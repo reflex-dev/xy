@@ -51,12 +51,18 @@ from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
 from ._ticker import (
+    AsinhLocator,
     AutoLocator,
     AutoMinorLocator,
     FixedLocator,
     Locator,
+    LogFormatterSciNotation,
+    LogitFormatter,
+    LogitLocator,
+    NullFormatter,
     NullLocator,
     ScalarFormatter,
+    SymmetricalLogLocator,
     as_formatter,
 )
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
@@ -289,16 +295,69 @@ def _scale_values(values: Any, spec: Optional[dict[str, Any]], *, inverse: bool 
         )
         return np.sign(source) * result
     if name == "logit":
+        nonpositive = spec.get("nonpositive", "mask")
         if inverse:
-            return 1.0 / (1.0 + np.exp(-source))
+            with np.errstate(over="ignore"):
+                return 1.0 / (1.0 + np.power(10.0, -source))
         with np.errstate(divide="ignore", invalid="ignore"):
-            result = np.log(source / (1.0 - source))
-        # values at/outside (0, 1) are masked like matplotlib, never ±inf
+            result = np.log10(source / (1.0 - source))
+        if nonpositive == "clip":
+            return np.where(source <= 0.0, -1000.0, np.where(source >= 1.0, 1000.0, result))
+        # Values at/outside (0, 1) are masked like matplotlib, never ±inf.
         return np.where((source > 0.0) & (source < 1.0), result, np.nan)
     if name == "asinh":
         width = spec["linear_width"]
         return width * np.sinh(source / width) if inverse else width * np.arcsinh(source / width)
+    if name == "function":
+        function = spec["inverse" if inverse else "forward"]
+        result = np.asarray(function(source), dtype=np.float64)
+        if result.shape != source.shape:
+            try:
+                result = np.broadcast_to(result, source.shape)
+            except ValueError as error:
+                raise ValueError("function scale must preserve the input shape") from error
+        return result
     return values
+
+
+class _ScaleTransformProxy:
+    """Small Matplotlib-shaped scale transform used by ``Axis.get_transform``."""
+
+    def __init__(self, spec: dict[str, Any], *, inverse: bool = False) -> None:
+        self._spec = spec
+        self._inverse = inverse
+
+    def transform(self, values: Any) -> np.ndarray:
+        source = np.asarray(values, dtype=np.float64)
+        if self._spec["name"] == "log":
+            base = float(self._spec.get("base", 10.0))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                if self._inverse:
+                    return np.power(base, source)
+                result = np.log(source) / np.log(base)
+            if self._spec.get("nonpositive", "clip") == "clip":
+                return np.where(source <= 0, -1000.0, result)
+            return np.where(source > 0, result, np.nan)
+        return np.asarray(_scale_values(source, self._spec, inverse=self._inverse))
+
+    def inverted(self) -> "_ScaleTransformProxy":
+        return _ScaleTransformProxy(self._spec, inverse=not self._inverse)
+
+    @property
+    def base(self) -> float:
+        return float(self._spec.get("base", 10.0))
+
+    @property
+    def linthresh(self) -> float:
+        return float(self._spec["linthresh"])
+
+    @property
+    def linscale(self) -> float:
+        return float(self._spec["linscale"])
+
+    @property
+    def linear_width(self) -> float:
+        return float(self._spec["linear_width"])
 
 
 def _clip_infinite_line(
@@ -475,20 +534,59 @@ def _box_spans(entry: dict[str, Any], axis: str) -> Iterator[np.ndarray]:
     yield from spans
 
 
-def _nonlinear_ticks(domain: tuple[float, float], spec: dict[str, Any]) -> np.ndarray:
-    lo, hi = map(float, _scale_values(np.asarray(domain), spec, inverse=True))
-    if spec["name"] == "logit":
-        candidates = np.asarray([0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999])
-        return candidates[(candidates >= lo) & (candidates <= hi)]
-    if spec["name"] == "symlog":
-        threshold, base = spec["linthresh"], spec["base"]
-        largest = max(abs(lo), abs(hi), threshold)
-        powers = threshold * base ** np.arange(
-            0, max(1, int(np.ceil(np.log(largest / threshold) / np.log(base)))) + 1
+def _scale_default_tickers(spec: dict[str, Any]) -> dict[str, Any]:
+    """Matplotlib's default ticker quartet for a non-native scale."""
+    name = spec["name"]
+    if name == "symlog":
+        locator_options = {
+            "base": spec["base"],
+            "linthresh": spec["linthresh"],
+        }
+        return {
+            "major_locator": SymmetricalLogLocator(**locator_options),
+            "major_formatter": LogFormatterSciNotation(spec["base"]),
+            "minor_locator": SymmetricalLogLocator(
+                **locator_options,
+                subs=spec.get("subs"),
+            ),
+            "minor_formatter": NullFormatter(),
+        }
+    if name == "asinh":
+        formatter: Any = (
+            LogFormatterSciNotation(spec["base"]) if spec["base"] > 1 else ScalarFormatter()
         )
-        candidates = np.unique(np.concatenate((-powers[::-1], [0.0], powers)))
-        return candidates[(candidates >= lo) & (candidates <= hi)]
-    return np.linspace(lo, hi, 6)
+        return {
+            "major_locator": AsinhLocator(
+                spec["linear_width"],
+                base=spec["base"],
+            ),
+            "major_formatter": formatter,
+            "minor_locator": AsinhLocator(
+                spec["linear_width"],
+                base=spec["base"],
+                subs=spec.get("subs"),
+            ),
+            "minor_formatter": NullFormatter(),
+        }
+    if name == "logit":
+        formatter_options = {
+            "one_half": spec["one_half"],
+            "use_overline": spec["use_overline"],
+        }
+        return {
+            "major_locator": LogitLocator(),
+            "major_formatter": LogitFormatter(**formatter_options),
+            "minor_locator": LogitLocator(minor=True),
+            "minor_formatter": LogitFormatter(minor=True, **formatter_options),
+        }
+    if name == "function":
+        return {
+            "major_locator": AutoLocator(),
+            "major_formatter": ScalarFormatter(),
+            "minor_locator": NullLocator(),
+            "minor_formatter": NullFormatter(),
+        }
+    return {}
 
 
 class _AxisProxy:
@@ -517,6 +615,10 @@ class _AxisProxy:
             self.set_major_locator(kwargs.pop("major_locator"))
         if "major_formatter" in kwargs:
             self.set_major_formatter(kwargs.pop("major_formatter"))
+        if "minor_locator" in kwargs:
+            self.set_minor_locator(kwargs.pop("minor_locator"))
+        if "minor_formatter" in kwargs:
+            self.set_minor_formatter(kwargs.pop("minor_formatter"))
 
     @staticmethod
     def _is_units_registry_ticker(ticker: Any) -> bool:
@@ -538,6 +640,9 @@ class _AxisProxy:
         for stale in ("tick_values", "tick_labels", "tick_count"):
             props.pop(stale, None)
         host._auto_scale_axis_ticks.discard(key)
+        if key in host._tick_expanded_domains:
+            host._tick_expanded_domains.discard(key)
+            props.pop("domain", None)
         host._invalidate_shared_ticker_axis(key)
 
     def get_major_locator(self) -> Any:
@@ -564,6 +669,10 @@ class _AxisProxy:
     def get_minor_locator(self) -> Any:
         host, key = self._ticker_slot()
         return host._tickers.get((key, "minor_locator")) or NullLocator()
+
+    def get_transform(self) -> _ScaleTransformProxy:
+        host, key = self._ticker_slot()
+        return _ScaleTransformProxy(host._scale_specs[key])
 
     def set_minor_formatter(self, formatter: Any) -> None:
         """Set a minor formatter, used when a labeled minor set is promoted."""
@@ -995,6 +1104,7 @@ class Axes(PlotTypeMixin):
         self._colorbar: Optional[dict[str, Any]] = None
         self._colorbar_source: Optional[dict[str, Any]] = None  # entry the colorbar reads
         self._aspect_equal = False
+        self._aspect_value = 1.0
         self._aspect_adjustable = "box"
         self._aspect_bounds: Optional[tuple[float, float, float, float]] = None
         self._insets: list[tuple["Axes", tuple[float, float, float, float]]] = []
@@ -1041,6 +1151,7 @@ class Axes(PlotTypeMixin):
             "y2": {"name": "linear"},
         }
         self._auto_scale_axis_ticks: set[str] = set()
+        self._tick_expanded_domains: set[str] = set()
         self._tickers: dict[tuple[str, str], Any] = {}
         # Matplotlib shares the Axis ticker containers (locator/formatter)
         # while keeping per-Axes Tick artists and their visibility separate.
@@ -1288,35 +1399,22 @@ class Axes(PlotTypeMixin):
             for key in [k for k, v in kw.items() if v is None]:
                 del kw[key]
         host = self._y2_of or self
-        nonlinear_axes = []
         for axis in ("x", "y"):
             key = "y2" if axis == "y" and self._y2_of is not None else axis
             spec = host._scale_specs[key]
             if spec["name"] != "linear":
                 _transform_entry_axis(entry, axis, {"name": "linear"}, spec)
-                nonlinear_axes.append((axis, spec))
         host._entries.append(entry)
+        for axis in ("x", "y"):
+            key = "y2" if axis == "y" and self._y2_of is not None else axis
+            if key in host._tick_expanded_domains:
+                self._expand_domain_to_ticks(axis)
         # Aspect modes may be selected before any data is added (the
         # Matplotlib fill gallery does exactly this with ``axis("equal")``).
         # Keep their bounds tied to the current autoscaled data until the user
         # explicitly pins a domain instead of freezing the empty (0, 1) view.
         if host._aspect_equal and not host._explicit_domains:
             host._set_aspect_equal_from_current()
-        for axis, spec in nonlinear_axes:
-            # scale-generated ticks were derived from the extent at
-            # set_*scale time; new data must refresh them (user-set ticks
-            # clear the marker and are left alone)
-            key = "y2" if axis == "y" and self._y2_of is not None else axis
-            if key in host._auto_scale_axis_ticks and spec["name"] in {
-                "symlog",
-                "logit",
-                "asinh",
-            }:
-                props = self._axis_props(axis)
-                ticks = _nonlinear_ticks(self._entry_extent(axis), spec)
-                props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
-                props["tick_labels"] = [f"{tick:g}" for tick in ticks]
-                props["tick_count"] = max(1, len(ticks))
         host._invalidate()
         return entry
 
@@ -1338,6 +1436,7 @@ class Axes(PlotTypeMixin):
             "y2": {"name": "linear"},
         }
         self._auto_scale_axis_ticks = set()
+        self._tick_expanded_domains = set()
         self._tickers = {}
         self._tick_rotation_modes = {"x": None, "y": None}
         self._tick_sides = {
@@ -1361,6 +1460,7 @@ class Axes(PlotTypeMixin):
         self._colorbar = None
         self._colorbar_source = None
         self._aspect_equal = False
+        self._aspect_value = 1.0
         self._aspect_adjustable = "box"
         self._aspect_bounds = None
         self._insets = []
@@ -2685,6 +2785,7 @@ class Axes(PlotTypeMixin):
             norm = getattr(colorizer, "norm", norm)
             cmap = getattr(colorizer, "cmap", cmap)
         self._aspect_equal = aspect != "auto"
+        self._aspect_value = 1.0
         check_unsupported(kwargs, "imshow()")
         masked_grid = np.ma.asarray(z, dtype=np.float64)
         grid = masked_grid.filled(np.nan)
@@ -3269,9 +3370,9 @@ class Axes(PlotTypeMixin):
         Supported property names: ``xlabel``, ``ylabel``, ``title``,
         ``xlim``, ``ylim``, ``xscale``, ``yscale``, ``xticks``, ``yticks``,
         ``xticklabels``, ``yticklabels``, ``position``, ``anchor``,
-        ``aspect``, ``facecolor``, and ``axisbelow`` (``projection`` must
-        stay rectilinear). Unknown names raise loudly. Returns the axes for
-        chaining.
+        ``aspect``, ``adjustable``, ``facecolor``, and ``axisbelow``
+        (``projection`` must stay rectilinear). Unknown names raise loudly.
+        Returns the axes for chaining.
         """
         aliases = {
             "xlabel": self.set_xlabel,
@@ -3286,6 +3387,7 @@ class Axes(PlotTypeMixin):
             "position": self.set_position,
             "anchor": self.set_anchor,
             "aspect": self.set_aspect,
+            "adjustable": self.set_adjustable,
             "facecolor": self.set_facecolor,
             "axisbelow": self.set_axisbelow,
         }
@@ -3339,6 +3441,7 @@ class Axes(PlotTypeMixin):
         host._axis["x"]["domain"] = tuple(sorted(map(float, transformed)))
         host._axis["x"]["reverse"] = start > end
         host._explicit_domains.add("x")
+        host._tick_expanded_domains.discard("x")
         host._invalidate_shared_ticker_axis("x")
 
     def get_xlim(self) -> tuple[float, float]:
@@ -3372,6 +3475,7 @@ class Axes(PlotTypeMixin):
         host._axis[key]["domain"] = tuple(sorted(map(float, transformed)))
         host._axis[key]["reverse"] = start > end
         host._explicit_domains.add(key)
+        host._tick_expanded_domains.discard(key)
         host._invalidate_shared_ticker_axis(key)
 
     def get_ylim(self) -> tuple[float, float]:
@@ -3385,6 +3489,35 @@ class Axes(PlotTypeMixin):
             _scale_values(np.asarray((lo, hi)), host._scale_specs[key], inverse=True),
         )
         return (hi, lo) if host._axis[key].get("reverse") else (lo, hi)
+
+    def _aspect_coordinates(
+        self,
+        axis: str,
+        bounds: tuple[float, float],
+        *,
+        inverse: bool = False,
+    ) -> tuple[float, float]:
+        """Convert stored domains to/from the coordinates aspect uses.
+
+        Non-native scales are already baked into affine entry/domain
+        coordinates. Native log axes retain data values for the core renderer,
+        so aspect math must explicitly enter and leave log space.
+        """
+        host = self._y2_of or self
+        key = "y2" if axis == "y" and self._y2_of is not None else axis
+        spec = host._scale_specs[key]
+        values = np.asarray(bounds, dtype=np.float64)
+        if spec["name"] != "log":
+            return tuple(map(float, values))
+        base = float(spec.get("base", 10.0))
+        if inverse:
+            transformed = np.power(base, values)
+        else:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                transformed = np.log(values) / np.log(base)
+        if not np.isfinite(transformed).all():
+            raise ValueError("log aspect limits must be positive and finite")
+        return tuple(map(float, transformed))
 
     def get_position(self, original: bool = False) -> Bbox:
         """The axes rectangle in figure fractions, as a `Bbox`.
@@ -3419,7 +3552,12 @@ class Axes(PlotTypeMixin):
         x0, x1, y0, y1 = self._aspect_bounds
         x0, x1 = self._axis["x"].get("domain", (x0, x1))
         y0, y1 = self._axis["y"].get("domain", (y0, y1))
-        data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
+        tx0, tx1 = self._aspect_coordinates("x", (x0, x1))
+        ty0, ty1 = self._aspect_coordinates("y", (y0, y1))
+        data_ratio = abs(tx1 - tx0) / max(
+            abs(ty1 - ty0) * self._aspect_value,
+            np.finfo(float).eps,
+        )
         fig_width, fig_height = self.figure.get_size_inches()
         left, bottom, width, height = rect
         physical_ratio = width * fig_width / max(height * fig_height, np.finfo(float).eps)
@@ -3908,6 +4046,7 @@ class Axes(PlotTypeMixin):
             # All five Matplotlib modes begin with autoscale_view(tight=False),
             # whose limits include the configured x/y margins.
             self._aspect_equal = False
+            self._aspect_value = 1.0
             self._aspect_adjustable = "box"
             self._aspect_bounds = None
             # Calling an aspect/autoscale mode on an empty Axes must not turn
@@ -3939,6 +4078,7 @@ class Axes(PlotTypeMixin):
                 self._set_box_aspect_ratio(1.0)
         elif arg == "tight":
             self._aspect_equal = False
+            self._aspect_value = 1.0
             self._aspect_adjustable = "box"
             self._aspect_bounds = None
             self._set_tight_domains()
@@ -3968,6 +4108,18 @@ class Axes(PlotTypeMixin):
         y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
 
+    def get_adjustable(self) -> str:
+        """Return whether aspect changes the axes box or its data limits."""
+        return self._aspect_adjustable
+
+    def set_adjustable(self, adjustable: str, share: bool = False) -> None:
+        """Select ``"box"`` or ``"datalim"`` aspect adjustment."""
+        del share  # shared-axis aspect constraints are resolved by the compositor
+        if adjustable not in {"box", "datalim"}:
+            raise ValueError("adjustable must be 'box' or 'datalim'")
+        self._aspect_adjustable = adjustable
+        self._invalidate()
+
     def set_aspect(
         self,
         aspect: str | float,
@@ -3976,7 +4128,7 @@ class Axes(PlotTypeMixin):
         share: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Set the data aspect ratio: ``"equal"``/``1`` or ``"auto"``.
+        """Set the data aspect ratio: ``"equal"``, ``"auto"``, or a positive float.
 
         ``adjustable`` is ``"box"`` (resize the axes rectangle) or
         ``"datalim"`` (expand a data limit at draw time); ``anchor`` controls
@@ -3989,12 +4141,21 @@ class Axes(PlotTypeMixin):
                 f"set_aspect() got an unexpected keyword argument {next(iter(kwargs))!r}"
             )
         if adjustable is not None:
-            if adjustable not in {"box", "datalim"}:
-                raise ValueError("adjustable must be 'box' or 'datalim'")
-            self._aspect_adjustable = adjustable
+            self.set_adjustable(adjustable)
         if anchor is not None:
             self.set_anchor(anchor)
-        self._aspect_equal = aspect in ("equal", 1, 1.0)
+        if aspect == "auto":
+            self._aspect_equal = False
+            self._aspect_value = 1.0
+        elif aspect == "equal":
+            self._aspect_equal = True
+            self._aspect_value = 1.0
+        else:
+            value = float(aspect)
+            if not np.isfinite(value) or value <= 0:
+                raise ValueError("aspect must be finite and positive")
+            self._aspect_equal = True
+            self._aspect_value = value
         if self._aspect_equal:
             self._set_aspect_equal_from_current()
         else:
@@ -4905,11 +5066,9 @@ class Axes(PlotTypeMixin):
         """Set the x-axis scale.
 
         ``scale`` is ``"linear"``, ``"log"``, ``"symlog"``, ``"logit"``, or
-        ``"asinh"``. ``symlog`` accepts ``base``/``linthresh``/``linscale``
-        and ``asinh`` accepts ``linear_width``. Log accepts ``base``, ``subs``,
-        and ``nonpositive="clip"``/``"mask"``. Existing data, limits, and auto
-        ticks are re-expressed in the new scale; unsupported keywords raise
-        loudly.
+        ``"asinh"``/``"function"``. Built-in scale options and a static
+        ``functions=(forward, inverse)`` pair follow Matplotlib. Existing data,
+        limits, and ticks are re-expressed in the new scale.
         """
         self._set_scale("x", scale, kwargs)
 
@@ -4919,18 +5078,20 @@ class Axes(PlotTypeMixin):
 
     def _set_scale(self, axis: str, scale: str, kwargs: Optional[dict[str, Any]] = None) -> None:
         kwargs = {} if kwargs is None else dict(kwargs)
-        if scale not in ("linear", "log", "symlog", "logit", "asinh"):
+        if scale not in ("linear", "log", "symlog", "logit", "asinh", "function"):
             raise ValueError(f"unknown {axis} scale {scale!r}")
         host = self._y2_of or self
         key = "y2" if axis == "y" and self._y2_of is not None else axis
         old = host._scale_specs[key]
         if scale == "linear" and kwargs:
             check_unsupported(kwargs, f"set_{axis}scale('linear')")
+        base = 10.0
+        subs: Any = None
+        nonpositive = "clip"
         if scale == "log":
             base = float(kwargs.pop("base", 10))
             subs = kwargs.pop("subs", None)
             nonpositive = kwargs.pop("nonpositive", "clip")
-            check_unsupported(kwargs, f"set_{axis}scale('log')")
             if not np.isfinite(base) or base <= 0 or base == 1:
                 raise ValueError("log scale base must be positive and not equal to 1")
             if nonpositive not in {"clip", "mask"}:
@@ -4946,9 +5107,54 @@ class Axes(PlotTypeMixin):
                 "base": float(kwargs.pop("base", 10.0)),
                 "linthresh": float(kwargs.pop("linthresh", 2.0)),
                 "linscale": float(kwargs.pop("linscale", 1.0)),
+                "subs": kwargs.pop("subs", None),
             }
         elif scale == "asinh":
-            new = {"name": scale, "linear_width": float(kwargs.pop("linear_width", 1.0))}
+            asinh_base = float(kwargs.pop("base", 10))
+            asinh_subs = kwargs.pop("subs", "auto")
+            if isinstance(asinh_subs, str) and asinh_subs == "auto":
+                auto_subs = {
+                    3: (2,),
+                    4: (2,),
+                    5: (2,),
+                    8: (2, 4),
+                    10: (2, 5),
+                    16: (2, 4, 8),
+                    64: (4, 16),
+                    1024: (256, 512),
+                }
+                asinh_subs = auto_subs.get(int(asinh_base))
+            elif asinh_subs is not None:
+                asinh_subs = tuple(float(value) for value in asinh_subs)
+            new = {
+                "name": scale,
+                "linear_width": float(kwargs.pop("linear_width", 1.0)),
+                "base": asinh_base,
+                "subs": asinh_subs,
+            }
+        elif scale == "logit":
+            logit_nonpositive = kwargs.pop("nonpositive", "mask")
+            if logit_nonpositive not in {"clip", "mask"}:
+                raise ValueError("nonpositive must be 'clip' or 'mask'")
+            new = {
+                "name": scale,
+                "nonpositive": logit_nonpositive,
+                "one_half": str(kwargs.pop("one_half", r"\frac{1}{2}")),
+                "use_overline": bool(kwargs.pop("use_overline", False)),
+            }
+        elif scale == "function":
+            functions = kwargs.pop("functions", None)
+            if (
+                not isinstance(functions, (tuple, list))
+                or len(functions) != 2
+                or not all(callable(function) for function in functions)
+            ):
+                raise ValueError(f"set_{axis}scale('function') requires two callable functions")
+            new = {
+                "name": scale,
+                "forward": functions[0],
+                "inverse": functions[1],
+            }
         elif scale == "log":
             new = {
                 "name": "log",
@@ -4963,6 +5169,8 @@ class Axes(PlotTypeMixin):
             new["base"] <= 1 or new["linthresh"] <= 0 or new["linscale"] <= 0
         ):
             raise ValueError(f"set_{axis}scale({scale!r}) parameters must be positive")
+        if scale == "symlog" and new["subs"] is not None:
+            new["subs"] = tuple(float(value) for value in new["subs"])
         if scale == "asinh" and new["linear_width"] <= 0:
             raise ValueError(f"set_{axis}scale({scale!r}) parameters must be positive")
         for entry in host._entries:
@@ -4974,13 +5182,6 @@ class Axes(PlotTypeMixin):
             props["domain"] = tuple(
                 map(float, _scale_values(_scale_values(props["domain"], old, inverse=True), new))
             )
-        if key in host._auto_scale_axis_ticks:
-            # ticks generated for the previous scale, not user-set:
-            # regenerate for the new scale instead of converting them
-            props.pop("tick_values", None)
-            props.pop("tick_labels", None)
-            props.pop("tick_count", None)
-            host._auto_scale_axis_ticks.discard(key)
         if "tick_values" in props:
             labels = props.get("tick_labels") or [
                 f"{v:g}" for v in _scale_values(props["tick_values"], old, inverse=True)
@@ -4992,13 +5193,25 @@ class Axes(PlotTypeMixin):
                 )
             )
             props["tick_labels"] = labels
-        elif scale in {"symlog", "logit", "asinh"}:
-            ticks = _nonlinear_ticks(self._entry_extent(axis), new)
-            props["tick_values"] = list(map(float, _scale_values(ticks, new)))
-            props["tick_labels"] = [f"{tick:g}" for tick in ticks]
-            props["tick_count"] = max(1, len(ticks))
-            host._auto_scale_axis_ticks.add(key)
         host._scale_specs[key] = new
+        # Matplotlib changes only scale-owned defaults; a user locator or
+        # formatter remains authoritative. Mark our defaults so a later scale
+        # transition can replace them without disturbing authored ticker state.
+        for slot in (
+            "major_locator",
+            "major_formatter",
+            "minor_locator",
+            "minor_formatter",
+        ):
+            existing = host._tickers.get((key, slot))
+            if getattr(existing, "_xy_scale_default", False):
+                host._tickers.pop((key, slot), None)
+        if "tick_values" not in props:
+            for slot, ticker in _scale_default_tickers(new).items():
+                if (key, slot) in host._tickers:
+                    continue
+                ticker._xy_scale_default = True
+                host._tickers[(key, slot)] = ticker
         axis_props = self._axis_props(axis)
         axis_props["type_"] = "log" if scale == "log" else None
         if scale == "log":
@@ -5221,6 +5434,7 @@ class Axes(PlotTypeMixin):
             host._tickers.pop(("x", "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
+            self._expand_domain_to_ticks("x")
             if labels is None:
                 if spec and spec.get("name") != "linear":
                     # exporters see transformed positions; label the originals
@@ -5261,6 +5475,7 @@ class Axes(PlotTypeMixin):
             host._tickers.pop((key, "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
+            self._expand_domain_to_ticks("y")
             if labels is None:
                 if spec and spec.get("name") != "linear":
                     # exporters see transformed positions; label the originals
@@ -5277,6 +5492,24 @@ class Axes(PlotTypeMixin):
         if rotation is not None:
             self._axis_props("y")["tick_label_angle"] = float(rotation)
         host._invalidate_shared_ticker_axis(key)
+
+    def _expand_domain_to_ticks(self, axis: str) -> None:
+        """Apply Matplotlib's mandatory view expansion for explicit ticks."""
+        host = self._y2_of or self
+        key = "y2" if axis == "y" and self._y2_of is not None else axis
+        props = self._axis_props(axis)
+        ticks = np.asarray(props.get("tick_values", []), dtype=np.float64)
+        ticks = ticks[np.isfinite(ticks)]
+        if not len(ticks):
+            return
+        if axis in self._explicit_domains:
+            domain = props.get("domain", self._auto_domain(axis))
+        else:
+            domain = self._auto_domain(axis)
+            host._tick_expanded_domains.add(key)
+        lo, hi = sorted(map(float, domain))
+        props["domain"] = (min(lo, float(ticks.min())), max(hi, float(ticks.max())))
+        self._invalidate()
 
     def _set_ticklabels(
         self,
@@ -5395,7 +5628,15 @@ class Axes(PlotTypeMixin):
         host = base._shared_ticker_source(key)
         props = host._axis[key]
         if minor:
-            return np.asarray(props.get("minor_tick_values", []), dtype=float)
+            key = "y2" if axis == "y" and self._y2_of is not None else axis
+            return np.asarray(
+                _scale_values(
+                    props.get("minor_tick_values", []),
+                    (self._y2_of or self)._scale_specs[key],
+                    inverse=True,
+                ),
+                dtype=float,
+            )
         if "tick_values" in props:
             return np.asarray(
                 _scale_values(props["tick_values"], host._scale_specs[key], inverse=True),
@@ -6829,6 +7070,8 @@ class Axes(PlotTypeMixin):
             x0, x1, y0, y1 = self._aspect_bounds
             x0, x1 = self._axis["x"].get("domain", (x0, x1))
             y0, y1 = self._axis["y"].get("domain", (y0, y1))
+            tx0, tx1 = self._aspect_coordinates("x", (x0, x1))
+            ty0, ty1 = self._aspect_coordinates("y", (y0, y1))
             compact = width < 520
             if chart_padding is None:
                 top, right, bottom, left = (
@@ -6845,20 +7088,25 @@ class Axes(PlotTypeMixin):
             layout_bottom = bottom + extra_bottom
             plot_width = max(40.0, width - left - layout_right)
             plot_height = max(40.0, height - layout_top - layout_bottom)
-            data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
+            data_ratio = abs(tx1 - tx0) / max(
+                abs(ty1 - ty0) * self._aspect_value,
+                np.finfo(float).eps,
+            )
             plot_ratio = plot_width / plot_height
             if self._aspect_adjustable == "datalim":
                 # axis("equal") keeps the normal axes rectangle. Expand the
                 # narrower data dimension around its existing center so one
                 # x unit and one y unit occupy the same number of pixels.
                 if plot_ratio > data_ratio:
-                    center = (x0 + x1) * 0.5
-                    half_span = abs(y1 - y0) * plot_ratio * 0.5
-                    x0, x1 = center - half_span, center + half_span
+                    center = (tx0 + tx1) * 0.5
+                    half_span = abs(ty1 - ty0) * plot_ratio * self._aspect_value * 0.5
+                    tx0, tx1 = center - half_span, center + half_span
                 else:
-                    center = (y0 + y1) * 0.5
-                    half_span = abs(x1 - x0) / plot_ratio * 0.5
-                    y0, y1 = center - half_span, center + half_span
+                    center = (ty0 + ty1) * 0.5
+                    half_span = abs(tx1 - tx0) / (plot_ratio * self._aspect_value) * 0.5
+                    ty0, ty1 = center - half_span, center + half_span
+                x0, x1 = self._aspect_coordinates("x", (tx0, tx1), inverse=True)
+                y0, y1 = self._aspect_coordinates("y", (ty0, ty1), inverse=True)
                 aspect_domains = ((x0, x1), (y0, y1))
             else:
                 # adjustable='box' preserves image limits and changes the axes
@@ -6973,7 +7221,11 @@ class Axes(PlotTypeMixin):
             # edge points toward the tick instead of pivoting into the plot.
             x_props["tick_label_angle"] = -float(x_props["tick_label_angle"])
         for axis, props in (("x", x_props), ("y", y_props)):
-            if adjusted_aspect or self._has_explicit_shared_domain(axis):
+            if (
+                adjusted_aspect
+                or self._has_explicit_shared_domain(axis)
+                or axis in self._tick_expanded_domains
+            ):
                 continue
             # Mesh and image spans are sticky on both ends: materialize the
             # domain so the renderer's generic margin padding cannot widen an
@@ -6994,9 +7246,13 @@ class Axes(PlotTypeMixin):
                 else:
                     props["margin"] = margin
         if "x" in empty_view:
-            x_props["domain"] = (0.0, 1.0)
+            x_props["domain"] = (
+                self._auto_domain("x") if self._scale_specs["x"]["name"] == "log" else (0.0, 1.0)
+            )
         if "y" in empty_view:
-            y_props["domain"] = (0.0, 1.0)
+            y_props["domain"] = (
+                self._auto_domain("y") if self._scale_specs["y"]["name"] == "log" else (0.0, 1.0)
+            )
         if aspect_domains is not None:
             x_props["domain"], y_props["domain"] = aspect_domains
         auto_tick_counts = self._auto_tick_counts(x_props, width, height)
@@ -7032,9 +7288,13 @@ class Axes(PlotTypeMixin):
             children.append(secondary._component(index))
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
-            if "y" not in self._twin._explicit_domains:
+            if "y" not in self._twin._explicit_domains and "y2" not in self._tick_expanded_domains:
                 if self._twin._axis_is_dataless("y"):
-                    y2_props["domain"] = (0.0, 1.0)
+                    y2_props["domain"] = (
+                        self._twin._auto_domain("y")
+                        if self._scale_specs["y2"]["name"] == "log"
+                        else (0.0, 1.0)
+                    )
                 else:
                     margin = self._twin._effective_margin("y")
                     if margin < 0.0 or self._twin._has_nonzero_bar_baseline("y"):
@@ -7199,7 +7459,11 @@ class Axes(PlotTypeMixin):
         one.
         """
         for axis, props in (("x", x_props), ("y", y_props)):
-            if self._has_explicit_shared_domain(axis) or self._axis_is_dataless(axis):
+            if (
+                self._has_explicit_shared_domain(axis)
+                or axis in self._tick_expanded_domains
+                or self._axis_is_dataless(axis)
+            ):
                 continue
             spec = self._scale_specs.get(axis) or {"name": "linear"}
             if spec.get("name") != "linear":
