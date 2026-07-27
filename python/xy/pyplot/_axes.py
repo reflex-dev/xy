@@ -7444,8 +7444,7 @@ def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarr
         beta = 6.33
         weights = np.where(
             absolute < radius,
-            np.i0(beta * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2)))
-            / np.i0(beta),
+            np.i0(beta * np.sqrt(np.maximum(0.0, 1.0 - (absolute / radius) ** 2))) / np.i0(beta),
             0.0,
         )
     elif method == "sinc":
