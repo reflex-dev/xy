@@ -371,6 +371,9 @@ Locked in before implementation, in the PR #117 fail-first style:
   the pre-reset view.
 - **Ordering:** `on_brush` before `on_select` holds for programmatic
   geometric selects.
+- **Browsing-context release:** a plot-canvas pan whose `pointerup` occurs
+  outside an embedding iframe ends once at the last in-frame view; the
+  buttonless re-entry move does not mutate ranges.
 - **Rows non-durability:** a rows-selection never enters the history stack,
   `view_state()` reports the `{"rows": true}` marker rather than indices,
   and Back after a rows-select restores the prior geometric state.

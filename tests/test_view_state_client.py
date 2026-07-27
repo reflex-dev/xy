@@ -123,6 +123,83 @@ def test_state_round_trip_patch_semantics_and_clamps(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_LOST_POINTER_CAPTURE_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const ranges = () => Object.fromEntries(
+      view._axisIds().map((id) => [id, [...view._axisRange(id)]]));
+    const rect = view.canvas.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    let ts = 0;
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 300 && (frames.length || view._viewAnim); round++) {
+        const queued = frames; frames = [];
+        ts += 100;
+        for (const fn of queued) fn(ts);
+      }
+    };
+
+    const endEvents = [];
+    view.root.addEventListener("xy:view_change", (event) => {
+      if (event.detail.source === "pan_drag" && event.detail.phase === "end") {
+        endEvents.push(event.detail);
+      }
+    });
+    const pointer = (type, clientX, clientY, buttons) => {
+      view.canvas.dispatchEvent(new PointerEvent(type, {
+        pointerId: 71,
+        pointerType: "mouse",
+        button: 0,
+        buttons,
+        clientX,
+        clientY,
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+      }));
+    };
+
+    pointer("pointerdown", x, y, 1);
+    pointer("pointermove", x + 60, y + 10, 1);
+    const atBoundary = ranges();
+
+    // Chrome's iframe sequence when the primary button is released in the
+    // parent document: no pointerup in this document, then lost capture and
+    // a buttonless pointermove when the cursor re-enters.
+    pointer("lostpointercapture", x + 60, y + 10, 0);
+    pointer("pointermove", x + 120, y + 20, 0);
+    flush();
+    window.requestAnimationFrame = realRaf;
+
+    document.body.setAttribute("data-xy-lost-capture-probe", JSON.stringify({
+      reentryDidNotPan: JSON.stringify(ranges()) === JSON.stringify(atBoundary),
+      finalEndEmittedOnce: endEvents.length === 1,
+      finalEndKeptInteraction: endEvents[0]?.interaction_id != null
+        && endEvents[0]?.axes?.length > 0,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-lost-capture-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_lost_pointer_capture_finishes_pan_before_buttonless_reentry(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _chart_html().replace(_RENDER_CALL, _LOST_POINTER_CAPTURE_PROBE),
+        "data-xy-lost-capture-probe",
+        label="lost pointer-capture pan probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _HISTORY_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {

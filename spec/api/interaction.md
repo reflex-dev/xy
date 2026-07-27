@@ -299,6 +299,15 @@ An existing lasso remains rendered until a replacement selection gesture
 crosses that movement threshold; a plain click or sub-threshold pointer jitter
 does not temporarily hide or replace it.
 
+Pointer capture is scoped to one browsing context. When a canvas drag leaves
+an embedded iframe and the primary mouse button is released in the parent
+document, the iframe may receive no `pointerup`; Chrome reports the lost
+capture only when the pointer re-enters. The client finalizes a pan at its last
+in-frame view before processing that buttonless move, emits the gesture's one
+`end` event, and cancels an unfinished selection/box-zoom whose release
+coordinate is unavailable. A buttonless mouse move back over the canvas is the
+backstop when the browser omits the lost-capture notification as well.
+
 Axis bands are geometric scopes, not new state: secondary axes get their band
 on their own side (`y` left, `y2` right, top-side x axes on top), so scoping
 needs no modifier keys, and a band gesture is an ordinary interaction with a

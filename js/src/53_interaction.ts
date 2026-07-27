@@ -241,7 +241,49 @@ Object.assign(ChartView.prototype, {
         this._hideTooltip();
       }
     });
+    const finishPanDrag = () => {
+      if (!drag) return;
+      const finished = drag;
+      drag = null;
+      if (finished.moved) {
+        this._ignoreNextClick = true;
+        if (finished.changedAxes.length) this._emitViewChange("pan_drag", {
+          axes: finished.changedAxes,
+          phase: "end",
+          interactionId: finished.interactionId,
+        });
+      } else {
+        this._hideTooltip();
+      }
+    };
+    const cancelPointerGesture = () => {
+      this.selRect.style.display = "none";
+      this.selLasso.style.display = "none";
+      if (band?.previousLasso) {
+        this._lassoPolygon = band.previousLasso;
+        this._renderLassoSelection();
+      } else if (band?.previousBox) {
+        this._boxSelection = band.previousBox;
+        this._renderBoxSelection();
+      }
+      band = null;
+      drag = null;
+    };
+    // A capture-owning gesture ended without a release this document saw: a pan
+    // keeps the view it already reached, while an unfinished selection/box-zoom
+    // has no release coordinate to complete with and therefore rolls back.
+    const endGestureWithoutRelease = () => {
+      if (drag) finishPanDrag();
+      else if (band) cancelPointerGesture();
+    };
     this._listen(c, "pointermove", (e) => {
+      // Pointer capture stops at a browsing-context boundary. If a drag leaves
+      // an iframe and the mouse is released outside it, Chrome omits pointerup
+      // here and returns with a buttonless lost-capture/move sequence.
+      if ((band || drag) && e.isTrusted && e.pointerType === "mouse" && !(e.buttons & 1)) {
+        endGestureWithoutRelease();
+        return;
+      }
       if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
@@ -327,31 +369,11 @@ Object.assign(ChartView.prototype, {
         band = null;
         return;
       }
-      if (drag && drag.moved) {
-        this._ignoreNextClick = true;
-        if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
-          axes: drag.changedAxes,
-          phase: "end",
-          interactionId: drag.interactionId,
-        });
-      }
-      if (drag && !drag.moved) this._hideTooltip();
-      drag = null;
+      finishPanDrag();
     };
     this._listen(c, "pointerup", end);
-    this._listen(c, "pointercancel", () => {
-      this.selRect.style.display = "none";
-      this.selLasso.style.display = "none";
-      if (band?.previousLasso) {
-        this._lassoPolygon = band.previousLasso;
-        this._renderLassoSelection();
-      } else if (band?.previousBox) {
-        this._boxSelection = band.previousBox;
-        this._renderBoxSelection();
-      }
-      band = null;
-      drag = null;
-    });
+    this._listen(c, "pointercancel", cancelPointerGesture);
+    this._listen(c, "lostpointercapture", endGestureWithoutRelease);
     this._listen(c, "pointerleave", () => this._pointerHoverExit());
     // Backstop for missed canvas pointerleave: browsers skip boundary events
     // when the element under a stationary cursor changes (page scroll,

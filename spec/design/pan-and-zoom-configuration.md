@@ -617,6 +617,10 @@ controls transport work.
 - DOM events may emit once per animation frame.
 - Python/Reflex events are coalesced.
 - Continuous gestures always deliver a final `end` event.
+- A plot-canvas pan released outside an embedding iframe finalizes at its last
+  in-frame view on lost pointer capture (or the first buttonless mouse re-entry
+  move over the canvas); that re-entry never applies another pan delta. Axis-band
+  drags take capture the same way and do not carry this backstop yet.
 - LOD and view-event throttles may differ.
 - Linked peers receive browser-local updates without a Python round trip.
 
