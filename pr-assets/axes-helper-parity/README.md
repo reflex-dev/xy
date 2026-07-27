@@ -4,7 +4,7 @@ This evidence compares:
 
 - Matplotlib 3.11.0
 - XY before: `074122d9b702fa16bdf8b78b318eb5b483e869b3`
-- XY after: `ac3fa149bad18d9628cce82ffd25710070e84d3c`
+- XY after: `06c7aeddb413f5fed49918cff26758797bde78aa`
 
 The example is a non-shared 2x2 scientific plot grid using
 `Axes.label_outer()`. Before the fix, XY left every inner X/Y label visible.
