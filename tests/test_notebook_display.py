@@ -193,6 +193,38 @@ def test_facet_chart_show_honors_display_host() -> None:
     assert view._repr_html_().startswith('<iframe class="xy-notebook-frame"')
 
 
+def test_facet_chart_bare_display_is_composed_document_on_every_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The one deliberate §3.3 exception: FacetChart's bare rich display always
+    # emits the composed standalone-grid document (the only representation
+    # that preserves the grid layout), which is WASM-safe as-is. Pin that it
+    # stays the document on an Emscripten kernel; test_facets.py pins the
+    # default-platform case.
+    import IPython.display
+
+    displayed: list[tuple[object, bool]] = []
+
+    def record(value: object, *, raw: bool = False) -> None:
+        displayed.append((value, raw))
+
+    monkeypatch.setattr(IPython.display, "display", record)
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    monkeypatch.delitem(sys.modules, "marimo", raising=False)
+
+    xy.facet_chart(
+        xy.line(x="x", y="y"),
+        by="g",
+        data={"x": [0.0, 1.0, 0.0, 1.0], "y": [1.0, 2.0, 3.0, 4.0], "g": ["a", "a", "b", "b"]},
+    )._ipython_display_()
+
+    assert len(displayed) == 1
+    payload, raw = displayed[0]
+    assert raw is True
+    assert isinstance(payload, dict)
+    assert payload["text/html"].startswith('<iframe class="xy-notebook-frame"')
+
+
 def test_facet_grid_show_honors_display_host() -> None:
     grid = xy.facet_chart(
         xy.line(x="x", y="y"),

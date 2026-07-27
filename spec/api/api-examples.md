@@ -453,7 +453,8 @@ Composed `Chart` objects expose `to_html(...)`, `html(...)`, `_repr_html_()`,
 `show()`, and `memory_report()` readout methods directly. `show(display=...)`
 picks the notebook host — `"widget"`, `"html"`, or auto, which falls back to
 the standalone-HTML iframe only on WASM kernels (JupyterLite/Pyodide), where a
-prebuilt frontend cannot load the anywidget extension
+prebuilt frontend cannot load the anywidget extension; Marimo's WASM build
+bundles its own anywidget frontend and keeps the widget host
 (design/reflex-shaped-api.md §3.3).
 `to_image(format="png", ...)` returns bytes and `write_image(path, ...)` writes
 one file atomically with the format inferred from its extension; together they

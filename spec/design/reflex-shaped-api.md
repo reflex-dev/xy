@@ -221,8 +221,8 @@ delegates to the engine's standalone export path, including same-directory
 atomic file replacement for path writes.
 
 `show(display=None)` resolves which notebook host renders the chart, and bare
-rich display (`_ipython_display_`) follows the same resolution with no
-argument. `"widget"` is the live anywidget host (Python callbacks, streaming
+rich display (`_ipython_display_`) on `Chart` and `Figure` follows the same
+resolution with no argument. `"widget"` is the live anywidget host (Python callbacks, streaming
 `append`, kernel-served LOD); `"html"` is the standalone-HTML host — the same
 isolated `notebook_iframe` document as `_repr_html_()`, interactive in the
 browser but with no kernel channel; on it `show()` returns an
@@ -241,7 +241,11 @@ custom JupyterLite deployment that ships the anywidget extension can force
 the widget host back via `XY_NOTEBOOK_DISPLAY=widget` or
 `show(display="widget")`. Invalid values fail loud, naming the argument or
 environment variable. `Figure.show`, `FacetChart.show`, and `FacetGrid.show`
-follow the same resolution.
+follow the same resolution. `FacetChart`'s *bare* rich display is the one
+deliberate exception: it always emits the composed standalone-grid document —
+the only representation that preserves the grid layout (N stacked panel
+widgets would not) — and that document is WASM-safe on every host. Live panel
+widgets remain an explicit `widget()` / `show(display="widget")` choice.
 
 ## 4. Styling Contract
 

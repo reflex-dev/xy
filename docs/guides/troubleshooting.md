@@ -38,8 +38,11 @@ extension, and `%pip install anywidget` adds only the kernel-side package —
 frontend JavaScript cannot be installed at runtime. Current XY releases
 detect WASM kernels and display through the standalone-HTML host instead, so
 `chart.show()` renders without the widget comm; upgrade XY if you still see
-this error. Set `XY_NOTEBOOK_DISPLAY=widget` only in a self-built JupyterLite
-deployment that bundled the anywidget frontend extension. See
+this error. If the error persists on a current release, check for an explicit
+`XY_NOTEBOOK_DISPLAY=widget` or `show(display="widget")` override forcing the
+widget host — set those only in a self-built JupyterLite deployment that
+bundled the anywidget frontend extension. Marimo's WASM notebook never shows
+this error: it bundles its own anywidget frontend and keeps live widgets. See
 [Notebooks](/docs/xy/integrations/notebooks/).
 
 **Only some charts in a large dashboard remain live.** Browsers limit WebGL

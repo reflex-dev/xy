@@ -54,6 +54,10 @@ callbacks (`on_select`, ...), `chart.append(...)` live refreshes, and
 kernel-served zoom refinement need the live widget host, so they stay
 inactive on the HTML host; re-run the cell to display mutated chart state.
 
+Marimo is the exception among WASM hosts: it ships its own anywidget frontend
+as part of the app, so charts in Marimo's WASM build keep the live widget
+host automatically.
+
 Override the automatic choice per call with `chart.show(display="widget")` /
 `chart.show(display="html")`, or process-wide with the `XY_NOTEBOOK_DISPLAY`
 environment variable (`auto`, `widget`, or `html`):

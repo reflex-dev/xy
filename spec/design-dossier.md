@@ -1184,6 +1184,8 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    runtime — there `show()`/rich display resolve to the standalone-HTML iframe
    host instead (same client, §29 static-export row; no kernel channel), with
    `XY_NOTEBOOK_DISPLAY` / `show(display=...)` overriding in both directions.
+   Marimo's WASM build is the carve-out: it bundles its own anywidget frontend,
+   so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
 - **Comm-protocol versioning.** The native core and JS client ship together but can
