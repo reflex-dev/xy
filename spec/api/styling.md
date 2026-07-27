@@ -345,6 +345,12 @@ for multiline blocks; native PNG emits one glyph command per line, and the
 browser uses `white-space: pre-line` with the same line height. Rotated extents
 use the whole block:
 
+The pyplot shim retains authored font sizes in Matplotlib points and resolves
+them to output pixels at the owning figure's current DPI before any of those
+measurements or renderer handoffs. This includes figure suptitles and a
+temporary `savefig(dpi=...)` override; 14 pt is therefore 19.44 px at 100 dpi,
+not 14 CSS pixels.
+
 ```text
 rotated width  = |cos θ| × block width + |sin θ| × block height
 rotated height = |sin θ| × block width + |cos θ| × block height
