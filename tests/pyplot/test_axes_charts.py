@@ -110,6 +110,39 @@ def test_fill_between_uses_a_faint_full_perimeter_not_an_opaque_lower_line() -> 
     assert trace.style["line_opacity"] == pytest.approx(0.2)
 
 
+def test_fill_betweenx_static_export_joins_dense_triangle_strip(monkeypatch) -> None:
+    from xy import _raster
+
+    fig, ax = plt.subplots()
+    y = np.arange(0.0, 2.0, 0.01)
+    ax.fill_betweenx(y, 0.0, np.sin(2 * np.pi * y), alpha=0.4)
+
+    traces = _traces(ax)
+    assert len(traces) == 1
+    assert traces[0].style["joined_fill"] is True
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert svg.count("<polygon") == 1
+
+    def reject_individual_triangles(*_args, **_kwargs):
+        pytest.fail("joined fill_betweenx fell back to individual raster triangles")
+
+    monkeypatch.setattr(_raster._Cmd, "triangles", reject_individual_triangles)
+    assert fig._to_png().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_fill_betweenx_static_export_joins_each_disconnected_region() -> None:
+    fig, ax = plt.subplots()
+    y = np.arange(0.0, 2.0, 0.01)
+    curve = np.sin(2 * np.pi * y)
+    ax.fill_betweenx(y, 0.0, curve, where=np.abs(curve) > 0.5)
+
+    traces = _traces(ax)
+    assert len(traces) == 4
+    assert all(trace.style["joined_fill"] is True for trace in traces)
+    svg = ax._build_chart(*fig._panel_px()).figure().to_svg()
+    assert svg.count("<polygon") == len(traces)
+
+
 def test_bar_categories_and_bottom() -> None:
     _fig, ax = plt.subplots()
     ax.bar(["a", "b"], [1, 2], bottom=[1, 1], label="one")
@@ -574,7 +607,9 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
     quiver = ax.quiver([0, 1], [0, 1], [1, 1], [1, 0], [0.2, 0.8], cmap="plasma")
     key = ax.quiverkey(quiver, 0.9, 0.9, 1.0, r"$1 \frac{m}{s}$", coordinates="figure")
     assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
-    assert len(contour_labels) > 2
+    # Matplotlib places one label on each of these two connected open
+    # contours; sampling the raw marching-square segments produced duplicates.
+    assert len(contour_labels) == 2
     assert len(table.get_celld()) == 9
     assert key is not None
     assert ax._entries[-1]["args"][2] == "1 m/s"

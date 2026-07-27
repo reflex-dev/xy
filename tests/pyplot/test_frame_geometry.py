@@ -11,6 +11,7 @@ rather than a snapshot churn.
 from __future__ import annotations
 
 import io
+import re
 
 import numpy as np
 import pytest
@@ -82,6 +83,48 @@ def test_axes_title_does_not_move_the_rendered_frame():
     (titled,) = _plot_rects(fig)
 
     assert titled == pytest.approx(plain, abs=0.5)
+
+
+def test_cached_axes_aligns_with_same_position_overlay_in_static_exports():
+    """A cached one-panel chart must be rebuilt for absolute composition.
+
+    Matplotlib draws a later same-position Axes above the first one. Its opaque
+    patch covers the older plot, while matching ticks and labels share exactly
+    one axes rectangle instead of appearing as offset duplicate chrome.
+    """
+    fig, first = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    first.plot([0, 1], [0, 1])
+    first.set(xlabel="x", ylabel="first y", title="first title")
+
+    # Prime the single-panel cache before plt.axes() changes the figure to the
+    # absolute multi-axes composition path.
+    fig.savefig(io.BytesIO(), format="png")
+
+    second = plt.axes()
+    second.plot([0, 1], [1, 0])
+    second.set(xlabel="x", ylabel="second y", title="second title")
+
+    png = io.BytesIO()
+    svg = io.BytesIO()
+    fig.savefig(png, format="png")
+    fig.savefig(svg, format="svg")
+
+    first_rect, second_rect = _plot_rects(fig)
+    assert first_rect == pytest.approx(second_rect, abs=0.5)
+    assert png.getvalue().startswith(b"\x89PNG\r\n\x1a\n")
+
+    nested_sizes = re.findall(
+        rb'<svg x="[^"]+" y="[^"]+" width="([^"]+)" height="([^"]+)" '
+        rb'viewBox="0 0 ([^ ]+) ([^"]+)">',
+        svg.getvalue(),
+    )
+    assert len(nested_sizes) == 2
+    assert nested_sizes[0] == nested_sizes[1]
+
+    fig.delaxes(second)
+    fig.savefig(io.BytesIO(), format="png")
+    assert first._plot_box_px is None
+    assert _plot_rects(fig)[0] == pytest.approx(_reported_rects(fig)[0], abs=0.5)
 
 
 @pytest.mark.parametrize(

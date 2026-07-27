@@ -1,4 +1,5 @@
-import { safeCssPaint } from "./20_theme";
+import { buildLutData } from "./10_colormaps";
+import { parseColor, safeCssPaint } from "./20_theme";
 import { ChartView } from "./50_chartview";
 
 // ChartView annotation layer (§ chrome): reference lines/zones already draw
@@ -144,6 +145,116 @@ function xyTrimPolylineEnd(points, trim) {
   return out;
 }
 
+function xyCanvasRegularPolygon(ctx, cx, cy, radius, points, start = -Math.PI / 2) {
+  for (let index = 0; index < points; index++) {
+    const angle = start + index * 2 * Math.PI / points;
+    const x = cx + radius * Math.cos(angle);
+    const y = cy + radius * Math.sin(angle);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+// Canvas counterpart of POINT_FS/_SYMBOL_BUILDERS. Returns true for the two
+// line-only symbols, whose authored paint is a stroke rather than a fill.
+function xyCanvasScatterSymbol(ctx, symbol, cx, cy, diameter) {
+  const radius = diameter / 2;
+  ctx.beginPath();
+  if (symbol === 0 || symbol === 12) {
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+  } else if (symbol === 1 || symbol === 13) {
+    ctx.rect(cx - radius, cy - radius, diameter, diameter);
+  } else if (symbol === 2 || symbol === 14) {
+    const yr = Math.SQRT2 * radius;
+    const xr = symbol === 14 ? 0.6 * yr : yr;
+    ctx.moveTo(cx, cy - yr);
+    ctx.lineTo(cx + xr, cy);
+    ctx.lineTo(cx, cy + yr);
+    ctx.lineTo(cx - xr, cy);
+    ctx.closePath();
+  } else if (symbol === 3) {
+    ctx.moveTo(cx, cy - radius);
+    ctx.lineTo(cx + radius, cy + radius);
+    ctx.lineTo(cx - radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 8) {
+    ctx.moveTo(cx, cy + radius);
+    ctx.lineTo(cx + radius, cy - radius);
+    ctx.lineTo(cx - radius, cy - radius);
+    ctx.closePath();
+  } else if (symbol === 9) {
+    ctx.moveTo(cx - radius, cy);
+    ctx.lineTo(cx + radius, cy - radius);
+    ctx.lineTo(cx + radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 10) {
+    ctx.moveTo(cx + radius, cy);
+    ctx.lineTo(cx - radius, cy - radius);
+    ctx.lineTo(cx - radius, cy + radius);
+    ctx.closePath();
+  } else if (symbol === 4) {
+    const inner = 0.34 * radius;
+    ctx.moveTo(cx - inner, cy - radius);
+    ctx.lineTo(cx + inner, cy - radius);
+    ctx.lineTo(cx + inner, cy - inner);
+    ctx.lineTo(cx + radius, cy - inner);
+    ctx.lineTo(cx + radius, cy + inner);
+    ctx.lineTo(cx + inner, cy + inner);
+    ctx.lineTo(cx + inner, cy + radius);
+    ctx.lineTo(cx - inner, cy + radius);
+    ctx.lineTo(cx - inner, cy + inner);
+    ctx.lineTo(cx - radius, cy + inner);
+    ctx.lineTo(cx - radius, cy - inner);
+    ctx.lineTo(cx - inner, cy - inner);
+    ctx.closePath();
+  } else if (symbol === 11) {
+    const wide = 0.72 * radius;
+    const narrow = 0.28 * radius;
+    ctx.moveTo(cx - wide, cy - radius);
+    ctx.lineTo(cx, cy - narrow);
+    ctx.lineTo(cx + wide, cy - radius);
+    ctx.lineTo(cx + radius, cy - wide);
+    ctx.lineTo(cx + narrow, cy);
+    ctx.lineTo(cx + radius, cy + wide);
+    ctx.lineTo(cx + wide, cy + radius);
+    ctx.lineTo(cx, cy + narrow);
+    ctx.lineTo(cx - wide, cy + radius);
+    ctx.lineTo(cx - radius, cy + wide);
+    ctx.lineTo(cx - narrow, cy);
+    ctx.lineTo(cx - radius, cy - wide);
+    ctx.closePath();
+  } else if (symbol === 15) {
+    ctx.moveTo(cx - radius, cy);
+    ctx.lineTo(cx + radius, cy);
+    ctx.moveTo(cx, cy - radius);
+    ctx.lineTo(cx, cy + radius);
+    return true;
+  } else if (symbol === 16) {
+    const edge = Math.SQRT1_2 * radius;
+    ctx.moveTo(cx - edge, cy - edge);
+    ctx.lineTo(cx + edge, cy + edge);
+    ctx.moveTo(cx + edge, cy - edge);
+    ctx.lineTo(cx - edge, cy + edge);
+    return true;
+  } else if (symbol === 5 || symbol === 6) {
+    xyCanvasRegularPolygon(ctx, cx, cy, radius, symbol === 5 ? 6 : 5);
+  } else if (symbol === 7) {
+    for (let index = 0; index < 10; index++) {
+      const r = index % 2 === 0 ? radius : radius * 0.45;
+      const angle = -Math.PI / 2 + index * Math.PI / 5;
+      const x = cx + r * Math.cos(angle);
+      const y = cy + r * Math.sin(angle);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  } else {
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+  }
+  return false;
+}
+
 // The shaft as a filled polygon whose width interpolates from w0 to w1
 // (matplotlib's fancy/simple/wedge arrowstyles are filled tapered shafts).
 function xyTaperPolygon(points, w0, w1) {
@@ -165,6 +276,158 @@ function xyTaperPolygon(points, w0, w1) {
 }
 
 Object.assign(ChartView.prototype, {
+  _authoredScatterRgba(g, index, continuousLut = null) {
+    if (g.colorMode === 3 && g._cpu.rgba) {
+      const offset = index * 4;
+      return Array.from(g._cpu.rgba.slice(offset, offset + 4), (value: number) => value / 255);
+    }
+    if (g.colorMode === 2 && g._cpu.color) {
+      const palette = g.trace.color?.palette || [];
+      if (palette.length) {
+        return parseColor(
+          this.root,
+          palette[Math.round(g._cpu.color[index]) % palette.length],
+          g.color,
+        );
+      }
+    }
+    if (g.colorMode === 1 && g._cpu.color) {
+      // The caller prepares this once per trace/redraw. Falling back to a
+      // default color is preferable to rebuilding 256 stops for every point.
+      if (!continuousLut) return g.color || [0.3, 0.47, 0.66, 1];
+      const lut = continuousLut;
+      const value = g._cpu.color[index];
+      const unit = g._cpu.color instanceof Uint8Array ? value / 255 : value;
+      const slot = Math.max(0, Math.min(255, Math.round(unit * 255))) * 4;
+      return [lut[slot] / 255, lut[slot + 1] / 255, lut[slot + 2] / 255, 1];
+    }
+    return g.color || [0.3, 0.47, 0.66, 1];
+  },
+
+  _drawAuthoredScatterMarkers(ctx) {
+    const draws = (this._authoredScatterDraws || []).filter(
+      ({ g }) => g && g.trace?.kind === "scatter" && g.authoredMarker
+    );
+    if (!draws.length) return;
+    const p = this.plot;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(p.x, p.y, p.w, p.h);
+    ctx.clip();
+    for (const { g, opacityScale } of draws) {
+      if (!g._cpu) continue;
+      const style = g.trace.style || {};
+      const markerPath = style.marker_path;
+      const markerGlyph = style.marker_glyph;
+      const zoomStyle = this._pointZoomStyle(g);
+      const colormap = g.trace.color?.colormap || "viridis";
+      if (g.colorMode === 1 && g._authoredLutName !== colormap) {
+        g._authoredLutName = colormap;
+        g._authoredLut = buildLutData(colormap);
+      }
+      const continuousLut = g.colorMode === 1 ? g._authoredLut : null;
+      for (let index = 0; index < g.n; index++) {
+        const sourceIndex = g._visMap ? g._visMap[index] : index;
+        const x = this._decodeValue(g._cpu.x, g.xMeta, sourceIndex);
+        const y = this._decodeValue(g._cpu.y, g.yMeta, sourceIndex);
+        const px = this._dataPx(g.xAxis, x);
+        const py = this._dataPx(g.yAxis, y);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+        const sizeValue = g.sizeMode === 1 && g._cpu.size
+          ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) *
+            (g._cpu.size instanceof Uint8Array
+              ? g._cpu.size[sourceIndex] / 255
+              : g._cpu.size[sourceIndex])
+          : g.size;
+        const size = Math.max(0, Number(sizeValue) * zoomStyle.sizeFactor);
+        const rgba = this._authoredScatterRgba(g, sourceIndex, continuousLut);
+        const styleOffset = sourceIndex * 4;
+        const itemStyle = g._cpuStyle && g._cpuStyle.length >= styleOffset + 4
+          ? g._cpuStyle.subarray(styleOffset, styleOffset + 4)
+          : null;
+        const itemOpacity = itemStyle ? itemStyle[0] : 1;
+        const scalarArtist = Number(style.artist_alpha);
+        const artistAlpha = itemStyle && itemStyle[1] >= 0
+          ? itemStyle[1]
+          : Number.isFinite(scalarArtist) ? scalarArtist : -1;
+        const intrinsicAlpha = artistAlpha >= 0 ? artistAlpha : rgba[3];
+        const alpha = Math.max(
+          0,
+          Math.min(1, intrinsicAlpha * itemOpacity * zoomStyle.opacity * opacityScale),
+        );
+        const paint = `rgba(${Math.round(rgba[0] * 255)},${Math.round(rgba[1] * 255)},${Math.round(rgba[2] * 255)},${alpha})`;
+        const strokeWidth = Math.max(
+          0,
+          itemStyle && itemStyle[2] >= 0
+            ? itemStyle[2] / this.dpr
+            : Number(style.stroke_width) || 0,
+        );
+        let strokeRgba = g.pointStroke || rgba;
+        if (g._cpuStroke && g._cpuStroke.length >= (sourceIndex + 1) * 4) {
+          const offset = sourceIndex * 4;
+          strokeRgba = Array.from(
+            g._cpuStroke.slice(offset, offset + 4),
+            (value: number) => value / 255,
+          );
+        }
+        const strokeIntrinsic = artistAlpha >= 0 ? artistAlpha : strokeRgba[3];
+        const strokeAlpha = Math.max(
+          0,
+          Math.min(1, strokeIntrinsic * itemOpacity * zoomStyle.strokeOpacity * opacityScale),
+        );
+        const strokePaint = g.pointStrokeFace
+          ? paint
+          : `rgba(${Math.round(strokeRgba[0] * 255)},${Math.round(strokeRgba[1] * 255)},${Math.round(strokeRgba[2] * 255)},${strokeAlpha})`;
+        const symbol = itemStyle && itemStyle[3] >= 0 ? Math.round(itemStyle[3]) : null;
+        const diameter = Math.max(0, size - strokeWidth);
+        ctx.save();
+        ctx.fillStyle = paint;
+        ctx.strokeStyle = strokePaint;
+        ctx.lineWidth = strokeWidth;
+        if (symbol !== null) {
+          const lineSymbol = xyCanvasScatterSymbol(ctx, symbol, px, py, diameter);
+          if (lineSymbol) {
+            ctx.strokeStyle = paint;
+            ctx.lineWidth = Math.max(1, strokeWidth);
+            ctx.stroke();
+          } else {
+            ctx.fill("evenodd");
+            if (strokeWidth > 0) ctx.stroke();
+          }
+        } else if (markerGlyph) {
+          ctx.font = `${diameter}px "DejaVu Sans", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(markerGlyph), px, py);
+          if (strokeWidth > 0) {
+            ctx.strokeText(String(markerGlyph), px, py);
+          }
+        } else if (markerPath) {
+          ctx.beginPath();
+          for (const contour of markerPath.contours || []) {
+            for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+              const vx = px + diameter * Number(contour[offset]);
+              const vy = py - diameter * Number(contour[offset + 1]);
+              if (offset === 0) ctx.moveTo(vx, vy);
+              else ctx.lineTo(vx, vy);
+            }
+            if (markerPath.filled) ctx.closePath();
+          }
+          if (markerPath.filled) {
+            ctx.fill("evenodd");
+            if (strokeWidth > 0) ctx.stroke();
+          } else {
+            ctx.strokeStyle = paint;
+            ctx.lineWidth = Math.max(1, strokeWidth);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  },
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   },

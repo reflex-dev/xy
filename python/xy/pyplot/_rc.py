@@ -16,6 +16,9 @@ class _PropCycle:
     def __init__(self, colors: Any = None) -> None:
         self._colors = None if colors is None else tuple(str(color) for color in colors)
 
+    def __len__(self) -> int:
+        return len(self.by_key()["color"])
+
     def by_key(self) -> dict[str, list[str]]:
         from ._colors import PROP_CYCLE
 
@@ -30,10 +33,12 @@ _DEFAULTS: dict[str, Any] = {
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
     "figure.facecolor": "white",
+    "lines.color": "C0",
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
     "errorbar.capsize": 0.0,
+    "patch.facecolor": "C0",
     "patch.linewidth": 1.0,
     "patch.edgecolor": "black",
     "patch.force_edgecolor": False,

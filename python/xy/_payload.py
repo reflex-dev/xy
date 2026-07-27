@@ -1184,6 +1184,11 @@ class PayloadMixin(_Host):
             sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
             if sample is not None:
                 density["sample"] = sample
+        elif "overlay_omitted" not in density:
+            # §28: no representation is dropped silently. `oversized` above may
+            # have already recorded the more fundamental u32 reason; that one
+            # wins, so only claim the field when nothing else has.
+            density["overlay_omitted"] = "static_raster"
         entry = {
             "id": t.id,
             "kind": "scatter",

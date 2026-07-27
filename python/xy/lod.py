@@ -938,24 +938,6 @@ def add_window_xy(
     return writer.add_encoded(x_col), writer.add_encoded(y_col)
 
 
-def encode_window_xy(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    lo_x: float,
-    hi_x: float,
-    lo_y: float,
-    hi_y: float,
-    x_scale: str | None = None,
-    y_scale: str | None = None,
-) -> tuple[dict, dict, np.ndarray, np.ndarray]:
-    """Offset-encode a drilled subset re-centered on the window midpoint (the
-    design dossier's §16 deep-zoom rule) — f32 precision follows the viewport,
-    not the dataset (log-family axes pin offset 0; see `geometry_offset`).
-    Returns wire metas ({offset, scale}) plus the encoded arrays."""
-    x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y, x_scale, y_scale)
-    return (x_col.meta, y_col.meta, x_col.values, y_col.values)
-
-
 def grid_shape(
     w: int, h: int, visible: int, target_per_cell: float = DENSITY_TARGET_POINTS_PER_CELL
 ) -> tuple[int, int]:

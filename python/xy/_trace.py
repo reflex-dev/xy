@@ -40,6 +40,13 @@ class Trace:
     y0: Optional[Column] = None
     y1: Optional[Column] = None
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
+    # Some derived scalar marks transform their color-channel values before
+    # shipping (hexbin's logarithmic count colors are the canonical example).
+    # Keep the user-facing domain and normalization beside the trace so
+    # colorbars can label the original values without changing the compact
+    # normalized paint channel sent to renderers.
+    colorbar_domain: Optional[tuple[float, float]] = None
+    colorbar_scale: str = "linear"
     # Independent per-mark outline paint.  ``None`` means the mark family has
     # no outline; a constant ``None`` color inside the channel means
     # edgecolors="face" and is resolved against color_ch by the renderers.
