@@ -1403,8 +1403,14 @@ def _text_cell(font_size: float) -> tuple[float, float]:
 
 def _text_block_content(text: object, x: float, line_step: float) -> str:
     """SVG text children for the shared newline-delimited block geometry."""
+    split = _textblock.split_lines(text)
+    if len(split) == 1:
+        # Keep ordinary text as a direct text node.  Besides producing the
+        # smallest SVG, the PDF exporter consumes these nodes as vector text
+        # and existing callers intentionally inspect ``Element.text``.
+        return escape(split[0])
     lines = []
-    for index, line in enumerate(_textblock.split_lines(text)):
+    for index, line in enumerate(split):
         dy = f' dy="{_num(line_step)}"' if index else ""
         lines.append(f'<tspan x="{_num(x)}"{dy}>{escape(line)}</tspan>')
     return "".join(lines)

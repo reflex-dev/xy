@@ -350,8 +350,9 @@ method accepts the call.
 
 - [x] `pie`: shadow, frame, rotated labels, hatches, explode/autopct placement,
       normalize behavior, text properties and wedge properties.
-- [x] `table`: cell/row/column alignment, placement, edges, sizing, colors and
-      mutable cell objects.
+- [x] `table`: cell/row/column alignment, placement, closed/open borders,
+      sizing, colors and mutable cell objects. Partial-edge specifications
+      remain a documented loud failure.
 - [x] Spectral methods: window, detrending, sides, padding, frequency scaling,
       modes, scale and return-value parity.
 - [x] `stem`, `stairs`, `eventplot`, and `stackplot`: complete style/container

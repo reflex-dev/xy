@@ -11,6 +11,7 @@ import pytest
 
 import xy.pyplot as plt
 from xy import _raster, _svg, _textblock
+from xy.pyplot._grid import _suptitle_baseline
 from xy.pyplot._mplfig import _panel_chrome
 
 
@@ -136,3 +137,20 @@ def test_browser_client_uses_the_same_preline_block_contract() -> None:
     assert "white-space:pre-line" in source
     assert "_xAxisRoom" in source
     assert "hasMultilineTicks" in source
+    assert "context.font = `${fontSize}px system-ui, sans-serif`" in source
+
+
+def test_grid_suptitle_baseline_contains_the_complete_block() -> None:
+    block = _textblock.measure("Figure heading\nwith context", 16)
+    title_h = block.height + 12
+
+    baseline = _suptitle_baseline(
+        canvas_height=1200,
+        title_band_height=title_h,
+        style={"y": 0.5},
+        block=block,
+        size=16,
+    )
+
+    assert baseline >= block.ascent
+    assert baseline + (block.line_count - 1) * block.line_step + block.descent <= title_h - 2

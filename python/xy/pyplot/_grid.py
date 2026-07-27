@@ -38,6 +38,24 @@ def _svg_text_lines(text: object, x: float, line_step: float) -> str:
     return "".join(lines)
 
 
+def _suptitle_baseline(
+    canvas_height: float,
+    title_band_height: float,
+    style: dict[str, Any],
+    block: Optional[_textblock.TextBlock],
+    size: float,
+) -> float:
+    """First baseline at the authored figure fraction, contained by its band."""
+    ascent = block.ascent if block is not None else 0.75 * size
+    descent = block.descent if block is not None else 0.25 * size
+    trailing = (block.line_count - 1) * block.line_step if block is not None else 0.0
+    desired = (1.0 - float(style.get("y", 0.98))) * canvas_height + ascent
+    # The reserved band owns the complete text block, not only its first
+    # baseline. Clamp both the leading ascent and final descender inside it.
+    maximum = max(ascent, title_band_height - trailing - descent - 2.0)
+    return min(max(ascent, desired), maximum)
+
+
 def _composite_rgba(destination: np.ndarray, source: np.ndarray) -> None:
     """Composite a straight-alpha RGBA tile over ``destination`` in place.
 
@@ -283,10 +301,15 @@ def compose_svg(
     width, height = total_size
     size = float(style.get("size", 16))
     block = _textblock.measure(suptitle, size) if suptitle else None
-    # y is a figure fraction measured from the bottom, like matplotlib.
-    baseline = min(
-        height - 2.0,
-        (1.0 - float(style.get("y", 0.98))) * height + (block.ascent if block else 0.75 * size),
+    # y is a figure fraction measured from the bottom, like matplotlib. Grid
+    # composition reserves ``title_h``; absolute composition overlays the full
+    # canvas and therefore uses that as the available title band.
+    baseline = _suptitle_baseline(
+        height,
+        float(title_h or height),
+        style,
+        block,
+        size,
     )
     title = (
         f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
@@ -447,10 +470,12 @@ def _blend_raster_suptitle(
     size = float(resolved.get("size", 14))
     block = _textblock.measure(suptitle, size)
     x = canvas.shape[1] * float(resolved.get("x", 0.5)) / scale
-    baseline = (
-        (1.0 - float(resolved.get("y", 0.98))) * canvas.shape[0] / scale + block.ascent
-        if absolute
-        else 4.0 + block.ascent
+    baseline = _suptitle_baseline(
+        canvas.shape[0] / scale,
+        (canvas.shape[0] if absolute else title_h) / scale,
+        resolved,
+        block,
+        size,
     )
     color = _raster._parse_color(str(resolved.get("color", "#262626")))
     bold = str(resolved.get("weight", "normal")).lower() in {

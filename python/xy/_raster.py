@@ -1066,7 +1066,15 @@ def render_raster(
                     if side == "top"
                     else py1 + label_offset + row_offset
                 )
-                anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else 1
+                angle = float(item["angle"])
+                if explicit_anchor:
+                    anchor = _TEXT_ANCHOR_CODES[explicit_anchor]
+                elif angle == 0:
+                    anchor = 1
+                elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                    anchor = 2
+                else:
+                    anchor = 0
             else:
                 x = px1 + label_offset if side == "right" else px0 - label_offset
                 y = (

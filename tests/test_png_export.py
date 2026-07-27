@@ -234,6 +234,44 @@ def test_raster_honors_tick_label_anchor() -> None:
     assert not np.array_equal(render(), render(tick_label_anchor="end"))
 
 
+@pytest.mark.parametrize(
+    ("side", "angle", "expected_anchor"),
+    [
+        ("bottom", -35, 2),
+        ("bottom", 35, 0),
+        ("top", 35, 2),
+        ("top", -35, 0),
+    ],
+)
+def test_raster_rotated_x_ticks_match_svg_default_anchor(
+    monkeypatch,
+    side: str,
+    angle: int,
+    expected_anchor: int,
+) -> None:
+    axis_id = "x" if side == "bottom" else "x2"
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], x_axis=axis_id),
+        xy.x_axis(
+            id=axis_id,
+            side=side,
+            tick_values=(0.0, 1.0),
+            tick_labels=("Long category alpha", "Long category beta"),
+            tick_label_strategy="preserve",
+            tick_label_angle=angle,
+        ),
+        width=480,
+        height=280,
+    )
+    spec, blob = chart.figure().build_payload()
+    recorded = _record_text(monkeypatch)
+
+    _raster.render_raster(spec, blob, scale=1)
+
+    anchors = {entry[2] & 0x03 for entry in recorded if entry[4].startswith("Long category")}
+    assert anchors == {expected_anchor}
+
+
 def test_raster_legend_text_honors_theme_text_color() -> None:
     # Red is reserved for the theme text color; every other paint is green,
     # and the tick labels are overridden, so red pixels can only come from

@@ -9,6 +9,7 @@ import pytest
 
 import xy.pyplot as plt
 from xy.pyplot._grid import _composite_rgba
+from xy.pyplot._mplfig import _measured_axis_chrome
 
 
 def test_set_aspect_accepts_positional_adjustable() -> None:
@@ -190,6 +191,37 @@ def test_subplot_mosaic_multiline_string_and_custom_sentinel() -> None:
     assert len(fig.axes) == 2
     assert axes["A"].get_subplotspec().cols == (0, 2)
     assert axes["B"].get_subplotspec().rows == (1, 2)
+
+
+def test_subplot_mosaic_strips_each_multiline_row() -> None:
+    fig, axes = plt.subplot_mosaic(
+        """
+        AA
+          B_
+        """,
+        empty_sentinel="_",
+    )
+
+    assert set(axes) == {"A", "B"}
+    assert len(fig.axes) == 2
+    assert axes["A"].get_subplotspec().cols == (0, 2)
+    assert axes["B"].get_subplotspec().cols == (0, 1)
+
+
+def test_provisional_chrome_probe_restores_equal_aspect_domains() -> None:
+    _fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    ax.imshow(np.arange(8).reshape(2, 4), extent=(0.0, 4.0, 0.0, 2.0))
+    ax.set_aspect("equal", adjustable="box")
+    before = {axis: dict(ax._axis_props(axis)) for axis in ("x", "y")}
+    had_plot_px = hasattr(ax, "_materialize_plot_px")
+    before_plot_px = getattr(ax, "_materialize_plot_px", None)
+
+    measured = _measured_axis_chrome(ax, 320, 180)
+
+    assert all(value >= 0.0 for value in measured)
+    assert {axis: dict(ax._axis_props(axis)) for axis in ("x", "y")} == before
+    assert hasattr(ax, "_materialize_plot_px") is had_plot_px
+    assert getattr(ax, "_materialize_plot_px", None) == before_plot_px
 
 
 def test_subplot_mosaic_list_form_matches_spectrum_gallery_geometry() -> None:

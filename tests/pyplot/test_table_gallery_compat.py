@@ -92,3 +92,11 @@ def test_table_alignment_rejects_unknown_values(keyword: str) -> None:
     _fig, ax = plt.subplots()
     with pytest.raises(ValueError, match=keyword):
         ax.table(cellText=[["a"]], **{keyword: "baseline"})
+
+
+@pytest.mark.parametrize("edges", ["horizontal", "vertical", "BRTL", "typo"])
+def test_table_rejects_unsupported_partial_edges(edges: str) -> None:
+    _fig, ax = plt.subplots()
+
+    with pytest.raises(NotImplementedError, match=r"table\(edges=.*closed.*open"):
+        ax.table(cellText=[["a"]], edges=edges)

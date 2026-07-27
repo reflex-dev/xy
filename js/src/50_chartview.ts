@@ -4854,7 +4854,10 @@ export class ChartView {
         || (this._tickMeasureCanvas = document.createElement("canvas"))
       ).getContext("2d")
       : null;
-    if (context) context.font = `${fontSize}px sans-serif`;
+    // Match the root's default font shorthand in 20_theme.ts. Measuring with
+    // the browser's generic sans-serif while the DOM paints system-ui can
+    // under-reserve long y labels enough to consume the title's 0.4 em gap.
+    if (context) context.font = `${fontSize}px system-ui, sans-serif`;
     return {
       lines,
       w: Math.max(

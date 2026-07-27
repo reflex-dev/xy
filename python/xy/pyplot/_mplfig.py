@@ -97,8 +97,48 @@ def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
     """
     from .. import _svg
 
-    spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+    spec = _probe_axis_spec(ax, width, height)
     return float(_svg.layout(spec)[3]["x"])
+
+
+def _probe_axis_spec(ax: Axes, width: int, height: int) -> dict[str, Any]:
+    """Build a provisional spec without retaining probe-dependent axis state."""
+    previous_chart = ax._chart
+    missing = object()
+    previous_plot_px = getattr(ax, "_materialize_plot_px", missing)
+    twin = ax._twin
+    previous_twin_plot_px = (
+        getattr(twin, "_materialize_plot_px", missing) if twin is not None else missing
+    )
+    # Preserve the dictionaries themselves because shared axes may alias them.
+    # `_build_chart()` can materialize equal-aspect domains from the provisional
+    # width/height; those values must not leak into the final panel build.
+    snapshots: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    seen: set[int] = set()
+    for props in ax._axis.values():
+        if id(props) not in seen:
+            snapshots.append((props, dict(props)))
+            seen.add(id(props))
+    ax._chart = None
+    try:
+        spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+        return spec
+    finally:
+        ax._chart = previous_chart
+        for props, snapshot in snapshots:
+            props.clear()
+            props.update(snapshot)
+        if previous_plot_px is missing:
+            if hasattr(ax, "_materialize_plot_px"):
+                del ax._materialize_plot_px
+        else:
+            ax._materialize_plot_px = previous_plot_px
+        if twin is not None:
+            if previous_twin_plot_px is missing:
+                if hasattr(twin, "_materialize_plot_px"):
+                    del twin._materialize_plot_px
+            else:
+                twin._materialize_plot_px = previous_twin_plot_px
 
 
 def _measured_axis_chrome(ax: Axes, width: int, height: int) -> tuple[float, float, float, float]:
@@ -112,12 +152,7 @@ def _measured_axis_chrome(ax: Axes, width: int, height: int) -> tuple[float, flo
     """
     from .. import _svg
 
-    previous_chart = ax._chart
-    ax._chart = None
-    try:
-        spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
-    finally:
-        ax._chart = previous_chart
+    spec = _probe_axis_spec(ax, width, height)
     intrinsic = dict(spec)
     intrinsic.pop("padding", None)
     measured_width, measured_height, _compact, plot = _svg.layout(intrinsic)
@@ -963,9 +998,9 @@ class Figure:
         if isinstance(mosaic, str):
             if "\n" in mosaic:
                 cleaned = inspect.cleandoc(mosaic).strip("\n")
-                rows = [list(row) for row in cleaned.split("\n")]
+                rows = [list(row.strip()) for row in cleaned.split("\n")]
             else:
-                rows = [list(row) for row in mosaic.split(";")]
+                rows = [list(row.strip()) for row in mosaic.split(";")]
         else:
             try:
                 rows = [list(row) for row in mosaic]
