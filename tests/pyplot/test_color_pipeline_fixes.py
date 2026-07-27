@@ -236,6 +236,25 @@ def test_monochrome_contour_dashes_negative_levels():
     assert all(t.style["opacity"] == pytest.approx(1.0) for t in contours)
 
 
+def test_monochrome_contour_dashes_all_negative_levels_with_authored_widths():
+    xx, yy, zz = _wiggle()
+    widths = np.array([0.5, 2.0])
+    levels = np.array([-0.9, -0.6, -0.3])
+    _fig, ax = plt.subplots()
+    ax.contour(xx, yy, zz, levels=levels, colors="black", linewidths=widths)
+
+    contours = [trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "contour"]
+    point_scale = plt.rcParams["figure.dpi"] / 72.0
+    expected_widths = widths[np.arange(len(levels)) % len(widths)] * point_scale
+
+    assert len(contours) == len(levels)
+    for trace, expected_width in zip(contours, expected_widths, strict=True):
+        assert trace.style["dash"] == pytest.approx(
+            [3.7 * expected_width, 1.6 * expected_width]
+        )
+        assert trace.style_channels["width"].values == pytest.approx(expected_width)
+
+
 def test_colormapped_contour_stays_solid():
     xx, yy, zz = _wiggle()
     plt.contour(xx, yy, zz, cmap="RdGy")

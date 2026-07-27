@@ -3661,8 +3661,11 @@ class PlotTypeMixin:
                     )
                 if not visible:
                     continue
+                rendered_width = float(
+                    contour_widths[public_index % len(contour_widths)]
+                )
                 dash = (
-                    [3.7, 1.6]
+                    [3.7 * rendered_width, 1.6 * rendered_width]
                     if source["kwargs"].get("dash_negative") and public_levels[public_index] < 0
                     else None
                 )
@@ -3679,7 +3682,7 @@ class PlotTypeMixin:
                             ),
                             "kwargs": {
                                 "color": contour_colors[public_index],
-                                "width": float(contour_widths[public_index % len(contour_widths)]),
+                                "width": rendered_width,
                                 "opacity": opacity,
                                 "dash": dash,
                             },

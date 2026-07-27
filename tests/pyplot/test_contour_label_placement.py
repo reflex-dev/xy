@@ -254,6 +254,24 @@ def test_colorbar_add_lines_preserves_negative_contour_dashes() -> None:
     assert svg.count("stroke-dasharray=") >= 1
 
 
+def test_clabel_replacement_scales_negative_dashes_by_rendered_width() -> None:
+    _fig, ax = plt.subplots()
+    values = np.linspace(-1.0, 1.0, 100).reshape(10, 10)
+    contour = ax.contour(values, levels=[-0.5, 0.5], colors="black", linewidths=3.0)
+    ax.clabel(contour)
+
+    replacement = next(
+        entry
+        for entry in ax._entries
+        if entry.get("factory") == "segments" and entry["kwargs"].get("dash")
+    )
+    rendered_width = 3.0 * plt.rcParams["figure.dpi"] / 72.0
+    assert replacement["kwargs"]["width"] == pytest.approx(rendered_width)
+    assert replacement["kwargs"]["dash"] == pytest.approx(
+        [3.7 * rendered_width, 1.6 * rendered_width]
+    )
+
+
 def test_constrained_layout_reserves_contour_colorbar_inside_canvas() -> None:
     from xy.pyplot._rc import rc_figsize_px
 

@@ -2608,16 +2608,33 @@ def contour(
                 segment_widths = width_values[level_indices % len(width_values)]
             else:
                 segment_widths = width
-            if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
+            if dash_negative and color is not None and np.any(lv < 0):
                 # Matplotlib's dashed preset is scaled by the contour linewidth:
                 # 3.7 on / 1.6 off times the rendered width.
                 if width_values is None:
-                    groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+                    groups = []
+                    if np.any(lv >= 0):
+                        groups.append((lv >= 0, None))
+                    groups.append((lv < 0, [3.7 * width, 1.6 * width]))
                 else:
-                    # Per-level widths cannot share one dash array. Splitting
-                    # by sign still retains the correct widths; the native
-                    # renderer uses its standard dashed contour preset.
-                    groups = ((lv >= 0, None), (lv < 0, [3.7, 1.6]))
+                    # Dash lengths are part of the trace style, so levels with
+                    # different authored widths need independent negative
+                    # groups. This also keeps tuple/list linewidths faithful
+                    # instead of shrinking every dash to 3.7/1.6 pixels.
+                    groups = []
+                    if np.any(lv >= 0):
+                        groups.append((lv >= 0, None))
+                    for level_index, level in enumerate(contour_levels):
+                        if level >= 0:
+                            continue
+                        level_mask = np.isclose(lv, level, rtol=0.0, atol=0.0)
+                        rendered_width = float(width_values[level_index % len(width_values)])
+                        groups.append(
+                            (
+                                level_mask,
+                                [3.7 * rendered_width, 1.6 * rendered_width],
+                            )
+                        )
             else:
                 groups = ((np.ones(len(lv), dtype=bool), None),)
             for mask, dash in groups:
