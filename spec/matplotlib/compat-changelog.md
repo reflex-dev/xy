@@ -13,6 +13,9 @@ which covers user-visible releases across the whole package.
 - The automatic colorbar-axes facade documents and tests that its active and
   original position queries are identical because renderer chrome has no
   independently aspect-adjusted axes box.
+- Static panel assembly consumes the automatic colorbar strip only for ordinary
+  GridSpec allocations. Tight/constrained rectangles already reserve that
+  chrome, so the data box is not reduced by the same strip twice.
 
 ## Vector-field gallery corrections — 2026-07-24
 

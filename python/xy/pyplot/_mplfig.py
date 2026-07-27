@@ -1096,12 +1096,15 @@ class Figure:
                 compact = allocated_plot_w + 54 < 520
                 colorbar_right, colorbar_bottom = ax._colorbar_outside_room(compact)
                 automatic_colorbar = (
-                    ax._colorbar is not None and ax._colorbar.get("placement") != "axes"
+                    ax._colorbar is not None
+                    and ax._colorbar.get("placement") != "axes"
+                    and self._layout_options.get("engine") != "tight"
                 )
                 # Matplotlib steals an automatic colorbar from the source
-                # subplot's allocation. Keep the whole panel inside that
-                # allocation by shrinking the data box before the renderer
-                # adds the colorbar strip back around it.
+                # subplot's allocation. Tight/constrained layout has already
+                # reserved that strip while solving the final data-box rect;
+                # other grids still need to shrink before the renderer adds
+                # the colorbar chrome back around the plot.
                 plot_w = max(
                     40,
                     round(allocated_plot_w - colorbar_right)
