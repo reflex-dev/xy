@@ -183,6 +183,8 @@ def test_browser_client_uses_the_same_preline_block_contract() -> None:
     assert "_xAxisRoom" in source
     assert "hasMultilineTicks" in source
     assert "context.font = `${fontSize}px system-ui, sans-serif`" in source
+    assert "const Y_TITLE_MEASURE_SAFETY_PX = 2;" in source
+    assert "Y_TITLE_MEASURE_SAFETY_PX\n          + gap" in source
 
 
 def test_grid_suptitle_baseline_contains_the_complete_block() -> None:

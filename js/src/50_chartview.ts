@@ -33,6 +33,10 @@ const XY_ASCII_ADVANCES = [
   10, 10, 7, 8, 6, 10, 9, 13, 9, 9, 8, 10, 5, 10, 13,
 ];
 const XY_MISSING_ADVANCE = 16;
+// Canvas measureText() returns advances while the DOM clamp below operates on
+// painted element rectangles. Keep a small guard for an outside y title so
+// font rasterization/rounding cannot consume its authored title-to-tick gap.
+const Y_TITLE_MEASURE_SAFETY_PX = 2;
 
 function xyTextAdvance(text, fontSize) {
   let units = 0;
@@ -644,7 +648,10 @@ export class ChartView {
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
           : 0.4 * labelSize;
-        needed += gap + this._estimateTickLabel(axis.label, labelSize).h;
+        needed +=
+          Y_TITLE_MEASURE_SAFETY_PX
+          + gap
+          + this._estimateTickLabel(axis.label, labelSize).h;
       }
       room = Math.max(room, needed);
     }
