@@ -756,6 +756,7 @@ def _grad_stops(fill_spec: dict, mark_color: str) -> list:
     return [(float(o), _parse_color(_css(c, mark_color))) for o, c in fill_spec.get("stops", [])]
 
 
+@_textblock.cached_measurements
 def render_raster(
     spec: dict[str, Any],
     blob: bytes,
