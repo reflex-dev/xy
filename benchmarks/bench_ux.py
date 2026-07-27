@@ -414,7 +414,7 @@ def drive_browser(
             "--force-device-scale-factor=1",
             "--window-size=1100,600",
             f"--user-data-dir={profile}",
-            url,
+            "about:blank",
         ]
         if software:
             command[1:1] = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
@@ -469,25 +469,19 @@ def drive_browser(
                     if msg.get("id") == call_id:
                         return msg.get("result", {}).get("result", {}).get("value")
 
-            def capture(name: str) -> None:
+            def command(method: str, params: dict[str, Any]) -> dict[str, Any]:
                 nonlocal call_id
-                if shots_prefix is None:
-                    return
                 call_id += 1
-                ws.send(
-                    json.dumps(
-                        {
-                            "id": call_id,
-                            "method": "Page.captureScreenshot",
-                            "params": {"format": "png"},
-                        }
-                    )
-                )
+                ws.send(json.dumps({"id": call_id, "method": method, "params": params}))
                 while True:
                     msg = json.loads(ws.recv())
                     if msg.get("id") == call_id:
-                        data = msg.get("result", {}).get("data")
-                        break
+                        return msg.get("result", {})
+
+            def capture(name: str) -> None:
+                if shots_prefix is None:
+                    return
+                data = command("Page.captureScreenshot", {"format": "png"}).get("data")
                 if data:
                     import base64
 
@@ -495,23 +489,15 @@ def drive_browser(
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(base64.b64decode(data))
 
-            if shots_prefix is not None:
-                call_id += 1
-                ws.send(json.dumps({"id": call_id, "method": "Page.enable"}))
-                while json.loads(ws.recv()).get("id") != call_id:
-                    pass
-
-            # Wait for the *navigated* document: the initial about:blank
-            # reports readyState "complete" before the real page commits, and
-            # anything injected there is wiped by the navigation.
-            while time.monotonic() - start < timeout_s:
-                href = evaluate("location.href") or ""
-                state = evaluate("document.readyState")
-                if href.startswith(url) and state in ("interactive", "complete"):
-                    break
-                time.sleep(0.02)
+            # Arm the probe BEFORE the page exists: scripts registered here run
+            # at document start, so the clock observes the page from its first
+            # moment.  Post-load injection floored every fast arm's number at
+            # "when the probe started looking" (measured: xy's first observed
+            # frame was already complete and stable).
+            command("Page.enable", {})
             for script in inject_js:
-                evaluate(script)
+                command("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+            command("Page.navigate", {"url": url})
 
             last_stage = ""
             while time.monotonic() - start < timeout_s:
