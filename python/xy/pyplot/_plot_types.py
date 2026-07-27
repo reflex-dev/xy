@@ -4438,10 +4438,10 @@ class PlotTypeMixin:
         edges: str = "closed",
         **kwargs: Any,
     ) -> Table:
-        """Render an Axes table as generic colored cells, rules, and text."""
-        _reject_non_default("table", "cellLoc", cellLoc, "right")
-        _reject_non_default("table", "rowLoc", rowLoc, "left")
-        _reject_non_default("table", "colLoc", colLoc, "center")
+        """Render a table in Axes-fraction coordinates below the plot."""
+        for name, value in (("cellLoc", cellLoc), ("rowLoc", rowLoc), ("colLoc", colLoc)):
+            if value not in {"left", "center", "right"}:
+                raise ValueError(f"table {name} must be 'left', 'center', or 'right'")
         _reject_non_default("table", "loc", loc, "bottom")
         if cellText is None:
             if cellColours is None:
@@ -4460,120 +4460,142 @@ class PlotTypeMixin:
         )
         if len(raw_colors) != rows or any(len(row) != cols for row in raw_colors):
             raise ValueError("table cellColours must match cellText")
-        if rowLabels is not None:
-            labels = list(rowLabels)
-            if len(labels) != rows:
-                raise ValueError("table rowLabels must match the row count")
-            row_palette = (
-                ["#ffffff"] * rows
-                if rowColours is None
-                else _sequence_param(rowColours, rows, "rowColours")
-            )
-            for index in range(rows):
-                raw_text[index].insert(0, labels[index])
-                raw_colors[index].insert(0, row_palette[index])
-            cols += 1
-        if colLabels is not None:
-            labels = list(colLabels)
-            expected = cols - (1 if rowLabels is not None else 0)
-            if len(labels) != expected:
-                raise ValueError("table colLabels must match the column count")
-            if rowLabels is not None:
-                labels.insert(0, "")
-            palette = (
-                ["#ffffff"] * expected
-                if colColours is None
-                else _sequence_param(colColours, expected, "colColours")
-            )
-            if rowLabels is not None:
-                palette.insert(0, "#ffffff")
-            raw_text.insert(0, labels)
-            raw_colors.insert(0, palette)
-            rows += 1
-        if bbox is None:
-            left, bottom, width, height = 0.0, 0.0, 1.0, 1.0
+        row_labels = None if rowLabels is None else [str(label) for label in rowLabels]
+        if row_labels is not None and len(row_labels) != rows:
+            raise ValueError("table rowLabels must match the row count")
+        row_palette = (
+            ["#ffffff"] * rows
+            if rowColours is None
+            else _sequence_param(rowColours, rows, "rowColours")
+        )
+        col_labels = None if colLabels is None else [str(label) for label in colLabels]
+        if col_labels is not None and len(col_labels) != cols:
+            raise ValueError("table colLabels must match the column count")
+        col_palette = (
+            ["#ffffff"] * cols
+            if colColours is None
+            else _sequence_param(colColours, cols, "colColours")
+        )
+        natural_layout = bbox is None
+        if natural_layout:
+            left, bottom, width, height = 0.0, 0.0, 1.0, 0.0
         else:
             left, bottom, width, height = map(float, bbox)
         if colWidths is None:
             widths = np.full(cols, width / cols, dtype=np.float64)
         else:
             widths = np.asarray(colWidths, dtype=np.float64)
-            if rowLabels is not None and len(widths) == cols - 1:
-                widths = np.insert(widths, 0, widths[0])
             if widths.shape != (cols,):
                 raise ValueError("table colWidths must match the column count")
-            widths *= width / widths.sum()
+            if not np.all(np.isfinite(widths)) or np.any(widths <= 0):
+                raise ValueError("table colWidths must contain positive finite values")
+            if natural_layout:
+                width = float(widths.sum())
+                left = (1.0 - width) * 0.5
+            else:
+                widths *= width / widths.sum()
         x_edges = left + np.concatenate(([0.0], np.cumsum(widths)))
-        y_edges = bottom + np.linspace(0.0, height, rows + 1)
-        x0: list[float] = []
-        y0: list[float] = []
-        x1: list[float] = []
-        y1: list[float] = []
-        x2: list[float] = []
-        y2: list[float] = []
-        triangle_colors: list[str] = []
-        for row in range(rows):
-            display_row = rows - row - 1
-            for col in range(cols):
-                xa, xb = x_edges[col], x_edges[col + 1]
-                ya, yb = y_edges[display_row], y_edges[display_row + 1]
-                x0.extend((xa, xa))
-                y0.extend((ya, ya))
-                x1.extend((xb, xb))
-                y1.extend((ya, yb))
-                x2.extend((xb, xa))
-                y2.extend((yb, yb))
-                chosen = resolve_color(raw_colors[row][col]) or "#ffffff"
-                triangle_colors.extend((chosen, chosen))
-        fill_entry = self._add(
-            "@mark",
-            {
-                "factory": "triangle_mesh",
-                "args": (x0, y0, x1, y1, x2, y2),
-                "kwargs": {"color": triangle_colors, "opacity": 0.9},
-            },
-        )
-        artists: list[Artist] = [Artist(self, fill_entry)]
-        if edges not in ("", "open"):
-            sx0 = np.concatenate((x_edges, np.full(len(y_edges), left)))
-            sy0 = np.concatenate((np.full(len(x_edges), bottom), y_edges))
-            sx1 = np.concatenate((x_edges, np.full(len(y_edges), left + width)))
-            sy1 = np.concatenate((np.full(len(x_edges), bottom + height), y_edges))
-            rule_entry = self._add(
-                "@mark",
-                {
-                    "factory": "segments",
-                    "args": (sx0, sy0, sx1, sy1),
-                    "kwargs": {"color": "#1f2937", "width": 0.8},
-                },
-            )
-            artists.append(Artist(self, rule_entry))
         text_color = kwargs.pop("color", None)
-        fontsize = kwargs.pop("fontsize", None)
+        fontsize = float(kwargs.pop("fontsize", rcParams["font.size"]))
+        if fontsize <= 0:
+            raise ValueError("table fontsize must be positive")
         check_unsupported(kwargs, "table()")
-        cell_text_kwargs: dict[str, Any] = {}
+        cell_text_kwargs: dict[str, Any] = {
+            "style": {
+                "coordinate_space": "axes_fraction",
+                "font_size": fontsize,
+                "vertical_align": "center",
+            }
+        }
         if text_color is not None:
             cell_text_kwargs["color"] = resolve_color(text_color)
-        if fontsize is not None:
-            cell_text_kwargs["style"] = {"font_size": float(fontsize)}
+        total_rows = rows + (1 if col_labels is not None else 0)
+        row_height_points = fontsize * 1.08
+        if natural_layout:
+            self._table_bottom_points = max(
+                getattr(self, "_table_bottom_points", 0.0),
+                total_rows * row_height_points + 1.0,
+            )
+        row_label_width_points = (
+            max((len(label) for label in (row_labels or ())), default=0) * fontsize * 0.6 + 6.0
+        )
+        border = None if edges in ("", "open") else "0.8px solid #1f2937"
         cells: dict[tuple[int, int], Text] = {}
-        for row in range(rows):
-            display_row = rows - row - 1
-            for col in range(cols):
-                entry = self._add(
-                    "@text",
-                    {
-                        "args": (
-                            (x_edges[col] + x_edges[col + 1]) * 0.5,
-                            (y_edges[display_row] + y_edges[display_row + 1]) * 0.5,
-                            str(raw_text[row][col]),
-                        ),
-                        "kwargs": dict(cell_text_kwargs),
+        artists: list[Artist] = []
+
+        def add_cell(
+            key: tuple[int, int],
+            text: str,
+            facecolor: ColorLike,
+            alignment: str,
+            row_from_top: int,
+            col: int | None,
+        ) -> None:
+            if col is None:
+                x0 = x1 = left
+                dynamic_width_points = row_label_width_points
+            else:
+                x0, x1 = float(x_edges[col]), float(x_edges[col + 1])
+                dynamic_width_points = None
+            if natural_layout:
+                y0 = y1 = 0.0
+            else:
+                cell_height = height / total_rows
+                y1 = bottom + height - row_from_top * cell_height
+                y0 = y1 - cell_height
+            entry = self._add(
+                "@table_cell",
+                {
+                    "args": ((x0 + x1) * 0.5, (y0 + y1) * 0.5, str(text)),
+                    "kwargs": {
+                        **cell_text_kwargs,
+                        "anchor": {
+                            "left": "start",
+                            "center": "middle",
+                            "right": "end",
+                        }[alignment],
                     },
+                    "table_geometry": {
+                        "x0": x0,
+                        "x1": x1,
+                        "dynamic_width_points": dynamic_width_points,
+                        "y0": y0,
+                        "y1": y1,
+                        "row_from_top": row_from_top,
+                        "row_height_points": row_height_points if natural_layout else None,
+                        "facecolor": resolve_color(facecolor) or "#ffffff",
+                        "border": border,
+                    },
+                },
+            )
+            handle = Text(self, entry)
+            cells[key] = handle
+            artists.append(handle)
+
+        header_offset = 1 if col_labels is not None else 0
+        if col_labels is not None:
+            for col, label in enumerate(col_labels):
+                add_cell((0, col), label, col_palette[col], colLoc, 0, col)
+        for row in range(rows):
+            table_row = row + header_offset
+            for col in range(cols):
+                add_cell(
+                    (table_row, col),
+                    str(raw_text[row][col]),
+                    raw_colors[row][col],
+                    cellLoc,
+                    table_row,
+                    col,
                 )
-                handle = Text(self, entry)
-                cells[(row, col)] = handle
-                artists.append(handle)
+            if row_labels is not None:
+                add_cell(
+                    (table_row, -1),
+                    row_labels[row],
+                    row_palette[row],
+                    rowLoc,
+                    table_row,
+                    None,
+                )
         return Table(artists, cells)
 
     def tripcolor(

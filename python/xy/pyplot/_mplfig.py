@@ -66,7 +66,13 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
             )
         left = max(left, needed)
     extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
-    defaults = (left, top + extra_top, right + extra_right, bottom + extra_bottom)
+    table_bottom = ax._table_bottom_points * ax._point_scale()
+    defaults = (
+        left,
+        top + extra_top,
+        right + extra_right,
+        max(bottom + extra_bottom, table_bottom),
+    )
     figure = ax.figure
     if figure is None:
         return defaults

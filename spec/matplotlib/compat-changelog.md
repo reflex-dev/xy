@@ -25,6 +25,21 @@ which covers user-visible releases across the whole package.
   are marked dirty by later plotting/styling and re-solved before output, so
   layout reflects final strings and angles in every target.
 
+## Gallery table placement — 2026-07-26
+
+- Root cause: the shim previously expanded cells to mesh/segment marks at
+  numeric coordinates `(0, 0, 1, 1)`. The engine correctly interpreted those
+  as data coordinates, so the table entered autoscale, overlaid the bars, and
+  was clipped when moved below the axes.
+- `table(loc="bottom")` now materializes cells in axes-fraction coordinates,
+  preserving data autoscale while keeping cell dimensions readable at the
+  output DPI.
+- Natural tables reserve their bottom layout and render outside the axes
+  without clipping in static PNG/SVG. Cell, row-label, and column-label text
+  honor independent left/center/right alignment; cell keys follow Matplotlib's
+  header-row and row-label-column convention. The live-browser annotation
+  guard band remains a documented limitation for multi-row bottom tables.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without
