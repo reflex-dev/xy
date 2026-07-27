@@ -28,6 +28,7 @@ from ._svg import (
     _GRID,
     _STATIC_COLOR_FALLBACK,
     _TEXT,
+    COLORBAR_FONT_SIZE,
     DEFAULT_PALETTE,
     _annotation_first_baseline,
     _axis_label_geometry,
@@ -66,7 +67,11 @@ from ._svg import (
     hexbin_ring,
     layout,
     legend_items,
+    legend_options_with_slot,
     minor_axis_ticks,
+    slot_font_size,
+    slot_styles,
+    slot_text_color,
     warp_grid_rgba,
 )
 
@@ -120,6 +125,8 @@ _SYMBOLS = {
     "thin_diamond": 14,
     "plus_line": 15,
     "x_line": 16,
+    "horizontal_line": 17,
+    "vertical_line": 18,
 }
 
 
@@ -1085,6 +1092,13 @@ def render_raster(
                     _parse_color(_css(axis_style.get("tick_color"), default_axis)),
                 )
 
+    slots = slot_styles(spec)
+
+    def slot_paint(slot: str, fallback: str) -> tuple:
+        """A slot's text paint, or the writer's own default."""
+        resolved = slot_text_color(slots.get(slot) or {}, "")
+        return _parse_color(resolved or fallback)
+
     def emit_tick_labels(
         axis: dict[str, Any],
         values: list[float],
@@ -1094,13 +1108,15 @@ def render_raster(
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
-        tick_color = _parse_color(
-            _css(
-                axis_style.get("tick_label_color", axis_style.get("tick_color")),
-                default_text,
-            )
+        # The axis's own tick_label_color/tick_color is the narrower
+        # selector and wins; the chart-wide slot fills in when it says nothing.
+        axis_tick_paint = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
+        tick_color = (
+            _parse_color(axis_tick_paint)
+            if axis_tick_paint
+            else slot_paint("tick_label", default_text)
         )
-        font_size = _axis_tick_font_size(axis)
+        font_size = slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(axis))
         baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
@@ -1196,7 +1212,7 @@ def render_raster(
             title_anchor_y - float(title_entry.get("pad", 8.0)) - title_block.descent - trailing,
             {"left": 0, "center": 1, "right": 2}.get(loc, 1),
             title_size,
-            _parse_color(_css(title_style.get("color"), default_text)),
+            _parse_color(slot_text_color(title_style, default_text)),
             str(title_entry["text"]),
             italic=title_italic,
             bold=title_bold,
@@ -1208,10 +1224,14 @@ def render_raster(
         axis_style = axis.get("style") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
+        axis_title_slot = slots.get("axis_title") or {}
         italic, bold = _native_font_emphasis(
             {
-                "font_style": axis_style.get("label_font_style"),
-                "font_weight": axis_style.get("label_font_weight", 400),
+                "font_style": axis_style.get("label_font_style")
+                or axis_title_slot.get("font-style"),
+                "font_weight": axis_style.get(
+                    "label_font_weight", axis_title_slot.get("font-weight", 400)
+                ),
             }
         )
         _emit_text_block(
@@ -1219,9 +1239,13 @@ def render_raster(
             float(geometry["x"]),
             float(geometry["y"]),
             anchor,
-            float(geometry["font_size"]),
-            _parse_color(_css(axis_style.get("label_color"), default_text)),
-            axis["label"],
+            slot_font_size(slots.get("axis_title") or {}, float(geometry["font_size"])),
+            (
+                _parse_color(_css(axis_style.get("label_color"), ""))
+                if _css(axis_style.get("label_color"), "")
+                else slot_paint("axis_title", default_text)
+            ),
+            str(axis["label"]),
             angle=float(geometry["angle"]),
             italic=italic,
             bold=bold,
@@ -1259,7 +1283,16 @@ def render_raster(
             else:
                 cmd.clip(0, 0, width, height)
             clipped_to_plot = want_clip
-        _emit_legend(cmd, items, plot, options, default_text, spec_palette)
+        _emit_legend(
+            cmd,
+            items,
+            plot,
+            legend_options_with_slot(spec, options),
+            default_text,
+            spec_palette,
+            slots.get("legend_label") or {},
+            slots.get("legend_title") or {},
+        )
     if clipped_to_plot:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
@@ -1269,6 +1302,8 @@ def render_raster(
             plot,
             _colorbar_right_axis_room(ya, extra_y_axes, compact),
             default_text,
+            slots.get("colorbar_title") or slots.get("colorbar") or {},
+            slots.get("colorbar_tick") or slots.get("colorbar") or {},
         )
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
@@ -2351,7 +2386,11 @@ def _emit_legend(
     options: dict[str, Any],
     text_color: str = _TEXT,
     palette: Sequence[str] = DEFAULT_PALETTE,
+    label_slot: Optional[dict[str, Any]] = None,
+    title_slot: Optional[dict[str, Any]] = None,
 ) -> None:
+    label_slot = label_slot or {}
+    title_slot = title_slot or {}
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
@@ -2372,7 +2411,13 @@ def _emit_legend(
         if style_opts.get("boxShadow"):
             shadow_points = _round_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2, radius)
             cmd.fill(shadow_points, (0, 0, 0, 55))
-        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
+        # An explicit background is a paint, not a tint — see the matching note
+        # in `_svg._legend`; the two writers must agree.
+        frame_alpha = style_opts.get("--xy-legend-frame-alpha")
+        if frame_alpha is not None:
+            alpha = float(frame_alpha)
+        else:
+            alpha = 0.08 if style_opts.get("background") is None else 1.0
         background = style_opts.get("background")
         frame = (
             _rgba(background, "#808080", alpha)
@@ -2389,8 +2434,8 @@ def _emit_legend(
             x + box_w / 2,
             y + pad / 2 + font_size * 0.82,
             1,
-            font_size,
-            _parse_color(text_color),
+            slot_font_size(title_slot, font_size),
+            _parse_color(slot_text_color(title_slot, text_color)),
             str(title),
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
@@ -2408,7 +2453,16 @@ def _emit_legend(
             symbol = style.get("symbol", "circle")
             sym = _SYMBOLS.get(symbol, 0)
             sw = float(style.get("stroke_width", 0.0))
-            if symbol in {"plus_line", "x_line"} and sw <= 0:
+            if (
+                symbol
+                in {
+                    "plus_line",
+                    "x_line",
+                    "horizontal_line",
+                    "vertical_line",
+                }
+                and sw <= 0
+            ):
                 sw = 1.0
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
             cmd.point(
@@ -2428,7 +2482,16 @@ def _emit_legend(
                 dash=style.get("dash"),
             )
         else:
-            cmd.fill(_rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2), c)
+            swatch_points = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
+            cmd.fill(swatch_points, c)
+            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+            if style.get("stroke") is not None and stroke_width > 0.0:
+                cmd.stroke(
+                    swatch_points,
+                    stroke_width,
+                    _rgba(style.get("stroke"), color_str),
+                    closed=True,
+                )
             hatch = style.get("hatch")
             if hatch:
                 _emit_legend_hatch(
@@ -2444,8 +2507,8 @@ def _emit_legend(
             hx1 + gap,
             ry + font_size * 0.82,
             0,
-            font_size,
-            _parse_color(text_color),
+            slot_font_size(label_slot, font_size),
+            _parse_color(slot_text_color(label_slot, text_color)),
             legend["names"][i],
         )
 
@@ -2490,7 +2553,15 @@ def _emit_colorbar(
     plot: dict[str, float],
     right_axis_room: float = 0.0,
     text_color: str = _TEXT,
+    title_slot: Optional[dict[str, Any]] = None,
+    tick_slot: Optional[dict[str, Any]] = None,
 ) -> None:
+    title_slot = title_slot or {}
+    tick_slot = tick_slot or {}
+    title_size = slot_font_size(title_slot, COLORBAR_FONT_SIZE)
+    title_paint = _parse_color(slot_text_color(title_slot, text_color))
+    tick_size = slot_font_size(tick_slot, COLORBAR_FONT_SIZE)
+    tick_paint = _parse_color(slot_text_color(tick_slot, text_color))
     from ._svg import _colorbar_tick_target, _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
@@ -2569,8 +2640,8 @@ def _emit_colorbar(
                 x + width * (value - lo) / span,
                 y + height + 13,
                 1,
-                10,
-                _parse_color(text_color),
+                tick_size,
+                tick_paint,
                 f"{value:g}",
             )
         if options.get("label"):
@@ -2578,8 +2649,8 @@ def _emit_colorbar(
                 x + width / 2,
                 y + height + 26,
                 1,
-                10,
-                _parse_color(text_color),
+                title_size,
+                title_paint,
                 str(options["label"]),
             )
     else:
@@ -2604,8 +2675,8 @@ def _emit_colorbar(
                 x + width + 4,
                 y + height * (1 - (value - lo) / span) + 4,
                 0,
-                10,
-                _parse_color(text_color),
+                tick_size,
+                tick_paint,
                 f"{value:g}",
             )
         # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
@@ -2621,8 +2692,8 @@ def _emit_colorbar(
                 x + width + 38,
                 y + height / 2,
                 1 | _TEXT_ROT_CCW,
-                10,
-                _parse_color(text_color),
+                title_size,
+                title_paint,
                 str(options["label"]),
             )
 

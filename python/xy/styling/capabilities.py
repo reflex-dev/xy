@@ -31,6 +31,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .. import styles
+from .._svg import STATIC_STYLED_SLOTS
 from ..dom import CHART_DOM_SLOTS
 
 #: The three mark renderers. Native PDF is intentionally absent: it is produced
@@ -227,29 +228,42 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
 )
 
 
-#: Slots whose styling reaches the native writers through some channel other
-#: than `styles={slot: ...}`, which none of them read. Everything else is
-#: browser-only, and that is the answer for 22 of the 23.
+#: What each slot's `styles={slot: ...}` reaches in the two native writers.
+#: The writers now read a defined text/box subset for the slots that name
+#: chrome a static file actually contains (`xy._svg.STATIC_STYLED_SLOTS`);
+#: everything else is live-only chrome — a tooltip, a modebar, a crosshair —
+#: and has nothing in a file to style.
+_SLOT_SUBSET_NOTE = (
+    "Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, "
+    "letter-spacing, opacity and the text paint (`fill`, or `color`). The raster "
+    "writer's glyph primitive takes a size and one RGBA paint and nothing else, "
+    "so it honors font-size and the paint only — font-weight, font-style, "
+    "font-family, letter-spacing and opacity are vector-only rather than "
+    "silently approximated. Properties outside the subset stay browser-only."
+)
+
 _SLOT_EXCEPTIONS: dict[str, tuple[str, str, str]] = {
-    "legend": (
-        "partial",
-        "xy.legend(style=...)",
-        "Written twice: to chrome_styles for the browser and to "
-        "legend_options['style'], which `_svg` and `_raster` do read — but only "
-        "`background`, `boxShadow`, `borderRadius`, `--xy-legend-frame-alpha`, "
-        "and `padding`/`rowGap` in `em`. The chart-level styles={'legend': ...} "
-        "spelling reaches none of it, so two spellings that agree in the browser "
-        "disagree in a PNG.",
-    ),
-    "root": (
-        "partial",
-        "chart style=",
-        "`styles={'root': ...}` is browser-only, but the chart-level `style=` "
-        "token bag targets the same element and every renderer reads it "
-        "(`spec['dom']['style']`). Prefer it for anything that must survive "
-        "export.",
-    ),
+    slot: ("partial", f"styles={{{slot!r}: ...}}", _SLOT_SUBSET_NOTE)
+    for slot in STATIC_STYLED_SLOTS
 }
+_SLOT_EXCEPTIONS["legend"] = (
+    "partial",
+    "styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg",
+    "The frame box. Both spellings and the theme token now converge on one "
+    "merged declaration block before the writers see it, so what agrees in the "
+    "browser agrees in a PNG. `background`, `boxShadow`, `borderRadius`, "
+    "`--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an "
+    "explicit background paints opaque, as it does in the browser.",
+)
+_SLOT_EXCEPTIONS["root"] = (
+    "partial",
+    "chart style=",
+    "`styles={'root': ...}` is browser-only, but the chart-level `style=` "
+    "token bag targets the same element and every renderer reads it "
+    "(`spec['dom']['style']`). Prefer it for anything that must survive "
+    "export.",
+)
+
 
 CHART_SLOTS: tuple[SlotCapability, ...] = tuple(
     SlotCapability(

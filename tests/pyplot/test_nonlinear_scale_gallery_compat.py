@@ -60,6 +60,91 @@ def test_aspect_loglog_uses_transformed_spans_and_exposes_adjustable() -> None:
     assert axes["y"]["domain"][0] > 0
 
 
+def test_shared_aspect_options_fail_before_mutating_axes() -> None:
+    _, shared = plt.subplots(1, 2, sharex=True)
+    left, right = shared
+    initial = [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ]
+
+    with pytest.raises(NotImplementedError, match=r"set_adjustable\(share=True\)"):
+        left.set_adjustable("datalim", share=True)
+    assert [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ] == initial
+
+    with pytest.raises(NotImplementedError, match=r"set_aspect\(share=True\)"):
+        left.set_aspect("equal", adjustable="datalim", anchor="SW", share=True)
+    assert [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ] == initial
+
+    left.set_adjustable("datalim")
+    assert left.get_adjustable() == "datalim"
+    assert right.get_adjustable() == "box"
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_nonpositive_log_limit_keeps_the_previous_positive_bound(axis: str) -> None:
+    _, ax = plt.subplots()
+    ax.plot([1.0, 10.0], [1.0, 10.0])
+    getattr(ax, f"set_{axis}scale")("log")
+    before = getattr(ax, f"get_{axis}lim")()
+
+    with pytest.warns(UserWarning, match="non-positive"):
+        getattr(ax, f"set_{axis}lim")(0.0, 100.0)
+
+    after = getattr(ax, f"get_{axis}lim")()
+    assert after[0] == pytest.approx(before[0])
+    assert after[1] == pytest.approx(100.0)
+    ax.set_aspect("equal")
+    assert np.isfinite(ax.get_position().bounds).all()
+
+
+def test_nonpositive_reversed_log_limits_preserve_display_sides() -> None:
+    _, ax = plt.subplots()
+    ax.set_xscale("log")
+    ax.set_xlim(100.0, 1.0)
+
+    with pytest.warns(UserWarning, match="non-positive"):
+        ax.set_xlim(0.0, None)
+    assert ax.get_xlim() == pytest.approx((100.0, 1.0))
+
+    with pytest.warns(UserWarning, match="non-positive"):
+        ax.set_xlim(None, 0.0)
+    assert ax.get_xlim() == pytest.approx((100.0, 1.0))
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("base", [0.5, 1.0, 0.0, np.nan])
+def test_unsupported_log_bases_fail_at_the_scale_setter(axis: str, base: float) -> None:
+    _, ax = plt.subplots()
+
+    with pytest.raises(ValueError, match="base must be greater than 1"):
+        getattr(ax, f"set_{axis}scale")("log", base=base)
+
+    key = axis
+    assert ax._scale_specs[key]["name"] == "linear"
+
+
 def test_log_demo_constrained_probe_keeps_an_empty_log_domain_positive() -> None:
     _, empty = plt.subplots(layout="constrained")
     empty.set_yscale("log")
