@@ -9,7 +9,10 @@ which covers user-visible releases across the whole package.
 - Split subplot creation from activation: repeated same-spec
   `Figure.add_subplot()` calls now create overlay axes, while `plt.subplot()`
   reuses the first matching axes and no-argument `plt.axes()` creates a fresh
-  axes. This restores the state boundaries used by PDSH 04.01 and 04.10.
+  axes. Reused subplots process `sharex=`/`sharey=` through the same
+  axis-property sharing path as newly created subplots, and mosaic-returned
+  axes are claimed before later `Figure.add_subplot()` calls. This restores
+  the state boundaries used by PDSH 04.01 and 04.10.
 - Static PNG/SVG composition rebuilds cached panels when a fresh axes changes
   the figure to or from overlapping absolute placement. Same-position axes
   therefore share one frame: the later opaque axes patch covers the older

@@ -191,13 +191,20 @@ class Figure:
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(ax, sharex=sharex, sharey=sharey)
+        if kwargs:
+            ax.set(**kwargs)
+        return ax
+
+    @staticmethod
+    def _share_subplot_axes(ax: Axes, *, sharex: Any = None, sharey: Any = None) -> None:
+        """Wire construction-only subplot sharing without routing it through ``Axes.set``."""
         if sharex is not None:
             ax._axis["x"] = sharex._axis_props("x")  # static share, as in twiny()
         if sharey is not None:
             ax._axis["y"] = sharey._axis_props("y")
-        if kwargs:
-            ax.set(**kwargs)
-        return ax
+        if sharex is not None or sharey is not None:
+            ax._invalidate()
 
     def _claim_or_create_subplot(self, key: tuple[Any, ...], index: int) -> Axes:
         """Claim a grid placeholder or append a same-spec overlay axes."""
@@ -232,6 +239,9 @@ class Figure:
         if existing is None:
             return self.add_subplot(*args, **kwargs)
         self._current_ax = existing
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(existing, sharex=sharex, sharey=sharey)
         if kwargs:
             existing.set(**kwargs)
         return existing
@@ -850,7 +860,10 @@ class Figure:
                 if label != "." and label not in labels:
                     labels.append(label)
         self._ensure_grid(max(1, len(rows)), max(1, max(map(len, rows))))
-        return {label: self._axes_at(index) for index, label in enumerate(labels)}
+        result = {label: self._axes_at(index) for index, label in enumerate(labels)}
+        for ax in result.values():
+            ax._subplot_claimed = True
+        return result
 
     # -- panel sizing -----------------------------------------------------------
 
