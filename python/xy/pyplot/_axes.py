@@ -5336,15 +5336,15 @@ class Axes(PlotTypeMixin):
         labelspacing = kwargs.pop("labelspacing", rcParams["legend.labelspacing"])
         borderaxespad = kwargs.pop("borderaxespad", rcParams["legend.borderaxespad"])
         handleheight = kwargs.pop("handleheight", None)
-        # Remaining handle/title geometry is not expressible yet and stays
-        # loud; the frame and row-layout options above map directly to CSS and
+        handlelength = kwargs.pop("handlelength", rcParams["legend.handlelength"])
+        handletextpad = kwargs.pop("handletextpad", rcParams["legend.handletextpad"])
+        # Remaining title geometry is not expressible yet and stays loud; the
+        # frame, handle, and row-layout options above map directly to CSS and
         # the static exporters.
         layout_options = {
             key: kwargs.pop(key)
             for key in (
                 "title_fontsize",
-                "handlelength",
-                "handletextpad",
             )
             if key in kwargs
         }
@@ -5414,6 +5414,14 @@ class Axes(PlotTypeMixin):
             if not np.isfinite(handleheight_value) or handleheight_value <= 0:
                 raise ValueError("legend handleheight must be a positive finite number")
             options["handleheight"] = handleheight_value
+        handlelength_value = float(handlelength)
+        if not np.isfinite(handlelength_value) or handlelength_value < 0:
+            raise ValueError("legend handlelength must be a non-negative finite number")
+        options["handlelength"] = handlelength_value
+        handletextpad_value = float(handletextpad)
+        if not np.isfinite(handletextpad_value) or handletextpad_value < 0:
+            raise ValueError("legend handletextpad must be a non-negative finite number")
+        options["handletextpad"] = handletextpad_value
         if title is not None:
             options["title"] = _plain_text(title)
         if style:
@@ -5602,6 +5610,10 @@ class Axes(PlotTypeMixin):
                 kw["width"] = (
                     float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
                 )
+                # Every renderer already uses round caps for dashed lines.
+                # ``Line2D.set_dash_capstyle("round")`` records the public
+                # Matplotlib state, but it is not a core ``xy.line`` keyword.
+                kw.pop("dash_capstyle", None)
                 gapcolor = kw.pop("_gapcolor", None)
                 if gapcolor is not None and kw.get("dash"):
                     children.append(
@@ -5620,6 +5632,7 @@ class Axes(PlotTypeMixin):
                 kw["width"] = (
                     float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
                 )
+                kw.pop("dash_capstyle", None)
                 gapcolor = kw.pop("_gapcolor", None)
                 x, y = self._axline_data(e)
                 if gapcolor is not None and kw.get("dash"):
@@ -6530,6 +6543,8 @@ class Axes(PlotTypeMixin):
             component_legend_options = dict(legend_options)
             component_legend_options.pop("border_pad", None)
             component_legend_options.pop("handleheight", None)
+            component_legend_options.pop("handlelength", None)
+            component_legend_options.pop("handletextpad", None)
             children.append(xy.legend(**component_legend_options))
         elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
             # Core XY can auto-create a continuous-color "value" legend.
@@ -6582,6 +6597,9 @@ class Axes(PlotTypeMixin):
             )
         if "handleheight" in self._legend_options:
             core_figure.legend_options["handleheight"] = self._legend_options["handleheight"]
+        for key in ("handlelength", "handletextpad"):
+            if key in self._legend_options:
+                core_figure.legend_options[key] = self._legend_options[key]
         core_figure.frame_sides = [
             side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
         ]

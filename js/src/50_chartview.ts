@@ -1891,6 +1891,12 @@ export class ChartView {
     const handleHeight = options.handleheight == null
       ? null
       : Math.max(8, 11 * Number(options.handleheight));
+    const handleLength = Number.isFinite(Number(options.handlelength))
+      ? Math.max(0, Number(options.handlelength))
+      : 2;
+    const handleTextPad = Number.isFinite(Number(options.handletextpad))
+      ? Math.max(0, Number(options.handletextpad))
+      : 0.8;
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
       "column-gap:2em;row-gap:.5em;overflow:auto;";
@@ -1921,6 +1927,8 @@ export class ChartView {
       // base-layer slot rule. SVG paint lives on the wrapper and inherits into
       // its path/line, so Tailwind fill-*/stroke-* utilities on this public slot
       // can override it without copying layout classes onto SVG paint nodes.
+      sw.style.setProperty("--xy-legend-swatch-width", `${handleLength}em`);
+      sw.style.setProperty("--xy-legend-swatch-margin-right", `${handleTextPad}em`);
       let bg = it.swatch;
       // A continuous encoding paints the swatch with the colormap ramp, but
       // the swatch keeps the mark's identity: a gradient-filled symbol for
@@ -1938,7 +1946,7 @@ export class ChartView {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 18 14");
-        svg.setAttribute("width", "18");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "14");
         const path = document.createElementNS(ns, "path");
         const paths = {
@@ -1969,13 +1977,12 @@ export class ChartView {
         );
         svg.appendChild(path);
         sw.appendChild(svg);
-        sw.style.setProperty("--xy-legend-swatch-width", "18px");
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
       } else if (it.line) {
         const ns = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(ns, "svg");
         svg.setAttribute("viewBox", "0 0 22 12");
-        svg.setAttribute("width", "22");
+        svg.setAttribute("width", "100%");
         svg.setAttribute("height", "12");
         const ln = document.createElementNS(ns, "line");
         ln.setAttribute("x1", "1");
@@ -1998,7 +2005,6 @@ export class ChartView {
         }
         svg.appendChild(ln);
         sw.appendChild(svg);
-        sw.style.setProperty("--xy-legend-swatch-width", "22px");
         sw.style.setProperty("--xy-legend-swatch-height", "12px");
       } else if (it.swatch !== "gradient") {
         // Keep the dynamic base paint on the security-audited safe sink, but

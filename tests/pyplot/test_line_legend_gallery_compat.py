@@ -295,6 +295,8 @@ def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
 
     assert line.get_dash_capstyle() == "round"
     assert line._entry["kwargs"]["dash_capstyle"] == "round"
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["traces"][0]["kind"] == "line"
 
 
 def test_legend_frame_is_wide_enough_for_its_measured_labels():
@@ -348,6 +350,22 @@ def test_legend_column_width_measures_glyphs_not_character_count():
     # drawn at handle + gap with the border pad still to spare on the right.
     text_x = result["column_offsets"][0] + result["handle"] + result["gap"]
     assert text_x + _legend_text_width("gamma") <= result["box_w"]
+
+
+def test_legend_handle_geometry_uses_legend_font_units():
+    plot = {"x": 0.0, "y": 0.0, "w": 560.0, "h": 400.0}
+    default = _legend_layout([{"name": "line"}], plot, {"loc": "upper right"})
+    custom = _legend_layout(
+        [{"name": "line"}],
+        plot,
+        {"loc": "upper right", "handlelength": 4, "handletextpad": 1.25},
+    )
+
+    assert default["handle"] == pytest.approx(2 * default["font_size"])
+    assert default["gap"] == pytest.approx(0.8 * default["font_size"])
+    assert custom["handle"] == pytest.approx(4 * custom["font_size"])
+    assert custom["gap"] == pytest.approx(1.25 * custom["font_size"])
+    assert custom["box_w"] > default["box_w"]
 
 
 def test_ellipsized_legend_label_fits_the_column_it_was_sized_for():

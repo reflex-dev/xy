@@ -49,6 +49,8 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["ncols"] == 2
     assert ax._legend_options["title"] == "Legend"
+    assert ax._legend_options["handlelength"] == 2.0
+    assert ax._legend_options["handletextpad"] == 0.8
     assert ax._legend_options["border_pad"] == pytest.approx(0.5 * 13 * 100 / 72)
     assert ax._legend_options["style"] == {
         "fontSize": "18.0556px",
@@ -73,6 +75,17 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["border_pad"] == pytest.approx(0.75 * 13 * 100 / 72)
     with pytest.raises(ValueError, match="borderaxespad"):
         ax.legend(borderaxespad=-0.1)
+
+    ax.legend(handlelength=4, handletextpad=1.25)
+    assert ax._legend_options["handlelength"] == 4.0
+    assert ax._legend_options["handletextpad"] == 1.25
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["legend"]["handlelength"] == 4.0
+    assert spec["legend"]["handletextpad"] == 1.25
+    with pytest.raises(ValueError, match="handlelength"):
+        ax.legend(handlelength=-1)
+    with pytest.raises(ValueError, match="handletextpad"):
+        ax.legend(handletextpad=float("nan"))
 
 
 def test_legend_frameoff_maps_to_transparent_style():

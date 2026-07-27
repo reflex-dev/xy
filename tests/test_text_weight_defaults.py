@@ -226,3 +226,17 @@ def test_chartview_does_not_pin_default_text_weights_inline() -> None:
         "author utilities must remain able to override the default"
     )
     assert '"font-weight": this._axisStyleValue(axis, "label_font_weight")' in source
+
+
+def test_browser_legend_handle_geometry_uses_font_relative_options() -> None:
+    source = (_JS / "50_chartview.ts").read_text(encoding="utf-8")
+
+    assert (
+        'sw.style.setProperty("--xy-legend-swatch-width", `${handleLength}em`)'
+        in source
+    )
+    assert (
+        'sw.style.setProperty("--xy-legend-swatch-margin-right", `${handleTextPad}em`)'
+        in source
+    )
+    assert 'svg.setAttribute("width", "100%")' in source
