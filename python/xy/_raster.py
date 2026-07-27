@@ -37,6 +37,7 @@ from ._svg import (
     _axis_tick_label_layout,
     _axis_tick_label_offset,
     _axis_tick_label_strategy,
+    _axis_tick_sides,
     _box_corner_radius,
     _colorbar_right_axis_room,
     _colormap_stops,
@@ -955,74 +956,74 @@ def render_raster(
 
     if not hide_x:
         inward, outward = tick_span(xstyle)
-        side = xa.get("side", "bottom")
-        edge = py0 if side == "top" else py1
-        for value in xt:
-            x = float(sx(value))
-            y0, y1 = (
-                (edge - outward, edge + inward)
-                if side == "top"
-                else (edge - inward, edge + outward)
-            )
-            cmd.stroke(
-                [(x, y0), (x, y1)],
-                float(xstyle.get("tick_width", 1)),
-                _parse_color(_css(xstyle.get("tick_color"), default_axis)),
-            )
+        for side in _axis_tick_sides(xa, is_x=True):
+            edge = py0 if side == "top" else py1
+            for value in xt:
+                x = float(sx(value))
+                y0, y1 = (
+                    (edge - outward, edge + inward)
+                    if side == "top"
+                    else (edge - inward, edge + outward)
+                )
+                cmd.stroke(
+                    [(x, y0), (x, y1)],
+                    float(xstyle.get("tick_width", 1)),
+                    _parse_color(_css(xstyle.get("tick_color"), default_axis)),
+                )
     if not hide_y:
         inward, outward = tick_span(ystyle)
-        side = ya.get("side", "left")
-        edge = px1 if side == "right" else px0
-        for value in yt:
-            y = float(sy(value))
-            x0, x1 = (
-                (edge - inward, edge + outward)
-                if side == "right"
-                else (edge - outward, edge + inward)
-            )
-            cmd.stroke(
-                [(x0, y), (x1, y)],
-                float(ystyle.get("tick_width", 1)),
-                _parse_color(_css(ystyle.get("tick_color"), default_axis)),
-            )
+        for side in _axis_tick_sides(ya, is_x=False):
+            edge = px1 if side == "right" else px0
+            for value in yt:
+                y = float(sy(value))
+                x0, x1 = (
+                    (edge - inward, edge + outward)
+                    if side == "right"
+                    else (edge - outward, edge + inward)
+                )
+                cmd.stroke(
+                    [(x0, y), (x1, y)],
+                    float(ystyle.get("tick_width", 1)),
+                    _parse_color(_css(ystyle.get("tick_color"), default_axis)),
+                )
     for axis_id, axis, axis_scale in extra_x_axes:
         if _axis_tick_label_strategy(axis) == "none":
             continue
         axis_style = axis.get("style") or {}
         inward, outward = tick_span(axis_style)
-        side = axis.get("side", "bottom")
-        edge = py0 if side == "top" else py1
-        for value in extra_x_ticks[axis_id][0]:
-            x = float(axis_scale(value))
-            y0, y1 = (
-                (edge - outward, edge + inward)
-                if side == "top"
-                else (edge - inward, edge + outward)
-            )
-            cmd.stroke(
-                [(x, y0), (x, y1)],
-                float(axis_style.get("tick_width", 1)),
-                _parse_color(_css(axis_style.get("tick_color"), default_axis)),
-            )
+        for side in _axis_tick_sides(axis, is_x=True):
+            edge = py0 if side == "top" else py1
+            for value in extra_x_ticks[axis_id][0]:
+                x = float(axis_scale(value))
+                y0, y1 = (
+                    (edge - outward, edge + inward)
+                    if side == "top"
+                    else (edge - inward, edge + outward)
+                )
+                cmd.stroke(
+                    [(x, y0), (x, y1)],
+                    float(axis_style.get("tick_width", 1)),
+                    _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+                )
     for axis_id, axis, axis_scale in extra_y_axes:
         if _axis_tick_label_strategy(axis) == "none":
             continue
         axis_style = axis.get("style") or {}
         inward, outward = tick_span(axis_style)
-        side = axis.get("side", "right")
-        edge = px1 if side == "right" else px0
-        for value in extra_y_ticks[axis_id][0]:
-            y = float(axis_scale(value))
-            x0, x1 = (
-                (edge - inward, edge + outward)
-                if side == "right"
-                else (edge - outward, edge + inward)
-            )
-            cmd.stroke(
-                [(x0, y), (x1, y)],
-                float(axis_style.get("tick_width", 1)),
-                _parse_color(_css(axis_style.get("tick_color"), default_axis)),
-            )
+        for side in _axis_tick_sides(axis, is_x=False):
+            edge = px1 if side == "right" else px0
+            for value in extra_y_ticks[axis_id][0]:
+                y = float(axis_scale(value))
+                x0, x1 = (
+                    (edge - inward, edge + outward)
+                    if side == "right"
+                    else (edge - outward, edge + inward)
+                )
+                cmd.stroke(
+                    [(x0, y), (x1, y)],
+                    float(axis_style.get("tick_width", 1)),
+                    _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+                )
 
     def emit_tick_labels(
         axis: dict[str, Any],

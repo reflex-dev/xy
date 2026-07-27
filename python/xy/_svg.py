@@ -1822,6 +1822,15 @@ def _axis_tick_geometry_authored(axis: dict[str, Any]) -> bool:
     )
 
 
+def _axis_tick_sides(axis: dict[str, Any], *, is_x: bool) -> list[str]:
+    """Sides that paint tick marks, independent of the label-bearing side."""
+    allowed = ("bottom", "top") if is_x else ("left", "right")
+    authored = axis.get("tick_sides")
+    if not isinstance(authored, list):
+        return [axis.get("side", allowed[0])]
+    return [side for side in allowed if side in authored]
+
+
 def _axis_tick_label_offset(axis: dict[str, Any], unstyled: float, font_room: float = 0.0) -> float:
     """Distance from the axis spine to a tick label's anchor point, in px.
 
@@ -2422,74 +2431,78 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     if not hide_x:
         inward, outward, tick_width = tick_span(xstyle)
-        side = xa.get("side", "bottom")
-        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
-        for value in xt:
-            x = float(sx(value))
-            y1, y2 = (
-                (edge - outward, edge + inward)
-                if side == "top"
-                else (edge - inward, edge + outward)
-            )
-            baselines += (
-                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
-                f'stroke="{escape(_css(xstyle.get("tick_color"), default_axis))}" '
-                f'stroke-width="{_num(tick_width)}"/>'
-            )
+        for side in _axis_tick_sides(xa, is_x=True):
+            edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+            for value in xt:
+                x = float(sx(value))
+                y1, y2 = (
+                    (edge - outward, edge + inward)
+                    if side == "top"
+                    else (edge - inward, edge + outward)
+                )
+                baselines += (
+                    f'<line x1="{_num(x)}" y1="{_num(y1)}" '
+                    f'x2="{_num(x)}" y2="{_num(y2)}" '
+                    f'stroke="{escape(_css(xstyle.get("tick_color"), default_axis))}" '
+                    f'stroke-width="{_num(tick_width)}"/>'
+                )
     if not hide_y:
         inward, outward, tick_width = tick_span(ystyle)
-        side = ya.get("side", "left")
-        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
-        for value in yt:
-            y = float(sy(value))
-            x1, x2 = (
-                (edge - inward, edge + outward)
-                if side == "right"
-                else (edge - outward, edge + inward)
-            )
-            baselines += (
-                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
-                f'stroke="{escape(_css(ystyle.get("tick_color"), default_axis))}" '
-                f'stroke-width="{_num(tick_width)}"/>'
-            )
+        for side in _axis_tick_sides(ya, is_x=False):
+            edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+            for value in yt:
+                y = float(sy(value))
+                x1, x2 = (
+                    (edge - inward, edge + outward)
+                    if side == "right"
+                    else (edge - outward, edge + inward)
+                )
+                baselines += (
+                    f'<line x1="{_num(x1)}" y1="{_num(y)}" '
+                    f'x2="{_num(x2)}" y2="{_num(y)}" '
+                    f'stroke="{escape(_css(ystyle.get("tick_color"), default_axis))}" '
+                    f'stroke-width="{_num(tick_width)}"/>'
+                )
     for axis_id, axis, axis_scale in extra_x_axes:
         if _axis_tick_label_strategy(axis) == "none":
             continue
         axis_style = axis.get("style") or {}
         inward, outward, tick_width = tick_span(axis_style)
-        side = axis.get("side", "bottom")
-        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
-        for value in extra_x_ticks[axis_id][0]:
-            x = float(axis_scale(value))
-            y1, y2 = (
-                (edge - outward, edge + inward)
-                if side == "top"
-                else (edge - inward, edge + outward)
-            )
-            baselines += (
-                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
-                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
-                f'stroke-width="{_num(tick_width)}"/>'
-            )
+        for side in _axis_tick_sides(axis, is_x=True):
+            edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+            for value in extra_x_ticks[axis_id][0]:
+                x = float(axis_scale(value))
+                y1, y2 = (
+                    (edge - outward, edge + inward)
+                    if side == "top"
+                    else (edge - inward, edge + outward)
+                )
+                baselines += (
+                    f'<line x1="{_num(x)}" y1="{_num(y1)}" '
+                    f'x2="{_num(x)}" y2="{_num(y2)}" '
+                    f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                    f'stroke-width="{_num(tick_width)}"/>'
+                )
     for axis_id, axis, axis_scale in extra_y_axes:
         if _axis_tick_label_strategy(axis) == "none":
             continue
         axis_style = axis.get("style") or {}
         inward, outward, tick_width = tick_span(axis_style)
-        side = axis.get("side", "right")
-        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
-        for value in extra_y_ticks[axis_id][0]:
-            y = float(axis_scale(value))
-            x1, x2 = (
-                (edge - inward, edge + outward)
-                if side == "right"
-                else (edge - outward, edge + inward)
-            )
-            baselines += (
-                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
-                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
-                f'stroke-width="{_num(tick_width)}"/>'
-            )
+        for side in _axis_tick_sides(axis, is_x=False):
+            edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+            for value in extra_y_ticks[axis_id][0]:
+                y = float(axis_scale(value))
+                x1, x2 = (
+                    (edge - inward, edge + outward)
+                    if side == "right"
+                    else (edge - outward, edge + inward)
+                )
+                baselines += (
+                    f'<line x1="{_num(x1)}" y1="{_num(y)}" '
+                    f'x2="{_num(x2)}" y2="{_num(y)}" '
+                    f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                    f'stroke-width="{_num(tick_width)}"/>'
+                )
 
     defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
     # Figure patch + plot-rect backgrounds, mirroring the browser: the root

@@ -4831,6 +4831,15 @@ export class ChartView {
       ? value : "auto";
   }
 
+  _axisTickSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_sides)) {
+      return [axis && axis.side || allowed[0]];
+    }
+    return allowed.filter((side) => axis.tick_sides.includes(side));
+  }
+
   _axisTickLabelAnchor(axis) {
     const raw = axis && axis.tick_label_anchor !== undefined
       ? axis.tick_label_anchor
@@ -5191,24 +5200,40 @@ export class ChartView {
 
       if (!hideX) {
         const tick = tickParts(xAxis);
-        const side = xAxis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of xt.ticks) {
-          const x = this._dataPx("x", value);
-          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+        for (const side of this._axisTickSides(xAxis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of xt.ticks) {
+            const x = this._dataPx("x", value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              xAxis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+            );
+          }
         }
       }
       if (!hideY) {
         const tick = tickParts(yAxis);
-        const side = yAxis.side || "left";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of yt.ticks) {
-          const y = this._dataPx("y", value);
-          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+        for (const side of this._axisTickSides(yAxis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of yt.ticks) {
+            const y = this._dataPx("y", value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              yAxis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+            );
+          }
         }
       }
       for (const axis of extraXAxes) {
@@ -5218,13 +5243,21 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "bottom";
-        const edge = side === "top" ? p.y : p.y + p.h;
-        for (const value of ticks.ticks) {
-          const x = this._dataPx(axis.id, value);
-          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
-          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "top" ? p.y : p.y + p.h;
+          for (const value of ticks.ticks) {
+            const x = this._dataPx(axis.id, value);
+            if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+            const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+            rule(
+              axis,
+              x - tick.width / 2,
+              top,
+              tick.width,
+              tick.inward + tick.outward,
+              "tick_color",
+            );
+          }
         }
       }
       for (const axis of extraYAxes) {
@@ -5234,13 +5267,21 @@ export class ChartView {
           this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
         );
         const tick = tickParts(axis);
-        const side = axis.side || "right";
-        const edge = side === "right" ? p.x + p.w : p.x;
-        for (const value of ticks.ticks) {
-          const y = this._dataPx(axis.id, value);
-          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
-          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+        for (const side of this._axisTickSides(axis)) {
+          const edge = side === "right" ? p.x + p.w : p.x;
+          for (const value of ticks.ticks) {
+            const y = this._dataPx(axis.id, value);
+            if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+            const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+            rule(
+              axis,
+              left,
+              y - tick.width / 2,
+              tick.inward + tick.outward,
+              tick.width,
+              "tick_color",
+            );
+          }
         }
       }
     }
