@@ -556,6 +556,26 @@ class _AxisProxy:
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
 
+    def set_tick_params(
+        self,
+        which: str = "major",
+        reset: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Forward major-tick styling to this proxy's axes dimension."""
+        which = str(which).lower()
+        if which != "major":
+            raise not_implemented(
+                f"Axis.set_tick_params(which={which!r})",
+                alternative="which='major'",
+            )
+        if reset:
+            raise not_implemented(
+                "Axis.set_tick_params(reset=True)",
+                alternative="reset=False",
+            )
+        self.axes.tick_params(axis=self.axis, **kwargs)
+
     def grid(self, visible: bool | None = None, which: str = "major", **kwargs: Any) -> None:
         """Configure grid lines for only this axis.
 
