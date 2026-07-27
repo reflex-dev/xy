@@ -356,11 +356,13 @@ rotated width  = |cos θ| × block width + |sin θ| × block height
 rotated height = |sin θ| × block width + |cos θ| × block height
 ```
 
-The ordinary one-line gutters remain unchanged. Each extra title/tick line
-raises only the corresponding gutter by its line step. Tight/constrained pyplot
-layouts are marked dirty by later chrome mutations and resolve from these final
-per-panel measurements; a subplot boundary reserves the outward gutters of both
-neighbors rather than a single global title constant.
+The ordinary one-line tick gutters remain unchanged. An outside x-axis title
+raises that floor only when its baseline, ascent/descent, and edge guard do not
+fit; each extra title/tick line then raises only the corresponding gutter by its
+line step. Tight/constrained pyplot layouts are marked dirty by later chrome
+mutations and resolve from these final per-panel measurements; a subplot
+boundary reserves the outward gutters of both neighbors rather than a single
+global title constant.
 
 The **left** gutter is additionally floored at what the left y axis's own text
 measures, rather than trusting the flat `46/62 px`:
@@ -402,14 +404,18 @@ leading ink on the canvas. Titles at an angle other than ±90° keep the raw ins
 `label_offset` moves the title within the reserved gutter and is included in the
 reservation.
 
-The **top and bottom x-axis gutters** are likewise floored at the projected
-cross-axis extent when the caller explicitly authors an angle or
-rotate/stagger strategy. The SVG/native paths use the baked DejaVu advance
-table; the browser uses `measureText` with the active tick size. The reservation
-is evaluated after collision strategy, and `"preserve"` pays for every authored
+The **top and bottom x-axis gutters** are likewise floored at the outside axis
+title's measured outer glyph edge and at the projected tick-label cross-axis
+extent when the caller explicitly authors an angle or rotate/stagger strategy.
+The title floor uses the same `font_size × 0.82` baseline conversion as the
+emitters and includes `label_offset`, ascent/descent, multiline steps, and the
+4 px edge guard. The SVG/native paths use the baked DejaVu advance table; the
+browser uses `measureText` with the active tick size. The tick reservation is
+evaluated after collision strategy, and `"preserve"` pays for every authored
 location. Core `"auto"` retains its long-standing fixed-band collision fallback.
-Explicitly rotated labels therefore cannot be clipped merely because a 32/42 px
-legacy band was chosen before their angle or strings were known.
+An outside title or explicitly rotated labels therefore cannot be clipped
+merely because a 32/42 px legacy band was chosen before their geometry was
+known.
 
 Two asymmetries are deliberate, not oversights:
 

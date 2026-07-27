@@ -1562,8 +1562,41 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
     return room
 
 
+def _x_axis_title_room(axis: dict[str, Any]) -> float:
+    """Outward room needed by an outside x-axis title.
+
+    ``_axis_label_geometry()`` positions x titles from their line-box top and
+    converts that top to a static-text baseline.  Measure the corresponding
+    outer glyph edge here so tight/constrained layout does not stop at the
+    historical 36/42 px band while the title itself extends past the canvas.
+    """
+    if not axis.get("label") or not _axis_text_paint_visible(axis, "label_color"):
+        return 0.0
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    if position.replace("-", "_").startswith("inside_"):
+        return 0.0
+    style = axis.get("style") or {}
+    font_size = float(style.get("label_size", 12))
+    block = _textblock.measure(axis["label"], font_size)
+    offset = float(axis.get("label_offset", 0.0))
+    if axis.get("side", "bottom") == "top":
+        # outside_top = plot-top - 34; the baseline conversion then moves
+        # 0.82em back toward the plot.
+        return _AXIS_TEXT_EDGE_PAD + 34.0 + offset - font_size * 0.82 + block.ascent
+    # outside_bottom = plot-bottom + 24; later lines move farther outward.
+    return (
+        _AXIS_TEXT_EDGE_PAD
+        + 24.0
+        + offset
+        + font_size * 0.82
+        + (block.line_count - 1) * block.line_step
+        + block.descent
+    )
+
+
 def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
-    """Outward room needed by the x axis's final tick-label set.
+    """Outward room needed by the x axis's final tick-label set and title.
 
     The old 32/42 px bands only fit horizontal labels. Measure the strings and
     project their DejaVu advance plus line box through the authored angle; this
@@ -1572,62 +1605,41 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     locations. The same value is used by SVG and native PNG layout.
     """
     strategy = _axis_tick_label_strategy(axis)
-    if strategy in {"none", "off"} or not _axis_text_paint_visible(
-        axis, "tick_label_color", "tick_color"
-    ):
+    if strategy == "none":
         return 0.0
-    raw_position = axis.get("label_position")
-    position = raw_position if isinstance(raw_position, str) else "center"
-    outside_label = (
-        axis.get("label")
-        and _axis_text_paint_visible(axis, "label_color")
-        and not position.replace("-", "_").startswith("inside_")
-    )
+    title_room = _x_axis_title_room(axis)
+    if strategy == "off" or not _axis_text_paint_visible(axis, "tick_label_color", "tick_color"):
+        return title_room
     if (
         strategy == "auto"
         and axis.get("tick_label_angle") is None
         and axis.get("tick_values") is None
         and axis.get("kind") != "category"
-        and (not outside_label or len(_textblock.split_lines(axis["label"])) == 1)
     ):
         # Numeric auto ticks are selected from the plot width and remain in the
         # established horizontal band. Only authored/category locations can
         # force rotation or staggering; avoid building and measuring the full
-        # label layout merely to rediscover the ordinary zero-extra case.
-        return 0.0
+        # label layout merely to rediscover the ordinary zero-extra case. The
+        # independently measured title can still exceed that fixed band.
+        return title_room
     _ticks, values, step = axis_ticks(axis, plot_w, True)
     scale = _Scale(axis, 0.0, max(1.0, plot_w))
     items = _axis_tick_label_layout(axis, values, step, scale, True)
     if not items:
-        return 0.0
+        return title_room
     has_adaptive_layout = any(float(item["angle"]) or int(item.get("row", 0)) for item in items)
     font_size = _axis_tick_font_size(axis)
     has_multiline_ticks = any(len(_textblock.split_lines(item["text"])) > 1 for item in items)
-    label_size = float((axis.get("style") or {}).get("label_size", 12))
-    label_block = (
-        _textblock.measure(axis["label"], label_size)
-        if axis.get("label")
-        and _axis_text_paint_visible(axis, "label_color")
-        and not position.replace("-", "_").startswith("inside_")
-        and len(_textblock.split_lines(axis["label"])) > 1
-        else None
-    )
-    label_extra = (
-        max(0.0, label_block.height - label_size * _textblock.LINE_HEIGHT)
-        if label_block is not None
-        else 0.0
-    )
     if (
         not has_adaptive_layout
         and not has_multiline_ticks
-        and not label_extra
         and strategy == "auto"
         and axis.get("tick_label_angle") is None
     ):
         # Preserve the long-standing flat band for ordinary horizontal text.
         # Measured bands are reserved for rotation, staggering, or multiline
         # chrome; ordinary auto ticks retain their historical geometry.
-        return 0.0
+        return title_room
     extent = 0.0
     for item in items:
         block = _textblock.measure(item["text"], font_size)
@@ -1639,7 +1651,8 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
         else _axis_tick_label_offset(axis, 16.0, 0.8)
     )
     rows = max(int(item.get("row", 0)) for item in items)
-    return _AXIS_TEXT_EDGE_PAD + label_offset + rows * (font_size + 4.0) + extent + label_extra
+    tick_room = _AXIS_TEXT_EDGE_PAD + label_offset + rows * (font_size + 4.0) + extent
+    return max(title_room, tick_room)
 
 
 def _x_tick_label_edge_rooms(axes: dict[str, dict[str, Any]], plot_w: float) -> tuple[float, float]:

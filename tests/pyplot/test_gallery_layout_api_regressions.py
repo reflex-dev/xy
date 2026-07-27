@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from io import BytesIO
+from xml.etree import ElementTree
 
 import numpy as np
 import pytest
 
 import xy.pyplot as plt
+from xy import _textblock
 from xy.pyplot._grid import _composite_rgba
 from xy.pyplot._mplfig import _measured_axis_chrome
 
@@ -62,6 +64,39 @@ def test_absolute_subplot_composition_preserves_neighboring_spines() -> None:
     dark_by_column = np.all(spine_strip < dark_threshold, axis=2).sum(axis=0)
 
     assert dark_by_column.max() > 0.9 * (bottom - top)
+
+
+def test_constrained_subplot_xlabels_stay_inside_static_canvas() -> None:
+    """The invert-axes gallery xlabel reached the panel edge and was clipped."""
+    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(6.4, 4), layout="constrained")
+    fig.suptitle("Inverted axis with ...")
+    for ax in axes:
+        ax.plot([0.01, 4.0], [1.0, 0.02])
+        ax.set_title("fixed limits: set_xlim(4, 0)")
+        ax.set_xlabel("decreasing x ⟶")
+
+    svg_output = BytesIO()
+    fig.savefig(svg_output, format="svg")
+    root = ElementTree.fromstring(svg_output.getvalue())
+    panels = [node for node in root if node.tag.endswith("svg")]
+    assert len(panels) == 2
+    for panel in panels:
+        label = next(
+            node
+            for node in panel.iter()
+            if node.tag.endswith("text") and "".join(node.itertext()) == "decreasing x ⟶"
+        )
+        block = _textblock.measure("decreasing x ⟶", float(label.attrib["font-size"]))
+        remaining = float(panel.attrib["height"]) - (float(label.attrib["y"]) + block.descent)
+        assert remaining >= 3.5
+
+    png_output = BytesIO()
+    fig.savefig(png_output, format="png")
+    png_output.seek(0)
+    pixels = np.asarray(plt.imread(png_output))
+    rgb = pixels[:, :, :3]
+    white = 0.99 if np.issubdtype(rgb.dtype, np.floating) else 250
+    assert np.all(rgb[-5:] >= white)
 
 
 def test_tight_layout_reserves_subplot_tick_chrome() -> None:
