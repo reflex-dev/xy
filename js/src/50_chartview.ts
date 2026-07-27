@@ -2014,6 +2014,13 @@ export class ChartView {
           "--xy-legend-swatch-paint",
           safeCssPaint(this.root, bg),
         );
+        const strokeWidth = Number(it.style?.stroke_width) || 0;
+        if (it.style?.stroke && strokeWidth > 0) {
+          sw.style.boxSizing = "border-box";
+          sw.style.borderStyle = "solid";
+          sw.style.borderWidth = `${strokeWidth}px`;
+          sw.style.borderColor = safeCssPaint(this.root, it.style.stroke);
+        }
         // Hatch layers are explicit mark semantics and sit over that sanitized
         // base paint without forcing the base color into an inline background.
         if (it.style?.hatch) {

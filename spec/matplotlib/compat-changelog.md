@@ -4,6 +4,20 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Legend and histogram gallery corrections — 2026-07-27
+
+- Errorbar containers contribute one automatic legend entry instead of
+  duplicating the bars and their private data line.
+- `loc="best"` scores the rendered stairs and compact ECDF paths instead of
+  treating their compact storage arguments as ordinary x/y vertices.
+- Stacked step histograms draw and list their outlines top-to-bottom while
+  keeping returned containers in input-dataset order.
+- Histogram dot/ring hatches use bounded per-bin geometry and the patch-edge
+  color, so short tail bars no longer leak fixed-size glyphs across the
+  baseline.
+- Hollow patch legend handles preserve their source stroke in browser, SVG,
+  and native raster output.
+
 ## Vector-field gallery corrections — 2026-07-24
 
 - `quiver(units=...)` now converts Matplotlib's width-unit vocabulary without

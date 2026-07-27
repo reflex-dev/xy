@@ -2316,7 +2316,16 @@ def _emit_legend(
                 dash=style.get("dash"),
             )
         else:
-            cmd.fill(_rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2), c)
+            swatch_points = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
+            cmd.fill(swatch_points, c)
+            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+            if style.get("stroke") is not None and stroke_width > 0.0:
+                cmd.stroke(
+                    swatch_points,
+                    stroke_width,
+                    _rgba(style.get("stroke"), color_str),
+                    closed=True,
+                )
             hatch = style.get("hatch")
             if hatch:
                 _emit_legend_hatch(

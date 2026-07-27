@@ -3838,10 +3838,17 @@ def _legend(
                 f"{_dash_attr(style)}/>"
             )
         else:
+            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+            stroke = style.get("stroke")
+            stroke_attr = (
+                f' stroke="{escape(_css(stroke, color))}" stroke-width="{_num(stroke_width)}"'
+                if stroke is not None and stroke_width > 0.0
+                else ""
+            )
             rows.append(
                 f'<rect x="{_num(hx0)}" y="{_num(cy - swatch_h / 2)}" '
                 f'width="{handle}" height="{_num(swatch_h)}" '
-                f'rx="2" fill="{escape(color)}"/>'
+                f'rx="2" fill="{escape(color)}"{stroke_attr}/>'
             )
             if style.get("hatch"):
                 rows.append(

@@ -2097,7 +2097,10 @@ class Axes(PlotTypeMixin):
             else (1.0 if (stacked or len(datasets) == 1) else 0.8)
         )
         width = binwidths * rel_width / (1 if stacked else len(datasets))
+        histogram_entry_start = len(self._entries)
+        histogram_entry_groups: list[list[dict[str, Any]]] = []
         for index, values in enumerate(counts):
+            group_start = len(self._entries)
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
             series_color = (
@@ -2264,7 +2267,7 @@ class Axes(PlotTypeMixin):
                         current_base,
                         orientation,
                         {
-                            "color": resolved_edge or series_color,
+                            "color": resolved_edge or resolve_color(rcParams["patch.edgecolor"]),
                             "facecolor": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -2272,8 +2275,19 @@ class Axes(PlotTypeMixin):
                         right_edges=positions + width / 2.0,
                     )
             containers.append(BarContainer(self, entry))
+            histogram_entry_groups.append(self._entries[group_start:])
             if stacked:
                 base += values
+        if stacked and histtype.startswith("step"):
+            # Matplotlib draws stacked step polygons from the top dataset
+            # downward, so the topmost outline cannot be hidden by lower
+            # layers. Its automatic legend follows that artist insertion order
+            # (top-to-bottom), while the returned patch containers are restored
+            # to the caller's original dataset order. Keep those two contracts
+            # distinct here as well.
+            self._entries[histogram_entry_start:] = [
+                entry for group in reversed(histogram_entry_groups) for entry in group
+            ]
         returned = np.vstack(counts)
         if stacked:
             returned = np.cumsum(returned, axis=0)
@@ -4174,21 +4188,29 @@ class Axes(PlotTypeMixin):
         host = self._y2_of or self
         return host._legend_handle if host._legend else None
 
-    def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
+    def get_legend_handles_labels(self) -> tuple[list[Any], list[str]]:
         """Handles and labels of the entries that would appear in the legend.
 
         Entries whose label starts with ``"_"`` are excluded, matching
         matplotlib.
         """
-        handles: list[Artist] = []
+        from ._artists import ErrorbarContainer
+
+        host = self._y2_of or self
+        errorbar_containers = {
+            id(container._artist._entry): container
+            for container in host._containers
+            if isinstance(container, ErrorbarContainer)
+        }
+        handles: list[Any] = []
         labels: list[str] = []
-        for entry in (self._y2_of or self)._entries:
+        for entry in host._entries:
             patch_labels = entry.get("patch_labels")
             if patch_labels is not None:
                 container = next(
                     (
                         item
-                        for item in (self._y2_of or self)._containers
+                        for item in host._containers
                         if isinstance(item, BarContainer) and item._entry is entry
                     ),
                     None,
@@ -4202,7 +4224,8 @@ class Axes(PlotTypeMixin):
                 continue
             label = entry.get("kwargs", {}).get("name")
             if label and not str(label).startswith("_"):
-                handles.append(Artist(self, entry))
+                handle = errorbar_containers.get(id(entry))
+                handles.append(handle if handle is not None else Artist(self, entry))
                 labels.append(str(label))
         return handles, labels
 
@@ -6167,6 +6190,39 @@ class Axes(PlotTypeMixin):
                 args = entry.get("args") or ()
                 if len(args) >= 4:
                     x_values, y_values = (args[0], args[2]), (args[1], args[3])
+            elif kind == "@mark" and entry.get("factory") == "stairs":
+                # ``xy.stairs`` stores ``(values, edges)``, while Matplotlib's
+                # StepPatch contributes the expanded edge/value path to
+                # Legend._auto_legend_data(). Feeding the compact arguments to
+                # the generic (x, y) path reverses the axes and makes the
+                # histogram effectively invisible to ``loc="best"``.
+                args = entry.get("args") or ()
+                if len(args) >= 2:
+                    try:
+                        values = axis_values(args[0], "y")
+                        edges = axis_values(args[1], "x")
+                    except (TypeError, ValueError):
+                        continue
+                    if len(edges) != len(values) + 1:
+                        continue
+                    x_values = np.repeat(edges, 2)[1:-1]
+                    y_values = np.repeat(values, 2)
+            elif kind == "@mark" and entry.get("factory") == "ecdf":
+                # The compact ECDF mark owns only the source observations; the
+                # renderer materializes its sorted post-step path. Score that
+                # same path so a rising CDF occupies the upper-right region
+                # instead of disappearing from best-placement input.
+                args = entry.get("args") or ()
+                if args:
+                    try:
+                        values = axis_values(args[0], "x")
+                    except (TypeError, ValueError):
+                        continue
+                    values = np.sort(values[np.isfinite(values)])
+                    if not len(values):
+                        continue
+                    x_values = np.concatenate((values[:1], values))
+                    y_values = np.arange(len(values) + 1, dtype=np.float64) / len(values)
             elif kind == "area" and x_values is not None and y_values is not None:
                 # PolyCollection contributes the complete closed polygon path:
                 # top edge followed by the reversed baseline.

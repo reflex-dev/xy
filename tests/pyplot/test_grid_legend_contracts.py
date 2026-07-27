@@ -194,3 +194,54 @@ def test_center_band_legend_loc_reaches_spec():
     ax.legend(["a", "b"])
     spec, _ = ax._build_chart(573, 400).figure().build_payload()
     assert spec["legend"]["loc"] == "center left"
+
+
+def test_best_legend_materializes_cumulative_histogram_and_ecdf_paths():
+    import numpy as np
+
+    np.random.seed(19680801)
+    mean = 200
+    sigma = 25
+    data = np.random.normal(mean, sigma, size=100)
+    fig = plt.figure(figsize=(9, 4), layout="constrained")
+    axes = fig.subplots(1, 2, sharex=True, sharey=True)
+
+    axes[0].ecdf(data, label="CDF")
+    _counts, bins, _patches = axes[0].hist(
+        data,
+        25,
+        density=True,
+        histtype="step",
+        cumulative=True,
+        label="Cumulative histogram",
+    )
+    x = np.linspace(data.min(), data.max())
+    y = (1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-0.5 * (1 / sigma * (x - mean)) ** 2)
+    y = y.cumsum()
+    y /= y[-1]
+    axes[0].plot(x, y, "k--", linewidth=1.5, label="Theory")
+
+    axes[1].ecdf(data, complementary=True, label="CCDF")
+    axes[1].hist(
+        data,
+        bins=bins,
+        density=True,
+        histtype="step",
+        cumulative=-1,
+        label="Reversed cumulative histogram",
+    )
+    axes[1].plot(x, 1 - y, "k--", linewidth=1.5, label="Theory")
+
+    for ax in axes:
+        ax.legend()
+    # These are the gallery's Matplotlib axes dimensions. XY's current
+    # constrained-layout fallback produces a narrower panel; that independent
+    # layout discrepancy is deliberately not hidden by the scorer.
+    locations = [
+        ax._best_legend_loc(
+            legend_options=ax._legend_options,
+            plot_size=(348.75, 308.0),
+        )
+        for ax in axes
+    ]
+    assert locations == ["upper left", "lower left"]

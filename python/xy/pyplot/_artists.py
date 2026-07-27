@@ -963,6 +963,13 @@ class ErrorbarContainer:
     def __iter__(self) -> Iterator[Any]:
         return iter(self.lines)
 
+    def get_label(self) -> Any:
+        return self._artist._entry["kwargs"].get("name")
+
+    def set_label(self, value: Any) -> None:
+        self._artist._entry["kwargs"]["name"] = value
+        self._artist._touch()
+
     def remove(self) -> None:
         self._artist.remove()
         self._artist._axes._unregister_container(self)
@@ -1393,6 +1400,10 @@ def _legend_item_from_entry(
         if symbol:
             style["symbol"] = symbol
         for key in ("size", "stroke", "stroke_width"):
+            if kw.get(key) is not None:
+                style[key] = kw[key]
+    elif kind not in {"line", "segments", "step", "stairs", "errorbar"}:
+        for key in ("stroke", "stroke_width"):
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}

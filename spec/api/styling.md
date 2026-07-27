@@ -680,11 +680,12 @@ utilities style the latter. The client pins the lasso path to
 existing box-oriented `pointer-events-none` class cannot disable handle edits.
 
 The `legend_swatch` slot is the chip wrapper for every legend handle. Bar/solid
-chips use its background and box dimensions; scatter and line SVG descendants
-inherit fill, stroke, stroke-width, and dash paint from that wrapper. The
-renderer supplies those values through private base-layer variables rather
-than presentation attributes, so normal Tailwind SVG paint utilities on the
-slot override them.
+chips use its background and box dimensions, and retain the source mark's
+stroke paint/width so an unfilled bar still has a visible outlined handle.
+Scatter and line SVG descendants inherit fill, stroke, stroke-width, and dash
+paint from that wrapper. The renderer supplies those values through private
+base-layer variables rather than presentation attributes, so normal Tailwind
+SVG paint utilities on the slot override them.
 
 Responsive CSS on DOM chrome reevaluates normally. Canvas paint is different:
 the renderer samples `--chart-bg`, `--chart-grid`, `--chart-axis`, and the

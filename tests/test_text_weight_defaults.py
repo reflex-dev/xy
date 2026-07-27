@@ -234,3 +234,11 @@ def test_browser_legend_handle_geometry_uses_font_relative_options() -> None:
     assert 'sw.style.setProperty("--xy-legend-swatch-width", `${handleLength}em`)' in source
     assert 'sw.style.setProperty("--xy-legend-swatch-margin-right", `${handleTextPad}em`)' in source
     assert 'svg.setAttribute("width", "100%")' in source
+
+
+def test_browser_patch_legend_swatch_preserves_hollow_outlines() -> None:
+    source = (_JS / "50_chartview.ts").read_text(encoding="utf-8")
+
+    assert "if (it.style?.stroke && strokeWidth > 0)" in source
+    assert "sw.style.borderWidth = `${strokeWidth}px`" in source
+    assert "sw.style.borderColor = safeCssPaint(this.root, it.style.stroke)" in source
