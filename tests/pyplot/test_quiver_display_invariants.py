@@ -147,6 +147,25 @@ def test_quiver_auto_scale_cancels_scale_units_constant() -> None:
         )
 
 
+def test_quiver_display_mask_keeps_scalar_colors_aligned_with_segments() -> None:
+    _fig, ax = plt.subplots()
+    ax.set_xlim(-1, 2)
+    ax.set_ylim(-1, 1)
+    quiver = ax.quiver(
+        [0.0, 1.0],
+        [0.0, 0.0],
+        [1.0, 1e10],
+        [0.0, 0.0],
+        [0.25, 0.75],
+        scale_units="width",
+        scale=1e20,
+    )
+
+    np.testing.assert_array_equal(quiver._entry["_quiver_valid"], [False, True])
+    assert len(quiver._entry["args"][0]) == 3
+    np.testing.assert_allclose(quiver._entry["kwargs"]["color"], [0.75, 0.75, 0.75])
+
+
 @pytest.mark.parametrize(
     ("stride", "kwargs", "expected_scale", "expected_width_px"),
     [

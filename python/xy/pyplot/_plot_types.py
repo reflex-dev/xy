@@ -5179,6 +5179,9 @@ class PlotTypeMixin:
             entry["kwargs"]["width"] = max(0.5, rendered_width)
             entry["vector_scale"] = effective_scale
             entry["_quiver_valid"] = args[4]
+            source_color = recipe.get("_source_color")
+            if source_color is not None:
+                entry["kwargs"]["color"] = np.repeat(source_color[args[4]], 3)
             recipe["_resolved_scale"] = effective_scale
             recipe["_resolved_width"] = rendered_width
 
@@ -5357,11 +5360,13 @@ class PlotTypeMixin:
             & (magnitudes > np.finfo(float).eps)
         )
         segment_color: Any
+        source_color: np.ndarray | None = None
         if color is not None and not isinstance(color, str):
             values = np.asarray(color).reshape(-1)
             if len(values) != len(x):
                 raise ValueError(f"{name} color values must match U and V")
             segment_color = np.repeat(values[valid], 3)
+            source_color = values
         else:
             segment_color = resolve_color(color) if color is not None else self._next_color()
         recipe = {
@@ -5376,6 +5381,8 @@ class PlotTypeMixin:
             "width": None if width is None else float(width),
             "pivot": pivot,
         }
+        if source_color is not None:
+            recipe["_source_color"] = source_color
         entry = self._add(
             "@mark",
             {
