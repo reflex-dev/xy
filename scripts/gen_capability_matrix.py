@@ -64,10 +64,11 @@ def render() -> str:
         f"**{counts['mark_kinds']}** mark kinds, {claim}.",
         f"- **{counts['chart_slots']}** stable chrome slots, CSS- and Tailwind-addressable "
         "in the browser; "
-        f"**{counts['slots_styleable_natively']}** of them reach the native writers, "
-        "through a channel other than per-slot styles.",
+        f"**{counts['slots_styleable_natively']}** of them reach the native writers — "
+        "nine through `styles={slot: ...}` itself, and `root` through the "
+        "chart-level `style=` token bag.",
         f"- **{counts['extension_points_shipped']}** shipped extension point.",
-        f"- **{counts['known_renderer_divergences']}** known default divergence between "
+        f"- **{counts['known_renderer_divergences']}** known default divergences between "
         "renderers, listed below rather than left to be discovered.",
         "",
         "## Mark style properties",

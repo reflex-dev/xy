@@ -156,3 +156,61 @@ def test_the_core_and_the_pyplot_shim_agree() -> None:
 
     core = xy.line_chart(xy.line(xs, ys, name="a"), xy.legend(loc="best")).figure()
     assert _loc(core) == shim_loc
+
+
+# --- display-space scoring ----------------------------------------------------
+
+
+def test_best_scores_a_log_axis_in_display_space() -> None:
+    # Raw subtraction crushes 1..10000 into the last decade and would hand
+    # `best` a corner the marks actually occupy. The decades are evenly spaced
+    # on screen, so the diagonal leaves upper-left free.
+    decades = [1.0, 10.0, 100.0, 1000.0, 10000.0]
+    figure = xy.line_chart(
+        xy.line(decades, decades, name="a"),
+        xy.x_axis(type_="log"),
+        xy.y_axis(type_="log"),
+        xy.legend(loc="best"),
+    ).figure()
+    assert _loc(figure) == "upper left"
+
+
+def test_log_normalization_spreads_decades_evenly() -> None:
+    decades = np.array([1.0, 10.0, 100.0, 1000.0, 10000.0])
+    xn, _yn = _legendfit.normalize(
+        decades, decades, (1.0, 10000.0), (1.0, 10000.0), x_scale="log", y_scale="log"
+    )
+    assert np.allclose(xn, [0.0, 0.25, 0.5, 0.75, 1.0])
+
+
+def test_symlog_normalization_uses_the_axis_constant() -> None:
+    values = np.array([-100.0, 0.0, 100.0])
+    xn, _yn = _legendfit.normalize(
+        values, values, (-100.0, 100.0), (-100.0, 100.0), x_scale="symlog", y_scale="symlog"
+    )
+    assert np.allclose(xn, [0.0, 0.5, 1.0])
+
+
+def test_off_plot_marks_are_dropped_not_clamped() -> None:
+    # Every renderer clips them; folding them onto an edge would guard a corner
+    # the viewer sees as empty.
+    values = np.array([0.0, 0.5, 1.0, 50.0, 99.0])
+    xn, _yn = _legendfit.normalize(values, values, (0.0, 1.0), (0.0, 1.0))
+    assert np.allclose(xn, [0.0, 0.5, 1.0])
+
+
+def test_a_series_entirely_off_plot_is_not_scored() -> None:
+    values = np.array([50.0, 60.0])
+    assert _legendfit.normalize(values, values, (0.0, 1.0), (0.0, 1.0)) is None
+
+
+def test_a_fixed_domain_frees_the_corner_the_clipped_marks_left() -> None:
+    # The tail sits above the domain, so it is clipped away and upper-right is
+    # empty on screen even though the raw data reaches it.
+    xs = [0.0, 1.0, 2.0, 3.0]
+    figure = xy.line_chart(
+        xy.line(xs, [0.0, 0.1, 0.2, 99.0], name="a"),
+        xy.y_axis(domain=(0.0, 1.0)),
+        xy.legend(loc="best"),
+    ).figure()
+    assert _loc(figure) in {"upper right", "upper left", "upper center"}

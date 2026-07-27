@@ -1048,7 +1048,16 @@ def render_raster(
         )
     for extra, items in extra_legends:
         if items:
-            _emit_legend(cmd, items, plot, extra, default_text, spec_palette)
+            _emit_legend(
+                cmd,
+                items,
+                plot,
+                legend_options_with_slot(spec, extra),
+                default_text,
+                spec_palette,
+                slots.get("legend_label") or {},
+                slots.get("legend_title") or {},
+            )
     if legend_present:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):

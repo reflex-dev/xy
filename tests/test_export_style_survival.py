@@ -179,3 +179,38 @@ def test_native_raster_matches_the_svg_writer_on_slot_styling() -> None:
 
     assert not (plain == painted).all(), "the raster writer must honor a slot's paint"
     assert (plain == weighted).all(), "the baked atlas has one weight; it must ignore font-weight"
+
+
+def test_an_extra_legend_is_styled_like_the_main_one_in_both_writers() -> None:
+    # A categorical color channel adds a second legend. `_svg` folded the slot
+    # and the theme token into every legend; the raster writer originally did it
+    # for the main legend only, so a multi-legend chart styled in SVG but not in
+    # PNG — the exact parity this module exists to hold.
+    def chart(**kwargs):
+        return xy.scatter_chart(
+            xy.scatter(x=[0.0, 1.0, 2.0, 3.0], y=[0.0, 1.0, 2.0, 3.0], color=["a", "b", "a", "b"]),
+            xy.line([0.0, 1.0], [0.0, 1.0], name="trend"),
+            **kwargs,
+        )
+
+    styled = {"legend_label": {"fill": "#123456", "font_size": 16}}
+    assert "#123456" in chart(styles=styled).figure().to_svg()
+
+    plain_png = _raster.render_raster(*chart().figure().build_payload(), scale=1)
+    styled_png = _raster.render_raster(*chart(styles=styled).figure().build_payload(), scale=1)
+    assert not (plain_png == styled_png).all(), "the raster writer skipped the extra legend"
+
+
+def test_the_raster_property_subset_is_a_subset_of_the_vector_one() -> None:
+    from xy._svg import SLOT_RASTER_PROPS, SLOT_TEXT_PROPS
+
+    assert set(SLOT_RASTER_PROPS) < set(SLOT_TEXT_PROPS)
+    # The glyph primitive takes a size and one RGBA paint and nothing else, so
+    # these are vector-only rather than silently approximated.
+    assert set(SLOT_TEXT_PROPS) - set(SLOT_RASTER_PROPS) == {
+        "font-weight",
+        "font-style",
+        "font-family",
+        "letter-spacing",
+        "opacity",
+    }

@@ -225,6 +225,18 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="stroke-width above ~4px at a sharp angle",
         tracked_by="no style property selects a join; the default is the whole contract",
     ),
+    RendererDivergence(
+        id="colorbar_text_default_size",
+        what="Colorbar tick and title text with no slot style set",
+        webgl="10px (the `colorbar` slot's stylesheet rule)",
+        svg="11px — the writer emits no font-size, so the text inherits the root <svg>",
+        native="10px (the writer passes an explicit size to the glyph blitter)",
+        visible_when="always, on any colorbar the author has not styled",
+        tracked_by="styles={'colorbar_tick'/'colorbar_title': {'font_size': ...}} sets all "
+        "three to the same value; only the unstyled default disagrees. Predates the "
+        "per-slot writer support and is left alone here because closing it changes "
+        "the pixels of every existing unstyled colorbar.",
+    ),
 )
 
 
@@ -234,11 +246,12 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
 #: everything else is live-only chrome — a tooltip, a modebar, a crosshair —
 #: and has nothing in a file to style.
 _SLOT_SUBSET_NOTE = (
-    "Honors font-size, font-weight, font-style, font-family, letter-spacing, "
-    "opacity and the text paint (`fill`, or `color`). The raster writer's atlas "
-    "is a single baked face, so it reads size and paint only and leaves the "
-    "typeface properties to the vector writers. Properties outside that subset "
-    "stay browser-only."
+    "Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, "
+    "letter-spacing, opacity and the text paint (`fill`, or `color`). The raster "
+    "writer's glyph primitive takes a size and one RGBA paint and nothing else, "
+    "so it honors font-size and the paint only — font-weight, font-style, "
+    "font-family, letter-spacing and opacity are vector-only rather than "
+    "silently approximated. Properties outside the subset stay browser-only."
 )
 
 _SLOT_EXCEPTIONS: dict[str, tuple[str, str, str]] = {

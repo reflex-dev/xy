@@ -79,6 +79,23 @@ def legend_footprint(labels: Sequence[str]) -> tuple[float, float]:
     return min(0.6, 0.12 + 0.03 * max_len), min(0.6, 0.10 + 0.07 * rows)
 
 
+def display_transform(
+    values: np.ndarray, scale: Optional[str], constant: float = 1.0
+) -> np.ndarray:
+    """Value -> display position, matching `_svg._Scale`.
+
+    Occupancy has to be measured where the marks are *drawn*, not where their
+    values sit on a number line: on a log axis 1..10000 is four evenly spaced
+    decades, while raw subtraction crushes all but the last into the first 10%
+    of the box and would hand `best` the wrong corner.
+    """
+    if scale == "log":
+        return np.log10(np.maximum(values, 1e-300))
+    if scale == "symlog":
+        return np.sign(values) * np.log1p(np.abs(values) / (constant or 1.0))
+    return values
+
+
 def normalize(
     xv: np.ndarray,
     yv: np.ndarray,
@@ -87,10 +104,17 @@ def normalize(
     *,
     x_reverse: bool = False,
     y_reverse: bool = False,
+    x_scale: Optional[str] = None,
+    y_scale: Optional[str] = None,
+    x_constant: float = 1.0,
+    y_constant: float = 1.0,
 ) -> Optional[tuple[np.ndarray, np.ndarray]]:
     """Sample a series down and project it into the normalized plot box.
 
-    Returns None when the series has no finite pair to score.
+    Samples outside the displayed domain are **dropped, not clamped**: the
+    renderers clip them away, so folding them onto an edge would invent
+    occupancy in a corner that is visibly empty. Returns None when the series
+    has no finite, visible pair to score.
     """
     try:
         xv, yv = np.broadcast_arrays(
@@ -113,12 +137,23 @@ def normalize(
         finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]
     if not len(finite):
         return None
-    xlo, xhi = x_domain
-    ylo, yhi = y_domain
+    xlo, xhi = (float(v) for v in display_transform(np.asarray(x_domain), x_scale, x_constant))
+    ylo, yhi = (float(v) for v in display_transform(np.asarray(y_domain), y_scale, y_constant))
+    if not (np.isfinite(xlo) and np.isfinite(xhi) and np.isfinite(ylo) and np.isfinite(yhi)):
+        return None
     if xhi <= xlo or yhi <= ylo:
         return None
-    xn = np.clip((xv[finite] - xlo) / (xhi - xlo), 0.0, 1.0)
-    yn = np.clip((yv[finite] - ylo) / (yhi - ylo), 0.0, 1.0)
+    xn = (display_transform(xv[finite], x_scale, x_constant) - xlo) / (xhi - xlo)
+    yn = (display_transform(yv[finite], y_scale, y_constant) - ylo) / (yhi - ylo)
+    # Off-plot marks are clipped by every renderer, so they must not count as
+    # occupancy. `np.clip` would pile them onto an edge and guard a corner the
+    # viewer sees as empty.
+    visible = (
+        np.isfinite(xn) & np.isfinite(yn) & (xn >= 0.0) & (xn <= 1.0) & (yn >= 0.0) & (yn <= 1.0)
+    )
+    xn, yn = xn[visible], yn[visible]
+    if not len(xn):
+        return None
     if x_reverse:
         xn = 1.0 - xn
     if y_reverse:
@@ -172,8 +207,19 @@ def resolve_for_figure(figure: Any) -> str:
         domains = _figure_domains(figure, trace)
         if domains is None:
             continue
-        (x_domain, x_reverse), (y_domain, y_reverse) = domains
-        projected = normalize(xv, yv, x_domain, y_domain, x_reverse=x_reverse, y_reverse=y_reverse)
+        (x_domain, x_reverse, x_scale, x_const), (y_domain, y_reverse, y_scale, y_const) = domains
+        projected = normalize(
+            xv,
+            yv,
+            x_domain,
+            y_domain,
+            x_reverse=x_reverse,
+            y_reverse=y_reverse,
+            x_scale=x_scale,
+            y_scale=y_scale,
+            x_constant=x_const,
+            y_constant=y_const,
+        )
         if projected is not None:
             series.append(projected)
     return best_loc(series, labels)
@@ -198,7 +244,8 @@ def _figure_domains(figure: Any, trace: Any) -> Optional[tuple[tuple, tuple]]:
         getattr(trace, "x_axis", None) or "x",
         getattr(trace, "y_axis", None) or "y",
     )
-    out: list[tuple[tuple[float, float], bool]] = []
+    options = getattr(figure, "axis_options", {}) or {}
+    out: list[tuple[tuple[float, float], bool, Optional[str], float]] = []
     for axis_id in axis_ids:
         try:
             lo, hi = (float(v) for v in figure._range(axis_id))
@@ -209,5 +256,10 @@ def _figure_domains(figure: Any, trace: Any) -> Optional[tuple[tuple, tuple]]:
             lo, hi = hi, lo
         if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
             return None
-        out.append(((lo, hi), reverse))
+        # The public axis option is `type_=`, stored as `type`; `_svg._Scale`
+        # reads the same names off the serialized axis.
+        axis = options.get(axis_id) or {}
+        scale = axis.get("type") or axis.get("scale")
+        constant = axis.get("constant")
+        out.append(((lo, hi), reverse, scale, float(constant) if constant else 1.0))
     return out[0], out[1]

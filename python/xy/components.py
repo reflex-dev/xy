@@ -4529,10 +4529,6 @@ def _theme_token_property(key: str, label: str) -> str:
         return _THEME_TOKEN_ALIASES[key]
     if key == "background":
         return "background"
-    if key.startswith("__"):
-        # A caller spelling the custom property directly (`**{"--chart-bg": v}`
-        # is not a legal identifier, but `__chart_bg` is a natural stand-in).
-        return "--" + key[2:].replace("_", "-")
     if key in _THEME_TOKEN_NAMES:
         return "--chart-" + key.replace("_", "-")
     known = sorted(_THEME_TOKEN_NAMES | set(_THEME_TOKEN_ALIASES) | {"background"})

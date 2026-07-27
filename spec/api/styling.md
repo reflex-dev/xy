@@ -729,8 +729,14 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 | | |
 | --- | --- |
 | Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
-| Properties | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` |
-| Raster caveat | the baked atlas is one face: PNG/JPEG/WebP honor size and paint, and leave weight/style/family to the vector writers |
+| Vector — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
+| Raster — PNG, JPEG, WebP | `font-size` and the text paint only (`_svg.SLOT_RASTER_PROPS`) |
+
+The raster writer's glyph primitive takes a size and one RGBA paint and nothing
+else, so `font-weight`, `font-style`, `font-family`, `letter-spacing` and
+`opacity` are **vector-only**. They are not approximated: the atlas is a single
+baked face, and a silently substituted weight would be exactly the kind of
+invisible decision §28 forbids.
 
 ```python
 xy.chart(
@@ -783,6 +789,22 @@ and keeps the least occupied, preferring the earlier candidate on a near-tie —
 Matplotlib's rule. It resolves **once, at payload-build time**
 (`xy._legendfit`), so the client and the two static writers all receive a
 settled location and cannot disagree about it (§28).
+
+The sampling is normative, because a different stride would place the legend
+somewhere else (§28):
+
+| | |
+| --- | --- |
+| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so placement costs O(1) on a large series. If that sample holds no finite pair, the full array is used instead, so a sparse-but-finite series is still scored. |
+| Finite cap | at most **512** finite points per series, evenly strided. |
+| Coordinate space | **display** space: the axis's `log`/`symlog` transform is applied first, so occupancy is measured where the marks are drawn. |
+| Off-plot marks | **dropped, not clamped.** Every renderer clips them, so folding them onto an edge would guard a corner the viewer sees as empty. |
+| Candidate order | the nine Matplotlib candidates, corners first, then mid-edges, then center. |
+| Near-tie band | boxes within **0.02** mean occupancy count as tied, and the earliest candidate wins — Matplotlib's integer badness ties on near-equal boxes, and a continuous metric would otherwise let sub-percent sampling noise override that order. |
+
+Density and heatmap tiers are not sampled: a trace with no `x`/`y` column pair
+contributes no occupancy, and a chart with no scorable series falls back to
+`"upper right"`.
 
 ## Static export
 

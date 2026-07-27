@@ -81,3 +81,16 @@ def test_the_component_spelling_still_wins_over_the_token() -> None:
 def test_an_unset_token_leaves_the_default_frame_untouched() -> None:
     svg = xy.line_chart(xy.line([0.0, 1.0], [0.0, 1.0], name="series")).to_svg()
     assert 'fill="rgba(128,128,128,0.08)"' in svg
+
+
+@pytest.mark.parametrize("spelling", ["__grid_colour", "__chart_bg", "__anything"])
+def test_a_dunder_keyword_is_not_a_custom_property_escape_hatch(spelling: str) -> None:
+    # An earlier draft mapped `__x_y` to `--x-y`, which reopened exactly the
+    # dead-CSS hole the closed vocabulary exists to shut. `style=` is the
+    # documented way to set a custom property directly.
+    with pytest.raises(ValueError, match="unknown token"):
+        xy.theme(**{spelling: "#123456"})
+
+
+def test_style_remains_the_custom_property_channel() -> None:
+    assert xy.theme(style={"--chart-bg": "#123456"}).style == {"--chart-bg": "#123456"}

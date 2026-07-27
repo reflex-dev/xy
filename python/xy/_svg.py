@@ -789,10 +789,9 @@ def _px_size(value: Any, default: float) -> float:
     return default
 
 
-#: Text properties a static writer can honor on a chrome slot. The vector
-#: writers carry all of them; the raster atlas is a single baked face, so it
-#: reads only `_SLOT_RASTER_PROPS` and records the rest as an omission (§28).
-_SLOT_TEXT_PROPS: tuple[str, ...] = (
+#: Text properties the VECTOR writers honor on a chrome slot (SVG, and PDF via
+#: the same markup). Each maps one-to-one onto an SVG presentation attribute.
+SLOT_TEXT_PROPS: tuple[str, ...] = (
     "font-size",
     "font-weight",
     "font-style",
@@ -802,7 +801,13 @@ _SLOT_TEXT_PROPS: tuple[str, ...] = (
     "color",
     "opacity",
 )
-_SLOT_RASTER_PROPS: tuple[str, ...] = ("font-size", "fill", "color", "opacity")
+
+#: What the RASTER writer honors. Its glyph primitive takes a size and one RGBA
+#: paint and nothing else, so the typeface properties have no argument to land
+#: in — and `opacity` and `letter-spacing` are not read either, rather than
+#: being silently approximated (§28). `SLOT_TEXT_PROPS` minus this tuple is the
+#: documented vector-only set.
+SLOT_RASTER_PROPS: tuple[str, ...] = ("font-size", "fill", "color")
 
 #: Slots the native writers style. Every one names chrome that a static file
 #: actually contains; the rest of `CHART_DOM_SLOTS` is live-only chrome
@@ -861,15 +866,24 @@ def legend_options_with_slot(spec: dict[str, Any], options: dict[str, Any]) -> d
     """
     slot = slot_styles(spec).get("legend") or {}
     token = (spec.get("dom") or {}).get("style", {}).get("--chart-legend-bg")
-    if not slot and token is None:
+    own = options.get("style") or {}
+    if not slot and token is None and not own:
         return options
+
+    def canonical(style: dict[str, Any]) -> dict[str, Any]:
+        return {_LEGEND_SLOT_ALIASES.get(str(key), str(key)): value for key, value in style.items()}
+
     folded: dict[str, Any] = {}
     if token is not None:
         # The browser's rule is `background:var(--chart-legend-bg, <default>)`,
         # so the token is the frame's paint, at full strength.
         folded["background"] = token
-    folded.update({_LEGEND_SLOT_ALIASES.get(key, key): value for key, value in slot.items()})
-    folded.update(options.get("style") or {})
+    folded.update(canonical(slot))
+    # `xy.legend(style=...)` is canonicalized too. It happens to reach the
+    # writers through `chrome_styles` as well today, but a legend built without
+    # that mirror — an extra legend, or an adapter — would otherwise lose its
+    # kebab-case declarations here.
+    folded.update(canonical(own))
     return {**options, "style": folded}
 
 
