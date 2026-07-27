@@ -1160,6 +1160,11 @@ class Axes(PlotTypeMixin):
             "y": self._ymargin,
         }
         self._margin_overrides: set[str] = set()
+        # Whether autoscaling should stop at the margin-expanded data limits
+        # instead of asking the locator for round-number limits. ``None`` has
+        # Matplotlib's initial false-like behavior and lets tight=None preserve
+        # the preceding explicit choice.
+        self._tight: bool | None = None
         # Edge annotations (notably bar_label) need more than the raw 5% data
         # margin to contain a 10 pt glyph plus point padding.  Keep that
         # renderer-independent reservation separate so an explicit margins()
@@ -1515,6 +1520,7 @@ class Axes(PlotTypeMixin):
             "y": self._ymargin,
         }
         self._margin_overrides = set()
+        self._tight = None
         self._explicit_domains = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_axes = {"x": self._grid, "y": self._grid}
@@ -4521,6 +4527,7 @@ class Axes(PlotTypeMixin):
         elif arg in {"auto", "equal", "scaled", "image", "square"}:
             # All five Matplotlib modes begin with autoscale_view(tight=False),
             # whose limits include the configured x/y margins.
+            self._tight = False
             self._aspect_equal = False
             self._aspect_value = 1.0
             self._aspect_adjustable = "box"
@@ -4529,7 +4536,7 @@ class Axes(PlotTypeMixin):
             # the placeholder (0, 1) view into explicit limits. Matplotlib
             # continues autoscaling when artists are added afterwards.
             if self._entries:
-                self._set_tight_domains()
+                self._set_tight_domains(tight=False)
             if arg in {"equal", "scaled", "image", "square"}:
                 if self._entries:
                     self._set_aspect_equal_from_current()
@@ -4552,6 +4559,10 @@ class Axes(PlotTypeMixin):
                 self.set_ylim(y0, y0 + edge)
                 self._aspect_bounds = (x0, x0 + edge, y0, y0 + edge)
                 self._set_box_aspect_ratio(1.0)
+            if arg == "image":
+                # image follows the shared tight=False transition with its
+                # own autoscale_view(tight=True).
+                self._tight = True
         elif arg == "tight":
             self._aspect_equal = False
             self._aspect_value = 1.0
@@ -4699,27 +4710,37 @@ class Axes(PlotTypeMixin):
         self.get_gridspec()
         return self._subplot_spec
 
-    def margins(self, *args: Any, **kwargs: Any) -> None:
-        """Set the autoscaling padding around the data, as axis fractions.
+    def margins(self, *args: Any, **kwargs: Any) -> tuple[float, float] | None:
+        """Set or return autoscaling padding around the data, as axis fractions.
 
         Call as ``margins(m)``, ``margins(x, y)``, or with ``x=``/``y=``;
         values must be finite and greater than -0.5 (negative margins clip).
-        ``tight`` is accepted and ignored; explicitly set limits are left alone.
+        With no values, return the current ``(xmargin, ymargin)``. ``tight``
+        controls round-number locator expansion; ``None`` preserves its prior
+        setting. Explicitly set limits are left alone.
         """
-        tight = kwargs.pop("tight", None)
-        del tight
+        tight = kwargs.pop("tight", True)
         x = kwargs.pop("x", None)
         y = kwargs.pop("y", None)
         if kwargs:
             raise TypeError(f"margins() got unsupported keyword argument {next(iter(kwargs))!r}")
-        if len(args) > 2:
-            raise TypeError("margins() takes at most two positional arguments")
+        if args and (x is not None or y is not None):
+            raise TypeError("Cannot pass both positional and keyword arguments for x and/or y.")
         if len(args) == 1:
             x = y = args[0]
         elif len(args) == 2:
             x, y = args
+        elif args:
+            raise TypeError(
+                "Must pass a single positional argument for all margins, "
+                "or one for each margin (x, y)."
+            )
         if x is None and y is None:
-            return
+            if tight is not True:
+                warnings.warn(f"ignoring tight={tight!r} in get mode", stacklevel=2)
+            return self._xmargin, self._ymargin
+        if tight is not None:
+            self._tight = bool(tight)
         if x is not None:
             self._xmargin = _validate_margin(x, "x")
             self._margin_overrides.add("x")
@@ -4753,11 +4774,11 @@ class Axes(PlotTypeMixin):
 
     def set_xmargin(self, margin: float) -> None:
         """Set x-axis autoscale padding as a fraction of the data interval."""
-        self.margins(x=margin)
+        self.margins(x=margin, tight=None)
 
     def set_ymargin(self, margin: float) -> None:
         """Set y-axis autoscale padding as a fraction of the data interval."""
-        self.margins(y=margin)
+        self.margins(y=margin, tight=None)
 
     def relim(self, visible_only: bool = False) -> None:
         """Recompute the data limits from the plotted entries.
@@ -4772,7 +4793,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def autoscale(
-        self, enable: bool = True, axis: str = "both", tight: Optional[bool] = None
+        self, enable: bool | None = True, axis: str = "both", tight: Optional[bool] = None
     ) -> None:
         """Turn autoscaling on or off and re-fit the limits.
 
@@ -4783,15 +4804,24 @@ class Axes(PlotTypeMixin):
         if axis not in {"both", "x", "y"}:
             raise ValueError("autoscale() axis must be 'both', 'x', or 'y'")
         axes = ("x", "y") if axis == "both" else (axis,)
+        enabled_axes = (
+            tuple(item for item in axes if item not in self._explicit_domains)
+            if enable is None
+            else axes
+            if enable
+            else ()
+        )
+        if enabled_axes and tight is not None:
+            self._tight = bool(tight)
         for item in axes:
-            if enable:
+            if item in enabled_axes:
                 self._explicit_domains.discard(item)
                 if tight:
                     self._axis_props(item)["domain"] = self._entry_extent(item)
                     self._explicit_domains.add(item)
                 else:
                     self._axis_props(item).pop("domain", None)
-            else:
+            elif enable is False:
                 self._axis_props(item)["domain"] = self._auto_domain(item)
                 self._explicit_domains.add(item)
         self._invalidate()
@@ -4804,6 +4834,8 @@ class Axes(PlotTypeMixin):
         ``scalex``/``scaley`` select which axes to autoscale; ``tight``
         drops the data margins.
         """
+        if tight is not None:
+            self._tight = bool(tight)
         if scalex:
             self.autoscale(True, axis="x", tight=tight)
         if scaley:
@@ -5117,11 +5149,11 @@ class Axes(PlotTypeMixin):
         self._invalidate()
         return made
 
-    def _set_tight_domains(self) -> None:
-        # Matplotlib's axis("tight") disables further autoscaling after an
-        # autoscale_view(tight=True), but that view still includes the current
-        # axes.xmargin/axes.ymargin (5% by default).  "Tight" suppresses tick
-        # locator expansion; it does not mean raw data extrema.
+    def _set_tight_domains(self, *, tight: bool = True) -> None:
+        # Axis modes materialize the margin-expanded view before applying
+        # their aspect/autoscale policy. "Tight" suppresses tick-locator
+        # expansion; it does not mean raw data extrema.
+        self._tight = bool(tight)
         for axis in ("x", "y"):
             self._axis_props(axis)["domain"] = self._auto_domain(axis)
         self._explicit_domains.update({"x", "y"})
@@ -5302,9 +5334,51 @@ class Axes(PlotTypeMixin):
         del kwargs
         return "yaxis transform"
 
-    def label_outer(self, **kwargs: Any) -> None:
-        """Compat-noop: the engine lays out shared-axis tick labels itself."""
-        del kwargs
+    def label_outer(self, remove_inner_ticks: bool = False) -> None:
+        """Keep axis labels and tick labels only on the GridSpec's outer edges."""
+        spec = self.get_subplotspec()
+        if spec is None:
+            return
+
+        x_label_side = self._axis_props("x").get("side", "bottom")
+        if spec.rows[0] != 0:
+            if x_label_side == "top":
+                self.set_xlabel("")
+            self.tick_params(
+                axis="x",
+                which="both",
+                labeltop=False,
+                **({"top": False} if remove_inner_ticks else {}),
+            )
+        if spec.rows[1] != spec.nrows:
+            if x_label_side == "bottom":
+                self.set_xlabel("")
+            self.tick_params(
+                axis="x",
+                which="both",
+                labelbottom=False,
+                **({"bottom": False} if remove_inner_ticks else {}),
+            )
+
+        y_label_side = self._axis_props("y").get("side", "left")
+        if spec.cols[0] != 0:
+            if y_label_side == "left":
+                self.set_ylabel("")
+            self.tick_params(
+                axis="y",
+                which="both",
+                labelleft=False,
+                **({"left": False} if remove_inner_ticks else {}),
+            )
+        if spec.cols[1] != spec.ncols:
+            if y_label_side == "right":
+                self.set_ylabel("")
+            self.tick_params(
+                axis="y",
+                which="both",
+                labelright=False,
+                **({"right": False} if remove_inner_ticks else {}),
+            )
 
     def add_artist(self, artist: Any) -> Any:
         """Add a prebuilt artist to the axes.
@@ -7978,7 +8052,11 @@ class Axes(PlotTypeMixin):
         if aspect_domains is not None:
             x_props["domain"], y_props["domain"] = aspect_domains
         auto_tick_counts = self._auto_tick_counts(x_props, width, height)
-        if rcParams["axes.autolimit_mode"] == "round_numbers" and not adjusted_aspect:
+        if (
+            rcParams["axes.autolimit_mode"] == "round_numbers"
+            and not adjusted_aspect
+            and not self._tight
+        ):
             self._apply_round_number_domains(x_props, y_props, auto_tick_counts)
         self._apply_tickers("x", x_props, auto_tick_counts["x"])
         self._apply_tickers("y", y_props, auto_tick_counts["y"])
