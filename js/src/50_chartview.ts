@@ -544,7 +544,8 @@ export class ChartView {
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const baseBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
@@ -552,7 +553,8 @@ export class ChartView {
     // multiple axes on the same side intentionally overlay until axis offsets
     // become part of the public API (the same rule used by secondary y axes).
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
-      axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
+      axis && String(axis.id || "").startsWith("x") &&
+      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
     const hasTopAxis = topAxes.length > 0;
     const titleFontSize = this._slotFontSize("title", 14);
@@ -575,7 +577,8 @@ export class ChartView {
     const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
-      axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
+      this._axisTickLabelStrategy(axis) !== "none");
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -611,7 +614,10 @@ export class ChartView {
   _yAxisLeftRoom(plotHeight) {
     let room = 0;
     for (const axis of Object.values<any>(this.axes || {})) {
-      if (!axis || !String(axis.id || "").startsWith("y") || axis.side === "right") continue;
+      if (!axis || !String(axis.id || "").startsWith("y")) continue;
+      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left");
+      const titleOnLeft = axis.side !== "right";
+      if (!labelsOnLeft && !titleOnLeft) continue;
       if (this._axisTickLabelStrategy(axis) === "none") continue;
       const size = Math.max(
         8,
@@ -622,10 +628,12 @@ export class ChartView {
         ),
       );
       const angle = Math.abs(Number(this._axisTickLabelAngle(axis) || 0)) * Math.PI / 180;
-      const ticks = this._axisTicks(
-        axis.id,
-        this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
-      );
+      const ticks = labelsOnLeft
+        ? this._axisTicks(
+          axis.id,
+          this._axisTickTarget(axis.id, Math.max(3, plotHeight / 45)),
+        )
+        : { ticks: [], labels: [] };
       let tickRoom = 0;
       for (const value of (ticks.labels || ticks.ticks)) {
         const text = this._axisTickText(axis, value, ticks.step);
@@ -638,12 +646,13 @@ export class ChartView {
       const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
       const outward = direction === "in" ? 0 : direction === "inout" ? length / 2 : length;
-      const tickOffset =
-        outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4));
-      let needed = 4 + tickOffset + tickRoom;
+      const tickOffset = labelsOnLeft
+        ? outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4))
+        : 0;
+      let needed = labelsOnLeft ? 4 + tickOffset + tickRoom : 0;
       const rawPosition = axis.label_position;
       const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
-      if (axis.label && !position.startsWith("inside_")) {
+      if (titleOnLeft && axis.label && !position.startsWith("inside_")) {
         const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
@@ -669,9 +678,12 @@ export class ChartView {
     let room = 0;
     for (const axis of Object.values<any>(this.axes || {})) {
       if (!axis || !String(axis.id || "").startsWith("x")) continue;
-      if ((axis.side === "top" ? "top" : "bottom") !== side) continue;
+      const titleSide = axis.side === "top" ? "top" : "bottom";
+      const labelsOnSide = this._axisTickLabelSides(axis).includes(side);
+      if (!labelsOnSide && titleSide !== side) continue;
       const strategy = this._axisTickLabelStrategy(axis);
       if (["none", "off"].includes(strategy)) continue;
+      const sideAxis = { ...axis, side };
       const size = Math.max(
         8,
         this._axisStyleNumber(
@@ -687,11 +699,11 @@ export class ChartView {
       const [lo, hi] = this._axisRange(axis.id);
       const c0 = this._axisCoord(axis, lo);
       const c1 = this._axisCoord(axis, hi);
-      const candidates = (ticks.labels || ticks.ticks).map((value) => ({
+      const candidates = (labelsOnSide ? (ticks.labels || ticks.ticks) : []).map((value) => ({
         pos: c1 === c0 ? plotWidth / 2 : ((this._axisCoord(axis, value) - c0) / (c1 - c0)) * plotWidth,
         text: this._axisTickText(axis, value, ticks.step),
       }));
-      const items = this._layoutTickLabels(axis, "x", candidates);
+      const items = this._layoutTickLabels(sideAxis, "x", candidates);
       const hasAdaptiveLayout = items.some(
         (item) => Number(item.angle || 0) || Number(item.row || 0),
       );
@@ -701,7 +713,7 @@ export class ChartView {
       const position = typeof axis.label_position === "string"
         ? axis.label_position.replace(/-/g, "_") : "center";
       const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
-      const labelBlock = axis.label && !position.startsWith("inside_")
+      const labelBlock = titleSide === side && axis.label && !position.startsWith("inside_")
         ? this._estimateTickLabel(axis.label, labelSize) : null;
       const labelExtra = labelBlock
         ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
@@ -4840,6 +4852,15 @@ export class ChartView {
     return allowed.filter((side) => axis.tick_sides.includes(side));
   }
 
+  _axisTickLabelSides(axis) {
+    const isX = String(axis && axis.id || "x").startsWith("x");
+    const allowed = isX ? ["bottom", "top"] : ["left", "right"];
+    if (!Array.isArray(axis && axis.tick_label_sides)) {
+      return [axis && axis.side || allowed[0]];
+    }
+    return allowed.filter((side) => axis.tick_label_sides.includes(side));
+  }
+
   _axisTickLabelAnchor(axis) {
     const raw = axis && axis.tick_label_anchor !== undefined
       ? axis.tick_label_anchor
@@ -5404,18 +5425,21 @@ export class ChartView {
       const pad = outward + this._axisStyleNumber(axis, "tick_padding", 4);
       return pad + fontRoomPx;
     };
-    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-      const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-      const top = xAxis.side === "top"
-        ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
-        : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
-      const placement = this._xTickLabelTransform(xAxis, item.angle);
-      label(
-        item.text,
-        `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-          `transform-origin:${placement.origin};`,
-        xAxis,
-      );
+    for (const side of this._axisTickLabelSides(xAxis)) {
+      const sideAxis = { ...xAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "x", xLabelCandidates)) {
+        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+        const top = side === "top"
+          ? p.y - tickLabelOffset(xAxis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+          : p.y + p.h + tickLabelOffset(xAxis, 6) + rowOffset;
+        const placement = this._xTickLabelTransform(sideAxis, item.angle);
+        label(
+          item.text,
+          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+            `transform-origin:${placement.origin};`,
+          sideAxis,
+        );
+      }
     }
     for (const axis of extraXAxes) {
       const ticks = this._axisTicks(
@@ -5428,23 +5452,26 @@ export class ChartView {
         if (px < p.x - 1 || px > p.x + p.w + 1) continue;
         labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
       }
-      for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
-        const tickLabelSize = this._axisStyleNumber(
-          axis,
-          "tick_label_size",
-          this._axisStyleNumber(axis, "tick_size", 11),
-        );
-        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
-        const top = axis.side === "top"
-          ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
-          : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
-        const placement = this._xTickLabelTransform(axis, item.angle);
-        label(
-          item.text,
-          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
-            `transform-origin:${placement.origin};`,
-          axis,
-        );
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "x", labelCandidates)) {
+          const tickLabelSize = this._axisStyleNumber(
+            axis,
+            "tick_label_size",
+            this._axisStyleNumber(axis, "tick_size", 11),
+          );
+          const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+          const top = side === "top"
+            ? p.y - tickLabelOffset(axis, 18, Math.max(8, tickLabelSize) * 1.2) - rowOffset
+            : p.y + p.h + tickLabelOffset(axis, 6) + rowOffset;
+          const placement = this._xTickLabelTransform(sideAxis, item.angle);
+          label(
+            item.text,
+            `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+              `transform-origin:${placement.origin};`,
+            sideAxis,
+          );
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
@@ -5481,9 +5508,12 @@ export class ChartView {
         angle,
       };
     };
-    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-      const placement = yLabelPlacement(yAxis, yAxis.side === "right", item);
-      label(item.text, placement.css, yAxis, "tick", null, placement);
+    for (const side of this._axisTickLabelSides(yAxis)) {
+      const sideAxis = { ...yAxis, side };
+      for (const item of this._layoutTickLabels(sideAxis, "y", yLabelCandidates)) {
+        const placement = yLabelPlacement(sideAxis, side === "right", item);
+        label(item.text, placement.css, sideAxis, "tick", null, placement);
+      }
     }
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
@@ -5494,9 +5524,12 @@ export class ChartView {
         const text = this._axisTickText(axis, v, ticks.step);
         labelCandidates.push({ pos: py, text });
       }
-      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-        const placement = yLabelPlacement(axis, axis.side !== "left", item);
-        label(item.text, placement.css, axis, "tick", null, placement);
+      for (const side of this._axisTickLabelSides(axis)) {
+        const sideAxis = { ...axis, side };
+        for (const item of this._layoutTickLabels(sideAxis, "y", labelCandidates)) {
+          const placement = yLabelPlacement(sideAxis, side === "right", item);
+          label(item.text, placement.css, sideAxis, "tick", null, placement);
+        }
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
@@ -5513,6 +5546,7 @@ export class ChartView {
       const tickLabels = [...this.labels.children].filter((element) =>
         element.dataset.xyLabelKind === "tick"
         && element.dataset.xyAxis === String(axis.id ?? "")
+        && element.dataset.xyAxisSide === (onRight ? "right" : "left")
       );
       if (!tickLabels.length) return;
       const root = this.root.getBoundingClientRect();

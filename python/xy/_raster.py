@@ -36,6 +36,7 @@ from ._svg import (
     _axis_tick_label_baseline_shift,
     _axis_tick_label_layout,
     _axis_tick_label_offset,
+    _axis_tick_label_sides,
     _axis_tick_label_strategy,
     _axis_tick_sides,
     _box_corner_radius,
@@ -1034,7 +1035,6 @@ def render_raster(
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
-        items = _axis_tick_label_layout(axis, values, step, axis_scale, is_x)
         tick_color = _parse_color(
             _css(
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
@@ -1042,60 +1042,64 @@ def render_raster(
             )
         )
         font_size = _axis_tick_font_size(axis)
-        side = axis.get("side", "bottom" if is_x else "left")
-        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
-        # The bottom gap is 15 here against the SVG exporter's 16: that 1 px has
-        # always separated the two and is not this seam's to change.
-        if is_x:
-            label_offset = (
-                _axis_tick_label_offset(axis, 7.0, 0.2)
-                if side == "top"
-                else _axis_tick_label_offset(axis, 15.0, 0.8)
-            )
-        else:
-            label_offset = _axis_tick_label_offset(axis, 8.0)
         baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
-        for item in items:
-            block = _textblock.measure(item["text"], font_size)
+        for side in _axis_tick_label_sides(axis, is_x=is_x):
+            side_axis = {**axis, "side": side}
+            side_items = _axis_tick_label_layout(side_axis, values, step, axis_scale, is_x)
+            # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
+            # The bottom gap is 15 here against the SVG exporter's 16: that 1 px has
+            # always separated the two and is not this seam's to change.
             if is_x:
-                row_offset = float(item["row"]) * (font_size + 4)
-                x = float(item["pos"])
-                y = (
-                    py0 - label_offset - row_offset
+                label_offset = (
+                    _axis_tick_label_offset(axis, 7.0, 0.2)
                     if side == "top"
-                    else py1 + label_offset + row_offset
+                    else _axis_tick_label_offset(axis, 15.0, 0.8)
                 )
-                angle = float(item["angle"])
-                if explicit_anchor:
-                    anchor = _TEXT_ANCHOR_CODES[explicit_anchor]
-                elif angle == 0:
-                    anchor = 1
-                elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
-                    anchor = 2
-                else:
-                    anchor = 0
             else:
-                x = px1 + label_offset if side == "right" else px0 - label_offset
-                y = (
-                    float(item["pos"])
-                    + baseline_shift
-                    - (block.line_count - 1) * block.line_step / 2.0
+                label_offset = _axis_tick_label_offset(axis, 8.0)
+            for item in side_items:
+                block = _textblock.measure(item["text"], font_size)
+                if is_x:
+                    row_offset = float(item["row"]) * (font_size + 4)
+                    x = float(item["pos"])
+                    y = (
+                        py0 - label_offset - row_offset
+                        if side == "top"
+                        else py1 + label_offset + row_offset
+                    )
+                    angle = float(item["angle"])
+                    if explicit_anchor:
+                        anchor = _TEXT_ANCHOR_CODES[explicit_anchor]
+                    elif angle == 0:
+                        anchor = 1
+                    elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                        anchor = 2
+                    else:
+                        anchor = 0
+                else:
+                    x = px1 + label_offset if side == "right" else px0 - label_offset
+                    y = (
+                        float(item["pos"])
+                        + baseline_shift
+                        - (block.line_count - 1) * block.line_step / 2.0
+                    )
+                    default_anchor = 0 if side == "right" else 2
+                    anchor = (
+                        _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
+                    )
+                _emit_text_block(
+                    cmd,
+                    x,
+                    y,
+                    anchor,
+                    font_size,
+                    tick_color,
+                    item["text"],
+                    angle=float(item["angle"]),
                 )
-                default_anchor = 0 if side == "right" else 2
-                anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
-            _emit_text_block(
-                cmd,
-                x,
-                y,
-                anchor,
-                font_size,
-                tick_color,
-                item["text"],
-                angle=float(item["angle"]),
-            )
 
     emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
     emit_tick_labels(ya, ylab, ystep, sy, is_x=False)

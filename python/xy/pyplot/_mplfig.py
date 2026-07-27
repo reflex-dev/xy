@@ -418,9 +418,9 @@ class Figure:
         for index, ax in enumerate(self._axes):
             row, col = index // ncols, index % ncols
             if self._sharex in ("all", "col") and row < nrows - 1:
-                ax._axis_props("x")["tick_label_strategy"] = "off"
+                ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
             if self._sharey in ("all", "row") and col > 0:
-                ax._axis_props("y")["tick_label_strategy"] = "off"
+                ax._apply_tick_label_side_visibility("y", {"labelleft": False})
 
     def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
         """Return a lightweight GridSpec facade backed by the current grid.
@@ -1112,9 +1112,9 @@ class Figure:
             for ax in axes.values():
                 spec = ax._subplot_spec
                 if sharex and spec.rows[1] < nrows:
-                    ax._axis_props("x")["tick_label_strategy"] = "off"
+                    ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
                 if sharey and spec.cols[0] > 0:
-                    ax._axis_props("y")["tick_label_strategy"] = "off"
+                    ax._apply_tick_label_side_visibility("y", {"labelleft": False})
         self._current_ax = next(reversed(axes.values()))
         self._invalidate()
         return axes
