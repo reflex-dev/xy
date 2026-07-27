@@ -2486,7 +2486,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
         )
 
-    annotation_marks, annotation_labels = _annotation_svg(
+    annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
         spec.get("annotations") or [], sx, sy, plot, width, height
     )
     marks.extend(annotation_marks)
@@ -2690,6 +2690,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<g clip-path="url(#{clip_id})">',
             *marks,
             "</g>",
+            *unclipped_annotation_marks,
             baselines,
             f'<g fill="{escape(default_text)}">',
             *labels,
@@ -2756,6 +2757,37 @@ def annotation_label_placement(
     return float(sx(x)), float(sy(y)), anchor, vertical_align
 
 
+def _annotation_connector_unclipped(
+    ann: dict[str, Any],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+) -> bool:
+    """Whether an arrow may leave the axes because its target is in bounds.
+
+    Matplotlib's default ``annotation_clip=None`` clips based on the annotated
+    point, not the text/connector path.  A label may therefore sit outside the
+    axes while its connector remains visible back to an in-bounds target.
+    """
+    kind = ann.get("kind")
+    if kind == "arrow":
+        target = ann.get("x1"), ann.get("y1")
+    elif kind == "callout":
+        target = ann.get("x"), ann.get("y")
+    else:
+        return False
+    try:
+        px, py = float(sx(float(target[0]))), float(sy(float(target[1])))
+    except (TypeError, ValueError):
+        return False
+    return (
+        np.isfinite(px)
+        and np.isfinite(py)
+        and plot["x"] <= px <= plot["x"] + plot["w"]
+        and plot["y"] <= py <= plot["y"] + plot["h"]
+    )
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -2763,8 +2795,9 @@ def _annotation_svg(
     plot: dict[str, float],
     width: float,
     height: float,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
+    unclipped_marks: list[str] = []
     labels: list[str] = []
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
@@ -2800,6 +2833,9 @@ def _annotation_svg(
                 f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
             )
         elif kind in ("arrow", "callout"):
+            connector_marks = (
+                unclipped_marks if _annotation_connector_unclipped(ann, sx, sy, plot) else marks
+            )
             if kind == "arrow":
                 x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
                 x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
@@ -2811,12 +2847,12 @@ def _annotation_svg(
                 stroke_width = _num(max(0.5, float(style.get("width", 1.5))))
                 if shapes["taper"] is not None:
                     taper = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["taper"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polygon points="{taper}" fill="{color}" fill-opacity="{_num(opacity)}"/>'
                     )
                 else:
                     shaft = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["shaft"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polyline points="{shaft}" fill="none" '
                         f'stroke="{color}" stroke-width="{stroke_width}" '
                         f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
@@ -2826,12 +2862,12 @@ def _annotation_svg(
                         continue
                     points = " ".join(f"{_num(px)},{_num(py)}" for px, py in decoration["points"])
                     if decoration["kind"] == "fill":
-                        marks.append(
+                        connector_marks.append(
                             f'<polygon points="{points}" fill="{color}" '
                             f'fill-opacity="{_num(opacity)}"/>'
                         )
                     else:
-                        marks.append(
+                        connector_marks.append(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
@@ -2945,7 +2981,7 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return marks, labels
+    return marks, unclipped_marks, labels
 
 
 def _svg_font_attrs(style: dict[str, Any]) -> str:

@@ -1792,7 +1792,7 @@ def pie(
     colors: ColorsLike | None = None,
     autopct: str | Callable[[float], str] | None = None,
     pctdistance: float = 0.6,
-    shadow: bool = False,
+    shadow: bool | Mapping[str, Any] = False,
     labeldistance: float | None = 1.1,
     startangle: float = 0,
     radius: float = 1,
@@ -1812,8 +1812,9 @@ def pie(
     ``explode`` offsets slices, ``autopct`` labels them with their share
     (%-format or callable), ``startangle``/``counterclock`` control
     orientation, and ``wedgeprops``/``textprops`` style slices and
-    labels. Returns ``(wedges, texts)`` or ``(wedges, texts, autotexts)``
-    as matplotlib does.
+    labels. ``hatch`` cycles patterns over wedges, and ``shadow`` accepts
+    either a boolean or Matplotlib ``Shadow`` properties. Returns
+    ``(wedges, texts)`` or ``(wedges, texts, autotexts)`` as matplotlib does.
     """
     return gca().pie(
         x,

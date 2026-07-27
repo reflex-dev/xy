@@ -167,11 +167,8 @@ _Z = np.arange(16.0).reshape(4, 4)
 @pytest.mark.parametrize(
     ("call", "match"),
     [
-        (lambda ax: ax.pie([1, 2], shadow=True), "shadow"),
         (lambda ax: ax.pie([1, 2], frame=True), "frame"),
         (lambda ax: ax.pie([1, 2], rotatelabels=True), "rotatelabels"),
-        (lambda ax: ax.pie([1, 2], hatch="//"), "hatch"),
-        (lambda ax: ax.pie([1, 2], wedgeprops={"hatch": "x"}), "hatch"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headwidth=6), "headwidth"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headlength=2), "headlength"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], headaxislength=2), "headaxislength"),
