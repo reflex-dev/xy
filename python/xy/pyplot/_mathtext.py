@@ -71,6 +71,10 @@ _COMMANDS = {
     "int": "∫",
     "propto": "∝",
     "in": "∈",
+    "clubsuit": "♣",
+    "diamondsuit": "♦",
+    "heartsuit": "♥",
+    "spadesuit": "♠",
     "percent": "%",
     "%": "%",
     # TeX ignores ordinary spaces in math mode.  Explicit spacing commands

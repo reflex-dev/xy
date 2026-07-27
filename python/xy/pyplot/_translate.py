@@ -65,8 +65,8 @@ MARKER_TO_SYMBOL = {
     "X": "x",
     "D": "diamond",
     "d": "thin_diamond",
-    "|": "cross",
-    "_": "cross",
+    "|": "vertical_line",
+    "_": "horizontal_line",
 }
 
 

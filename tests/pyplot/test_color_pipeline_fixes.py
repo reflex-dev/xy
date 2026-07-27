@@ -202,6 +202,42 @@ def test_discrete_colorbar_renders_solid_bands():
     _png()
 
 
+def test_boundary_norm_is_shared_by_imshow_pcolormesh_and_colorbar():
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import BoundaryNorm
+
+    boundaries = [-3.0, -1.0, 0.0, 4.0]
+    norm = BoundaryNorm(boundaries, ncolors=256)
+    values = np.asarray([[-2.0, -0.5, 2.0]])
+
+    fig, (image_ax, mesh_ax) = plt.subplots(1, 2)
+    image = image_ax.imshow(values, norm=norm, cmap="RdYlBu")
+    mesh = mesh_ax.pcolormesh(values, norm=norm, cmap="RdYlBu")
+
+    for entry in (image._entry, mesh._entry):
+        assert entry["discrete_levels"] == 3
+        np.testing.assert_array_equal(entry["discrete_boundaries"], boundaries)
+        assert np.asarray(entry["discrete_colors"]).shape == (3, 3)
+        rendered = np.asarray(entry["z"] if "z" in entry else entry["args"][0])
+        assert rendered.shape[-1] == 4
+
+    fig.colorbar(
+        image,
+        ax=image_ax,
+        spacing="proportional",
+        ticks=boundaries,
+        format=plt.FuncFormatter(lambda value, _position: f"{value:g} units"),
+    )
+    options = image_ax._colorbar
+    assert options["spacing"] == "proportional"
+    assert options["boundaries"] == boundaries
+    assert options["tick_labels"] == ["-3 units", "-1 units", "0 units", "4 units"]
+    assert len(options["band_colors"]) == 3
+
+    svg = _svg()
+    assert all(f">{value}<" in svg for value in options["tick_labels"])
+
+
 # -- defect 7: contour conventions --------------------------------------------
 
 
@@ -236,6 +272,25 @@ def test_monochrome_contour_dashes_negative_levels():
     assert all(t.style["opacity"] == pytest.approx(1.0) for t in contours)
 
 
+def test_monochrome_contour_dashes_all_negative_levels_with_authored_widths():
+    xx, yy, zz = _wiggle()
+    widths = np.array([0.5, 2.0])
+    levels = np.array([-0.9, -0.6, -0.3])
+    _fig, ax = plt.subplots()
+    ax.contour(xx, yy, zz, levels=levels, colors="black", linewidths=widths)
+
+    contours = [
+        trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "contour"
+    ]
+    point_scale = plt.rcParams["figure.dpi"] / 72.0
+    expected_widths = widths[np.arange(len(levels)) % len(widths)] * point_scale
+
+    assert len(contours) == len(levels)
+    for trace, expected_width in zip(contours, expected_widths, strict=True):
+        assert trace.style["dash"] == pytest.approx([3.7 * expected_width, 1.6 * expected_width])
+        assert trace.style_channels["width"].values == pytest.approx(expected_width)
+
+
 def test_colormapped_contour_stays_solid():
     xx, yy, zz = _wiggle()
     plt.contour(xx, yy, zz, cmap="RdGy")
@@ -266,6 +321,48 @@ def test_contourf_fills_discrete_bands_not_a_smooth_gradient():
     assert 0.0 in colorbar["ticks"]
 
 
+def test_default_contourf_levels_trim_extended_locator_ends() -> None:
+    x = np.linspace(-3.0, 5.0, 150)
+    y = np.linspace(-3.0, 5.0, 120)
+    z = np.cos(x[None, :]) + np.sin(y[:, None])
+
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(
+        x,
+        y,
+        z,
+        hatches=["-", "/", "\\", "//"],
+        cmap="gray",
+        extend="both",
+    )
+    ax.figure.colorbar(contour)
+
+    assert contour.levels == pytest.approx([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5])
+    assert contour._entry["domain"] == pytest.approx((-1.5, 1.5))
+    assert ax._colorbar["domain"] == pytest.approx((-1.5, 1.5))
+    assert ax._colorbar["boundaries"] == pytest.approx(contour.levels)
+    assert ax._colorbar["extend"] == "both"
+
+
+def test_explicit_integer_contourf_levels_keep_full_locator_span() -> None:
+    x = np.linspace(-3.0, 5.0, 150)
+    y = np.linspace(-3.0, 5.0, 120)
+    z = np.cos(x[None, :]) + np.sin(y[:, None])
+
+    _fig, ax = plt.subplots()
+    contour = ax.contourf(
+        x,
+        y,
+        z,
+        6,
+        colors="none",
+        hatches=[".", "/", "\\", None, "\\\\", "*"],
+        extend="lower",
+    )
+
+    assert contour.levels == pytest.approx([-2.4, -1.8, -1.2, -0.6, 0.0, 0.6, 1.2, 1.8, 2.4])
+
+
 def test_contourf_includes_samples_equal_to_the_final_level():
     values = np.array([[0.0, 1.0], [1.0, 2.0]])
     _fig, ax = plt.subplots()
@@ -276,3 +373,22 @@ def test_contourf_includes_samples_equal_to_the_final_level():
     )
 
     assert heatmap.grid.values.reshape(heatmap.grid_shape)[-1, -1] == 1.5
+
+
+@pytest.mark.parametrize("origin", ["upper", "lower"])
+def test_contourf_named_colormap_extensions_fill_the_image_domain(origin):
+    values = np.arange(1.0, 10.0)
+    field = values[:, None] * values[None, :]
+    _fig, ax = plt.subplots()
+    ax.contourf(
+        field,
+        levels=np.arange(5.0, 70.0, 5.0),
+        extend="both",
+        origin=origin,
+    )
+
+    figure = ax._build_chart(320, 320).figure()
+    heatmap = next(trace for trace in figure.traces if trace.kind == "heatmap")
+    assert np.isfinite(heatmap.grid.values).all()
+    assert "<image " in figure.to_svg()
+    assert figure.to_png(scale=1).startswith(b"\x89PNG\r\n\x1a\n")

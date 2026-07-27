@@ -16,6 +16,9 @@ class _PropCycle:
     def __init__(self, colors: Any = None) -> None:
         self._colors = None if colors is None else tuple(str(color) for color in colors)
 
+    def __len__(self) -> int:
+        return len(self.by_key()["color"])
+
     def by_key(self) -> dict[str, list[str]]:
         from ._colors import PROP_CYCLE
 
@@ -30,10 +33,12 @@ _DEFAULTS: dict[str, Any] = {
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
     "figure.facecolor": "white",
+    "lines.color": "C0",
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
     "errorbar.capsize": 0.0,
+    "patch.facecolor": "C0",
     "patch.linewidth": 1.0,
     "patch.edgecolor": "black",
     "patch.force_edgecolor": False,
@@ -70,6 +75,15 @@ _DEFAULTS: dict[str, Any] = {
     "ytick.major.pad": 3.5,
     "xtick.major.width": 0.8,
     "ytick.major.width": 0.8,
+    "xtick.minor.size": 2.0,
+    "ytick.minor.size": 2.0,
+    "xtick.minor.pad": 3.4,
+    "ytick.minor.pad": 3.4,
+    "xtick.minor.width": 0.6,
+    "ytick.minor.width": 0.6,
+    "grid.linewidth": 0.8,
+    "grid.linestyle": "-",
+    "grid.alpha": 1.0,
     "legend.loc": "best",
     "legend.fontsize": "medium",
     "legend.facecolor": "inherit",
@@ -152,7 +166,12 @@ class RcParams(dict):
             value = float(value)
             if value <= 0:
                 raise ValueError(f"{key} must be positive")
-        if key in {"xtick.major.pad", "ytick.major.pad"}:
+        if key in {
+            "xtick.major.pad",
+            "ytick.major.pad",
+            "xtick.minor.pad",
+            "ytick.minor.pad",
+        }:
             value = float(value)
             if not math.isfinite(value):
                 raise ValueError(f"{key} must be finite")
@@ -166,6 +185,12 @@ class RcParams(dict):
             "ytick.major.size",
             "xtick.major.width",
             "ytick.major.width",
+            "xtick.minor.size",
+            "ytick.minor.size",
+            "xtick.minor.width",
+            "ytick.minor.width",
+            "grid.linewidth",
+            "grid.alpha",
         }:
             value = float(value)
             if value < 0:

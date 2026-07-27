@@ -1328,6 +1328,8 @@ def append_data(
                 "thin_diamond",
                 "plus_line",
                 "x_line",
+                "horizontal_line",
+                "vertical_line",
             )
         )
     }

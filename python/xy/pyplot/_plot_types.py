@@ -35,8 +35,18 @@ from ._artists import (
     Table,
     Text,
     Wedge,
+    _contour_legend_colors,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba
+from ._colors import (
+    PROP_CYCLE,
+    cmap_extreme,
+    normalize_scalar_grid,
+    prepare_boundary_norm,
+    resolve_cmap,
+    resolve_color,
+    resolve_rgba,
+    scalar_grid_rgba,
+)
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._rc import rc_figsize_px, rcParams
@@ -453,6 +463,233 @@ def _dashed_segments(
     )
 
 
+def _triangle_mesh_exterior(
+    vertices: tuple[
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+    ],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the boundary edges of a triangle mesh without its fan seams."""
+    coordinate_values = np.concatenate([axis for vertex in vertices for axis in vertex])
+    tolerance = max(float(np.ptp(coordinate_values)) * 1e-12, 1e-14)
+
+    def point_key(point: tuple[float, float]) -> tuple[int, int]:
+        return round(point[0] / tolerance), round(point[1] / tolerance)
+
+    edges: dict[
+        tuple[tuple[int, int], tuple[int, int]],
+        tuple[int, tuple[float, float], tuple[float, float]],
+    ] = {}
+    for first, second in ((0, 1), (1, 2), (2, 0)):
+        for start_x, start_y, end_x, end_y in zip(
+            vertices[first][0],
+            vertices[first][1],
+            vertices[second][0],
+            vertices[second][1],
+            strict=True,
+        ):
+            start = float(start_x), float(start_y)
+            end = float(end_x), float(end_y)
+            start_key, end_key = point_key(start), point_key(end)
+            key = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
+            count, saved_start, saved_end = edges.get(key, (0, start, end))
+            edges[key] = count + 1, saved_start, saved_end
+    exterior = [(start, end) for count, start, end in edges.values() if count == 1]
+    return (
+        np.asarray([start[0] for start, _end in exterior]),
+        np.asarray([start[1] for start, _end in exterior]),
+        np.asarray([end[0] for _start, end in exterior]),
+        np.asarray([end[1] for _start, end in exterior]),
+    )
+
+
+def _clip_segment_to_triangle(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    triangle: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Clip a segment to one triangle with a convex half-plane solve."""
+    area = float(
+        (triangle[1, 0] - triangle[0, 0]) * (triangle[2, 1] - triangle[0, 1])
+        - (triangle[1, 1] - triangle[0, 1]) * (triangle[2, 0] - triangle[0, 0])
+    )
+    if abs(area) <= np.finfo(float).eps:
+        return None
+    direction = np.asarray(end, dtype=np.float64) - np.asarray(start, dtype=np.float64)
+    origin = np.asarray(start, dtype=np.float64)
+    orientation = 1.0 if area > 0 else -1.0
+    lower, upper = 0.0, 1.0
+    for index in range(3):
+        edge_start = triangle[index]
+        edge = triangle[(index + 1) % 3] - edge_start
+        at_start = float(
+            orientation
+            * (edge[0] * (origin[1] - edge_start[1]) - edge[1] * (origin[0] - edge_start[0]))
+        )
+        at_end = float(
+            orientation
+            * (
+                edge[0] * (origin[1] + direction[1] - edge_start[1])
+                - edge[1] * (origin[0] + direction[0] - edge_start[0])
+            )
+        )
+        slope = at_end - at_start
+        if abs(slope) <= np.finfo(float).eps:
+            if at_start < -1e-12:
+                return None
+            continue
+        crossing = -at_start / slope
+        if slope > 0:
+            lower = max(lower, crossing)
+        else:
+            upper = min(upper, crossing)
+        if lower > upper:
+            return None
+    clipped_start = origin + min(1.0, max(0.0, lower)) * direction
+    clipped_end = origin + min(1.0, max(0.0, upper)) * direction
+    if np.linalg.norm(clipped_end - clipped_start) <= 1e-12:
+        return None
+    return (
+        (float(clipped_start[0]), float(clipped_start[1])),
+        (float(clipped_end[0]), float(clipped_end[1])),
+    )
+
+
+def _pie_hatch_geometry(
+    vertices: tuple[
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+        tuple[np.ndarray, np.ndarray],
+    ],
+    hatch: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build hatch strokes clipped to a sector for every xy renderer."""
+    triangles = np.stack(
+        [
+            np.column_stack(vertices[0]),
+            np.column_stack(vertices[1]),
+            np.column_stack(vertices[2]),
+        ],
+        axis=1,
+    )
+    all_x = np.concatenate([vertex[0] for vertex in vertices])
+    all_y = np.concatenate([vertex[1] for vertex in vertices])
+    xmin, xmax = float(all_x.min()), float(all_x.max())
+    ymin, ymax = float(all_y.min()), float(all_y.max())
+    diameter = max(xmax - xmin, ymax - ymin)
+    if diameter <= 0 or not hatch:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty.copy(), empty.copy(), empty.copy()
+
+    candidates: list[tuple[tuple[float, float], tuple[float, float]]] = []
+
+    def count(*characters: str) -> int:
+        return max((hatch.count(character) for character in characters), default=0)
+
+    def spacing(density: int) -> float:
+        return diameter / (5.0 + 2.0 * max(1, density))
+
+    def linear_family(kind: str, density: int) -> None:
+        gap = spacing(density)
+        margin = diameter + gap
+        if kind == "vertical":
+            for position in np.arange(xmin - gap, xmax + gap, gap):
+                candidates.append(
+                    ((float(position), ymin - margin), (float(position), ymax + margin))
+                )
+        elif kind == "horizontal":
+            for position in np.arange(ymin - gap, ymax + gap, gap):
+                candidates.append(
+                    ((xmin - margin, float(position)), (xmax + margin, float(position)))
+                )
+        else:
+            low = ymin - xmax - margin
+            high = ymax - xmin + margin
+            for intercept in np.arange(low, high, gap):
+                if kind == "slash":
+                    candidates.append(
+                        (
+                            (xmin - margin, xmin - margin + intercept),
+                            (xmax + margin, xmax + margin + intercept),
+                        )
+                    )
+                else:
+                    candidates.append(
+                        (
+                            (xmin - margin, -xmin + margin + intercept),
+                            (xmax + margin, -xmax - margin + intercept),
+                        )
+                    )
+
+    slash_density = count("/", "x", "X")
+    backslash_density = count("\\", "x", "X")
+    vertical_density = count("|", "+")
+    horizontal_density = count("-", "+")
+    if slash_density:
+        linear_family("slash", slash_density)
+    if backslash_density:
+        linear_family("backslash", backslash_density)
+    if vertical_density:
+        linear_family("vertical", vertical_density)
+    if horizontal_density:
+        linear_family("horizontal", horizontal_density)
+
+    def polygon_family(character: str, points: int, radius_factor: float) -> None:
+        density = hatch.count(character)
+        if not density:
+            return
+        gap = spacing(density)
+        radius = gap * radius_factor
+        xs = np.arange(xmin + gap * 0.5, xmax + gap * 0.5, gap)
+        ys = np.arange(ymin + gap * 0.5, ymax + gap * 0.5, gap)
+        for cx in xs:
+            for cy in ys:
+                if character == "*":
+                    angles = -np.pi / 2 + np.arange(points * 2) * np.pi / points
+                    radii = np.where(
+                        np.arange(points * 2) % 2 == 0,
+                        radius,
+                        radius * 0.42,
+                    )
+                else:
+                    angles = np.arange(points) * 2.0 * np.pi / points
+                    radii = np.full(points, radius)
+                polygon = np.column_stack(
+                    (cx + radii * np.cos(angles), cy + radii * np.sin(angles))
+                )
+                closed = np.vstack((polygon, polygon[0]))
+                candidates.extend(
+                    (
+                        (float(closed[index, 0]), float(closed[index, 1])),
+                        (float(closed[index + 1, 0]), float(closed[index + 1, 1])),
+                    )
+                    for index in range(len(closed) - 1)
+                )
+
+    polygon_family(".", 4, 0.08)
+    polygon_family("o", 8, 0.18)
+    polygon_family("O", 10, 0.30)
+    polygon_family("*", 5, 0.34)
+
+    x0: list[float] = []
+    y0: list[float] = []
+    x1: list[float] = []
+    y1: list[float] = []
+    for start, end in candidates:
+        for triangle in triangles:
+            clipped = _clip_segment_to_triangle(start, end, triangle)
+            if clipped is None:
+                continue
+            clipped_start, clipped_end = clipped
+            x0.append(clipped_start[0])
+            y0.append(clipped_start[1])
+            x1.append(clipped_end[0])
+            y1.append(clipped_end[1])
+    arrays = tuple(np.asarray(values, dtype=np.float64) for values in (x0, y0, x1, y1))
+    return arrays  # type: ignore[return-value]
+
+
 def _limit_error(error: Any, lower_limits: Any, upper_limits: Any, size: int) -> Any:
     """Convert limit flags into Matplotlib's two-sided error-array geometry."""
     if error is None or (not np.any(lower_limits) and not np.any(upper_limits)):
@@ -508,6 +745,302 @@ def _nice_contour_levels(lo: float, hi: float, count: int) -> np.ndarray:
     stop = np.ceil((hi - step * 1e-9) / step) * step
     levels = np.arange(start, stop + step * 0.5, step)
     return levels if len(levels) >= 2 else np.asarray([lo, hi], dtype=np.float64)
+
+
+def _joined_contour_paths(
+    x0: np.ndarray,
+    x1: np.ndarray,
+    y0: np.ndarray,
+    y1: np.ndarray,
+) -> list[np.ndarray]:
+    """Join a marching-squares segment soup into deterministic polylines.
+
+    The native contour kernel deliberately returns independent segments: that
+    is ideal for the renderers, but Matplotlib's label placement operates on
+    connected contour paths.  Quantized endpoint keys absorb only the
+    round-off introduced by interpolation; the tolerance is many orders of
+    magnitude below a visible data-space displacement.
+    """
+    segments = np.column_stack((x0, y0, x1, y1)).astype(np.float64, copy=False)
+    segments = segments[np.isfinite(segments).all(axis=1)]
+    if not len(segments):
+        return []
+    span = max(float(np.ptp(segments[:, (0, 2)])), float(np.ptp(segments[:, (1, 3)])), 1.0)
+    tolerance = span * 1e-10
+
+    def key(x: float, y: float) -> tuple[int, int]:
+        return round(x / tolerance), round(y / tolerance)
+
+    endpoints: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    positions: dict[tuple[int, int], tuple[float, float]] = {}
+    adjacency: dict[tuple[int, int], list[int]] = {}
+    for xa, ya, xb, yb in segments:
+        ka, kb = key(float(xa), float(ya)), key(float(xb), float(yb))
+        if ka == kb:
+            continue
+        edge_index = len(endpoints)
+        endpoints.append((ka, kb))
+        positions.setdefault(ka, (float(xa), float(ya)))
+        positions.setdefault(kb, (float(xb), float(yb)))
+        adjacency.setdefault(ka, []).append(edge_index)
+        adjacency.setdefault(kb, []).append(edge_index)
+    if not endpoints:
+        return []
+
+    unused = set(range(len(endpoints)))
+    paths: list[np.ndarray] = []
+    while unused:
+        seed = min(unused)
+        # Discover the whole unused connected component so an open contour
+        # starts at its true boundary even when the native segment selected as
+        # ``seed`` happens to lie in the middle.
+        component = {seed}
+        frontier = [seed]
+        while frontier:
+            edge = frontier.pop()
+            for node in endpoints[edge]:
+                for neighbor in adjacency.get(node, ()):
+                    if neighbor in unused and neighbor not in component:
+                        component.add(neighbor)
+                        frontier.append(neighbor)
+        component_degree: dict[tuple[int, int], int] = {}
+        for edge in component:
+            for node in endpoints[edge]:
+                component_degree[node] = component_degree.get(node, 0) + 1
+        a, b = endpoints[seed]
+        # Open contours start at an endpoint. Closed contours have degree two
+        # everywhere and may start at the first native segment.
+        endpoints_of_component = sorted(
+            node for node, degree in component_degree.items() if degree != 2
+        )
+        current = endpoints_of_component[0] if endpoints_of_component else a
+        points = [positions[current]]
+        previous: tuple[int, int] | None = None
+        while True:
+            candidates = [edge for edge in adjacency.get(current, ()) if edge in unused]
+            if not candidates:
+                break
+            if len(candidates) == 1 or previous is None:
+                edge = min(candidates)
+            else:
+                # At the rare grid vertex shared by more than two segments,
+                # continue as straight as possible instead of arbitrarily
+                # switching contour branches.
+                px, py = positions[previous]
+                cx, cy = positions[current]
+                incoming = np.asarray((cx - px, cy - py), dtype=np.float64)
+                incoming_norm = float(np.hypot(*incoming))
+
+                def continuation_score(
+                    candidate: int,
+                    *,
+                    _current: tuple[int, int] = current,
+                    _cx: float = cx,
+                    _cy: float = cy,
+                    _incoming: np.ndarray = incoming,
+                    _incoming_norm: float = incoming_norm,
+                ) -> float:
+                    ca, cb = endpoints[candidate]
+                    other = cb if ca == _current else ca
+                    ox, oy = positions[other]
+                    outgoing = np.asarray((ox - _cx, oy - _cy), dtype=np.float64)
+                    norm = _incoming_norm * float(np.hypot(*outgoing))
+                    return float(np.dot(_incoming, outgoing) / norm) if norm else -2.0
+
+                edge = max(
+                    candidates,
+                    key=lambda candidate: (continuation_score(candidate), -candidate),
+                )
+            unused.remove(edge)
+            ea, eb = endpoints[edge]
+            next_key = eb if ea == current else ea
+            previous, current = current, next_key
+            points.append(positions[current])
+        if len(points) >= 2:
+            paths.append(np.asarray(points, dtype=np.float64))
+    return paths
+
+
+def _path_cumulative(screen_path: np.ndarray) -> np.ndarray:
+    return np.concatenate(
+        ([0.0], np.cumsum(np.hypot(*np.diff(screen_path, axis=0).T), dtype=np.float64))
+    )
+
+
+def _path_interpolate(path: np.ndarray, cumulative: np.ndarray, distance: float) -> np.ndarray:
+    """Interpolate one point at a screen-space curvilinear distance."""
+    distance = float(np.clip(distance, 0.0, cumulative[-1]))
+    index = min(int(np.searchsorted(cumulative, distance, side="right") - 1), len(path) - 2)
+    index = max(0, index)
+    length = cumulative[index + 1] - cumulative[index]
+    fraction = 0.0 if length <= 0 else (distance - cumulative[index]) / length
+    return path[index] + (path[index + 1] - path[index]) * fraction
+
+
+def _contour_label_location(
+    path: np.ndarray,
+    screen_path: np.ndarray,
+    label_width: float,
+    font_height: float,
+    occupied: list[tuple[float, float, float]],
+    *,
+    rightside_up: bool,
+) -> dict[str, Any] | None:
+    """Pick the straightest collision-free label site along one contour."""
+    cumulative = _path_cumulative(screen_path)
+    total = float(cumulative[-1])
+    if total <= 0.0:
+        return None
+    extent = np.ptp(screen_path, axis=0)
+    if total < 1.5 * label_width or not np.any(extent > 1.2 * label_width):
+        return None
+    half = min(label_width * 0.5, total * 0.45)
+    count = max(24, min(64, 2 * int(np.ceil(total / max(label_width, 1.0)))))
+    distances = np.linspace(half, total - half, count)
+    candidates: list[tuple[float, float, np.ndarray, float]] = []
+    for distance in distances:
+        before = _path_interpolate(screen_path, cumulative, distance - half)
+        after = _path_interpolate(screen_path, cumulative, distance + half)
+        direction = after - before
+        norm = float(np.hypot(*direction))
+        if norm <= np.finfo(float).eps:
+            continue
+        inside = (cumulative >= distance - half) & (cumulative <= distance + half)
+        window = np.vstack((before, screen_path[inside], after))
+        deviation = np.abs(
+            direction[0] * (before[1] - window[:, 1]) - direction[1] * (before[0] - window[:, 0])
+        )
+        straightness = float(np.mean(deviation) / norm)
+        point = _path_interpolate(screen_path, cumulative, distance)
+        angle = float(np.rad2deg(np.arctan2(direction[1], direction[0])))
+        if rightside_up:
+            angle = (angle + 90.0) % 180.0 - 90.0
+        candidates.append((straightness, float(distance), point, angle))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
+    collision_width = max(label_width, 2.4 * font_height)
+    clear = [
+        candidate
+        for candidate in candidates
+        if all(
+            float(np.hypot(*(candidate[2] - np.asarray(prior[:2]))))
+            >= 0.75 * (collision_width + prior[2])
+            for prior in occupied
+        )
+    ]
+    if clear:
+        selected = clear[0]
+    elif occupied:
+        # A small nested contour may have no fully clear point. Prefer the
+        # candidate with the most display-space breathing room rather than
+        # falling back to the straightest point directly under another label.
+        selected = max(
+            candidates,
+            key=lambda candidate: min(
+                float(np.hypot(*(candidate[2] - np.asarray(prior[:2]))))
+                / max(1.0, 0.5 * (collision_width + prior[2]))
+                for prior in occupied
+            ),
+        )
+    else:
+        selected = candidates[0]
+    _, distance, screen_point, angle = selected
+    occupied.append((float(screen_point[0]), float(screen_point[1]), collision_width))
+    return {
+        "position": _path_interpolate(path, cumulative, distance),
+        "screen_position": screen_point,
+        "angle": angle,
+        "distance": distance,
+        "cumulative": cumulative,
+    }
+
+
+def _nearest_contour_location(
+    query: tuple[float, float],
+    paths: list[tuple[int, np.ndarray, np.ndarray]],
+    *,
+    rightside_up: bool,
+) -> dict[str, Any] | None:
+    """Project a manual data-space request onto the nearest contour path."""
+    query_point = np.asarray(query, dtype=np.float64)
+    best: tuple[float, int, np.ndarray, np.ndarray, float, np.ndarray] | None = None
+    for level_index, path, screen_path in paths:
+        cumulative = _path_cumulative(screen_path)
+        for index, (start, end) in enumerate(pairwise(screen_path)):
+            delta = end - start
+            norm2 = float(np.dot(delta, delta))
+            fraction = (
+                0.0
+                if norm2 <= np.finfo(float).eps
+                else float(np.clip(np.dot(query_point - start, delta) / norm2, 0.0, 1.0))
+            )
+            projected = start + fraction * delta
+            distance2 = float(np.dot(projected - query_point, projected - query_point))
+            along = float(
+                cumulative[index] + fraction * (cumulative[index + 1] - cumulative[index])
+            )
+            candidate = (distance2, level_index, path, screen_path, along, delta)
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+    if best is None:
+        return None
+    _, level_index, path, screen_path, distance, direction = best
+    cumulative = _path_cumulative(screen_path)
+    angle = float(np.rad2deg(np.arctan2(direction[1], direction[0])))
+    if rightside_up:
+        angle = (angle + 90.0) % 180.0 - 90.0
+    return {
+        "level_index": level_index,
+        "path": path,
+        "screen_path": screen_path,
+        "position": _path_interpolate(path, cumulative, distance),
+        "screen_position": _path_interpolate(screen_path, cumulative, distance),
+        "angle": angle,
+        "distance": distance,
+        "cumulative": cumulative,
+    }
+
+
+def _contour_visible_segments(
+    path: np.ndarray,
+    cumulative: np.ndarray,
+    excluded: list[tuple[float, float]],
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return path pieces outside the merged screen-space exclusion windows."""
+    intervals: list[tuple[float, float]] = []
+    for start, stop in sorted(excluded):
+        start = max(0.0, float(start))
+        stop = min(float(cumulative[-1]), float(stop))
+        if start >= stop:
+            continue
+        if intervals and start <= intervals[-1][1]:
+            intervals[-1] = intervals[-1][0], max(intervals[-1][1], stop)
+        else:
+            intervals.append((start, stop))
+    result: list[tuple[np.ndarray, np.ndarray]] = []
+    for start, stop in pairwise(cumulative):
+        pieces = [(float(start), float(stop))]
+        for excluded_start, excluded_stop in intervals:
+            next_pieces: list[tuple[float, float]] = []
+            for piece_start, piece_stop in pieces:
+                if excluded_stop <= piece_start or excluded_start >= piece_stop:
+                    next_pieces.append((piece_start, piece_stop))
+                    continue
+                if piece_start < excluded_start:
+                    next_pieces.append((piece_start, excluded_start))
+                if excluded_stop < piece_stop:
+                    next_pieces.append((excluded_stop, piece_stop))
+            pieces = next_pieces
+            if not pieces:
+                break
+        for piece_start, piece_stop in pieces:
+            if piece_stop <= piece_start:
+                continue
+            a = _path_interpolate(path, cumulative, piece_start)
+            b = _path_interpolate(path, cumulative, piece_stop)
+            result.append((a, b))
+    return result
 
 
 def _segment_values(value: Any) -> np.ndarray:
@@ -585,6 +1118,11 @@ def _gouraud_rect_axes(
 
 def _bilinear_grid(grid: np.ndarray, width: int, height: int) -> np.ndarray:
     """Small NumPy-only bilinear expansion used by regular Gouraud meshes."""
+    if grid.ndim == 3:
+        return np.stack(
+            [_bilinear_grid(grid[..., channel], width, height) for channel in range(grid.shape[2])],
+            axis=-1,
+        )
     source_y = np.linspace(0.0, 1.0, grid.shape[0])
     source_x = np.linspace(0.0, 1.0, grid.shape[1])
     target_y = np.linspace(0.0, 1.0, height)
@@ -680,6 +1218,8 @@ class PlotTypeMixin:
         def _add(self, kind: str, entry: dict[str, Any]) -> dict[str, Any]: ...
 
         def _next_color(self) -> str: ...
+
+        def _next_patch_color(self) -> str: ...
 
         def _mpl_dash(self, dash: Any, linewidth: Any) -> Any: ...
 
@@ -812,7 +1352,7 @@ class PlotTypeMixin:
                 "kwargs": {
                     "color": resolve_color(chosen_color)
                     if chosen_color is not None
-                    else self._next_color(),
+                    else resolve_color(rcParams["lines.color"]),
                     "width": _float(np.asarray(width).reshape(-1)[0]),
                     "opacity": 1.0 if alpha is None else float(alpha),
                     "name": str(label) if label else None,
@@ -882,7 +1422,11 @@ class PlotTypeMixin:
                 "factory": "segments",
                 "args": (sx0, sy0, sx1, sy1),
                 "kwargs": {
-                    "color": resolve_color(color) if color is not None else self._next_color(),
+                    "color": (
+                        resolve_color(color)
+                        if color is not None
+                        else resolve_color(rcParams["lines.color"])
+                    ),
                     "width": _float(np.asarray(width).reshape(-1)[0]),
                     "opacity": 1.0 if alpha is None else float(alpha),
                     "name": str(label) if label else None,
@@ -923,7 +1467,11 @@ class PlotTypeMixin:
         check_unsupported(kwargs, "broken_barh()")
         entry_kwargs: dict[str, Any] = {
             "base": ranges[:, 0],
-            "color": resolve_color(color) if color is not None else self._next_color(),
+            "color": (
+                resolve_color(color)
+                if color is not None
+                else resolve_color(rcParams["patch.facecolor"])
+            ),
             "name": None if label is None else str(label),
             "opacity": 1.0 if alpha is None else float(alpha),
             "orientation": "horizontal",
@@ -997,9 +1545,13 @@ class PlotTypeMixin:
         from xy import kernels
 
         mark_kwargs: dict[str, Any] = {
-            "color": resolve_color(color) if color is not None else self._next_color(),
+            "color": resolve_color(color) if color is not None else self._next_patch_color(),
             "name": None if label is None else str(label),
             "opacity": 1.0 if alpha is None else float(alpha),
+            # Static exporters must paint each contiguous strip as one polygon.
+            # Independently antialiased triangles expose their shared edges as
+            # hairline seams, and translucent triangles can double-apply alpha.
+            "_joined_fill": True,
         }
         # Triangle meshes cannot stroke only the polygon perimeter; stroking
         # every tessellated triangle creates false internal striping. Keep the
@@ -1087,7 +1639,9 @@ class PlotTypeMixin:
             if chosen is None and positional_color is not None:
                 chosen = positional_color
             mark_kwargs: dict[str, Any] = {
-                "color": resolve_color(chosen) if chosen is not None else self._next_color(),
+                "color": (
+                    resolve_color(chosen) if chosen is not None else self._next_patch_color()
+                ),
                 "name": None if label is None else str(label),
                 "opacity": 1.0 if alpha is None else float(alpha),
                 "_joined_fill": True,
@@ -2557,10 +3111,30 @@ class PlotTypeMixin:
         x_values = np.asarray(x)
         y_values = np.asarray(y)
         limit_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
+        cap_markers: list[tuple[np.ndarray, np.ndarray, str]] = []
         if yerr is not None:
             lower, upper = _error_sides(yerr, len(y_values))
             lower_flags = np.broadcast_to(np.asarray(lolims, dtype=bool), y_values.shape)
             upper_flags = np.broadcast_to(np.asarray(uplims, dtype=bool), y_values.shape)
+            ordinary = ~(lower_flags | upper_flags)
+            if ordinary.any():
+                cap_markers.append(
+                    (
+                        np.concatenate((x_values[ordinary], x_values[ordinary])),
+                        np.concatenate(
+                            (
+                                y_values[ordinary] - lower[ordinary],
+                                y_values[ordinary] + upper[ordinary],
+                            )
+                        ),
+                        "_",
+                    )
+                )
+            limited = lower_flags | upper_flags
+            if limited.any():
+                # Matplotlib puts the caret at the finite error endpoint and
+                # the cap at the reported datum for a one-sided limit.
+                cap_markers.append((x_values[limited], y_values[limited], "_"))
             if lower_flags.any():
                 limit_markers.append(
                     (x_values[lower_flags], y_values[lower_flags] + upper[lower_flags], "^")
@@ -2573,6 +3147,23 @@ class PlotTypeMixin:
             lower, upper = _error_sides(xerr, len(x_values))
             lower_flags = np.broadcast_to(np.asarray(xlolims, dtype=bool), x_values.shape)
             upper_flags = np.broadcast_to(np.asarray(xuplims, dtype=bool), x_values.shape)
+            ordinary = ~(lower_flags | upper_flags)
+            if ordinary.any():
+                cap_markers.append(
+                    (
+                        np.concatenate(
+                            (
+                                x_values[ordinary] - lower[ordinary],
+                                x_values[ordinary] + upper[ordinary],
+                            )
+                        ),
+                        np.concatenate((y_values[ordinary], y_values[ordinary])),
+                        "|",
+                    )
+                )
+            limited = lower_flags | upper_flags
+            if limited.any():
+                cap_markers.append((x_values[limited], y_values[limited], "|"))
             if lower_flags.any():
                 limit_markers.append(
                     (x_values[lower_flags] + upper[lower_flags], y_values[lower_flags], ">")
@@ -2606,6 +3197,8 @@ class PlotTypeMixin:
                 line_color = self._next_color()
             color = line_color
         resolved_capsize = float(rcParams["errorbar.capsize"] if capsize is None else capsize)
+        if not np.isfinite(resolved_capsize) or resolved_capsize < 0.0:
+            raise ValueError("errorbar capsize must be finite and non-negative")
         errorbar_width = float(
             elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
         )
@@ -2620,21 +3213,48 @@ class PlotTypeMixin:
                     "name": base.get("name"),
                     "color": color,
                     "width": errorbar_width,
-                    "cap_size": resolved_capsize,
+                    # Core XY caps are symmetric data-unit geometry. Matplotlib
+                    # caps are fixed-size ``_``/``|`` line markers in points,
+                    # so the pyplot overlays below own them instead.
+                    "cap_size": 0.0,
                     "opacity": base.get("opacity", 1.0),
                 },
             },
         )
+        cap_artists: list[Artist] = []
+        if resolved_capsize > 0.0:
+            for cap_x, cap_y, marker_symbol in cap_markers:
+                cap_entry = self._add(
+                    "scatter",
+                    {
+                        "x": cap_x,
+                        "y": cap_y,
+                        "kwargs": {
+                            "color": color,
+                            "opacity": base.get("opacity", 1.0),
+                            "symbol": MARKER_TO_SYMBOL[marker_symbol],
+                            "density": False,
+                        },
+                        # Preserve point units until chart materialization. A
+                        # resize keeps the marker size fixed, while a DPI change
+                        # re-resolves points to the new output pixels.
+                        "_mpl_line_marker_path_points": 2.0 * resolved_capsize,
+                        "_mpl_line_marker_stroke_points": float(rcParams["lines.markeredgewidth"]),
+                    },
+                )
+                cap_artists.append(Artist(self, cap_entry))
         marker_area = float(max(float(rcParams["lines.markersize"]), 2.0 * resolved_capsize) ** 2)
         for marker_x, marker_y, marker_symbol in limit_markers:
-            self.scatter(
-                marker_x,
-                marker_y,
-                s=marker_area,
-                c=color,
-                marker=marker_symbol,
-                edgecolors=color,
-                linewidths=0.0,
+            cap_artists.append(
+                self.scatter(
+                    marker_x,
+                    marker_y,
+                    s=marker_area,
+                    c=color,
+                    marker=marker_symbol,
+                    edgecolors=color,
+                    linewidths=0.0,
+                )
             )
         data_line: Optional[Line2D] = None
         if fmt.lower() != "none":
@@ -2658,7 +3278,7 @@ class PlotTypeMixin:
             if markersize is not None:
                 line_kwargs_for_plot["markersize"] = markersize
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
-        return ErrorbarContainer(Artist(self, entry), data_line)
+        return ErrorbarContainer(Artist(self, entry), data_line, cap_artists)
 
     def hexbin(
         self,
@@ -2740,6 +3360,11 @@ class PlotTypeMixin:
                 },
             },
         )
+        if bins == "log":
+            # The core pre-transforms the compact per-cell paint channel, but
+            # Matplotlib exposes a LogNorm over the original counts. Preserve
+            # that normalization contract for the associated colorbar.
+            entry["_mpl_norm_scale"] = "log"
         return PathCollection(self, entry)
 
     def _contour(self, filled: bool, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ContourSet:
@@ -2805,6 +3430,8 @@ class PlotTypeMixin:
         # unextended contour. Keep that observable value on the ContourSet
         # while passing the renderer its normalized four-value contract.
         extend = public_extend if public_extend in ("neither", "min", "max", "both") else "neither"
+        cmap_under = cmap_extreme(cmap, "under")
+        cmap_over = cmap_extreme(cmap, "over")
         hatches = kwargs.pop("hatches", None)
         locator = kwargs.pop("locator", None)
         za = np.asarray(z, dtype=np.float64)
@@ -2859,6 +3486,21 @@ class PlotTypeMixin:
             else:
                 count = int(np.asarray(levels, dtype=np.float64).item())
                 levels = _nice_contour_levels(float(finite.min()), float(finite.max()), count)
+                # Match ContourSet._autolev: keep one locator boundary beyond
+                # each data limit, except that an extended end discards its
+                # outer boundary because the under/over band owns that range.
+                # Unrecognized public values remain unextended; this preserves
+                # the gallery's legacy ``extend="lower"`` behavior.
+                under = np.flatnonzero(levels < float(finite.min()))
+                lower = int(under[-1]) if under.size else 0
+                over = np.flatnonzero(levels > float(finite.max()))
+                upper = int(over[0]) + 1 if over.size else len(levels)
+                if public_extend in ("min", "both"):
+                    lower += 1
+                if public_extend in ("max", "both"):
+                    upper -= 1
+                if upper - lower >= 3:
+                    levels = levels[lower:upper]
         public_levels = np.asarray(levels, dtype=np.float64)
         rendered_z = za
         rendered_levels = public_levels
@@ -2961,6 +3603,8 @@ class PlotTypeMixin:
                 "hatches": list(hatches) if hatches is not None else None,
                 "extend": public_extend,
                 "levels": public_levels,
+                "cmap_under": cmap_under,
+                "cmap_over": cmap_over,
             },
         )
         if filled:
@@ -3002,12 +3646,28 @@ class PlotTypeMixin:
                 hy0: list[float] = []
                 hx1: list[float] = []
                 hy1: list[float] = []
+                dot_x: list[float] = []
+                dot_y: list[float] = []
+                star_x: list[float] = []
+                star_y: list[float] = []
+                extend_min = extend in ("min", "both")
+                extend_max = extend in ("max", "both")
                 for row in sample_rows:
                     for col in sample_cols:
                         if not np.isfinite(za[row, col]):
                             continue
                         band = int(np.searchsorted(levels, za[row, col], side="right") - 1)
-                        pattern = patterns[band % len(patterns)]
+                        if band < 0:
+                            if not extend_min:
+                                continue
+                            path_index = 0
+                        elif band >= len(levels) - 1:
+                            if not extend_max:
+                                continue
+                            path_index = len(levels) - 1 + int(extend_min)
+                        else:
+                            path_index = band + int(extend_min)
+                        pattern = patterns[path_index % len(patterns)]
                         if not pattern:
                             continue
                         text = str(pattern)
@@ -3041,20 +3701,18 @@ class PlotTypeMixin:
                             hx1.append(_cx + ox + vx)
                             hy1.append(_cy + oy + vy)
 
-                        if "-" in text or "*" in text:
+                        if "-" in text:
                             stroke("horizontal")
                         for char, angle in (("/", "slash"), ("\\", "backslash")):
                             count = min(3, text.count(char))
                             for index in range(count):
                                 stroke(angle, (index - (count - 1) / 2) * 0.16)
                         if "." in text:
-                            # A tiny cross remains visible in both native raster
-                            # and browser renderers, unlike a zero-length segment.
-                            stroke("horizontal")
-                            stroke("slash")
+                            dot_x.append(cx)
+                            dot_y.append(cy)
                         if "*" in text:
-                            stroke("slash")
-                            stroke("backslash")
+                            star_x.append(cx)
+                            star_y.append(cy)
                 if hx0:
                     self._add(
                         "@mark",
@@ -3064,6 +3722,27 @@ class PlotTypeMixin:
                             "kwargs": {"color": "#222222", "width": 0.9, "opacity": 0.95},
                         },
                     )
+                for marker_x, marker_y, symbol, size in (
+                    (dot_x, dot_y, "circle", 2.2),
+                    (star_x, star_y, "star", 7.0),
+                ):
+                    if marker_x:
+                        overlay = self._add(
+                            "scatter",
+                            {
+                                "x": marker_x,
+                                "y": marker_y,
+                                "kwargs": {
+                                    "color": "#222222",
+                                    "opacity": 0.95,
+                                    "symbol": symbol,
+                                    "size": size,
+                                    "stroke_width": 0.0,
+                                    "name": None,
+                                },
+                            },
+                        )
+                        overlay["_legend_skip"] = True
         return ContourSet(self, entry)
 
     def contour(self, *args: Any, data: TableLike = None, **kwargs: Any) -> ContourSet:
@@ -3102,94 +3781,294 @@ class PlotTypeMixin:
         rightside_up: bool = True,
         zorder: float | None = None,
     ) -> list[Text]:
-        """Label contour levels without exposing contour semantics to core."""
-        del (
-            fontsize,
-            inline,
-            inline_spacing,
-            use_clabeltext,
-            rightside_up,
-            zorder,
-        )  # compat-noop: deterministic shim contour-label placement and styling
-        chosen = np.asarray(CS.levels if levels is None else levels, dtype=np.float64).reshape(-1)
-        if isinstance(manual, (list, tuple, np.ndarray)) and len(manual):
-            label_specs = [
-                (index, level, tuple(manual[index % len(manual)]))
-                for index, level in enumerate(chosen)
-            ]
-        else:
-            source = CS._entry
-            grid = np.asarray(source["args"][0], dtype=np.float64)
-            x_values = source["kwargs"].get("x")
-            y_values = source["kwargs"].get("y")
-            x_values = (
-                np.arange(grid.shape[1], dtype=np.float64)
-                if x_values is None
-                else np.asarray(x_values, dtype=np.float64)
-            )
-            y_values = (
-                np.arange(grid.shape[0], dtype=np.float64)
-                if y_values is None
-                else np.asarray(y_values, dtype=np.float64)
-            )
-            try:
-                from xy import kernels
+        """Label connected contour paths using Matplotlib-like screen geometry.
 
-                x0, x1, y0, y1, segment_levels = kernels.marching_squares(
-                    grid, x_values, y_values, chosen
-                )
-                label_specs = []
-                x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
-                y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
-                for index, level in enumerate(chosen):
-                    candidates = np.flatnonzero(np.isclose(segment_levels, level))
-                    if len(candidates):
-                        target = min(6, max(3, int(np.ceil(len(candidates) / 18))))
-                        probes = np.linspace(0, len(candidates) - 1, target, dtype=int)
-                        accepted: list[tuple[float, float]] = []
-                        for probe in probes:
-                            selected = candidates[(probe + index * 7) % len(candidates)]
-                            location = (
-                                float((x0[selected] + x1[selected]) * 0.5),
-                                float((y0[selected] + y1[selected]) * 0.5),
-                            )
-                            if all(
-                                np.hypot(
-                                    (location[0] - prior[0]) / x_span,
-                                    (location[1] - prior[1]) / y_span,
-                                )
-                                >= 0.12
-                                for prior in accepted
-                            ):
-                                accepted.append(location)
-                        label_specs.extend((index, level, location) for location in accepted)
-            except (ValueError, RuntimeError):
-                label_specs = [(index, level, (0.5, 0.5)) for index, level in enumerate(chosen)]
-        color_values = [colors] * len(chosen) if isinstance(colors, str) else colors
-        if color_values is None:
-            color_values = [None] * len(chosen)
-        elif not isinstance(color_values, list):
-            color_values = list(color_values)
-        result: list[Text] = []
-        for index, level, location in label_specs:
-            if callable(fmt):
-                label = str(fmt(level))
+        Marching squares remains native, while path joining and text placement
+        stay in the compatibility shim.  Automatic labels prefer flat path
+        windows, avoid prior labels in display space, rotate to the local
+        tangent, and place at most one label on each eligible connected
+        component.  Iterable ``manual`` positions are snapped to the nearest
+        requested contour instead of being assigned to levels round-robin.
+        ``zorder`` controls the returned text artists. Dynamic aspect-following
+        rotation from ``use_clabeltext=True`` is rejected until the shim can
+        recompute text transforms after an aspect change.
+        """
+        if use_clabeltext:
+            raise not_implemented(
+                "clabel(use_clabeltext=True)",
+                "fixed contour-label rotation or explicit relabeling after aspect changes",
+            )
+        if not isinstance(CS, ContourSet) or CS._axes is not self:
+            raise ValueError("clabel() requires a ContourSet from this Axes")
+        inline_spacing = float(inline_spacing)
+        if not np.isfinite(inline_spacing) or inline_spacing < 0:
+            raise ValueError("inline_spacing must be a non-negative finite value")
+        if isinstance(manual, (bool, np.bool_)) and bool(manual):
+            raise not_implemented(
+                "clabel(manual=True)",
+                "an iterable of manual data-coordinate positions",
+            )
+
+        source = CS._entry
+        public_levels = np.asarray(CS.levels, dtype=np.float64).reshape(-1)
+        requested = (
+            public_levels if levels is None else np.asarray(levels, dtype=np.float64).reshape(-1)
+        )
+        chosen_indices: list[int] = []
+        for index, level in enumerate(public_levels):
+            tolerance = np.finfo(float).eps * max(1.0, abs(float(level))) * 8.0
+            if np.any(np.isclose(requested, level, rtol=0.0, atol=tolerance)):
+                chosen_indices.append(index)
+        matched = public_levels[chosen_indices]
+        if len(matched) < len(requested):
+            raise ValueError(
+                f"Specified levels {requested.tolist()} don't match available levels "
+                f"{public_levels.tolist()}"
+            )
+
+        grid = np.asarray(source["args"][0], dtype=np.float64)
+        x_values = source["kwargs"].get("x")
+        y_values = source["kwargs"].get("y")
+        x_values = (
+            np.arange(grid.shape[1], dtype=np.float64)
+            if x_values is None
+            else np.asarray(x_values, dtype=np.float64)
+        )
+        y_values = (
+            np.arange(grid.shape[0], dtype=np.float64)
+            if y_values is None
+            else np.asarray(y_values, dtype=np.float64)
+        )
+        rendered_levels = np.asarray(
+            source["kwargs"].get("levels", public_levels), dtype=np.float64
+        ).reshape(-1)
+
+        from xy import kernels
+
+        x0, x1, y0, y1, segment_levels = kernels.marching_squares(
+            grid, x_values, y_values, rendered_levels
+        )
+        canvas_width, canvas_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        _left, _bottom, axes_width, axes_height = self.get_position().bounds
+        plot_width = max(40.0, float(canvas_width) * axes_width)
+        plot_height = max(40.0, float(canvas_height) * axes_height)
+        x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
+        y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
+        scale = np.asarray((plot_width / x_span, plot_height / y_span), dtype=np.float64)
+
+        all_connected: list[tuple[int, np.ndarray, np.ndarray]] = []
+        for public_index, rendered_level in enumerate(rendered_levels):
+            tolerance = np.finfo(float).eps * max(1.0, abs(float(rendered_level))) * 16.0
+            selected = np.isclose(segment_levels, rendered_level, rtol=0.0, atol=tolerance)
+            for path in _joined_contour_paths(
+                x0[selected], x1[selected], y0[selected], y1[selected]
+            ):
+                all_connected.append((public_index, path, path * scale))
+        connected = [item for item in all_connected if int(item[0]) in set(chosen_indices)]
+
+        font_points = _text_font_size_points(
+            rcParams["font.size"] if fontsize is None else fontsize
+        )
+        font_pixels = font_points * self._point_scale()
+
+        def label_text(level: float) -> str:
+            if callable(getattr(fmt, "format_ticks", None)):
+                value = fmt.format_ticks([*matched, level])[-1]
+            elif callable(fmt):
+                value = fmt(level)
             elif isinstance(fmt, dict):
-                label = str(fmt.get(level, level))
+                value = fmt.get(level, "%1.3f")
             elif isinstance(fmt, str):
-                label = fmt % level
+                value = fmt % level
             else:
-                label = f"{level:g}"
-            label = _plain_label(label)
-            color = color_values[index % len(color_values)]
+                value = f"{level:g}"
+            return _plain_label(value)
+
+        default_colors = _contour_legend_colors(source, len(public_levels))
+        color_array = (
+            np.asarray(colors) if colors is not None and not isinstance(colors, str) else None
+        )
+        scalar_explicit_color = isinstance(colors, str) or (
+            color_array is not None
+            and color_array.ndim == 1
+            and len(color_array) in (3, 4)
+            and all(
+                np.isscalar(value) and not isinstance(value, (str, bytes)) for value in color_array
+            )
+        )
+        if colors is None:
+            explicit_colors: list[Any] | None = None
+        elif scalar_explicit_color:
+            explicit_colors = [colors]
+        else:
+            explicit_colors = list(colors)
+            if not explicit_colors:
+                raise ValueError("colors must contain at least one color")
+
+        label_specs: list[dict[str, Any]] = []
+        occupied: list[tuple[float, float, float]] = []
+        if not (manual is None or (isinstance(manual, (bool, np.bool_)) and not bool(manual))):
+            try:
+                manual_locations = list(manual)
+            except TypeError as exc:
+                raise TypeError("manual must be False, True, or an iterable of (x, y)") from exc
+            for raw_location in manual_locations:
+                values = np.asarray(raw_location, dtype=np.float64).reshape(-1)
+                if len(values) != 2 or not np.isfinite(values).all():
+                    raise ValueError("manual contour-label positions must be finite (x, y) pairs")
+                snapped = _nearest_contour_location(
+                    (float(values[0]) * scale[0], float(values[1]) * scale[1]),
+                    connected,
+                    rightside_up=rightside_up,
+                )
+                if snapped is None:
+                    continue
+                public_index = int(snapped["level_index"])
+                text = label_text(float(public_levels[public_index]))
+                snapped.update(
+                    {
+                        "level": float(public_levels[public_index]),
+                        "text": text,
+                        "label_width": max(font_pixels * 0.7, len(text) * font_pixels * 0.62),
+                    }
+                )
+                label_specs.append(snapped)
+        else:
+            for public_index, path, screen_path in connected:
+                text = label_text(float(public_levels[public_index]))
+                label_width = max(font_pixels * 0.7, len(text) * font_pixels * 0.62)
+                placed = _contour_label_location(
+                    path,
+                    screen_path,
+                    label_width,
+                    font_pixels,
+                    occupied,
+                    rightside_up=rightside_up,
+                )
+                if placed is None:
+                    continue
+                placed.update(
+                    {
+                        "level_index": public_index,
+                        "level": float(public_levels[public_index]),
+                        "path": path,
+                        "screen_path": screen_path,
+                        "text": text,
+                        "label_width": label_width,
+                    }
+                )
+                label_specs.append(placed)
+
+        if inline and label_specs and not source["kwargs"].get("filled", False):
+            exclusions: dict[int, list[tuple[float, float]]] = {}
+            for spec in label_specs:
+                half_width = float(spec["label_width"]) * 0.5 + inline_spacing
+                exclusions.setdefault(id(spec["path"]), []).append(
+                    (
+                        float(spec["distance"]) - half_width,
+                        float(spec["distance"]) + half_width,
+                    )
+                )
+            contour_colors = _contour_legend_colors(source, len(public_levels))
+            contour_widths = np.asarray(source["kwargs"].get("width", 1.1), dtype=float).reshape(-1)
+            opacity = float(source["kwargs"].get("opacity", 1.0))
+            generated: list[dict[str, Any]] = []
+            for public_index in range(len(public_levels)):
+                visible: list[tuple[np.ndarray, np.ndarray]] = []
+                for level_index, path, screen_path in all_connected:
+                    if level_index != public_index:
+                        continue
+                    visible.extend(
+                        _contour_visible_segments(
+                            path,
+                            _path_cumulative(screen_path),
+                            exclusions.get(id(path), []),
+                        )
+                    )
+                if not visible:
+                    continue
+                rendered_width = float(contour_widths[public_index % len(contour_widths)])
+                dash = (
+                    [3.7 * rendered_width, 1.6 * rendered_width]
+                    if source["kwargs"].get("dash_negative") and public_levels[public_index] < 0
+                    else None
+                )
+                generated.append(
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": (
+                                [float(segment[0][0]) for segment in visible],
+                                [float(segment[0][1]) for segment in visible],
+                                [float(segment[1][0]) for segment in visible],
+                                [float(segment[1][1]) for segment in visible],
+                            ),
+                            "kwargs": {
+                                "color": contour_colors[public_index],
+                                "width": rendered_width,
+                                "opacity": opacity,
+                                "dash": dash,
+                            },
+                        },
+                    )
+                )
+            if generated:
+                # The mappable remains live for colorbar()/clim(), but its
+                # unsplit native trace is hidden behind exact generic segment
+                # replacements. Keep those replacements adjacent to the
+                # original artist so later marks retain their creation order.
+                source["kwargs"]["opacity"] = 0.0
+                source_index = next(
+                    index for index, entry in enumerate(self._entries) if entry is source
+                )
+                generated_ids = {id(entry) for entry in generated}
+                self._entries[:] = [
+                    entry for entry in self._entries if id(entry) not in generated_ids
+                ]
+                self._entries[source_index + 1 : source_index + 1] = generated
+                self._invalidate()
+
+        result: list[Text] = []
+        contour_zorder = CS.get_zorder()
+        if "_zorder" not in source:
+            # Matplotlib's default collection zorders are 1 for filled
+            # contours and 2 for contour lines. The shim's contour payload
+            # predates public zorder state, so use those defaults only while
+            # the caller has not explicitly mutated the ContourSet.
+            contour_zorder = 1.0 if source["kwargs"].get("filled", False) else 2.0
+        label_zorder = 2.0 + contour_zorder if zorder is None else float(zorder)
+        for spec in label_specs:
+            public_index = int(spec["level_index"])
+            if explicit_colors is None:
+                color = default_colors[public_index]
+            else:
+                color = resolve_color(
+                    explicit_colors[chosen_indices.index(public_index) % len(explicit_colors)]
+                )
+            style = {
+                "font_size": font_points,
+                "rotation": float(spec["angle"]),
+                "vertical_align": "center",
+            }
             entry = self._add(
                 "@text",
                 {
-                    "args": (float(location[0]), float(location[1]), label),
-                    "kwargs": {"color": resolve_color(color)} if color is not None else {},
+                    "args": (
+                        float(spec["position"][0]),
+                        float(spec["position"][1]),
+                        str(spec["text"]),
+                    ),
+                    "kwargs": {
+                        "anchor": "middle",
+                        "color": color,
+                        "style": style,
+                    },
                 },
             )
-            result.append(Text(self, entry))
+            label = Text(self, entry)
+            label.set_zorder(label_zorder)
+            result.append(label)
         return result
 
     def bxp(
@@ -4029,7 +4908,9 @@ class PlotTypeMixin:
         keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
         (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
         ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, ``norm``
-        (linear ``Normalize`` only), and ``antialiased`` (default only).
+        (``"linear"``/``"log"``, their Normalize classes, or ``BoundaryNorm``),
+        ``rasterized`` for the regular heatmap path, and ``antialiased``
+        (default only).
         Unknown keywords raise loudly.
         """
         if len(args) == 1:
@@ -4051,23 +4932,42 @@ class PlotTypeMixin:
         edgecolors = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidth = kwargs.pop("linewidth", kwargs.pop("linewidths", None))
         norm = kwargs.pop("norm", None)
-        if norm is not None and type(norm).__name__ != "Normalize":
-            # Only the linear Normalize maps onto the engine's domain contract.
-            raise not_implemented(
-                f"pcolormesh(norm={type(norm).__name__})", alternative="vmin=/vmax="
-            )
+        rasterized = kwargs.pop("rasterized", False)
+        if not isinstance(rasterized, (bool, np.bool_)):
+            raise TypeError("pcolormesh rasterized must be a boolean")
         if shading not in (None, "auto", "flat", "nearest", "gouraud"):
             raise ValueError(f"invalid pcolormesh shading {shading!r}")
         check_unsupported(kwargs, "pcolormesh()")
-        colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
+        cmap_value = cmap if cmap is not None else "viridis"
+        colormap = resolve_cmap(cmap_value)
         opacity = 1.0 if alpha is None else float(alpha)
-        norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
-        if vmin is None and norm_vmin is not None:
-            vmin = norm_vmin
-        if vmax is None and norm_vmax is not None:
-            vmax = norm_vmax
-        domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
+        prepared_boundary = prepare_boundary_norm(z, norm, cmap_value, vmin, vmax)
+        boundary_boundaries: np.ndarray | None = None
+        boundary_colors: np.ndarray | None = None
+        if prepared_boundary is None:
+            render_z, domain, norm_scale = normalize_scalar_grid(z, norm, vmin, vmax)
+            truecolor_z = scalar_grid_rgba(render_z, cmap_value) if norm_scale == "log" else None
+        else:
+            domain = prepared_boundary.domain
+            norm_scale = "boundary"
+            truecolor_z = prepared_boundary.rgba
+            boundary_boundaries = prepared_boundary.boundaries
+            boundary_colors = prepared_boundary.band_colors
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
+
+        def finish(entry: dict[str, Any]) -> PolyCollection:
+            if domain is not None:
+                entry["_mpl_domain"] = domain
+            if norm_scale == "log":
+                entry["_mpl_norm_scale"] = norm_scale
+            if boundary_boundaries is not None and boundary_colors is not None:
+                entry["discrete_levels"] = len(boundary_boundaries) - 1
+                entry["discrete_boundaries"] = boundary_boundaries
+                entry["discrete_colors"] = boundary_colors
+            handle = PolyCollection(self, entry)
+            handle._rasterized = bool(rasterized)
+            return handle
+
         if shading == "gouraud":
             gouraud_axes = (
                 (np.arange(z.shape[1], dtype=float), np.arange(z.shape[0], dtype=float))
@@ -4080,7 +4980,9 @@ class PlotTypeMixin:
             if gouraud_axes is not None and no_edges:
                 width = max(2, min(512, max(256, z.shape[1] * 32)))
                 height = max(2, min(512, max(256, z.shape[0] * 32)))
-                smooth = _bilinear_grid(z, width, height)
+                smooth = _bilinear_grid(
+                    truecolor_z if truecolor_z is not None else z, width, height
+                )
                 gx, gy = gouraud_axes
                 mark_kwargs: dict[str, Any] = {
                     "x": np.linspace(float(gx[0]), float(gx[-1]), width),
@@ -4088,7 +4990,7 @@ class PlotTypeMixin:
                     "colormap": colormap,
                     "opacity": opacity,
                 }
-                if domain is not None:
+                if domain is not None and norm_scale == "linear":
                     mark_kwargs["domain"] = domain
                 entry = self._add(
                     "@mark",
@@ -4099,7 +5001,7 @@ class PlotTypeMixin:
                         "source_z": z,
                     },
                 )
-                return PolyCollection(self, entry)
+                return finish(entry)
         if x is None or (regular is not None and shading != "gouraud"):
             if regular is not None:
                 x, y = regular
@@ -4115,21 +5017,26 @@ class PlotTypeMixin:
                 "colormap": colormap,
                 "opacity": opacity,
             }
-            if domain is not None:
+            if domain is not None and norm_scale == "linear":
                 mark_kwargs["domain"] = domain
             entry = self._add(
                 "@mark",
                 {
                     "factory": "heatmap",
-                    "args": (z,),
+                    "args": (truecolor_z if truecolor_z is not None else z,),
                     "kwargs": mark_kwargs,
                     "source_z": z,
                 },
             )
-            return PolyCollection(self, entry)
+            return finish(entry)
 
         from xy import kernels
 
+        if rasterized:
+            raise not_implemented(
+                "pcolormesh(rasterized=True) on a non-uniform mesh",
+                "rasterized=True on a regular rectilinear mesh",
+            )
         if y is None:
             raise ValueError("pcolormesh requires Y when X is provided")
         x0, y0, x1, y1, x2, y2, scalar = kernels.quad_mesh_triangles(x, y, z)
@@ -4156,12 +5063,26 @@ class PlotTypeMixin:
             x0, y0, x1, y1, x2, y2, scalar = (
                 values[finite_triangles] for values in (x0, y0, x1, y1, x2, y2, scalar)
             )
+        if norm_scale == "boundary":
+            scalar_boundary = prepare_boundary_norm(scalar, norm, cmap_value)
+            assert scalar_boundary is not None
+            painted_scalar = scalar_boundary.rgba
+        elif norm_scale == "log":
+            normalized_scalar, _resolved_domain, _scale = normalize_scalar_grid(
+                scalar,
+                norm_scale,
+                domain[0] if domain is not None else vmin,
+                domain[1] if domain is not None else vmax,
+            )
+            painted_scalar: Any = scalar_grid_rgba(normalized_scalar, cmap_value)
+        else:
+            painted_scalar = scalar
         mark_kwargs = {
-            "color": scalar,
+            "color": painted_scalar,
             "colormap": colormap,
             "opacity": opacity,
         }
-        if domain is not None:
+        if domain is not None and norm_scale == "linear":
             mark_kwargs["domain"] = domain
         no_edges = edgecolors is None or (
             isinstance(edgecolors, str) and edgecolors.lower() == "none"
@@ -4181,7 +5102,7 @@ class PlotTypeMixin:
                 "_mpl_sticky_edges": mesh_extent,
             },
         )
-        return PolyCollection(self, entry)
+        return finish(entry)
 
     def pcolor(self, *args: Any, **kwargs: Any) -> PolyCollection:
         """A pseudocolor plot of a 2-D array (see ``pcolormesh``).
@@ -4267,7 +5188,7 @@ class PlotTypeMixin:
         colors: Any = None,
         autopct: Any = None,
         pctdistance: float = 0.6,
-        shadow: bool = False,
+        shadow: bool | Mapping[str, Any] = False,
         labeldistance: float | None = 1.1,
         startangle: float = 0,
         radius: float = 1,
@@ -4287,15 +5208,13 @@ class PlotTypeMixin:
         ``explode`` offsets slices, ``autopct`` labels them with their share
         (%-format or callable), ``startangle``/``counterclock`` control
         orientation, and ``wedgeprops``/``textprops`` style slices and
-        labels. ``shadow``, ``frame``, ``rotatelabels``, and ``hatch`` raise
-        loudly. Returns ``(wedges, texts)`` or ``(wedges, texts, autotexts)``
-        as matplotlib does.
+        labels. Per-wedge hatches and Matplotlib ``Shadow`` dictionaries are
+        retained as bounded geometry in every renderer. ``frame`` and
+        ``rotatelabels`` still raise loudly. Returns ``(wedges, texts)`` or
+        ``(wedges, texts, autotexts)`` as matplotlib does.
         """
-        _reject_non_default("pie", "shadow", shadow, False)
         _reject_non_default("pie", "frame", frame, False)
         _reject_non_default("pie", "rotatelabels", rotatelabels, False)
-        if hatch is not None:
-            raise not_implemented("pie(hatch=...)")
         source_values = np.asarray(_from_data(x, data))
         values = np.asarray(source_values, dtype=np.float64)
         if values.ndim != 1 or len(values) == 0:
@@ -4322,10 +5241,88 @@ class PlotTypeMixin:
         edgecolor = wedge_style.pop("edgecolor", wedge_style.pop("ec", None))
         linewidth = wedge_style.pop("linewidth", wedge_style.pop("lw", None))
         alpha = wedge_style.pop("alpha", None)
-        if wedge_style.pop("hatch", None) is not None:
-            raise not_implemented("pie(wedgeprops={'hatch': ...})")
+        zorder = float(wedge_style.pop("zorder", 1.0))
+        wedge_hatch = wedge_style.pop("hatch", None)
+        hatch_color = wedge_style.pop(
+            "hatchcolor",
+            wedge_style.pop("hatch_color", "#000000"),
+        )
         if wedge_style:
             check_unsupported(wedge_style, "pie(wedgeprops=)")
+        if wedge_hatch is not None:
+            hatch_values = [str(wedge_hatch)] * len(values)
+        elif hatch is None:
+            hatch_values = [None] * len(values)
+        else:
+            provided_hatches = [hatch] if isinstance(hatch, str) else list(hatch)
+            if not provided_hatches:
+                raise ValueError("pie hatch must not be empty")
+            hatch_values = [
+                None
+                if provided_hatches[index % len(provided_hatches)] is None
+                else str(provided_hatches[index % len(provided_hatches)])
+                for index in range(len(values))
+            ]
+        shadow_options: dict[str, Any] | None = None
+        if shadow:
+            if not isinstance(shadow, (bool, Mapping)):
+                raise TypeError("pie shadow must be a bool or mapping")
+            shadow_options = {
+                "ox": -0.02,
+                "oy": -0.02,
+                "shade": 0.7,
+                "alpha": 0.5,
+                "label": "_nolegend_",
+            }
+            if isinstance(shadow, Mapping):
+                shadow_options.update(shadow)
+            shade = float(shadow_options.pop("shade"))
+            if not 0.0 <= shade <= 1.0:
+                raise ValueError("pie shadow shade must be between 0 and 1")
+            shadow_options["shade"] = shade
+            shadow_options["ox"] = float(shadow_options["ox"])
+            shadow_options["oy"] = float(shadow_options["oy"])
+            shadow_options["zorder"] = float(
+                shadow_options.get("zorder", np.nextafter(zorder, -np.inf))
+            )
+            shadow_options["linewidth"] = float(
+                shadow_options.pop(
+                    "lw",
+                    shadow_options.get("linewidth", rcParams["patch.linewidth"]),
+                )
+            )
+            shadow_options["facecolor"] = shadow_options.pop("fc", shadow_options.get("facecolor"))
+            shadow_options["edgecolor"] = shadow_options.pop("ec", shadow_options.get("edgecolor"))
+            shadow_color = shadow_options.pop("color", None)
+            if shadow_color is not None:
+                shadow_options["facecolor"] = shadow_color
+                shadow_options["edgecolor"] = shadow_color
+            visible = shadow_options.pop("visible", True)
+            if not bool(visible):
+                shadow_options = None
+            if shadow_options is not None:
+                supported_shadow = {
+                    "ox",
+                    "oy",
+                    "shade",
+                    "alpha",
+                    "label",
+                    "zorder",
+                    "linewidth",
+                    "facecolor",
+                    "edgecolor",
+                }
+                check_unsupported(
+                    {
+                        key: value
+                        for key, value in shadow_options.items()
+                        if key not in supported_shadow
+                    },
+                    "pie(shadow=)",
+                )
+                shadow_options = {
+                    key: value for key, value in shadow_options.items() if key in supported_shadow
+                }
         inner_radius = 0.0 if width is None else max(0.0, float(radius) - float(width))
         from xy import kernels
 
@@ -4345,39 +5342,135 @@ class PlotTypeMixin:
             ([0.0], np.cumsum(values) / total)
         )
         mids = (boundaries[:-1] + boundaries[1:]) * 0.5
-        wedges: list[Wedge] = []
+        extent = float(radius) * (1.25 + float(np.max(offsets)))
+        data_units_per_point = 0.0
+        if shadow_options is not None and self.figure is not None:
+            figure_width, figure_height = self.figure.get_size_inches()
+            _left, _bottom, axes_width, axes_height = self.get_position(original=True).bounds
+            active_points = min(axes_width * figure_width, axes_height * figure_height) * 72.0
+            data_units_per_point = 2.0 * extent / max(active_points, np.finfo(float).eps)
+
+        wedge_geometry: list[
+            tuple[
+                tuple[
+                    tuple[np.ndarray, np.ndarray],
+                    tuple[np.ndarray, np.ndarray],
+                    tuple[np.ndarray, np.ndarray],
+                ],
+                str | None,
+            ]
+        ] = []
+        outline_args: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None] = []
         for index in range(len(values)):
             selected = sectors == float(index)
-            face = resolve_color(color_values[index])
+            vertices = (
+                (x0[selected], y0[selected]),
+                (x1[selected], y1[selected]),
+                (x2[selected], y2[selected]),
+            )
+            wedge_geometry.append((vertices, resolve_color(color_values[index])))
+            outline_args.append(
+                _triangle_mesh_exterior(vertices) if edgecolor is not None else None
+            )
+
+        shadow_entries: list[list[dict[str, Any]]] = [[] for _ in values]
+        if shadow_options is not None:
+            shift_x = float(shadow_options["ox"]) * data_units_per_point
+            shift_y = float(shadow_options["oy"]) * data_units_per_point
+            shade = float(shadow_options["shade"])
+            shadow_alpha = shadow_options.get("alpha", 0.5)
+            shadow_zorder = float(shadow_options["zorder"])
+            for index, (vertices, face) in enumerate(wedge_geometry):
+                face_rgba = resolve_rgba(face)
+                shade_factor = round(1.0 - shade, 15)
+                darkened = tuple(shade_factor * channel for channel in face_rgba[:3])
+                explicit_face = shadow_options.get("facecolor")
+                shadow_face = (
+                    resolve_color(explicit_face)
+                    if explicit_face is not None
+                    else resolve_color(darkened)
+                )
+                opacity = face_rgba[3] if shadow_alpha is None else float(shadow_alpha)
+                shifted = tuple(
+                    (
+                        vertex[0] + shift_x,
+                        vertex[1] + shift_y,
+                    )
+                    for vertex in vertices
+                )
+                shadow_entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": (
+                            shifted[0][0],
+                            shifted[0][1],
+                            shifted[1][0],
+                            shifted[1][1],
+                            shifted[2][0],
+                            shifted[2][1],
+                        ),
+                        "kwargs": {
+                            "color": shadow_face,
+                            "name": None,
+                            "opacity": opacity,
+                            "_joined_fill": True,
+                        },
+                    },
+                )
+                shadow_entry["_zorder"] = shadow_zorder
+                shadow_entry["_legend_skip"] = True
+                shadow_entry["_pie_shadow_offset_points"] = (
+                    float(shadow_options["ox"]),
+                    float(shadow_options["oy"]),
+                )
+                shadow_entries[index].append(shadow_entry)
+                shadow_edge = shadow_options.get("edgecolor")
+                if shadow_edge is None:
+                    shadow_edge = shadow_face
+                resolved_shadow_edge = resolve_color(shadow_edge)
+                if resolved_shadow_edge != "transparent":
+                    shadow_outline = self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": _triangle_mesh_exterior(shifted),
+                            "kwargs": {
+                                "color": resolved_shadow_edge,
+                                "width": float(shadow_options["linewidth"]) * self._point_scale(),
+                                "opacity": opacity,
+                            },
+                        },
+                    )
+                    shadow_outline["_zorder"] = shadow_zorder
+                    shadow_outline["_legend_skip"] = True
+                    shadow_entries[index].append(shadow_outline)
+
+        wedge_entries: list[dict[str, Any]] = []
+        for index, (vertices, face) in enumerate(wedge_geometry):
             mark_kwargs: dict[str, Any] = {
                 "color": face,
                 "name": None if label_values[index] is None else str(label_values[index]),
                 "opacity": 1.0 if alpha is None else float(alpha),
+                "_joined_fill": True,
             }
-            if edgecolor is not None:
-                mark_kwargs["stroke"] = resolve_color(edgecolor)
-                mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
-            else:
-                # A sector is a fan of adjacent triangles. Stroke each fan
-                # triangle with its own face color so anti-aliasing cannot
-                # expose the figure background as radial hairline spokes.
-                mark_kwargs["stroke"] = face
-                mark_kwargs["stroke_width"] = 0.75
             entry = self._add(
                 "@mark",
                 {
                     "factory": "triangle_mesh",
                     "args": (
-                        x0[selected],
-                        y0[selected],
-                        x1[selected],
-                        y1[selected],
-                        x2[selected],
-                        y2[selected],
+                        vertices[0][0],
+                        vertices[0][1],
+                        vertices[1][0],
+                        vertices[1][1],
+                        vertices[2][0],
+                        vertices[2][1],
                     ),
                     "kwargs": mark_kwargs,
                 },
             )
+            entry["_zorder"] = zorder
+            entry["_legend_kind"] = "patch"
             entry["pie_center"] = (float(center[0]), float(center[1]))
             entry["pie_mid"] = float(mids[index])
             entry["pie_radius"] = float(radius)
@@ -4385,7 +5478,61 @@ class PlotTypeMixin:
             theta_start, theta_end = np.rad2deg(boundaries[index : index + 2])
             entry["pie_theta1"] = float(min(theta_start, theta_end))
             entry["pie_theta2"] = float(max(theta_start, theta_end))
-            wedges.append(Wedge(self, entry))
+            entry["pie_hatch"] = hatch_values[index]
+            entry["pie_hatch_color"] = resolve_color(hatch_color)
+            wedge_entries.append(entry)
+
+        # Draw clipped hatches and every explicit outline after every fill. A
+        # later neighboring wedge must not overpaint either decoration.
+        wedges: list[Wedge] = []
+        for index, (entry, segment_args) in enumerate(
+            zip(wedge_entries, outline_args, strict=True)
+        ):
+            hatch_entry = None
+            pattern = hatch_values[index]
+            if pattern:
+                hatch_args = _pie_hatch_geometry(wedge_geometry[index][0], pattern)
+                if len(hatch_args[0]):
+                    hatch_entry = self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": hatch_args,
+                            "kwargs": {
+                                "color": resolve_color(hatch_color),
+                                "width": 0.8 * self._point_scale(),
+                                "opacity": 1.0 if alpha is None else float(alpha),
+                            },
+                        },
+                    )
+                    hatch_entry["_zorder"] = zorder
+                    hatch_entry["_legend_skip"] = True
+                    hatch_entry["_pie_hatch"] = pattern
+            outline_entry = None
+            if segment_args is not None:
+                outline_entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": segment_args,
+                        "kwargs": {
+                            "color": resolve_color(edgecolor),
+                            "width": 1.0 if linewidth is None else float(linewidth),
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
+                outline_entry["_zorder"] = zorder
+                outline_entry["_legend_skip"] = True
+            wedges.append(
+                Wedge(
+                    self,
+                    entry,
+                    outline_entry,
+                    hatch_entry=hatch_entry,
+                    shadow_entries=shadow_entries[index],
+                )
+            )
 
         angle = np.deg2rad(float(startangle))
         text_kwargs = _textprops_kwargs(textprops, "pie(textprops=)")
@@ -4427,13 +5574,11 @@ class PlotTypeMixin:
                     add_text(float(pctdistance), mid, str(label), float(offsets[index]))
                 )
             angle += sweep
-        extent = float(radius) * (1.25 + float(np.max(offsets)))
         self.set_xlim(float(center[0]) - extent, float(center[0]) + extent)
         self.set_ylim(float(center[1]) - extent, float(center[1]) + extent)
         self.set_aspect("equal", adjustable="box")
         if not frame:
             self.set_axis_off()
-            self._hidden_spines.update(("left", "bottom", "top", "right"))
         return PieContainer(wedges, source_values, bool(normalize), texts, autotexts)
 
     def pie_label(
@@ -4825,7 +5970,8 @@ class PlotTypeMixin:
             raise not_implemented(f"{where}(norm={type(norm).__name__})", alternative="vmin=/vmax=")
         # Matplotlib antialiases contour lines but not filled bands by default.
         _reject_non_default(where, "antialiased", kwargs.pop("antialiased", None), not filled)
-        if kwargs.pop("linestyles", None) is not None:
+        linestyles = kwargs.pop("linestyles", None)
+        if linestyles not in (None, "-", "solid"):
             raise not_implemented(f"{where}(linestyles=...)")
         _reject_non_default(where, "extend", kwargs.pop("extend", None), "neither")
         hatches = kwargs.pop("hatches", None)
@@ -4944,7 +6090,8 @@ class PlotTypeMixin:
         Call as ``tricontour(x, y, values[, levels])`` with optional
         ``triangles`` indices. Supported keywords: ``levels``, ``cmap``,
         ``colors``, ``linewidths``, ``alpha``, ``label``, ``norm`` (linear
-        ``Normalize`` only), and ``data``; ``linestyles``, a non-default
+        ``Normalize`` only), and ``data``. ``linestyles`` accepts the solid
+        aliases ``"-"`` and ``"solid"``; other line styles, a non-default
         ``extend``, and unknown keywords raise loudly.
         """
         return self._tricontour(False, args, kwargs)
@@ -4954,7 +6101,8 @@ class PlotTypeMixin:
 
         Same call forms and keywords as ``tricontour``; ``hatches`` fills
         bands with approximate hatch strokes, and ``colors="none"`` renders
-        a fully transparent fill.
+        a fully transparent fill. Filled bands remain a per-triangle color
+        approximation rather than clipped triangular isoband polygons.
         """
         return self._tricontour(True, args, kwargs)
 

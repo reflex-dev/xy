@@ -577,6 +577,45 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     assert "view._applyDensitySample(g, d.sample, buffers);" in lod
 
 
+def test_authored_markers_keep_lod_and_style_channels_cpu_readable() -> None:
+    chartview = _read(ROOT / "js/src/50_chartview.ts")
+    lod = _read(ROOT / "js/src/45_lod.ts")
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+
+    # The draw queue records the exact direct/sample/drill object selected by
+    # LOD, including its transition alpha, rather than rescanning top-level
+    # traces and silently omitting density samples.
+    assert "this._authoredScatterDraws = [];" in chartview
+    assert "(this._authoredScatterDraws ||= []).push({ g, opacityScale });" in chartview
+    assert "const draws = (this._authoredScatterDraws || []).filter(" in annotations
+
+    # Direct, density-sample, and density-drill rows all retain the canonical
+    # style and edge-paint channels needed by the Canvas overlay.
+    assert "g._cpuStyle = values;" in chartview
+    assert "s._cpuStyle = values;" in chartview
+    assert "d._cpuStyle = values;" in lod
+    assert "g._cpuStroke = this._columnView(" in chartview
+    assert "s._cpuStroke = this._asU8(" in chartview
+    assert "d._cpuStroke = values;" in lod
+
+    draw_start = annotations.index("_drawAuthoredScatterMarkers(ctx) {")
+    draw_body = annotations[
+        draw_start : annotations.index("\n  _annotationPaint(style, fallback)", draw_start)
+    ]
+    loop_start = draw_body.index("for (let index = 0; index < g.n; index++)")
+    assert "buildLutData(" in draw_body[:loop_start]
+    assert "buildLutData(" not in draw_body[loop_start:]
+    for marker in (
+        "g._cpuStyle.subarray(",
+        "itemStyle[0]",
+        "itemStyle[1]",
+        "itemStyle[2]",
+        "itemStyle[3]",
+        "g._cpuStroke.slice(",
+    ):
+        assert marker in draw_body
+
+
 def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
     """Keep canvas paint synchronized with class- and attribute-driven themes."""
     required = (

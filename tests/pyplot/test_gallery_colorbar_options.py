@@ -92,6 +92,8 @@ def test_short_gallery_colorbar_renders_only_three_major_tick_labels() -> None:
         ({"shrink": 0.0}, "shrink"),
         ({"anchor": (0.5,)}, "anchor"),
         ({"location": "right", "orientation": "horizontal"}, "incompatible"),
+        ({"spacing": "stretched"}, "spacing"),
+        ({"format": object(), "ticks": [0.0, 1.0]}, "format"),
     ],
 )
 def test_colorbar_gallery_options_reject_invalid_values(
@@ -100,5 +102,5 @@ def test_colorbar_gallery_options_reject_invalid_values(
     fig, ax = plt.subplots()
     image = ax.imshow(np.eye(3))
 
-    with pytest.raises((ValueError, NotImplementedError), match=message):
+    with pytest.raises((TypeError, ValueError, NotImplementedError), match=message):
         fig.colorbar(image, ax=ax, **kwargs)

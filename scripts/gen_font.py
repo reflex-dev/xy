@@ -41,7 +41,7 @@ EXTRA = sorted(
         "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ"
         "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢₖₗₘₙₒₚᵣₛₜᵤᵥₓ"
         "×·±∓≤≥≠≈∞√°→←∂∇∫∝∈−–—‘’“”…µ"
-        "§¶†‡•‰≡⌀"
+        "§¶†‡•‰≡⌀♣♦♥♠"
         + _LATIN
         + _CURRENCY
         # U+FFFD is the fallback the rasterizer substitutes for anything still
