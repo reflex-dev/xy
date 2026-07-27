@@ -146,7 +146,7 @@ def test_constrained_layout_remeasures_final_rotated_category_labels() -> None:
     fig.savefig(png, format="png", dpi=100)
     fig.savefig(svg, format="svg", dpi=100)
     assert png.getvalue().startswith(b"\x89PNG")
-    assert b"rotate(45" in svg.getvalue()
+    assert b"rotate(-45" in svg.getvalue()
 
 
 def test_subplot_mosaic_string_preserves_spans_holes_and_ratios() -> None:
