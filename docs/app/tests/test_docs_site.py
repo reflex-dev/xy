@@ -1184,12 +1184,13 @@ def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> N
 
     assert all(value in windows_row for value in ("`x86_64`", "`x86`", "`arm64`"))
     assert "| Supported | Not included |" in windows_row
-    assert "Pyodide 0.29.4" in wasm_row
-    assert "`wasm32` | Supported | Not accepted by PyPI |" in wasm_row
+    assert "Pyodide 314" in wasm_row
+    assert "`wasm32` | Supported | Not in 0.0.1 (on PyPI since 0.0.3) |" in wasm_row
     assert "Windows is supported by XY's native core and release pipeline." in content
     assert "0.0.1 PyPI upload does not include Windows wheels" in content
-    assert "runtime-verified Pyodide wheel" in content
-    assert "`pyodide_2025_0_wasm32` platform" in content
+    assert "runtime-verified WebAssembly wheel" in content
+    assert "`pyemscripten_2026_0_wasm32` platform" in content
+    assert "%pip install xy" in content
 
 
 def test_chart_gallery_grid_renders_every_type_as_inline_svg(

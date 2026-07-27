@@ -32,6 +32,16 @@ chart or component height while debugging.
 Python package and bundled `anywidget` client come from the same installation,
 then display `chart.widget()` directly to isolate surrounding layout.
 
+**JupyterLite shows `Failed to load model class 'AnyModel' from module
+'anywidget'`.** The deployment's prebuilt frontend lacks the anywidget
+extension, and `%pip install anywidget` adds only the kernel-side package —
+frontend JavaScript cannot be installed at runtime. Current XY releases
+detect WASM kernels and display through the standalone-HTML host instead, so
+`chart.show()` renders without the widget comm; upgrade XY if you still see
+this error. Set `XY_NOTEBOOK_DISPLAY=widget` only in a self-built JupyterLite
+deployment that bundled the anywidget frontend extension. See
+[Notebooks](/docs/xy/integrations/notebooks/).
+
 **Only some charts in a large dashboard remain live.** Browsers limit WebGL
 contexts. Avoid keeping more than XY's default context budget of 12 charts
 simultaneously visible; see

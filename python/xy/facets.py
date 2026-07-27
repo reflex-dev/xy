@@ -472,9 +472,18 @@ for(const p of panels){{
 
         return [FigureWidget(fig) for fig in self.figures]
 
-    def show(self) -> list[Any]:
-        """Display the facet grid: returns the panel widgets."""
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """Display the facet grid: the panel widgets, or one standalone-HTML
+        view of the whole grid on the html display host (see `Chart.show`)."""
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(
+            export.notebook_iframe(
+                self.to_html(),
+                width=self.width,
+                height=self.grid_height + self._title_height,
+            )
+        )
 
     def memory_report(self) -> dict[str, Any]:
         """Aggregated data/cache buffer accounting across all panels."""

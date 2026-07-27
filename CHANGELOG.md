@@ -9,6 +9,17 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Notebook display-host resolution (`spec/design/reflex-shaped-api.md` §3.3):
+  `show(display=...)` on charts, facet charts, and the internal figure objects
+  accepts `"auto"` (default), `"widget"`, or `"html"`, with the
+  `XY_NOTEBOOK_DISPLAY` environment variable as the process-wide override. On
+  Emscripten/WASM kernels (JupyterLite, Pyodide) `"auto"` now displays through
+  the standalone-HTML iframe host instead of the anywidget comm, so charts
+  render on hosted JupyterLite deployments (for example try-jupyter) whose
+  prebuilt frontends cannot load the anywidget extension `%pip` installs
+  kernel-side ("Failed to load model class 'AnyModel' from module
+  'anywidget'"). Marimo's WASM build keeps the live widget host, and
+  `show(display="html")` returns an `xy.export.HtmlView` rich-repr handle.
 - `xy.box(...)` exposes its four visible parts without a parallel styling
   language: the main `style=` now controls body fill and border, while
   `whisker_style=`, `median_style=`, and `outlier_style=` reuse the validated

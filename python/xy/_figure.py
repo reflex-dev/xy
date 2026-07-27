@@ -1746,13 +1746,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self._widget = FigureWidget(self)
         return self._widget
 
-    def show(self) -> Any:
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """The live widget, or a standalone-HTML view when the html display
+        host is selected (reflex-shaped-api.md §3.3: "auto" falls back to
+        html only on WASM kernels, whose prebuilt frontends cannot load the
+        anywidget extension)."""
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
-        display(self.widget())
+        if export.notebook_display_mode() == "widget":
+            display(self.widget())
+        else:
+            display({"text/html": self._repr_html_()}, raw=True)
 
     def to_html(
         self,

@@ -39,7 +39,7 @@ the current 0.0.1 upload, not whether XY supports the platform.
 | Linux | glibc (`manylinux_2_17`) | `x86_64`, `aarch64`, `armv7l` | Supported | Included |
 | Linux | musl (`musllinux_1_2`, including Alpine) | `x86_64`, `aarch64`, `armv7l` | Supported | Included |
 | Windows | Native Windows | `x86_64`, `x86`, `arm64` | Supported | Not included |
-| WebAssembly | Pyodide 0.29.4 (Emscripten) | `wasm32` | Supported | Not accepted by PyPI |
+| WebAssembly | Pyodide 314 (Emscripten, PEP 783) | `wasm32` | Supported | Not in 0.0.1 (on PyPI since 0.0.3) |
 
 Windows is supported by XY's native core and release pipeline. The current
 0.0.1 PyPI upload does not include Windows wheels or a source distribution, so
@@ -47,13 +47,14 @@ Windows is supported by XY's native core and release pipeline. The current
 Windows yet. Until a Windows wheel is published, install the tagged source
 with a Rust MSVC toolchain as described below.
 
-A runtime-verified Pyodide wheel has been built for in-browser Python, but the
-`v0.0.1` wheel is not yet publicly distributed as a durable release asset.
-PyPI does not accept its `pyodide_2025_0_wasm32` platform tag, so the WASM
-wheel is not available through the normal install commands. This target runs
-XY's Python and Rust core inside Pyodide; it is separate from the
-JavaScript/WebGL client included with every chart. Track publication in
-[#97](https://github.com/reflex-dev/xy/issues/97).
+The runtime-verified WebAssembly wheel targets the standardized PEP 783
+`pyemscripten_2026_0_wasm32` platform and, as of 0.0.3, is published to PyPI
+alongside the native wheels. In-browser Python installs it by package name —
+`micropip.install("xy")`, or `%pip install xy` in a JupyterLite notebook.
+This target runs XY's Python and Rust core inside Pyodide; it is separate
+from the JavaScript/WebGL client included with every chart. See
+[Notebooks](/docs/xy/integrations/notebooks/) for how charts display on WASM
+kernels.
 
 ## What the package includes
 

@@ -3662,9 +3662,20 @@ class Chart(Component):
             self._widget = FigureWidget(self.figure(), **widget_kwargs)
         return self._widget
 
-    def show(self) -> Any:
-        """Display the chart: returns the live widget (see `widget`)."""
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """Display the chart: the live widget, or a standalone-HTML view.
+
+        ``display`` picks the notebook host — ``"widget"`` (anywidget comm;
+        Python callbacks live), ``"html"`` (the same isolated iframe as
+        `_repr_html_`; interactive in the browser, no kernel channel), or
+        ``None``/``"auto"``, which follows ``XY_NOTEBOOK_DISPLAY`` and falls
+        back to ``"html"`` only on WASM kernels (JupyterLite/Pyodide), whose
+        prebuilt frontends cannot load the anywidget extension `%pip`
+        installs kernel-side.
+        """
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     # -- programmatic view state (kernel-connected; view-state.md §5.1) ------
 
@@ -3699,7 +3710,10 @@ class Chart(Component):
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
-        display(self.widget())
+        if export.notebook_display_mode() == "widget":
+            display(self.widget())
+        else:
+            display({"text/html": self._repr_html_()}, raw=True)
 
     def to_html(
         self,
@@ -4993,9 +5007,12 @@ class FacetChart(Component):
         """Live notebook widgets, one per facet panel."""
         return self.figure().widget()
 
-    def show(self) -> list[Any]:
-        """Display the facet grid: returns the panel widgets."""
-        return self.widget()
+    def show(self, display: Optional[str] = None) -> Any:
+        """Display the facet grid: the panel widgets, or a standalone-HTML
+        view of the whole grid (see `Chart.show` for display-host resolution)."""
+        if export.notebook_display_mode(display) == "widget":
+            return self.widget()
+        return export.HtmlView(self._repr_html_())
 
     def to_html(
         self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None

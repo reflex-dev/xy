@@ -12,6 +12,7 @@ import os
 import re as _re
 import shutil
 import subprocess
+import sys
 import tempfile
 import warnings
 from contextlib import suppress
@@ -411,6 +412,62 @@ def notebook_iframe(doc: str, *, width: object, height: object) -> str:
         'border:0;background:transparent" '
         f'srcdoc="{source}"></iframe>'
     )
+
+
+# Notebook display-host resolution (reflex-shaped-api.md §3.3). The widget
+# host needs the anywidget frontend extension; a WASM-kernel deployment with a
+# prebuilt frontend (JupyterLite's `%pip`, e.g. try-jupyter) installs only the
+# kernel-side package, so the comm opens against a frontend that cannot answer
+# it. The kernel cannot observe the frontend registry, so "auto" resolves from
+# the runtime instead: an Emscripten kernel defaults to the standalone HTML
+# host, everything else to the widget. Marimo bundles its own anywidget
+# frontend even in its WASM build, so it keeps the widget host under "auto".
+_NOTEBOOK_DISPLAY_ENV = "XY_NOTEBOOK_DISPLAY"
+_NOTEBOOK_DISPLAY_MODES = ("auto", "widget", "html")
+
+
+class HtmlView:
+    """A displayable handle over the standalone-HTML notebook host.
+
+    Returned by ``show(display="html")`` so the isolated iframe renders through
+    the ordinary rich-repr path with no widget comm; ``str()`` yields the
+    fragment for direct embedding.
+    """
+
+    def __init__(self, html: str) -> None:
+        self._html = html
+
+    def _repr_html_(self) -> str:
+        return self._html
+
+    def __str__(self) -> str:
+        return self._html
+
+    def __repr__(self) -> str:
+        return f"<xy.export.HtmlView ({len(self._html)} chars; rich display renders it)>"
+
+
+def notebook_display_mode(display: Optional[str] = None) -> str:
+    """Resolve the notebook display host: ``"widget"`` or ``"html"``.
+
+    Precedence: the explicit ``display=`` argument, then the
+    ``XY_NOTEBOOK_DISPLAY`` environment variable, then ``"auto"`` — which
+    picks the standalone HTML host on Emscripten/WASM kernels (JupyterLite,
+    Pyodide; their prebuilt frontends cannot gain the anywidget extension at
+    runtime) and the live widget host everywhere else.
+    """
+    if display is not None:
+        mode, source = display, "display"
+    else:
+        mode, source = os.environ.get(_NOTEBOOK_DISPLAY_ENV) or "auto", _NOTEBOOK_DISPLAY_ENV
+    if not isinstance(mode, str) or mode.strip().lower() not in _NOTEBOOK_DISPLAY_MODES:
+        raise ValueError(f'{source} must be one of "auto", "widget", or "html"; got {mode!r}')
+    mode = mode.strip().lower()
+    if mode != "auto":
+        return mode
+    if sys.platform == "emscripten" and "marimo" not in sys.modules:
+        return "html"
+    return "widget"
 
 
 def _installed_browser(candidate: object) -> Optional[str]:
