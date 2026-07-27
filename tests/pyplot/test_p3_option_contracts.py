@@ -463,6 +463,35 @@ def test_contour_corner_mask_controls_missing_corner_geometry_and_is_inherited()
     assert len(contour_traces) == 1
 
 
+def test_contourf_corner_mask_uses_exact_band_clipped_triangles() -> None:
+    _fig, ax = plt.subplots()
+    z = np.ma.array([[0.0, 1.0], [0.0, 0.0]], mask=[[True, False], [False, False]])
+    ax.contourf(
+        z,
+        levels=[-1.0, 0.5, 2.0],
+        colors=["red", "blue"],
+        corner_mask=True,
+    )
+
+    figure = ax._build_chart(300, 300).figure()
+    mesh = next(trace for trace in figure.traces if trace.kind == "triangle_mesh")
+    geometry = np.column_stack(
+        [getattr(mesh, name).values for name in ("x0", "y0", "x1", "y1", "x", "y")]
+    )
+    # ContourPy's retained triangle is split at z=.5 into a quad and triangle;
+    # triangulating the quad yields these three exact faces, all bounded by the
+    # true x+y=1 masked-corner diagonal rather than a sampled staircase.
+    np.testing.assert_allclose(
+        geometry,
+        [
+            [0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            [0.5, 0.5, 1.0, 1.0, 0.0, 1.0],
+            [0.5, 0.5, 1.0, 0.0, 1.0, 0.5],
+        ],
+    )
+    assert figure.to_svg().count("<polygon points=") == 3
+
+
 def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> None:
     _fig, ax = plt.subplots()
     contour = ax.contourf(

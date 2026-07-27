@@ -338,8 +338,9 @@ method accepts the call.
       Matplotlib.
 - [x] `pcolor`, `pcolorfast`, `pcolormesh`: shading modes, edge/line styling,
       antialiasing, snap, rasterized behavior and norm/colorizer variants.
-- [x] `contour`/`contourf`: origin, extent, linestyles, corner masks, extend,
-      hatches, locators, norms and filled-region topology parity.
+- [x] `contour`/`contourf`: origin, extent, linestyles, exact triangular corner
+      masks, full-domain extended bands, hatches, locators, norms and
+      filled-region topology parity.
 - [x] `clabel`: inline path cutting, formatting, manual positions, rotation,
       label z-order, and supported text styling. Dynamic aspect-following
       rotation (`use_clabeltext=True`) fails loudly.

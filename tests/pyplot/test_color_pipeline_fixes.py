@@ -276,3 +276,22 @@ def test_contourf_includes_samples_equal_to_the_final_level():
     )
 
     assert heatmap.grid.values.reshape(heatmap.grid_shape)[-1, -1] == 1.5
+
+
+@pytest.mark.parametrize("origin", ["upper", "lower"])
+def test_contourf_named_colormap_extensions_fill_the_image_domain(origin):
+    values = np.arange(1.0, 10.0)
+    field = values[:, None] * values[None, :]
+    _fig, ax = plt.subplots()
+    ax.contourf(
+        field,
+        levels=np.arange(5.0, 70.0, 5.0),
+        extend="both",
+        origin=origin,
+    )
+
+    figure = ax._build_chart(320, 320).figure()
+    heatmap = next(trace for trace in figure.traces if trace.kind == "heatmap")
+    assert np.isfinite(heatmap.grid.values).all()
+    assert "<image " in figure.to_svg()
+    assert figure.to_png(scale=1).startswith(b"\x89PNG\r\n\x1a\n")

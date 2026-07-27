@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Mapping, Sequence
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
@@ -2227,8 +2228,6 @@ def _interpolate_contourf_grid(
     arr: np.ndarray,
     xpos: np.ndarray,
     ypos: np.ndarray,
-    *,
-    corner_mask: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bilinearly densify a contour field before assigning discrete bands."""
     rows, cols = arr.shape
@@ -2272,47 +2271,103 @@ def _interpolate_contourf_grid(
         + z11 * row_weight * col_weight
     )
     interpolated[~valid] = np.nan
-    if corner_mask:
-        # contourpy's corner_mask=True retains the triangle opposite a single
-        # masked vertex instead of discarding the whole quad.  Interpolate
-        # that valid triangle in barycentric coordinates; quads with two or
-        # more missing vertices remain wholly masked.
-        finite_count = (
-            finite00.astype(np.uint8)
-            + finite10.astype(np.uint8)
-            + finite01.astype(np.uint8)
-            + finite11.astype(np.uint8)
-        )
-        u = np.broadcast_to(col_weight, interpolated.shape)
-        v = np.broadcast_to(row_weight, interpolated.shape)
-        safe00 = np.nan_to_num(z00)
-        safe10 = np.nan_to_num(z10)
-        safe01 = np.nan_to_num(z01)
-        safe11 = np.nan_to_num(z11)
-        triangular = finite_count == 3
-        cases = (
-            (
-                triangular & ~finite00 & (u + v >= 1.0),
-                safe10 * (1.0 - v) + safe01 * (1.0 - u) + safe11 * (u + v - 1.0),
-            ),
-            (
-                triangular & ~finite10 & (v >= u),
-                safe00 * (1.0 - v) + safe01 * (v - u) + safe11 * u,
-            ),
-            (
-                triangular & ~finite01 & (u >= v),
-                safe00 * (1.0 - u) + safe10 * (u - v) + safe11 * v,
-            ),
-            (
-                triangular & ~finite11 & (u + v <= 1.0),
-                safe00 * (1.0 - u - v) + safe10 * u + safe01 * v,
-            ),
-        )
-        for keep, values in cases:
-            interpolated[keep] = values[keep]
     dense_x = np.interp(col_at, np.arange(cols), xpos)
     dense_y = np.interp(row_at, np.arange(rows), ypos)
     return interpolated, dense_x, dense_y
+
+
+def _contourf_corner_triangles(
+    arr: np.ndarray,
+    xpos: np.ndarray,
+    ypos: np.ndarray,
+    edges: np.ndarray,
+    *,
+    extend_min: bool,
+    extend_max: bool,
+) -> tuple[tuple[np.ndarray, ...], np.ndarray]:
+    """Clip one-masked-corner cells into exact ContourPy-style band triangles."""
+
+    def clip(
+        polygon: list[tuple[float, float, float]],
+        threshold: float,
+        *,
+        keep_above: bool,
+    ) -> list[tuple[float, float, float]]:
+        if not polygon:
+            return []
+        output: list[tuple[float, float, float]] = []
+        previous = polygon[-1]
+        previous_inside = previous[2] >= threshold if keep_above else previous[2] <= threshold
+        for current in polygon:
+            current_inside = current[2] >= threshold if keep_above else current[2] <= threshold
+            if current_inside != previous_inside:
+                fraction = (threshold - previous[2]) / (current[2] - previous[2])
+                output.append(
+                    (
+                        previous[0] + fraction * (current[0] - previous[0]),
+                        previous[1] + fraction * (current[1] - previous[1]),
+                        threshold,
+                    )
+                )
+            if current_inside:
+                output.append(current)
+            previous, previous_inside = current, current_inside
+        return output
+
+    bands: list[tuple[float, float, int]] = []
+    slot = 0
+    if extend_min:
+        bands.append((-np.inf, float(edges[0]), slot))
+        slot += 1
+    for index, (low, high) in enumerate(pairwise(edges)):
+        bands.append((float(low), float(high), slot + index))
+    slot += len(edges) - 1
+    if extend_max:
+        bands.append((float(edges[-1]), np.inf, slot))
+
+    coordinates = [[] for _ in range(6)]
+    slots: list[int] = []
+    rows, cols = arr.shape
+    for row in range(rows - 1):
+        for col in range(cols - 1):
+            corners = [
+                (float(xpos[col]), float(ypos[row]), float(arr[row, col])),
+                (float(xpos[col + 1]), float(ypos[row]), float(arr[row, col + 1])),
+                (
+                    float(xpos[col + 1]),
+                    float(ypos[row + 1]),
+                    float(arr[row + 1, col + 1]),
+                ),
+                (float(xpos[col]), float(ypos[row + 1]), float(arr[row + 1, col])),
+            ]
+            triangle = [corner for corner in corners if np.isfinite(corner[2])]
+            if len(triangle) != 3:
+                continue
+            for low, high, band_slot in bands:
+                polygon = triangle
+                if np.isfinite(low):
+                    polygon = clip(polygon, low, keep_above=True)
+                if np.isfinite(high):
+                    polygon = clip(polygon, high, keep_above=False)
+                for index in range(1, len(polygon) - 1):
+                    vertices = (polygon[0], polygon[index], polygon[index + 1])
+                    area = (vertices[1][0] - vertices[0][0]) * (vertices[2][1] - vertices[0][1]) - (
+                        vertices[1][1] - vertices[0][1]
+                    ) * (vertices[2][0] - vertices[0][0])
+                    if abs(area) <= np.finfo(np.float64).eps:
+                        continue
+                    for vertex, (x_column, y_column) in zip(
+                        vertices,
+                        ((0, 1), (2, 3), (4, 5)),
+                        strict=True,
+                    ):
+                        coordinates[x_column].append(vertex[0])
+                        coordinates[y_column].append(vertex[1])
+                    slots.append(band_slot)
+    return (
+        tuple(np.asarray(column, dtype=np.float64) for column in coordinates),
+        np.asarray(slots, dtype=np.intp),
+    )
 
 
 def contour(
@@ -2431,18 +2486,21 @@ def contour(
             # Values outside the level range stay unpainted (extend='neither').
             edges = np.asarray(level_values, dtype=np.float64)
             if len(edges) >= 2 and edges[0] < edges[-1]:
-                dense, dense_x, dense_y = _interpolate_contourf_grid(
-                    arr, xpos, ypos, corner_mask=bool(corner_mask)
-                )
+                dense, dense_x, dense_y = _interpolate_contourf_grid(arr, xpos, ypos)
                 band = np.searchsorted(edges, dense, side="right") - 1
                 # Matplotlib includes the final level in the final filled
                 # interval; only values strictly above it are outside.
                 band[np.isfinite(dense) & (dense == edges[-1])] = len(edges) - 2
                 mids = (edges[:-1] + edges[1:]) * 0.5
                 inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
+                finite_dense = np.isfinite(dense)
                 if color_table is None:
                     banded = np.full(dense.shape, np.nan, dtype=np.float64)
                     banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
+                    if extend_min:
+                        banded[finite_dense & (dense < edges[0])] = edges[0]
+                    if extend_max:
+                        banded[finite_dense & (dense > edges[-1])] = edges[-1]
                     self.heatmap(
                         banded,
                         x=dense_x,
@@ -2460,7 +2518,6 @@ def contour(
                     rgba = np.zeros(dense.shape + (4,), dtype=np.float64)
                     offset = int(extend_min)
                     rgba[inside] = color_table[offset + band[inside]]
-                    finite_dense = np.isfinite(dense)
                     if extend_min:
                         rgba[finite_dense & (dense < edges[0])] = color_table[0]
                     if extend_max:
@@ -2472,6 +2529,37 @@ def contour(
                         name=name,
                         opacity=opacity,
                     )
+                if corner_mask:
+                    triangle_columns, triangle_slots = _contourf_corner_triangles(
+                        arr,
+                        xpos,
+                        ypos,
+                        edges,
+                        extend_min=extend_min,
+                        extend_max=extend_max,
+                    )
+                    if len(triangle_slots):
+                        if color_table is None:
+                            paints = np.concatenate(
+                                (
+                                    [edges[0]] if extend_min else [],
+                                    mids,
+                                    [edges[-1]] if extend_max else [],
+                                )
+                            )
+                            triangle_colors: Any = paints[triangle_slots]
+                            triangle_domain = (float(edges[0]), float(edges[-1]))
+                        else:
+                            triangle_colors = color_table[triangle_slots]
+                            triangle_domain = None
+                        self.triangle_mesh(
+                            *triangle_columns,
+                            color=triangle_colors,
+                            colormap=colormap,
+                            domain=triangle_domain,
+                            opacity=min(opacity, 0.9) if color_table is None else opacity,
+                            _joined_fill=True,
+                        )
             else:
                 self.heatmap(
                     arr,
