@@ -3238,6 +3238,7 @@ class PlotTypeMixin:
         errorbar_width = float(
             elinewidth if elinewidth is not None else base.get("width", rcParams["lines.linewidth"])
         )
+        container_label = base.get("name")
         entry = self._add(
             "@mark",
             {
@@ -3246,7 +3247,10 @@ class PlotTypeMixin:
                 "kwargs": {
                     "yerr": yerr,
                     "xerr": xerr,
-                    "name": base.get("name"),
+                    # Matplotlib keeps underscore-prefixed labels on the
+                    # container but excludes them from automatic legends.
+                    # Do not expose those private labels to XY's renderer.
+                    "name": (None if str(container_label).startswith("_") else container_label),
                     "color": color,
                     "width": errorbar_width,
                     # Core XY caps are symmetric data-unit geometry. Matplotlib
@@ -3257,6 +3261,7 @@ class PlotTypeMixin:
                 },
             },
         )
+        entry["_mpl_container_label"] = container_label
         cap_artists: list[Artist] = []
         if resolved_capsize > 0.0:
             for cap_x, cap_y, marker_symbol in cap_markers:
