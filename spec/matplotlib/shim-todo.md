@@ -193,8 +193,9 @@ The shim can be called complete for ordinary 2-D scripts when:
 - [x] Make `tick_params()` honor supported visibility, side, length, width,
       color, direction and label styling arguments; reject the remainder. Evidence:
       supported tick style/visibility values reach axis props, independent mark-side
-      arrays render in browser/PNG/SVG without moving the label side, and unsupported
-      kwargs fail loudly (`tests/pyplot/test_tick_side_rendering.py`).
+      and label-side arrays render in browser/PNG/SVG without moving each other,
+      shared panels keep local label visibility, and unsupported kwargs fail loudly
+      (`tests/pyplot/test_tick_side_rendering.py`).
 - [x] Make `grid(which=..., axis=..., **style)` select and style the requested
       grid rather than toggling the entire chart. Evidence:
       `tests/pyplot/test_grid_legend_contracts.py::test_grid_selects_axis_and_records_supported_style`

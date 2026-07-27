@@ -1377,7 +1377,8 @@ def _colorbar_right_axis_room(
     (plot-right+40); the JS client applies the identical rule."""
     axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
-        axis.get("side", "left") == "right" and _axis_tick_label_strategy(axis) != "none"
+        (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
+        and _axis_tick_label_strategy(axis) != "none"
         for axis in axes
     ):
         return 42.0 if compact else 54.0
@@ -1471,7 +1472,11 @@ def _y_title_baseline(
         angle = float(axis.get("label_angle", 90.0))
         shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
         return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
-    tick_offset, tick_room = _y_tick_label_room(axis, plot["h"])
+    tick_offset, tick_room = (
+        _y_tick_label_room(axis, plot["h"])
+        if "left" in _axis_tick_label_sides(axis, is_x=False)
+        else (0.0, 0.0)
+    )
     gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * font_size))
     # For a -90 degree title, later lines move toward the plot. Pin the first
     # baseline so the whole block, not only line one, remains outside ticks.
@@ -1524,10 +1529,18 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
     """
     room = 0.0
     for axis_id, axis in _axes_by_id(spec).items():
-        if not axis_id.startswith("y") or axis.get("side", "left") == "right":
+        if not axis_id.startswith("y"):
             continue
-        tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
-        title_visible = _has_outside_y_title(axis) and _axis_text_paint_visible(axis, "label_color")
+        left_labels = "left" in _axis_tick_label_sides(axis, is_x=False)
+        left_title = axis.get("side", "left") != "right"
+        if not left_labels and not left_title:
+            continue
+        tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
+        title_visible = (
+            left_title
+            and _has_outside_y_title(axis)
+            and _axis_text_paint_visible(axis, "label_color")
+        )
         if not title_visible:
             if tick_offset == 0.0 and tick_room == 0.0:
                 continue
@@ -1644,12 +1657,20 @@ def _x_axis_rooms(
     for axis_id, axis in axes.items():
         if not axis_id.startswith("x") or _axis_tick_label_strategy(axis) == "none":
             continue
-        measured = _x_tick_label_room(axis, plot_w)
-        if axis.get("side", "bottom") == "top":
-            top = max(top, 26.0 if compact else 32.0, measured)
-        else:
-            bottom = max(bottom, 36.0 if compact else 42.0, measured)
-            measured_bottom = max(measured_bottom, measured)
+        title_side = axis.get("side", "bottom")
+        room_sides = set(_axis_tick_label_sides(axis, is_x=True))
+        if _axis_tick_label_strategy(axis) == "off" or axis.get("label"):
+            room_sides.add(title_side)
+        for side in room_sides:
+            side_axis = {**axis, "side": side}
+            if side != title_side:
+                side_axis.pop("label", None)
+            measured = _x_tick_label_room(side_axis, plot_w)
+            if side == "top":
+                top = max(top, 26.0 if compact else 32.0, measured)
+            else:
+                bottom = max(bottom, 36.0 if compact else 42.0, measured)
+                measured_bottom = max(measured_bottom, measured)
     return top, bottom, measured_bottom
 
 
@@ -1697,7 +1718,10 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         right += 86 + (18 if colorbar.get("label") else 0)
     if any(
         axis_id.startswith("y")
-        and axis.get("side", "right") == "right"
+        and (
+            axis.get("side", "right") == "right"
+            or "right" in _axis_tick_label_sides(axis, is_x=False)
+        )
         and _axis_tick_label_strategy(axis) != "none"
         for axis_id, axis in axes.items()
     ):
@@ -1826,6 +1850,15 @@ def _axis_tick_sides(axis: dict[str, Any], *, is_x: bool) -> list[str]:
     """Sides that paint tick marks, independent of the label-bearing side."""
     allowed = ("bottom", "top") if is_x else ("left", "right")
     authored = axis.get("tick_sides")
+    if not isinstance(authored, list):
+        return [axis.get("side", allowed[0])]
+    return [side for side in allowed if side in authored]
+
+
+def _axis_tick_label_sides(axis: dict[str, Any], *, is_x: bool) -> list[str]:
+    """Sides that paint tick labels, independent of tick marks and titles."""
+    allowed = ("bottom", "top") if is_x else ("left", "right")
+    authored = axis.get("tick_label_sides")
     if not isinstance(authored, list):
         return [axis.get("side", allowed[0])]
     return [side for side in allowed if side in authored]
@@ -2127,62 +2160,65 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
         )
         font_size = _axis_tick_font_size(axis)
-        side = axis.get("side", "bottom" if is_x else "left")
-        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
-        if is_x:
-            label_offset = (
-                _axis_tick_label_offset(axis, 7.0, 0.2)
-                if side == "top"
-                else _axis_tick_label_offset(axis, 16.0, 0.8)
-            )
-        else:
-            label_offset = _axis_tick_label_offset(axis, 8.0)
         baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
         # matching the browser client.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
-        for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
-            angle = float(item["angle"])
-            block = _textblock.measure(item["text"], font_size)
+        for side in _axis_tick_label_sides(axis, is_x=is_x):
+            side_axis = {**axis, "side": side}
+            # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
             if is_x:
-                row_offset = float(item["row"]) * (font_size + 4)
-                x = float(item["pos"])
-                y = (
-                    plot["y"] - label_offset - row_offset
+                label_offset = (
+                    _axis_tick_label_offset(axis, 7.0, 0.2)
                     if side == "top"
-                    else plot["y"] + plot["h"] + label_offset + row_offset
+                    else _axis_tick_label_offset(axis, 16.0, 0.8)
                 )
-                if explicit_anchor:
-                    anchor = _TEXT_ANCHORS[explicit_anchor]
-                elif angle == 0:
-                    anchor = "middle"
-                elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
-                    anchor = "end"
-                else:
-                    anchor = "start"
             else:
-                x = (
-                    plot["x"] + plot["w"] + label_offset
-                    if side == "right"
-                    else plot["x"] - label_offset
-                )
-                y = (
-                    float(item["pos"])
-                    + baseline_shift
-                    - (block.line_count - 1) * block.line_step / 2.0
-                )
-                if explicit_anchor:
-                    anchor = _TEXT_ANCHORS[explicit_anchor]
+                label_offset = _axis_tick_label_offset(axis, 8.0)
+            for item in _axis_tick_label_layout(side_axis, values, step, axis_scale, is_x):
+                angle = float(item["angle"])
+                block = _textblock.measure(item["text"], font_size)
+                if is_x:
+                    row_offset = float(item["row"]) * (font_size + 4)
+                    x = float(item["pos"])
+                    y = (
+                        plot["y"] - label_offset - row_offset
+                        if side == "top"
+                        else plot["y"] + plot["h"] + label_offset + row_offset
+                    )
+                    if explicit_anchor:
+                        anchor = _TEXT_ANCHORS[explicit_anchor]
+                    elif angle == 0:
+                        anchor = "middle"
+                    elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                        anchor = "end"
+                    else:
+                        anchor = "start"
                 else:
-                    anchor = "start" if side == "right" else "end"
-            transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
-            labels.append(
-                f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
-                f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
-                f"{_text_block_content(item['text'], x, block.line_step)}</text>"
-            )
+                    x = (
+                        plot["x"] + plot["w"] + label_offset
+                        if side == "right"
+                        else plot["x"] - label_offset
+                    )
+                    y = (
+                        float(item["pos"])
+                        + baseline_shift
+                        - (block.line_count - 1) * block.line_step / 2.0
+                    )
+                    if explicit_anchor:
+                        anchor = _TEXT_ANCHORS[explicit_anchor]
+                    else:
+                        anchor = "start" if side == "right" else "end"
+                transform = (
+                    f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+                )
+                labels.append(
+                    f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
+                    f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
+                    f"{_text_block_content(item['text'], x, block.line_step)}</text>"
+                )
 
     append_tick_labels(xa, xlab, xstep, sx, is_x=True)
     append_tick_labels(ya, ylab, ystep, sy, is_x=False)

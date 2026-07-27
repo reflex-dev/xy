@@ -4931,9 +4931,9 @@ class Axes(PlotTypeMixin):
         sides.update({key: value for key, value in side_updates.items() if key in sides})
         props = self._axis_props(axis)
         props["tick_label_strategy"] = None if any(sides.values()) else "off"
-        visible_sides = [key.removeprefix("label") for key, shown in sides.items() if shown]
-        if len(visible_sides) == 1:
-            props["side"] = visible_sides[0]
+        props["tick_label_sides"] = [
+            key.removeprefix("label") for key, shown in sides.items() if shown
+        ]
 
     def tick_params(self, axis: str = "both", **kwargs: Any) -> None:
         """Change tick, tick-label, and axis-color appearance.

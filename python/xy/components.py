@@ -232,6 +232,7 @@ class Axis(Component):
     # New fields append after the v0.0.3 positional surface.
     margin: Optional[float] = None
     tick_sides: Optional[list[str]] = None
+    tick_label_sides: Optional[list[str]] = None
 
 
 @dataclass
@@ -2383,6 +2384,7 @@ def x_axis(
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
     show: Optional[bool] = None,
     line: Optional[bool] = None,
     ticks: Optional[bool] = None,
@@ -2423,6 +2425,8 @@ def x_axis(
         tick_sides: Plot sides where tick marks are drawn. Defaults to
             ``side``; supplying both draws mirrored ticks without moving the
             axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
         show: Draw this axis at all. ``False`` hides its baseline, tick marks,
             tick labels, title, and grid lines in one switch; the four
             narrower switches below override it either way, so
@@ -2469,6 +2473,7 @@ def x_axis(
         side=_axis_side(side, "x"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "x_axis"),
         tick_sides=_axis_tick_sides(tick_sides, "x"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "x"),
     )
 
 
@@ -2495,6 +2500,7 @@ def y_axis(
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     tick_sides: Optional[Sequence[str]] = None,
+    tick_label_sides: Optional[Sequence[str]] = None,
     show: Optional[bool] = None,
     line: Optional[bool] = None,
     ticks: Optional[bool] = None,
@@ -2535,6 +2541,8 @@ def y_axis(
         tick_sides: Plot sides where tick marks are drawn. Defaults to
             ``side``; supplying both draws mirrored ticks without moving the
             axis labels.
+        tick_label_sides: Plot sides where tick labels are drawn. Defaults to
+            ``side`` and remains independent of ``tick_sides``.
         show: Draw this axis at all. ``False`` hides its baseline, tick marks,
             tick labels, title, and grid lines in one switch; the four
             narrower switches below override it either way, so
@@ -2581,6 +2589,7 @@ def y_axis(
         side=_axis_side(side, "y"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "y_axis"),
         tick_sides=_axis_tick_sides(tick_sides, "y"),
+        tick_label_sides=_axis_tick_label_sides(tick_label_sides, "y"),
     )
 
 
@@ -3298,6 +3307,7 @@ class Chart(Component):
                 tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
                 tick_sides=axis.tick_sides,
+                tick_label_sides=axis.tick_label_sides,
                 style=axis.style,
             )
         # Facet builds pre-seed the union category order (set as a private
@@ -5100,14 +5110,22 @@ def _axis_side(value: Any, which: str) -> Optional[str]:
 
 
 def _axis_tick_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_sides")
+
+
+def _axis_tick_label_sides(value: Any, which: str) -> Optional[list[str]]:
+    return _axis_sides(value, which, "tick_label_sides")
+
+
+def _axis_sides(value: Any, which: str, field: str) -> Optional[list[str]]:
     if value is None:
         return None
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise ValueError(f"{which}_axis tick_sides must be a sequence")
+        raise ValueError(f"{which}_axis {field} must be a sequence")
     allowed = ("bottom", "top") if which == "x" else ("left", "right")
     sides = list(value)
     if any(side not in allowed for side in sides):
-        raise ValueError(f"{which}_axis tick_sides must contain only {list(allowed)}")
+        raise ValueError(f"{which}_axis {field} must contain only {list(allowed)}")
     return [side for side in allowed if side in sides]
 
 
