@@ -356,12 +356,14 @@ method accepts the call.
       modes, scale and return-value parity.
 - [x] `stem`, `stairs`, `eventplot`, and `stackplot`: complete style/container
       behavior, hatches, orientation and baselines.
-- [x] `quiver`: units, head geometry, pivots, angles, scaling, norm, z-order and
-      scalar-mappable behavior.
+- [x] `quiver`: live-display-transform `uv`/`xy` angles, axes/DPI-derived
+      units, scale units, auto-scaling, shaft width, pivots, head geometry,
+      norm, z-order and scalar-mappable behavior.
 - [x] `barbs`: non-default increments, flags, rounding, empty-barb, flip,
       color, size, length, and pivot options render through fixed-staff
       WMO-style geometry.
-- [x] `quiverkey`: coordinates, label positions, fonts and sizing.
+- [x] `quiverkey`: actual axes/figure/data/inches coordinates, directional
+      pivots, physical-inch label separation, label positions, fonts and sizing.
 - [x] `streamplot`: always integrates with the shim's own occupancy-aware
       adaptive Heun kernel, so output no longer depends on whether Matplotlib is installed;
       `start_points`, `integration_direction`, array `linewidth`/`color`,

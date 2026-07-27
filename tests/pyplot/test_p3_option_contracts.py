@@ -275,8 +275,26 @@ def test_matplotlib_default_option_values_pass_through() -> None:
 
 def test_quiver_units_control_width_without_changing_vector_length() -> None:
     _fig, ax = plt.subplots()
-    width_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="width", width=0.02, scale=1)
-    x_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="x", width=0.02, scale=1)
+    width_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="width",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
+    x_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="x",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
     np.testing.assert_allclose(width_units._entry["args"][0], x_units._entry["args"][0])
     np.testing.assert_allclose(width_units._entry["args"][2], x_units._entry["args"][2])
     assert width_units._entry["kwargs"]["width"] > x_units._entry["kwargs"]["width"]
