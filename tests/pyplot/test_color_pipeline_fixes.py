@@ -243,15 +243,15 @@ def test_monochrome_contour_dashes_all_negative_levels_with_authored_widths():
     _fig, ax = plt.subplots()
     ax.contour(xx, yy, zz, levels=levels, colors="black", linewidths=widths)
 
-    contours = [trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "contour"]
+    contours = [
+        trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "contour"
+    ]
     point_scale = plt.rcParams["figure.dpi"] / 72.0
     expected_widths = widths[np.arange(len(levels)) % len(widths)] * point_scale
 
     assert len(contours) == len(levels)
     for trace, expected_width in zip(contours, expected_widths, strict=True):
-        assert trace.style["dash"] == pytest.approx(
-            [3.7 * expected_width, 1.6 * expected_width]
-        )
+        assert trace.style["dash"] == pytest.approx([3.7 * expected_width, 1.6 * expected_width])
         assert trace.style_channels["width"].values == pytest.approx(expected_width)
 
 
@@ -324,9 +324,7 @@ def test_explicit_integer_contourf_levels_keep_full_locator_span() -> None:
         extend="lower",
     )
 
-    assert contour.levels == pytest.approx(
-        [-2.4, -1.8, -1.2, -0.6, 0.0, 0.6, 1.2, 1.8, 2.4]
-    )
+    assert contour.levels == pytest.approx([-2.4, -1.8, -1.2, -0.6, 0.0, 0.6, 1.2, 1.8, 2.4])
 
 
 def test_contourf_includes_samples_equal_to_the_final_level():

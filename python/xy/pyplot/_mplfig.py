@@ -1085,12 +1085,81 @@ class Figure:
         heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
         return widths, heights
 
+    def _tight_layout_colorbar_reservations(
+        self,
+        rects: list[tuple[float, float, float, float]],
+        canvas_size: tuple[int, int],
+    ) -> set[int]:
+        """Return automatic colorbars whose chrome already fits the layout.
+
+        A tight/constrained solve may run either before or after ``colorbar()``.
+        The engine name therefore cannot tell `_charts()` whether the solved
+        rectangles include the colorbar.  Instead, test the resulting geometry:
+        a vertical bar is reserved when the panel's full right chrome fits
+        before the canvas edge or the next panel's left chrome; a horizontal
+        bar uses the analogous clearance below the panel.
+        """
+        if self._layout_options.get("engine") != "tight":
+            return set()
+
+        canvas_w, canvas_h = canvas_size
+        chromes = [
+            _panel_chrome(ax, max(1, round(canvas_w * rect[2])))
+            for ax, rect in zip(self._axes, rects, strict=True)
+        ]
+        reserved: set[int] = set()
+        tolerance = 0.5
+        for index, (ax, rect, chrome) in enumerate(zip(self._axes, rects, chromes, strict=True)):
+            options = ax._colorbar
+            if options is None or options.get("placement") == "axes":
+                continue
+
+            left, bottom, width, height = rect
+            right = left + width
+            top = bottom + height
+            if options.get("orientation") == "horizontal":
+                boundary = 0.0
+                for other_index, other_rect in enumerate(rects):
+                    if other_index == index:
+                        continue
+                    other_left, other_bottom, other_width, other_height = other_rect
+                    other_right = other_left + other_width
+                    other_top = other_bottom + other_height
+                    columns_overlap = max(left, other_left) < min(right, other_right)
+                    if columns_overlap and other_top <= bottom + tolerance / canvas_h:
+                        boundary = max(
+                            boundary,
+                            other_top + chromes[other_index][1] / canvas_h,
+                        )
+                panel_bottom = bottom - chrome[3] / canvas_h
+                if panel_bottom >= boundary - tolerance / canvas_h:
+                    reserved.add(index)
+                continue
+
+            boundary = 1.0
+            for other_index, other_rect in enumerate(rects):
+                if other_index == index:
+                    continue
+                other_left, other_bottom, _other_width, other_height = other_rect
+                other_top = other_bottom + other_height
+                rows_overlap = max(bottom, other_bottom) < min(top, other_top)
+                if rows_overlap and other_left >= right - tolerance / canvas_w:
+                    boundary = min(
+                        boundary,
+                        other_left - chromes[other_index][0] / canvas_w,
+                    )
+            panel_right = right + chrome[2] / canvas_w
+            if panel_right <= boundary + tolerance / canvas_w:
+                reserved.add(index)
+        return reserved
+
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
         rects = self._effective_rects()
         if rects is not None:
             charts = []
-            for ax, rect in zip(self._axes, rects, strict=True):
+            reserved_colorbars = self._tight_layout_colorbar_reservations(rects, (total_w, total_h))
+            for index, (ax, rect) in enumerate(zip(self._axes, rects, strict=True)):
                 allocated_plot_w = max(1, round(total_w * rect[2]))
                 allocated_plot_h = max(1, round(total_h * rect[3]))
                 compact = allocated_plot_w + 54 < 520
@@ -1098,13 +1167,12 @@ class Figure:
                 automatic_colorbar = (
                     ax._colorbar is not None
                     and ax._colorbar.get("placement") != "axes"
-                    and self._layout_options.get("engine") != "tight"
+                    and index not in reserved_colorbars
                 )
                 # Matplotlib steals an automatic colorbar from the source
-                # subplot's allocation. Tight/constrained layout has already
-                # reserved that strip while solving the final data-box rect;
-                # other grids still need to shrink before the renderer adds
-                # the colorbar chrome back around the plot.
+                # subplot's allocation. Shrink here unless the actual
+                # tight/constrained geometry already contains the complete
+                # colorbar-bearing panel.
                 plot_w = max(
                     40,
                     round(allocated_plot_w - colorbar_right)

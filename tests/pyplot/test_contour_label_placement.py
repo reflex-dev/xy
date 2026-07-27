@@ -286,6 +286,7 @@ def test_constrained_layout_reserves_contour_colorbar_inside_canvas() -> None:
     canvas_width, canvas_height = rc_figsize_px(fig._figsize, fig._dpi)
     rects = fig._effective_rects()
     assert rects is not None
+    assert not fig._tight_layout_colorbar_reservations(rects, (canvas_width, canvas_height))
     position = fig._panel_positions(rects, (canvas_width, canvas_height))[0]
     panel = fig._charts()[0].figure()
     panel_x = round(position[0] * canvas_width)
@@ -296,6 +297,31 @@ def test_constrained_layout_reserves_contour_colorbar_inside_canvas() -> None:
     # in the payload but only red line slivers survived the export crop.
     assert panel_x + panel.width <= canvas_width
     assert panel_y + panel.height <= canvas_height
+
+
+def test_tight_layout_does_not_steal_pre_reserved_colorbar_room_twice() -> None:
+    """A later measured-layout solve may already contain the colorbar panel."""
+    from xy.pyplot._rc import rc_figsize_px
+
+    fig, ax = plt.subplots()
+    filled = ax.contourf(np.arange(16.0).reshape(4, 4), levels=[2.0, 6.0, 10.0])
+    fig.colorbar(filled)
+    fig._layout_options["engine"] = "tight"
+
+    canvas_width, canvas_height = rc_figsize_px(fig._figsize, fig._dpi)
+    colorbar_right, _colorbar_bottom = ax._colorbar_outside_room(False)
+    # Model the final geometry produced by the measured layout stack: the
+    # solved plot rectangle ends early enough for its default right gutter plus
+    # the automatic colorbar chrome to remain within the figure.
+    fig.subplots_adjust(right=1.0 - (14.0 + colorbar_right) / canvas_width)
+    rects = fig._effective_rects()
+    assert rects is not None
+    allocated_width = round(canvas_width * rects[0][2])
+    assert fig._tight_layout_colorbar_reservations(rects, (canvas_width, canvas_height)) == {0}
+
+    fig._charts()
+    assert ax._plot_box_px is not None
+    assert ax._plot_box_px[2] == allocated_width
 
 
 def test_second_automatic_colorbar_uses_explicit_axes_without_overwriting_first() -> None:

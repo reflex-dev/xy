@@ -3903,14 +3903,12 @@ def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, co
     if "*" in hatch:
         radius = min(x1 - x0, y1 - y0) * 0.28
         shapes.append(
-            _star_path((x0 + x1) / 2, mid_y, radius, 5, 0.45, -90.0)
-            + f' fill="{escape(color)}"/>'
+            _star_path((x0 + x1) / 2, mid_y, radius, 5, 0.45, -90.0) + f' fill="{escape(color)}"/>'
         )
     if paths:
         shapes.insert(
             0,
-            f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" '
-            'stroke-width="1"/>',
+            f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" stroke-width="1"/>',
         )
     return "".join(shapes)
 
