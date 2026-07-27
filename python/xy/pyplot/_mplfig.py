@@ -1603,6 +1603,7 @@ class Figure:
             options = {**common_options, **per_label_options.get(label, {})}
             ax = self.add_axes(grid.cell_rect(spec.rows, spec.cols), **options)
             ax._subplot_spec = spec
+            ax._subplot_claimed = True
             axes[label] = ax
 
         apply_sharing(self, sharex, sharey)
