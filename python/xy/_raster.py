@@ -2397,45 +2397,36 @@ def _emit_legend(
         hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
-            symbol = style.get("symbol", "circle")
-            sym = _SYMBOLS.get(symbol, 0)
-            marker_path = style.get("marker_path")
-            marker_glyph = style.get("marker_glyph")
-            sw = float(style.get("stroke_width", 0.0))
-            if (
-                symbol in {"plus_line", "x_line"}
-                or (marker_path and not bool(marker_path.get("filled", True)))
-            ) and sw <= 0:
-                sw = 1.0
-            stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
-            radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
-            center = (hx0 + hx1) / 2
-            if marker_glyph:
-                cmd.text(center, cy + radius * 0.68, 1, 2 * radius, c, str(marker_glyph))
-            elif marker_path:
-                for contour in marker_path.get("contours") or ():
-                    values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
-                    points = [
-                        (center + 2 * radius * float(px), cy - 2 * radius * float(py))
-                        for px, py in values
-                    ]
-                    if bool(marker_path.get("filled", True)):
-                        cmd.fill(points, c)
-                        if sw > 0:
-                            cmd.stroke(points, sw, stroke if stroke[3] else c, closed=True)
-                    else:
-                        cmd.stroke(points, max(1.0, sw), c)
-            else:
-                cmd.point(center, cy, radius, sym, c, sw, stroke)
+            _emit_legend_marker(cmd, style, (hx0 + hx1) / 2, cy, color_str)
         elif kind in _LEGEND_LINE_KINDS:
+            width = float(style.get("width", 1.5))
+            gap_color = style.get("legend_gap_color")
+            if gap_color is not None and style.get("dash"):
+                cmd.stroke(
+                    [(hx0, cy), (hx1, cy)],
+                    width,
+                    _parse_color(_css(gap_color, color_str)),
+                )
             cmd.stroke(
                 [(hx0, cy), (hx1, cy)],
-                float(style.get("width", 1.5)),
+                width,
                 c,
                 dash=style.get("dash"),
             )
+            marker = style.get("legend_marker")
+            if isinstance(marker, dict):
+                _emit_legend_marker(cmd, marker, (hx0 + hx1) / 2, cy, color_str)
         else:
-            cmd.fill(_rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2), c)
+            rect = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
+            cmd.fill(rect, c)
+            stroke_width = float(style.get("stroke_width", 0.0))
+            if stroke_width > 0:
+                cmd.stroke(
+                    rect,
+                    stroke_width,
+                    _parse_color(_css(style.get("stroke"), color_str)),
+                    closed=True,
+                )
             hatch = style.get("hatch")
             if hatch:
                 _emit_legend_hatch(
@@ -2455,6 +2446,44 @@ def _emit_legend(
             _parse_color(text_color),
             legend["names"][i],
         )
+
+
+def _emit_legend_marker(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    x: float,
+    y: float,
+    default_color: str,
+) -> None:
+    """Render one Matplotlib marker centered on its legend line sample."""
+    symbol = str(style.get("symbol", "circle"))
+    sym = _SYMBOLS.get(symbol, 0)
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
+    color_str = _css(style.get("color"), default_color)
+    color = _parse_color(color_str)
+    sw = float(style.get("stroke_width", 0.0))
+    if (
+        symbol in {"plus_line", "x_line"}
+        or (marker_path and not bool(marker_path.get("filled", True)))
+    ) and sw <= 0:
+        sw = 1.0
+    stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
+    radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
+    if marker_glyph:
+        cmd.text(x, y + radius * 0.68, 1, 2 * radius, color, str(marker_glyph))
+    elif marker_path:
+        for contour in marker_path.get("contours") or ():
+            values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+            points = [(x + 2 * radius * float(px), y - 2 * radius * float(py)) for px, py in values]
+            if bool(marker_path.get("filled", True)):
+                cmd.fill(points, color)
+                if sw > 0:
+                    cmd.stroke(points, sw, stroke if stroke[3] else color, closed=True)
+            else:
+                cmd.stroke(points, max(1.0, sw), color)
+    else:
+        cmd.point(x, y, radius, sym, color, sw, stroke)
 
 
 def _emit_legend_hatch(

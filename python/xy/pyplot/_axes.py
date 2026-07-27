@@ -6005,6 +6005,60 @@ class Axes(PlotTypeMixin):
                     children.append(xy.text(x, y, *e["args"][2:], **text_kw))
         return children
 
+    def _apply_legend_handle_styles(
+        self,
+        core_figure: Any,
+        claimed_trace_ids: Optional[set[int]] = None,
+    ) -> set[int]:
+        """Attach Matplotlib-only handle paint to automatic legend traces.
+
+        Plot markers and dash gap colors are separate XY marks so the data
+        renderer can stay compact, but Matplotlib's ``HandlerLine2D`` combines
+        them into one legend handle. Match each named source entry to its
+        materialized trace and retain that handle-only state without changing
+        the plotted geometry or replacing the automatic interactive legend.
+        """
+        from ._artists import _legend_marker_style
+
+        claimed = set() if claimed_trace_ids is None else claimed_trace_ids
+        traces = list(core_figure.traces)
+        line_factories = {"segments", "step", "stairs", "errorbar"}
+        for index, entry in enumerate(self._entries):
+            kwargs = entry.get("kwargs") or {}
+            name = kwargs.get("name")
+            if not name or str(name).startswith("_"):
+                continue
+            kind = entry.get("kind")
+            if kind in {"line", "@axline"}:
+                trace_kind = "line"
+            elif kind == "@mark" and entry.get("factory") in line_factories:
+                trace_kind = str(entry["factory"])
+            else:
+                continue
+            target = next(
+                (
+                    trace
+                    for trace in traces
+                    if trace.id not in claimed
+                    and trace.kind == trace_kind
+                    and trace.name == str(name)
+                ),
+                None,
+            )
+            if target is None:
+                continue
+            claimed.add(target.id)
+            gap_color = kwargs.get("_gapcolor")
+            if isinstance(gap_color, str):
+                target.style["legend_gap_color"] = gap_color
+            if index + 1 >= len(self._entries):
+                continue
+            marker_entry = self._entries[index + 1]
+            if marker_entry.get("kind") != "scatter" or not marker_entry.get("_legend_skip"):
+                continue
+            target.style["legend_marker"] = _legend_marker_style(marker_entry)
+        return claimed
+
     def _plot_rect_px(
         self,
         width: int,
@@ -6757,6 +6811,9 @@ class Axes(PlotTypeMixin):
             styles=chrome_styles,
         )
         core_figure = self._chart.figure()
+        claimed_legend_traces = self._apply_legend_handle_styles(core_figure)
+        if self._twin is not None:
+            self._twin._apply_legend_handle_styles(core_figure, claimed_legend_traces)
         if self._legend and self._legend_artist is None and "border_pad" in self._legend_options:
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
         if self._legend_items is not None:

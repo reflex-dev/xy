@@ -1948,72 +1948,10 @@ export class ChartView {
         svg.setAttribute("width", "18");
         svg.setAttribute("height", "14");
         svg.style.overflow = "visible";
-        const requestedMarkerSize = Number(it.style?.size);
-        const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
-        const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
-        const paths = {
-          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
-          thin_diamond: "M9 2l3 5-3 5-3-5z",
-          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
-          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
-          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
-          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
-          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
-          pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
-          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
-          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
-        };
         const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
-        if (it.style?.marker_glyph) {
-          const text = document.createElementNS(ns, "text");
-          text.setAttribute("x", "9");
-          text.setAttribute("y", "7");
-          text.setAttribute("font-family", "DejaVu Sans");
-          text.setAttribute("font-size", String(markerSize));
-          text.setAttribute("text-anchor", "middle");
-          text.setAttribute("dominant-baseline", "central");
-          text.textContent = String(it.style.marker_glyph);
-          sw.style.setProperty("--xy-legend-swatch-fill", color);
-          sw.style.setProperty("--xy-legend-swatch-stroke", "none");
-          sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
-          svg.appendChild(text);
-        } else {
-          const path = document.createElementNS(ns, "path");
-          if (it.style?.marker_path) {
-            const commands = [];
-            for (const contour of it.style.marker_path.contours || []) {
-              for (let offset = 0; offset + 1 < contour.length; offset += 2) {
-                const x = 9 + markerSize * Number(contour[offset]);
-                const y = 7 - markerSize * Number(contour[offset + 1]);
-                commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
-              }
-              if (it.style.marker_path.filled) commands.push("Z");
-            }
-            path.setAttribute("d", commands.join(" "));
-          } else if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-            const radius = markerSize / 2;
-            if (it.symbol === "pixel") path.setAttribute("d", `M${9 - radius} ${7 - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
-            else path.setAttribute("d", `M9 ${7 - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
-          } else {
-            path.setAttribute("d", paths[it.symbol] || paths.square);
-            if (hasMarkerSize) {
-              const scale = markerSize / 9;
-              path.setAttribute("transform", `translate(9 7) scale(${scale}) translate(-9 -7)`);
-            }
-          }
-          const lineMarker = it.symbol.endsWith("_line") ||
-            (it.style?.marker_path && !it.style.marker_path.filled);
-          sw.style.setProperty(
-            "--xy-legend-swatch-fill",
-            lineMarker ? "none" : color,
-          );
-          sw.style.setProperty("--xy-legend-swatch-stroke", color);
-          sw.style.setProperty(
-            "--xy-legend-swatch-stroke-width",
-            String(it.style?.stroke_width || 1),
-          );
-          svg.appendChild(path);
-        }
+        this._appendLegendMarker(
+          svg, sw, { ...(it.style || {}), symbol: it.symbol }, color, 9, 7, true,
+        );
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-width", "18px");
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
@@ -2028,10 +1966,27 @@ export class ChartView {
         ln.setAttribute("y1", "6");
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
+        const lineColor = gradientPaint
+          ? gradientPaint(svg)
+          : safeCssPaint(this.root, bg);
+        if (it.style?.legend_gap_color && it.style?.dash?.length) {
+          const gaps = document.createElementNS(ns, "line");
+          gaps.setAttribute("x1", "1");
+          gaps.setAttribute("y1", "6");
+          gaps.setAttribute("x2", "21");
+          gaps.setAttribute("y2", "6");
+          gaps.setAttribute(
+            "stroke",
+            safeCssPaint(this.root, it.style.legend_gap_color),
+          );
+          gaps.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+          gaps.setAttribute("stroke-dasharray", "none");
+          svg.appendChild(gaps);
+        }
         sw.style.setProperty("--xy-legend-swatch-fill", "none");
         sw.style.setProperty(
           "--xy-legend-swatch-stroke",
-          gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg),
+          lineColor,
         );
         // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
         // exporters' dict-default and Matplotlib itself.
@@ -2043,6 +1998,11 @@ export class ChartView {
           sw.style.setProperty("--xy-legend-swatch-dasharray", it.style.dash.join(" "));
         }
         svg.appendChild(ln);
+        if (it.style?.legend_marker) {
+          this._appendLegendMarker(
+            svg, sw, it.style.legend_marker, lineColor, 11, 6, false,
+          );
+        }
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-width", "22px");
         sw.style.setProperty("--xy-legend-swatch-height", "12px");
@@ -2054,6 +2014,27 @@ export class ChartView {
           "--xy-legend-swatch-paint",
           safeCssPaint(this.root, bg),
         );
+        const patchStrokeWidth = Number(it.style?.stroke_width);
+        if (Number.isFinite(patchStrokeWidth) && patchStrokeWidth > 0) {
+          const ns = "http://www.w3.org/2000/svg";
+          const svg = document.createElementNS(ns, "svg");
+          svg.setAttribute("viewBox", "0 0 12 10");
+          const rect = document.createElementNS(ns, "rect");
+          const inset = Math.min(2, patchStrokeWidth / 2);
+          rect.setAttribute("x", String(inset));
+          rect.setAttribute("y", String(inset));
+          rect.setAttribute("width", String(12 - 2 * inset));
+          rect.setAttribute("height", String(10 - 2 * inset));
+          rect.setAttribute("rx", "2");
+          rect.setAttribute("fill", "none");
+          rect.setAttribute(
+            "stroke",
+            safeCssPaint(this.root, it.style?.stroke || bg),
+          );
+          rect.setAttribute("stroke-width", String(patchStrokeWidth));
+          svg.appendChild(rect);
+          sw.appendChild(svg);
+        }
         // Hatch layers are explicit mark semantics and sit over that sanitized
         // base paint without forcing the base color into an inline background.
         if (it.style?.hatch) {
@@ -2102,6 +2083,94 @@ export class ChartView {
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
     return lg;
+  }
+
+  _appendLegendMarker(svg, sw, marker, defaultColor, cx, cy, wrapperPaint) {
+    const ns = "http://www.w3.org/2000/svg";
+    const requestedMarkerSize = Number(marker?.size);
+    const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
+    const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
+    const symbol = String(marker?.symbol || "circle");
+    const fillColor = safeCssPaint(this.root, marker?.color || defaultColor);
+    const hasStroke = marker?.stroke != null || marker?.stroke_width != null;
+    const strokeColor = hasStroke
+      ? safeCssPaint(this.root, marker?.stroke || fillColor)
+      : (wrapperPaint ? fillColor : "none");
+    const paths = {
+      square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+      thin_diamond: "M9 2l3 5-3 5-3-5z",
+      triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+      triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+      plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+      cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+      x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+      pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+      hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+      star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+    };
+    if (marker?.marker_glyph) {
+      const text = document.createElementNS(ns, "text");
+      text.setAttribute("x", String(cx));
+      text.setAttribute("y", String(cy));
+      text.setAttribute("font-family", "DejaVu Sans");
+      text.setAttribute("font-size", String(markerSize));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "central");
+      if (wrapperPaint) {
+        sw.style.setProperty("--xy-legend-swatch-fill", fillColor);
+        sw.style.setProperty("--xy-legend-swatch-stroke", "none");
+        sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
+      } else {
+        text.setAttribute("fill", fillColor);
+      }
+      text.textContent = String(marker.marker_glyph);
+      svg.appendChild(text);
+      return;
+    }
+    const path = document.createElementNS(ns, "path");
+    if (marker?.marker_path) {
+      const commands = [];
+      for (const contour of marker.marker_path.contours || []) {
+        for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+          const x = cx + markerSize * Number(contour[offset]);
+          const y = cy - markerSize * Number(contour[offset + 1]);
+          commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
+        }
+        if (marker.marker_path.filled) commands.push("Z");
+      }
+      path.setAttribute("d", commands.join(" "));
+    } else if (symbol === "circle" || symbol === "point" || symbol === "pixel") {
+      const radius = markerSize / 2;
+      if (symbol === "pixel")
+        path.setAttribute("d", `M${cx - radius} ${cy - radius}h${markerSize}v${markerSize}h-${markerSize}z`);
+      else
+        path.setAttribute("d", `M${cx} ${cy - radius}a${radius} ${radius} 0 1 0 0 ${markerSize}a${radius} ${radius} 0 1 0 0 -${markerSize}`);
+    } else {
+      path.setAttribute("d", paths[symbol] || paths.square);
+      const scale = hasMarkerSize ? markerSize / 9 : 1;
+      path.setAttribute(
+        "transform",
+        `translate(${cx} ${cy}) scale(${scale}) translate(-9 -7)`,
+      );
+    }
+    const lineMarker = symbol.endsWith("_line") ||
+      (marker?.marker_path && !marker.marker_path.filled);
+    const fill = lineMarker ? "none" : fillColor;
+    const requestedStrokeWidth = Number(marker?.stroke_width);
+    const strokeWidth = Number.isFinite(requestedStrokeWidth)
+      ? requestedStrokeWidth
+      : (wrapperPaint ? 1 : 0);
+    if (wrapperPaint) {
+      sw.style.setProperty("--xy-legend-swatch-fill", fill);
+      sw.style.setProperty("--xy-legend-swatch-stroke", strokeColor);
+      sw.style.setProperty("--xy-legend-swatch-stroke-width", String(strokeWidth));
+    } else {
+      path.setAttribute("fill", fill);
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-width", String(strokeWidth));
+      path.setAttribute("stroke-dasharray", "none");
+    }
+    svg.appendChild(path);
   }
 
   // Paint an SVG swatch with the item's colormap ramp: registers a

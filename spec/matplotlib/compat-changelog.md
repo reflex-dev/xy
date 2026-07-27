@@ -4,6 +4,15 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Legend handle fidelity — 2026-07-27
+
+- Patch handles retain independent face and edge paint, so an unfilled bar
+  with a visible outline no longer becomes an invisible legend swatch.
+- Dashed `Line2D` handles retain their alternating `gapcolor` beneath the
+  foreground dash pattern.
+- Line handles retain their centered marker shape, size, face, and edge paint
+  for clean, masked, and NaN-broken paths.
+
 ## Style-sheet gallery source compatibility — 2026-07-27
 
 - The bounded `rcParams["axes.prop_cycle"]` proxy now reports the installed

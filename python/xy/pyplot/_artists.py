@@ -1337,7 +1337,10 @@ class StreamplotSet:
 
 
 def _legend_item_from_entry(
-    entry: dict[str, Any], label: Any, point_scale: float
+    entry: dict[str, Any],
+    label: Any,
+    point_scale: float,
+    marker_entry: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Freeze a plotted entry into a standalone legend swatch descriptor.
 
@@ -1362,6 +1365,12 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
+    stroke = kw.get("stroke")
+    if isinstance(stroke, str):
+        style["stroke"] = stroke
+    stroke_width = kw.get("stroke_width")
+    if stroke_width is not None and np.isscalar(stroke_width):
+        style["stroke_width"] = float(stroke_width)
     hatch = kw.get("hatch")
     if hatch:
         style["hatch"] = str(hatch)
@@ -1386,6 +1395,11 @@ def _legend_item_from_entry(
             style["dash"] = resolved
     elif isinstance(dash, (list, tuple)):
         style["dash"] = [float(v) for v in dash]
+    gap_color = kw.get("_gapcolor")
+    if isinstance(gap_color, str):
+        style["legend_gap_color"] = gap_color
+    if marker_entry is not None:
+        style["legend_marker"] = _legend_marker_style(marker_entry)
     if kind == "scatter":
         symbol = kw.get("symbol")
         if symbol:
@@ -1394,6 +1408,26 @@ def _legend_item_from_entry(
             if kw.get(key) is not None:
                 style[key] = kw[key]
     return {"name": str(label), "kind": kind, "style": style}
+
+
+def _legend_marker_style(entry: dict[str, Any]) -> dict[str, Any]:
+    """Freeze a pyplot marker overlay into a renderer-neutral legend marker."""
+    kw = entry.get("kwargs") or {}
+    marker: dict[str, Any] = {"symbol": str(kw.get("symbol", "circle"))}
+    for source, target in (
+        ("color", "color"),
+        ("stroke", "stroke"),
+        ("_marker_path", "marker_path"),
+        ("_marker_glyph", "marker_glyph"),
+    ):
+        value = kw.get(source)
+        if value is not None:
+            marker[target] = value
+    for key in ("size", "stroke_width"):
+        value = kw.get(key)
+        if value is not None and np.isscalar(value):
+            marker[key] = float(value)
+    return marker
 
 
 class Legend:
@@ -1414,7 +1448,7 @@ class Legend:
                 f"labels ({len(labels)}); the extras are ignored",
                 stacklevel=2,
             )
-        self._pairs: list[tuple[dict[str, Any], Any]] = []
+        self._pairs: list[tuple[dict[str, Any], Any, Optional[dict[str, Any]]]] = []
         for handle, label in zip(handles, labels, strict=False):
             entry = getattr(handle, "_entry", None)
             if entry is None:
@@ -1428,7 +1462,12 @@ class Legend:
                     stacklevel=2,
                 )
                 continue
-            self._pairs.append((entry, label))
+            marker_entry = None
+            if isinstance(handle, Line2D):
+                marker_entries = handle._marker_entries()
+                if marker_entries and marker_entries[0] is not entry:
+                    marker_entry = marker_entries[0]
+            self._pairs.append((entry, label, marker_entry))
         self._kwargs = dict(kwargs)
         if loc is not None:
             self._kwargs.setdefault("loc", loc)
@@ -1444,7 +1483,10 @@ class Legend:
         self._parent = parent
         self._options = parent._compose_legend_options(dict(self._kwargs))
         scale = parent._point_scale()
-        self._items = [_legend_item_from_entry(entry, label, scale) for entry, label in self._pairs]
+        self._items = [
+            _legend_item_from_entry(entry, label, scale, marker_entry)
+            for entry, label, marker_entry in self._pairs
+        ]
 
     def spec(self) -> dict[str, Any]:
         """The option dict plus explicit items, ready for the render payload."""
