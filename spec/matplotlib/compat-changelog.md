@@ -4,38 +4,31 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Legend handle fidelity — 2026-07-27
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- Patch handles retain independent face and edge paint, so an unfilled bar
-  with a visible outline no longer becomes an invisible legend swatch.
-- Dashed `Line2D` handles retain their alternating `gapcolor` beneath the
-  foreground dash pattern.
-- Line handles retain their centered marker shape, size, face, and edge paint
-  for clean, masked, and NaN-broken paths.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
 
-## Style-sheet gallery source compatibility — 2026-07-27
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- The bounded `rcParams["axes.prop_cycle"]` proxy now reports the installed
-  color count through `len()`, allowing Matplotlib's exact `dark_background`
-  gallery source to derive its shifted-line count after applying the style.
-
-## PDSH state and image ownership — 2026-07-26
-
-- Split subplot creation from activation: repeated same-spec
-  `Figure.add_subplot()` calls now create overlay axes, while `plt.subplot()`
-  reuses the first matching axes and no-argument `plt.axes()` creates a fresh
-  axes. Reused subplots process `sharex=`/`sharey=` through the same
-  axis-property sharing path as newly created subplots, and mosaic-returned
-  axes are claimed before later `Figure.add_subplot()` calls. This restores
-  the state boundaries used by PDSH 04.01 and 04.10.
-- Static PNG/SVG composition rebuilds cached panels when a fresh axes changes
-  the figure to or from overlapping absolute placement. Same-position axes
-  therefore share one frame: the later opaque axes patch covers the older
-  plot, while their ticks and labels no longer drift into duplicated chrome.
-- `imshow()` now copies both its logical source and prepared render arrays.
-  `AxesImage.set_data()` updates `get_array()` and rebuilds render data through
-  the initial normalization/origin/resampling path, so later mutation of either
-  caller array cannot rewrite an existing image.
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 
