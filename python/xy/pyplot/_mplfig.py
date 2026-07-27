@@ -17,7 +17,7 @@ import numpy as np
 
 from .. import _textblock
 from ._artists import Text
-from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
+from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text, _scale_values
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
@@ -1197,6 +1197,7 @@ class Figure:
     def _charts(self, chrome_cache: Optional[_ChromeCache] = None) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
         rects = self._effective_rects(chrome_cache)
+        chart_sizes: list[tuple[int, int]] = []
         if rects is not None:
             charts = []
             for ax, rect in zip(self._axes, rects, strict=True):
@@ -1213,18 +1214,19 @@ class Figure:
                 # panel assuming its plot box sits at exactly this inset, so
                 # the renderers must not pick their own label-aware margins.
                 ax._plot_box_px = (left, top, plot_w, plot_h)
-                charts.append(
-                    ax._build_chart(round(plot_w + left + right), round(plot_h + top + bottom))
-                )
+                chart_sizes.append((round(plot_w + left + right), round(plot_h + top + bottom)))
+                charts.append(ax._build_chart(*chart_sizes[-1]))
         else:
             widths, heights = self._grid_cell_sizes()
-            charts = [
-                ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-                for index, ax in enumerate(self._axes)
+            chart_sizes = [
+                (widths[index % self._ncols], heights[index // self._ncols])
+                for index in range(len(self._axes))
             ]
+            charts = [ax._build_chart(*chart_sizes[index]) for index, ax in enumerate(self._axes)]
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
+            shared_domains: list[dict[str, tuple[float, float]]] = [{} for _figure in figures]
             for dim, shared in (("x", self._sharex), ("y", self._sharey)):
                 if not shared:
                     continue
@@ -1242,8 +1244,34 @@ class Figure:
                         min(min(pair) for pair in ranges),
                         max(max(pair) for pair in ranges),
                     )
-                    for figure in members:
-                        figure._set_axis_domain(dim, domain)
+                    for index in group:
+                        shared_domains[index][dim] = domain
+
+            # Matplotlib's AxLine reads the live shared viewLim at draw time.
+            # Our wire format needs finite endpoints, so materialize only axes
+            # containing axlines one more time when their group's finalized
+            # domain differs from the view used by the cached chart.
+            for index, (ax, domains) in enumerate(zip(self._axes, shared_domains, strict=True)):
+                if not any(entry["kind"] == "@axline" for entry in ax._entries):
+                    continue
+                data_domains = {}
+                for dim, domain in domains.items():
+                    spec = ax._scale_specs[dim]
+                    data_domains[dim] = tuple(
+                        map(
+                            float,
+                            _scale_values(np.asarray(domain), spec, inverse=True),
+                        )
+                    )
+                if getattr(ax, "_shared_render_domains", {}) != data_domains:
+                    ax._shared_render_domains = data_domains
+                    ax._chart = None
+                    charts[index] = ax._build_chart(*chart_sizes[index])
+
+            figures = [chart.figure() for chart in charts]
+            for figure, domains in zip(figures, shared_domains, strict=True):
+                for dim, domain in domains.items():
+                    figure._set_axis_domain(dim, domain)
             for figure in figures:
                 figure.set_interaction(link_group=self._link_group, link_axes=tuple(linked))
         return charts
