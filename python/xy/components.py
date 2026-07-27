@@ -622,6 +622,9 @@ def scatter(
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
+        _marker_path: Internal authored marker-path payload for Matplotlib adapters.
+        _marker_glyph: Internal single-glyph marker payload for Matplotlib adapters.
+        _legend_trace_size: Whether a Matplotlib legend derives marker size from this trace.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         key: Stable row identities, or a column name resolved from ``data``.
