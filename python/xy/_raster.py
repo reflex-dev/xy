@@ -2348,7 +2348,7 @@ def _emit_legend_hatch(
     color: tuple[int, int, int, int],
 ) -> None:
     mid_y = (y0 + y1) / 2
-    if "-" in hatch or "*" in hatch:
+    if "-" in hatch:
         cmd.stroke([(x0, mid_y), (x1, mid_y)], 1.0, color)
     for char, direction in (("/", 1), ("\\", -1)):
         count = min(3, hatch.count(char))
@@ -2366,10 +2366,26 @@ def _emit_legend_hatch(
     if "." in hatch:
         for fraction in (0.3, 0.7):
             x = x0 + fraction * (x1 - x0)
-            cmd.stroke([(x, mid_y), (x + 0.1, mid_y)], 1.0, color)
+            cmd.point(
+                x,
+                mid_y,
+                min(1.1, (y1 - y0) * 0.09),
+                _SYMBOLS["circle"],
+                color,
+                0.0,
+                (0, 0, 0, 0),
+            )
     if "*" in hatch:
         center = (x0 + x1) / 2
-        cmd.stroke([(center, y0), (center, y1)], 1.0, color)
+        cmd.point(
+            center,
+            mid_y,
+            min(x1 - x0, y1 - y0) * 0.28,
+            _SYMBOLS["star"],
+            color,
+            0.0,
+            (0, 0, 0, 0),
+        )
 
 
 def _emit_colorbar(

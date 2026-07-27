@@ -3370,12 +3370,28 @@ class PlotTypeMixin:
                 hy0: list[float] = []
                 hx1: list[float] = []
                 hy1: list[float] = []
+                dot_x: list[float] = []
+                dot_y: list[float] = []
+                star_x: list[float] = []
+                star_y: list[float] = []
+                extend_min = extend in ("min", "both")
+                extend_max = extend in ("max", "both")
                 for row in sample_rows:
                     for col in sample_cols:
                         if not np.isfinite(za[row, col]):
                             continue
                         band = int(np.searchsorted(levels, za[row, col], side="right") - 1)
-                        pattern = patterns[band % len(patterns)]
+                        if band < 0:
+                            if not extend_min:
+                                continue
+                            path_index = 0
+                        elif band >= len(levels) - 1:
+                            if not extend_max:
+                                continue
+                            path_index = len(levels) - 1 + int(extend_min)
+                        else:
+                            path_index = band + int(extend_min)
+                        pattern = patterns[path_index % len(patterns)]
                         if not pattern:
                             continue
                         text = str(pattern)
@@ -3409,20 +3425,18 @@ class PlotTypeMixin:
                             hx1.append(_cx + ox + vx)
                             hy1.append(_cy + oy + vy)
 
-                        if "-" in text or "*" in text:
+                        if "-" in text:
                             stroke("horizontal")
                         for char, angle in (("/", "slash"), ("\\", "backslash")):
                             count = min(3, text.count(char))
                             for index in range(count):
                                 stroke(angle, (index - (count - 1) / 2) * 0.16)
                         if "." in text:
-                            # A tiny cross remains visible in both native raster
-                            # and browser renderers, unlike a zero-length segment.
-                            stroke("horizontal")
-                            stroke("slash")
+                            dot_x.append(cx)
+                            dot_y.append(cy)
                         if "*" in text:
-                            stroke("slash")
-                            stroke("backslash")
+                            star_x.append(cx)
+                            star_y.append(cy)
                 if hx0:
                     self._add(
                         "@mark",
@@ -3432,6 +3446,27 @@ class PlotTypeMixin:
                             "kwargs": {"color": "#222222", "width": 0.9, "opacity": 0.95},
                         },
                     )
+                for marker_x, marker_y, symbol, size in (
+                    (dot_x, dot_y, "circle", 2.2),
+                    (star_x, star_y, "star", 7.0),
+                ):
+                    if marker_x:
+                        overlay = self._add(
+                            "scatter",
+                            {
+                                "x": marker_x,
+                                "y": marker_y,
+                                "kwargs": {
+                                    "color": "#222222",
+                                    "opacity": 0.95,
+                                    "symbol": symbol,
+                                    "size": size,
+                                    "stroke_width": 0.0,
+                                    "name": None,
+                                },
+                            },
+                        )
+                        overlay["_legend_skip"] = True
         return ContourSet(self, entry)
 
     def contour(self, *args: Any, data: TableLike = None, **kwargs: Any) -> ContourSet:

@@ -3880,8 +3880,9 @@ def _legend(
 def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, color: str) -> str:
     """Small, bounded hatch sample for explicit patch legend handles."""
     paths: list[str] = []
+    shapes: list[str] = []
     mid_y = (y0 + y1) / 2
-    if "-" in hatch or "*" in hatch:
+    if "-" in hatch:
         paths.append(f"M{_num(x0)},{_num(mid_y)} L{_num(x1)},{_num(mid_y)}")
     for char, direction in (("/", 1), ("\\", -1)):
         count = min(3, hatch.count(char))
@@ -3893,13 +3894,25 @@ def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, co
                 f"L{_num(center + half)},{_num(mid_y - direction * half)}"
             )
     if "." in hatch:
+        radius = min(1.1, (y1 - y0) * 0.09)
         for fraction in (0.3, 0.7):
-            paths.append(f"M{_num(x0 + fraction * (x1 - x0))},{_num(mid_y)} l0.1,0")
+            shapes.append(
+                f'<circle cx="{_num(x0 + fraction * (x1 - x0))}" cy="{_num(mid_y)}" '
+                f'r="{_num(radius)}" fill="{escape(color)}"/>'
+            )
     if "*" in hatch:
-        paths.append(f"M{_num((x0 + x1) / 2)},{_num(y0)} L{_num((x0 + x1) / 2)},{_num(y1)}")
-    if not paths:
-        return ""
-    return f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" stroke-width="1"/>'
+        radius = min(x1 - x0, y1 - y0) * 0.28
+        shapes.append(
+            _star_path((x0 + x1) / 2, mid_y, radius, 5, 0.45, -90.0)
+            + f' fill="{escape(color)}"/>'
+        )
+    if paths:
+        shapes.insert(
+            0,
+            f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" '
+            'stroke-width="1"/>',
+        )
+    return "".join(shapes)
 
 
 def _colorbar(

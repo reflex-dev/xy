@@ -512,6 +512,84 @@ def test_contourf_legend_elements_keep_per_band_hatches_and_handleheight() -> No
     assert all(item["kind"] == "bar" for item in spec["legend"]["items"])
 
 
+def test_contourf_dot_star_and_backslash_hatches_keep_their_geometry() -> None:
+    z = np.tile([0.2, 1.2, 2.2], (3, 1))
+    _fig, ax = plt.subplots()
+    ax.contourf(
+        z,
+        levels=[0.0, 1.0, 2.0, 3.0],
+        colors="none",
+        hatches=[".", "*", "\\"],
+    )
+
+    dots = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "scatter" and entry["kwargs"]["symbol"] == "circle"
+    )
+    stars = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "scatter" and entry["kwargs"]["symbol"] == "star"
+    )
+    hatch_lines = next(
+        entry
+        for entry in ax._entries
+        if entry["kind"] == "@mark" and entry.get("factory") == "segments"
+    )
+
+    assert set(dots["x"]) == {0.0}
+    assert set(stars["x"]) == {1.0}
+    assert dots["_legend_skip"] is stars["_legend_skip"] is True
+    x0, y0, x1, y1 = map(np.asarray, hatch_lines["args"])
+    assert np.all(x1 > x0)
+    assert np.all(y1 < y0)
+
+
+def test_static_legend_hatches_use_filled_dots_and_stars() -> None:
+    from xy._raster import _SYMBOLS, _emit_legend_hatch
+    from xy._svg import _legend_hatch_svg
+
+    dots = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, ".", "#123456")
+    star = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "*", "#123456")
+    slash = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "/", "#123456")
+    backslash = _legend_hatch_svg(0.0, 20.0, 0.0, 20.0, "\\", "#123456")
+
+    assert dots.count("<circle") == 2
+    assert "<path" not in dots
+    assert "<path" in star and 'fill="#123456"' in star and "stroke=" not in star
+    assert "M5,15 L15,5" in slash
+    assert "M5,5 L15,15" in backslash
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.points: list[tuple[Any, ...]] = []
+            self.strokes: list[tuple[Any, ...]] = []
+
+        def point(self, *args: Any) -> None:
+            self.points.append(args)
+
+        def stroke(self, *args: Any, **_kwargs: Any) -> None:
+            self.strokes.append(args)
+
+    recorder = Recorder()
+    _emit_legend_hatch(
+        recorder,
+        0.0,
+        20.0,
+        0.0,
+        20.0,
+        ".*\\",
+        (18, 52, 86, 255),
+    )
+    assert [point[3] for point in recorder.points] == [
+        _SYMBOLS["circle"],
+        _SYMBOLS["circle"],
+        _SYMBOLS["star"],
+    ]
+    assert len(recorder.strokes) == 1
+
+
 def test_contourf_preserves_unknown_public_extend_as_unextended_geometry() -> None:
     _fig, ax = plt.subplots()
     contour = ax.contourf(_Z, levels=4, extend="lower")
