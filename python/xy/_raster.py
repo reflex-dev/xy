@@ -1022,14 +1022,6 @@ def render_raster(
                 _parse_color(_css(axis_style.get("tick_color"), default_axis)),
             )
 
-    def rotation_flag(angle: float) -> int:
-        normalized = angle % 360.0
-        if abs(normalized - 90.0) < 1e-9:
-            return _TEXT_ROT_CW
-        if abs(normalized - 270.0) < 1e-9:
-            return _TEXT_ROT_CCW
-        return 0
-
     def emit_tick_labels(
         axis: dict[str, Any],
         values: list[float],
@@ -1040,16 +1032,6 @@ def render_raster(
     ) -> None:
         axis_style = axis.get("style") or {}
         items = _axis_tick_label_layout(axis, values, step, axis_scale, is_x)
-        # The native glyph protocol supports quarter-turns, not arbitrary
-        # angles. When SVG/browser collision relief chose a diagonal rotation,
-        # fall back to horizontal downsampling rather than paint overlapping text.
-        if any(rotation_flag(float(item["angle"])) == 0 and item["angle"] for item in items):
-            fallback_axis = {
-                **axis,
-                "tick_label_angle": 0,
-                "tick_label_strategy": "hide",
-            }
-            items = _axis_tick_label_layout(fallback_axis, values, step, axis_scale, is_x)
         tick_color = _parse_color(
             _css(
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
@@ -1074,7 +1056,6 @@ def render_raster(
         # side-derived default, matching the browser client and SVG export.
         explicit_anchor = _tick_label_anchor(axis, axis_style, "")
         for item in items:
-            flag = rotation_flag(float(item["angle"]))
             block = _textblock.measure(item["text"], font_size)
             if is_x:
                 row_offset = float(item["row"]) * (font_size + 4)
@@ -1094,7 +1075,6 @@ def render_raster(
                 )
                 default_anchor = 0 if side == "right" else 2
                 anchor = _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
-            angle = float(item["angle"]) if flag else 0.0
             _emit_text_block(
                 cmd,
                 x,
@@ -1103,7 +1083,7 @@ def render_raster(
                 font_size,
                 tick_color,
                 item["text"],
-                angle=angle,
+                angle=float(item["angle"]),
             )
 
     emit_tick_labels(xa, xlab, xstep, sx, is_x=True)

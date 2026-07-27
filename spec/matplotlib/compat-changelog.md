@@ -4,7 +4,7 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Multiline chrome and final layout resolution — 2026-07-26
+## Multiline chrome, tick fidelity, and final layout resolution — 2026-07-26
 
 - Newline-delimited axes titles, axis labels, tick/category labels, and
   suptitles now use one measured text-block contract across browser, SVG, and
@@ -15,6 +15,15 @@ which covers user-visible releases across the whole package.
   re-resolves from the final per-panel chrome. Inter-panel spacing is the union
   of neighboring measured gutters, so multiline titles and category labels do
   not collide across subplot boundaries.
+- Pyplot categorical axes now author all first-seen category locations, and
+  categorical/`FixedLocator`/`set_*ticks` labels use the explicit `preserve`
+  strategy. Core XY axes still default to collision-aware automatic thinning.
+- Native PNG tick labels use the existing arbitrary-angle styled-text command;
+  diagonal labels no longer fall back to a different horizontal subset.
+- Browser, SVG, and PNG layouts measure the final rotated x-label projection
+  into both bottom and top gutters. Tight/constrained figure-factory requests
+  are marked dirty by later plotting/styling and re-solved before output, so
+  layout reflects final strings and angles in every target.
 
 ## Vector-field gallery corrections — 2026-07-24
 

@@ -220,6 +220,12 @@ or a CSS `px` value such as `"3px"`.
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 | `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
 
+`tick_label_strategy="preserve"` is the explicit-locator policy: every tick
+label is drawn even when its box overlaps another. It is used by
+`xy.pyplot` for Matplotlib categorical conversion, `FixedLocator`, and
+`set_*ticks`; ordinary composition axes remain on `"auto"` and retain
+collision-aware rotate/stagger/thinning behavior.
+
 ```python
 xy.x_axis(
     label="time",
@@ -380,6 +386,15 @@ A title whose line box is taller than twice the inset is clamped to keep 1 px of
 leading ink on the canvas. Titles at an angle other than ±90° keep the raw inset.
 `label_offset` moves the title within the reserved gutter and is included in the
 reservation.
+
+The **top and bottom x-axis gutters** are likewise floored at the projected
+cross-axis extent when the caller explicitly authors an angle or
+rotate/stagger strategy. The SVG/native paths use the baked DejaVu advance
+table; the browser uses `measureText` with the active tick size. The reservation
+is evaluated after collision strategy, and `"preserve"` pays for every authored
+location. Core `"auto"` retains its long-standing fixed-band collision fallback.
+Explicitly rotated labels therefore cannot be clipped merely because a 32/42 px
+legacy band was chosen before their angle or strings were known.
 
 Two asymmetries are deliberate, not oversights:
 

@@ -181,6 +181,34 @@ def test_svg_tick_label_anchor_collision_parity() -> None:
     )
 
 
+@pytest.mark.parametrize(("side", "room_key"), [("bottom", "bottom"), ("top", "top")])
+def test_rotated_x_tick_labels_measure_their_outward_gutter(side, room_key) -> None:
+    labels = [
+        "Democratic Republic of the Congo",
+        "United States of America",
+        "Papua New Guinea",
+    ]
+    chart = xy.chart(
+        xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]),
+        xy.x_axis(
+            side=side,
+            tick_values=[0.0, 1.0, 2.0],
+            tick_labels=labels,
+            tick_label_angle=45,
+            tick_label_anchor="end",
+            tick_label_strategy="preserve",
+        ),
+        width=640,
+        height=360,
+    )
+    spec, _blob = chart.figure().build_payload()
+    width, height, _compact, plot = layout(spec)
+    room = plot["y"] if room_key == "top" else height - plot["y"] - plot["h"]
+
+    assert width == 640
+    assert room > 100
+
+
 def test_svg_legend_text_honors_theme_text_color() -> None:
     chart = xy.line_chart(
         xy.line(x=[0.0, 1.0], y=[0.0, 1.0], name="walk"),
