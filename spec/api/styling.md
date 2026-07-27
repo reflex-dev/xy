@@ -183,7 +183,7 @@ disagreeing with the rasterizer at no benefit.
 
 ### Marker shape
 
-`marker-shape` selects one of the 17 renderer-backed scatter symbols and is the
+`marker-shape` selects one of the 19 renderer-backed scatter symbols and is the
 CSS spelling of the existing `symbol=` argument — both resolve to the same
 `symbol` trace-style value, so the two spellings produce identical specs. It is
 an **XY vocabulary name, not a standard CSS property**: CSS has no shape keyword
@@ -1103,7 +1103,7 @@ mutated, so a rejected append cannot leave channel lengths out of sync.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
-`scatter` markers take any of the 17 renderer-backed symbols listed in the
+`scatter` markers take any of the 19 renderer-backed symbols listed in the
 public [Mark styles](../../docs/styling/mark-styles.md#mark-specific-appearance) guide,
 plus a `stroke` color and `stroke_width` (px) for a border, e.g.
 `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an
