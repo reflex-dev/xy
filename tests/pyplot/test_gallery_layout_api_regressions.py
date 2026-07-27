@@ -114,6 +114,39 @@ def test_subplot_mosaic_constrained_layout_reserves_subplot_tick_chrome() -> Non
     assert (second[0] - first[0] - first[2]) * 800 >= 57
 
 
+def test_constrained_layout_remeasures_final_rotated_category_labels() -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), layout="constrained")
+    empty_rect = fig._effective_rects()[0]
+    labels = [
+        "United States",
+        "Democratic Republic of the Congo",
+        "United Kingdom",
+        "Papua New Guinea",
+    ]
+
+    ax.bar(labels, [4, 3, 2, 1])
+    ax.tick_params("x", rotation=45, rotation_mode="xtick")
+
+    assert fig._layout_dirty is True
+    final_rect = fig._effective_rects()[0]
+    assert fig._layout_dirty is False
+    assert final_rect[1] > empty_rect[1]
+
+    charts = fig._charts()
+    spec, _blob = charts[0].figure().build_payload()
+    from xy import _svg
+
+    _width, height, _compact, plot = _svg.layout(spec)
+    assert height - plot["y"] - plot["h"] > 80
+
+    png = BytesIO()
+    svg = BytesIO()
+    fig.savefig(png, format="png", dpi=100)
+    fig.savefig(svg, format="svg", dpi=100)
+    assert png.getvalue().startswith(b"\x89PNG")
+    assert b"rotate(45" in svg.getvalue()
+
+
 def test_rgba_compositor_preserves_transparent_chrome() -> None:
     destination = np.array(
         [[[255, 255, 255, 255], [0, 0, 255, 255]]],

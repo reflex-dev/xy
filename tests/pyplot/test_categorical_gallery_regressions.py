@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
+from xy import chart, line, x_axis
 
 
 def _axis_domain(ax, which: str) -> tuple[float, float]:
@@ -30,6 +31,32 @@ def test_categorical_variables_trajectories_keep_every_first_seen_category() -> 
     np.testing.assert_allclose(traces[1].x.values, np.arange(6))
     np.testing.assert_allclose(traces[0].y.values, [0, 0, 0, 0, 1, 1])
     np.testing.assert_allclose(traces[1].y.values, [1, 0, 1, 1, 0, 1])
+    spec, _blob = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["x_axis"]["tick_values"] == [0, 1, 2, 3, 4, 5]
+    assert spec["x_axis"]["tick_label_strategy"] == "preserve"
+
+
+def test_pyplot_fixed_locator_preserves_every_authored_tick() -> None:
+    _fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot([0, 1, 2, 3], [1, 2, 3, 4])
+    ax.xaxis.set_major_locator(plt.FixedLocator([0, 1, 2, 3]))
+
+    spec, _blob = ax._build_chart(300, 200).figure().build_payload()
+
+    assert spec["x_axis"]["tick_values"] == [0, 1, 2, 3]
+    assert spec["x_axis"]["tick_label_strategy"] == "preserve"
+
+
+def test_core_category_axis_keeps_automatic_thinning_policy() -> None:
+    figure = chart(
+        line(["alpha", "beta", "gamma"], [1, 2, 3]),
+        x_axis(),
+    ).figure()
+
+    spec, _blob = figure.build_payload()
+
+    assert "tick_values" not in spec["x_axis"]
+    assert "tick_label_strategy" not in spec["x_axis"]
 
 
 def test_categorical_scatter_and_line_autoscale_to_the_shared_category_union() -> None:

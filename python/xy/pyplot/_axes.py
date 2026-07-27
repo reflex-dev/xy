@@ -49,7 +49,7 @@ from ._fmt import parse_fmt
 from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
-from ._ticker import AutoLocator, Locator, NullLocator, ScalarFormatter, as_formatter
+from ._ticker import AutoLocator, FixedLocator, Locator, NullLocator, ScalarFormatter, as_formatter
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
     LINESTYLE_TO_DASH,
@@ -6611,6 +6611,21 @@ class Axes(PlotTypeMixin):
             styles=chrome_styles,
         )
         core_figure = self._chart.figure()
+        # Matplotlib's categorical converter installs one fixed location per
+        # first-seen category, and FixedLocator/set_*ticks draw every authored
+        # location even when labels collide. The core chart API deliberately
+        # auto-thins ordinary category axes; author the stronger policy only at
+        # this compatibility boundary.
+        for axis_id in ("x", "y"):
+            options = core_figure.axis_options.get(axis_id, {})
+            categories = core_figure._axis_categories.get(axis_id)
+            locator = self._tickers.get((axis_id, "major_locator"))
+            explicit_ticks = "tick_values" in self._axis[axis_id]
+            if categories and options.get("tick_values") is None:
+                options["tick_values"] = [float(index) for index in range(len(categories))]
+                options["tick_count"] = max(1, len(categories))
+            if categories or isinstance(locator, FixedLocator) or explicit_ticks:
+                options["tick_label_strategy"] = "preserve"
         if self._legend and self._legend_artist is None and "border_pad" in self._legend_options:
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
         if self._legend_items is not None:

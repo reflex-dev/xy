@@ -106,9 +106,9 @@ def _record_text(monkeypatch) -> list[tuple[float, float, int, float, str]]:
     recorded: list[tuple[float, float, int, float, str]] = []
     original_text = _raster._Cmd.text
 
-    def record_text(self, x, y, anchor, size, color, value):
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
         recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
-        return original_text(self, x, y, anchor, size, color, value)
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
 
     monkeypatch.setattr(_raster._Cmd, "text", record_text)
     return recorded
@@ -630,9 +630,8 @@ def test_native_horizontal_colorbar_label_stays_upright_below_the_bar(monkeypatc
 
 
 def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) -> None:
-    # The native glyph protocol only rotates in quarter-turns, so a diagonal
-    # tick_label_angle falls back to horizontal strategy="hide" — which must
-    # only downsample on a real collision, not unconditionally.
+    # Arbitrary tick angles use the native styled-text command and keep the
+    # same collision-selected label set as SVG/browser.
     tick_values = [0.0, 25.0, 50.0, 75.0, 100.0]
     tick_labels = ["t0", "t25", "t50", "t75", "t100"]
     chart = xy.chart(
@@ -647,11 +646,18 @@ def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) 
         height=300,
     )
     spec, blob = chart.figure().build_payload()
-    recorded = _record_text(monkeypatch)
+    angles: dict[str, float] = {}
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value, **kwargs):
+        angles[str(value)] = float(kwargs.get("angle", 0.0))
+        return original_text(self, x, y, anchor, size, color, value, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
     _raster.render_raster(spec, blob, scale=1)
 
-    rendered = {entry[4] for entry in recorded}
-    assert set(tick_labels) <= rendered
+    assert set(tick_labels) <= angles.keys()
+    assert {angles[label] for label in tick_labels} == {45.0}
 
 
 def test_native_smooth_stroke_matches_reference_polyline() -> None:

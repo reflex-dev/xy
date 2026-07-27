@@ -65,7 +65,18 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
             )
         left = max(left, needed)
     extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
-    return left, top + extra_top, right + extra_right, bottom + extra_bottom
+    defaults = (left, top + extra_top, right + extra_right, bottom + extra_bottom)
+    figure = ax.figure
+    if figure is None:
+        return defaults
+    _canvas_w, canvas_h = rc_figsize_px(figure._figsize, figure._dpi)
+    probe_h = max(120, round(canvas_h / max(1, figure._nrows)))
+    measured = _measured_axis_chrome(
+        ax,
+        max(120, round(plot_w + defaults[0] + defaults[2])),
+        probe_h,
+    )
+    return tuple(max(default, actual) for default, actual in zip(defaults, measured, strict=True))
 
 
 def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
@@ -81,6 +92,34 @@ def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
 
     spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
     return float(_svg.layout(spec)[3]["x"])
+
+
+def _measured_axis_chrome(ax: Axes, width: int, height: int) -> tuple[float, float, float, float]:
+    """Intrinsic ``(left, top, right, bottom)`` chrome for final axes content.
+
+    Tight/constrained layout needs the labels after plotting and styling have
+    finished. Build one provisional payload, remove its figure-rectangle
+    padding, and ask the same layout resolver used by PNG/SVG for the actual
+    text reservation. The later layout adjustment invalidates this provisional
+    chart before any output consumes it.
+    """
+    from .. import _svg
+
+    previous_chart = ax._chart
+    ax._chart = None
+    try:
+        spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
+    finally:
+        ax._chart = previous_chart
+    intrinsic = dict(spec)
+    intrinsic.pop("padding", None)
+    measured_width, measured_height, _compact, plot = _svg.layout(intrinsic)
+    return (
+        float(plot["x"]),
+        float(plot["y"]),
+        float(measured_width - plot["x"] - plot["w"]),
+        float(measured_height - plot["y"] - plot["h"]),
+    )
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
@@ -147,7 +186,7 @@ class Figure:
         self._height_ratios: Optional[tuple[float, ...]] = None
         self._layout_options: dict[str, Any] = {}
         self._layout_dirty = False
-        self._layout_resolving = False
+        self._applying_layout = False
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
         self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
@@ -167,7 +206,7 @@ class Figure:
 
     def _invalidate(self) -> None:
         self._html_cache = None
-        if self._layout_options and not self._layout_resolving:
+        if self._layout_options.get("engine") == "tight" and not self._applying_layout:
             self._layout_dirty = True
 
     @property
@@ -396,6 +435,7 @@ class Figure:
         self._height_ratios = None
         self._layout_options = {}
         self._layout_dirty = False
+        self._applying_layout = False
         self._subplot_adjust = {}
         self._invalidate()
 
@@ -481,25 +521,32 @@ class Figure:
             "w_pad": w_pad,
             "rect": rect,
         }
+        # Defer the solve until geometry is queried or an output is built.
+        # Figure factories receive layout= before callers add marks/labels;
+        # solving there permanently bakes an empty-axes rectangle.
         self._layout_dirty = True
-        self._resolve_layout()
+        self._invalidate()
+        # Preserve Matplotlib's observable call semantics for code that reads
+        # axes positions immediately. Later content/style mutations mark the
+        # request dirty again, so factory-authored tight/constrained layout is
+        # still re-solved from final content at render time.
+        self._ensure_layout()
 
-    def _resolve_layout(self) -> None:
-        """Resolve a dirty layout from the figure's final chrome state."""
-        if not self._layout_dirty or self._layout_resolving:
+    def _ensure_layout(self) -> None:
+        if not self._layout_dirty or self._applying_layout:
             return
-        self._layout_resolving = True
+        self._applying_layout = True
         try:
-            self._resolve_tight_layout()
-            self._layout_dirty = False
+            self._apply_tight_layout()
         finally:
-            self._layout_resolving = False
+            self._applying_layout = False
 
-    def _resolve_tight_layout(self) -> None:
-        pad = self._layout_options.get("pad")
-        h_pad = self._layout_options.get("h_pad")
-        w_pad = self._layout_options.get("w_pad")
-        rect = self._layout_options.get("rect")
+    def _apply_tight_layout(self) -> None:
+        options = self._layout_options
+        pad = options.get("pad")
+        h_pad = options.get("h_pad")
+        w_pad = options.get("w_pad")
+        rect = options.get("rect")
         # The native panels carry their own tick/title chrome, while the
         # GridSpec rectangles describe plot boxes only.  Reserve enough
         # figure-edge and inter-panel room for that chrome so adjacent panels
@@ -578,6 +625,7 @@ class Figure:
                 wspace=horizontal_gap / cell_w,
                 hspace=vertical_gap / cell_h,
             )
+        self._layout_dirty = False
         self._html_cache = None
 
     def subplots_adjust(
@@ -888,7 +936,7 @@ class Figure:
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
         """
-        self._resolve_layout()
+        self._ensure_layout()
         if not self._axes:
             return None
         if (
@@ -906,7 +954,7 @@ class Figure:
         place) and `Axes.get_position` (what scripts read), so the reported box
         and the rendered box cannot drift apart.
         """
-        self._resolve_layout()
+        self._ensure_layout()
         if ax._figure_rect is not None:
             return ax._figure_rect
         if ax not in self._axes:

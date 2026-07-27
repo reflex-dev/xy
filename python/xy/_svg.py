@@ -1543,33 +1543,100 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
     return room
 
 
-def _x_axis_multiline_extra(axis: dict[str, Any], plot_w: float) -> float:
-    """Cross-axis room beyond the historical one-line x-axis gutter."""
-    if _axis_tick_label_strategy(axis) == "none":
-        return 0.0
-    extra = 0.0
-    if _axis_tick_label_strategy(axis) != "off" and _axis_text_paint_visible(
+def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
+    """Outward room needed by the x axis's final tick-label set.
+
+    The old 32/42 px bands only fit horizontal labels. Measure the strings and
+    project their DejaVu advance plus line box through the authored angle; this
+    is deliberately evaluated *after* collision policy, so ``auto`` reserves
+    only labels it will draw while pyplot's ``preserve`` reserves all fixed
+    locations. The same value is used by SVG and native PNG layout.
+    """
+    strategy = _axis_tick_label_strategy(axis)
+    if strategy in {"none", "off"} or not _axis_text_paint_visible(
         axis, "tick_label_color", "tick_color"
     ):
-        font_size = _axis_tick_font_size(axis)
-        angle = float(axis.get("tick_label_angle") or 0.0)
-        _values, labels, step = axis_ticks(axis, plot_w, True)
-        for value in labels:
-            block = _textblock.measure(_tick_text(axis, value, step), font_size)
-            single = _textblock.measure(block.lines[0], font_size)
-            extra = max(
-                extra,
-                _textblock.rotated_extent(block, angle)[1]
-                - _textblock.rotated_extent(single, angle)[1],
-            )
-    if axis.get("label") and _axis_text_paint_visible(axis, "label_color"):
-        raw_position = axis.get("label_position")
-        position = raw_position if isinstance(raw_position, str) else "center"
-        if not position.replace("-", "_").startswith("inside_"):
-            size = float((axis.get("style") or {}).get("label_size", 12))
-            block = _textblock.measure(axis["label"], size)
-            extra = max(extra, block.height - size * _textblock.LINE_HEIGHT)
-    return max(0.0, extra)
+        return 0.0
+    _ticks, values, step = axis_ticks(axis, plot_w, True)
+    scale = _Scale(axis, 0.0, max(1.0, plot_w))
+    items = _axis_tick_label_layout(axis, values, step, scale, True)
+    if not items:
+        return 0.0
+    has_adaptive_layout = any(
+        float(item["angle"]) or int(item.get("row", 0)) for item in items
+    )
+    font_size = _axis_tick_font_size(axis)
+    has_multiline_ticks = any(
+        _textblock.measure(item["text"], font_size).line_count > 1 for item in items
+    )
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    label_size = float((axis.get("style") or {}).get("label_size", 12))
+    label_block = (
+        _textblock.measure(axis["label"], label_size)
+        if axis.get("label")
+        and _axis_text_paint_visible(axis, "label_color")
+        and not position.replace("-", "_").startswith("inside_")
+        else None
+    )
+    label_extra = (
+        max(0.0, label_block.height - label_size * _textblock.LINE_HEIGHT)
+        if label_block is not None
+        else 0.0
+    )
+    if (
+        not has_adaptive_layout
+        and not has_multiline_ticks
+        and not label_extra
+        and strategy == "auto"
+        and axis.get("tick_label_angle") is None
+    ):
+        # Preserve the long-standing flat band for ordinary horizontal text.
+        # Measured bands are reserved for rotation, staggering, or multiline
+        # chrome; ordinary auto ticks retain their historical geometry.
+        return 0.0
+    extent = 0.0
+    for item in items:
+        block = _textblock.measure(item["text"], font_size)
+        extent = max(extent, _textblock.rotated_extent(block, float(item["angle"]))[1])
+    side = axis.get("side", "bottom")
+    label_offset = (
+        _axis_tick_label_offset(axis, 7.0, 0.2)
+        if side == "top"
+        else _axis_tick_label_offset(axis, 16.0, 0.8)
+    )
+    rows = max(int(item.get("row", 0)) for item in items)
+    return (
+        _AXIS_TEXT_EDGE_PAD
+        + label_offset
+        + rows * (font_size + 4.0)
+        + extent
+        + label_extra
+    )
+
+
+def _x_axis_rooms(
+    axes: dict[str, dict[str, Any]], plot_w: float, compact: bool
+) -> tuple[float, float, float]:
+    """Shared ``(top, bottom, measured_bottom)`` x-axis bands.
+
+    The fixed bottom band is metadata for colorbar placement.  It must not
+    override an explicit figure ``padding`` authored by pyplot unless rotated
+    or staggered labels actually require more room.
+    """
+    top = 0.0
+    bottom = 0.0
+    measured_bottom = 0.0
+    for axis_id, axis in axes.items():
+        if not axis_id.startswith("x") or _axis_tick_label_strategy(axis) == "none":
+            continue
+        measured = _x_tick_label_room(axis, plot_w)
+        if axis.get("side", "bottom") == "top":
+            top = max(top, 26.0 if compact else 32.0, measured)
+        else:
+            bottom = max(bottom, 36.0 if compact else 42.0, measured)
+            measured_bottom = max(measured_bottom, measured)
+    return top, bottom, measured_bottom
 
 
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
@@ -1598,40 +1665,17 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         title_room = max(
             26.0 if compact else 30.0, _textblock.measure(spec["title"], title_size).height + 8.0
         )
-        top += title_room
-    bottom_axis_room = 0.0
-    bottom_axes = [
-        axis
-        for axis_id, axis in axes.items()
-        if axis_id.startswith("x")
-        and axis.get("side", "bottom") == "bottom"
-        and _axis_tick_label_strategy(axis) != "none"
-    ]
-    if bottom_axes:
-        provisional_w = max(40.0, width - left - right)
-        bottom_extra = max(
-            (_x_axis_multiline_extra(axis, provisional_w) for axis in bottom_axes),
-            default=0.0,
-        )
-        bottom_axis_room = (36.0 if compact else 42.0) + bottom_extra
-        bottom += bottom_extra
-    top_axis_room = 0.0
-    top_axes = [
-        axis
-        for axis_id, axis in axes.items()
-        if axis_id.startswith("x")
-        and axis.get("side", "bottom") == "top"
-        and _axis_tick_label_strategy(axis) != "none"
-    ]
-    if top_axes:
-        # One shared top gutter mirrors ChartView. Multiple named x axes on
-        # the same edge intentionally overlap until per-axis offsets exist.
-        provisional_w = max(40.0, width - left - right)
-        top_axis_room = (26.0 if compact else 32.0) + max(
-            (_x_axis_multiline_extra(axis, provisional_w) for axis in top_axes),
-            default=0.0,
-        )
-        top += top_axis_room
+    # The first pass uses the authored/default horizontal allocation. A second
+    # pass after the measured left gutter catches an auto-collision decision
+    # whose final plot width changes the chosen label set.
+    provisional_w = max(40.0, width - left - right)
+    top_axis_room, bottom_axis_room, measured_bottom_room = _x_axis_rooms(
+        axes, provisional_w, compact
+    )
+    top += title_room
+    top += top_axis_room
+    if measured_bottom_room:
+        bottom = max(bottom, measured_bottom_room)
     colorbar = spec.get("colorbar") or {}
     if colorbar.get("orientation") == "horizontal":
         bottom += 38 + (16 if colorbar.get("label") else 0)
@@ -1655,6 +1699,15 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # than authoritative. Reserving less than the ink is not an option — a
     # static export has no ellipsis to fall back on the way the DOM does.
     left = max(left, _y_axis_left_room(spec, max(40, height - top - bottom)))
+    final_w = max(40.0, width - left - right)
+    measured_top, measured_bottom, final_measured_bottom = _x_axis_rooms(axes, final_w, compact)
+    if measured_top > top_axis_room:
+        top += measured_top - top_axis_room
+        top_axis_room = measured_top
+    if final_measured_bottom > measured_bottom_room:
+        bottom = max(bottom, final_measured_bottom)
+        measured_bottom_room = final_measured_bottom
+    bottom_axis_room = max(bottom_axis_room, measured_bottom)
     plot = {
         "x": left,
         "y": top,
@@ -1716,7 +1769,11 @@ def axis_ticks(
 
 def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
     value = str(axis.get("tick_label_strategy") or "auto").replace("-", "_")
-    return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
+    return (
+        value
+        if value in {"auto", "hide", "rotate", "stagger", "preserve", "none", "off"}
+        else "auto"
+    )
 
 
 def _axis_tick_font_size(axis: dict[str, Any]) -> float:
@@ -1813,6 +1870,12 @@ def _axis_tick_label_layout(
         for value in values
     ]
     if len(labels) <= 1:
+        return labels
+    # Explicit locators and categorical unit conversion in the Matplotlib shim
+    # author ``preserve`` because Matplotlib draws every located tick, even
+    # when the result is intentionally dense. Core axes remain on ``auto`` and
+    # retain their normal collision thinning.
+    if strategy == "preserve":
         return labels
 
     def extent(label: dict[str, Any]) -> float:
