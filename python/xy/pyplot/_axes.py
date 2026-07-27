@@ -2517,9 +2517,7 @@ class Axes(PlotTypeMixin):
         if not truecolor and grid.ndim != 2:
             raise ValueError(f"imshow image data must be 2-D or RGB(A), got shape {grid.shape}")
         truecolor_ceiling = (
-            255.0
-            if truecolor and np.issubdtype(np.asanyarray(z).dtype, np.integer)
-            else 1.0
+            255.0 if truecolor and np.issubdtype(np.asanyarray(z).dtype, np.integer) else 1.0
         )
         source_rows, source_cols = grid.shape[:2]
         effective_interpolation = (
@@ -5381,13 +5379,7 @@ class Axes(PlotTypeMixin):
         # Remaining title geometry is not expressible yet and stays loud; the
         # frame, handle, and row-layout options above map directly to CSS and
         # the static exporters.
-        layout_options = {
-            key: kwargs.pop(key)
-            for key in (
-                "title_fontsize",
-            )
-            if key in kwargs
-        }
+        layout_options = {key: kwargs.pop(key) for key in ("title_fontsize",) if key in kwargs}
         if layout_options:
             raise not_implemented(
                 f"legend({sorted(layout_options)[0]}=...)",
@@ -5760,6 +5752,12 @@ class Axes(PlotTypeMixin):
                         kw["domain"] = (float(dom[0]), float(dom[1]))
                 children.append(xy.heatmap(z=z, **kw, **axis_kw))
             elif kind == "@mark":
+                if e["factory"] == "step":
+                    kw = dict(kw)
+                    # ``Line2D.set_dash_capstyle()`` mutates the deferred
+                    # pyplot entry, but core ``xy.step`` has fixed round caps
+                    # and does not accept the Matplotlib-only keyword.
+                    kw.pop("dash_capstyle", None)
                 children.append(getattr(xy, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
                 children.append(xy.hline(*e["args"], **kw))

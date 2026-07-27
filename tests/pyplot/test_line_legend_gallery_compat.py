@@ -299,6 +299,20 @@ def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
     assert spec["traces"][0]["kind"] == "line"
 
 
+def test_round_dash_capstyle_mutation_is_filtered_for_step_lines():
+    _, ax = plt.subplots()
+    line = ax.plot([0, 1, 2], [0, 1, 0], "--", drawstyle="steps-post")[0]
+
+    line.set_dash_capstyle("round")
+
+    assert line.get_dash_capstyle() == "round"
+    assert line._entry["kwargs"]["dash_capstyle"] == "round"
+    assert line._entry["kind"] == "@mark"
+    assert line._entry["factory"] == "step"
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["traces"][0]["kind"] == "line"
+
+
 def test_legend_frame_is_wide_enough_for_its_measured_labels():
     """The frame must contain its own labels, wide glyphs included.
 
