@@ -5,6 +5,7 @@ from __future__ import annotations
 from io import BytesIO
 
 import numpy as np
+import pytest
 
 import xy.pyplot as plt
 from xy.pyplot._grid import _composite_rgba
@@ -145,6 +146,122 @@ def test_constrained_layout_remeasures_final_rotated_category_labels() -> None:
     fig.savefig(svg, format="svg", dpi=100)
     assert png.getvalue().startswith(b"\x89PNG")
     assert b"rotate(45" in svg.getvalue()
+
+
+def test_subplot_mosaic_string_preserves_spans_holes_and_ratios() -> None:
+    plt.close("all")
+    fig, axes = plt.subplot_mosaic(
+        "AA;B.",
+        figsize=(6.4, 4.8),
+        width_ratios=(4, 1),
+        height_ratios=(1, 4),
+    )
+
+    assert list(axes) == ["A", "B"]
+    assert fig.axes == [axes["A"], axes["B"]]
+    assert fig._width_ratios == (4.0, 1.0)
+    assert fig._height_ratios == (1.0, 4.0)
+    assert axes["A"].get_subplotspec().rows == (0, 1)
+    assert axes["A"].get_subplotspec().cols == (0, 2)
+    assert axes["B"].get_subplotspec().rows == (1, 2)
+    assert axes["B"].get_subplotspec().cols == (0, 1)
+
+    top = axes["A"].get_position().bounds
+    lower = axes["B"].get_position().bounds
+    grid = axes["A"].get_gridspec()
+    lower_right = grid.cell_rect((1, 2), (1, 2))
+    assert top[0] == pytest.approx(lower[0])
+    assert top[2] == pytest.approx(0.775)
+    assert lower[2] == pytest.approx(4 * lower_right[2])
+    assert lower[3] == pytest.approx(4 * top[3])
+
+
+def test_subplot_mosaic_multiline_string_and_custom_sentinel() -> None:
+    plt.close("all")
+    fig, axes = plt.subplot_mosaic(
+        """
+        AA
+        B_
+        """,
+        empty_sentinel="_",
+    )
+
+    assert set(axes) == {"A", "B"}
+    assert len(fig.axes) == 2
+    assert axes["A"].get_subplotspec().cols == (0, 2)
+    assert axes["B"].get_subplotspec().rows == (1, 2)
+
+
+def test_subplot_mosaic_list_form_matches_spectrum_gallery_geometry() -> None:
+    plt.close("all")
+    fig, axes = plt.subplot_mosaic(
+        [
+            ["signal", "signal"],
+            ["magnitude", "log_magnitude"],
+            ["phase", "angle"],
+        ]
+    )
+
+    assert list(axes) == ["signal", "magnitude", "log_magnitude", "phase", "angle"]
+    assert len(fig.axes) == 5
+    assert axes["signal"].get_subplotspec().rows == (0, 1)
+    assert axes["signal"].get_subplotspec().cols == (0, 2)
+    signal = axes["signal"].get_position().bounds
+    magnitude = axes["magnitude"].get_position().bounds
+    assert signal[2] > 2 * magnitude[2]
+
+
+def test_subplot_mosaic_rejects_non_rectangular_label_regions() -> None:
+    plt.close("all")
+    with pytest.raises(ValueError, match="non-rectangular or non-contiguous"):
+        plt.subplot_mosaic([["A", "B"], ["B", "A"]])
+
+
+def test_subplot_mosaic_shares_live_domains_without_hiding_outer_labels() -> None:
+    plt.close("all")
+    fig, axes = plt.subplot_mosaic(
+        [["top", "top"], ["left", "right"]],
+        sharex=True,
+        sharey=True,
+    )
+    axes["top"].plot([0, 1], [0, 2])
+    axes["left"].plot([10, 20], [-3, 4])
+    axes["right"].plot([30, 40], [5, 8])
+
+    figures = [chart.figure() for chart in fig._charts()]
+    assert fig._sharex == "all"
+    assert fig._sharey == "all"
+    assert len({tuple(core.x_range()) for core in figures}) == 1
+    assert len({tuple(core.y_range()) for core in figures}) == 1
+    assert all(core.interaction["link_axes"] == ["x", "y"] for core in figures)
+    assert axes["top"]._axis_props("x")["tick_label_strategy"] == "off"
+    assert axes["right"]._axis_props("y")["tick_label_strategy"] == "off"
+    assert axes["left"]._axis_props("x").get("tick_label_strategy") != "off"
+    assert axes["left"]._axis_props("y").get("tick_label_strategy") != "off"
+
+
+def test_subplot_mosaic_png_contains_only_materialized_spanning_axes() -> None:
+    plt.close("all")
+    fig, axes = plt.subplot_mosaic("AA;B.", figsize=(6.4, 4.8), dpi=100)
+    output = BytesIO()
+
+    fig.savefig(output, format="png")
+    output.seek(0)
+
+    pixels = np.asarray(plt.imread(output))
+    assert pixels.shape[:2] == (480, 640)
+    assert len(fig._charts()) == 2
+    top, lower = (axes[label].get_position().bounds for label in ("A", "B"))
+    assert top[2] > 2 * lower[2]
+
+    # A real span has one uninterrupted top spine across both columns.  A
+    # phantom axes in the sentinel cell would instead split this into two.
+    y = round((1.0 - top[1] - top[3]) * pixels.shape[0])
+    x0 = round(top[0] * pixels.shape[1])
+    x1 = round((top[0] + top[2]) * pixels.shape[1])
+    threshold = 0.65 if np.issubdtype(pixels.dtype, np.floating) else 0.65 * 255
+    spine = np.all(pixels[max(0, y - 1) : y + 2, x0:x1, :3] < threshold, axis=2)
+    assert spine.sum(axis=1).max() > 0.9 * (x1 - x0)
 
 
 def test_rgba_compositor_preserves_transparent_chrome() -> None:

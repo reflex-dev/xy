@@ -7,6 +7,7 @@ itself has no grid container; that capability lives entirely in this shim.
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from os import PathLike
 from pathlib import Path
@@ -571,13 +572,35 @@ class Figure:
 
             horizontal_gap = 58.0 if compact else 76.0
             vertical_gap = 44.0 if compact else 56.0
-            for index, item in enumerate(chrome):
-                row, col = divmod(index, max(1, self._ncols))
-                if col + 1 < self._ncols and index + 1 < len(chrome):
-                    horizontal_gap = max(horizontal_gap, item[2] + chrome[index + 1][0])
-                below = index + self._ncols
-                if row + 1 < self._nrows and below < len(chrome):
-                    vertical_gap = max(vertical_gap, item[3] + chrome[below][1])
+            for index, (ax, item) in enumerate(zip(self._axes, chrome, strict=True)):
+                spec = ax._subplot_spec
+                if spec is None:
+                    row, col = divmod(index, max(1, self._ncols))
+                    rows, cols = (row, row + 1), (col, col + 1)
+                else:
+                    rows, cols = spec.rows, spec.cols
+                for other_index, other_ax in enumerate(self._axes):
+                    if index == other_index:
+                        continue
+                    other_spec = other_ax._subplot_spec
+                    if other_spec is None:
+                        other_row, other_col = divmod(other_index, max(1, self._ncols))
+                        other_rows = (other_row, other_row + 1)
+                        other_cols = (other_col, other_col + 1)
+                    else:
+                        other_rows, other_cols = other_spec.rows, other_spec.cols
+                    rows_overlap = max(rows[0], other_rows[0]) < min(rows[1], other_rows[1])
+                    cols_overlap = max(cols[0], other_cols[0]) < min(cols[1], other_cols[1])
+                    if rows_overlap and cols[1] == other_cols[0]:
+                        horizontal_gap = max(
+                            horizontal_gap,
+                            item[2] + chrome[other_index][0],
+                        )
+                    if cols_overlap and rows[1] == other_rows[0]:
+                        vertical_gap = max(
+                            vertical_gap,
+                            item[3] + chrome[other_index][1],
+                        )
 
             if self._suptitle:
                 style = self._suptitle_style or {}
@@ -907,15 +930,117 @@ class Figure:
             axes.set_axis_off()
         return result
 
-    def subplot_mosaic(self, mosaic: Any, **kwargs: Any) -> dict[Any, Axes]:
-        rows = [list(row) for row in mosaic]
-        labels: list[Any] = []
-        for row in rows:
-            for label in row:
-                if label != "." and label not in labels:
-                    labels.append(label)
-        self._ensure_grid(max(1, len(rows)), max(1, max(map(len, rows))))
-        return {label: self._axes_at(index) for index, label in enumerate(labels)}
+    def subplot_mosaic(
+        self,
+        mosaic: Any,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        empty_sentinel: Any = ".",
+        subplot_kw: Optional[dict[str, Any]] = None,
+        per_subplot_kw: Optional[dict[Any, dict[str, Any]]] = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+    ) -> dict[Any, Axes]:
+        """Create one axes for each rectangular label region in ``mosaic``.
+
+        Unlike a dense ``subplots`` grid, a mosaic may contain holes and one
+        label may span several cells.  Resolve every region through the same
+        ``_GridSpec.cell_rect`` path as an explicit GridSpec span, but do not
+        call ``_ensure_grid``: that helper intentionally materializes every
+        dense-grid cell and would turn holes and repeated labels into phantom
+        axes.
+        """
+        if not isinstance(sharex, bool) or not isinstance(sharey, bool):
+            raise TypeError("sharex and sharey must be bool")
+        if isinstance(mosaic, str):
+            if "\n" in mosaic:
+                cleaned = inspect.cleandoc(mosaic).strip("\n")
+                rows = [list(row) for row in cleaned.split("\n")]
+            else:
+                rows = [list(row) for row in mosaic.split(";")]
+        else:
+            try:
+                rows = [list(row) for row in mosaic]
+            except TypeError as error:
+                raise ValueError("mosaic must be a string or a 2-D row sequence") from error
+        if not rows or not rows[0]:
+            raise ValueError("mosaic must contain at least one row and one column")
+        ncols = len(rows[0])
+        if any(len(row) != ncols for row in rows):
+            raise ValueError("all mosaic rows must have the same length")
+        nrows = len(rows)
+
+        grid_options = dict(gridspec_kw or {})
+        for name, value in (
+            ("width_ratios", width_ratios),
+            ("height_ratios", height_ratios),
+        ):
+            if value is None:
+                continue
+            if name in grid_options:
+                raise ValueError(f"{name!r} must not be defined both directly and in gridspec_kw")
+            grid_options[name] = value
+        grid = _GridSpec(self, nrows, ncols, **grid_options)
+
+        positions: dict[Any, list[tuple[int, int]]] = {}
+        for row_index, row in enumerate(rows):
+            for col_index, label in enumerate(row):
+                if label == empty_sentinel:
+                    continue
+                try:
+                    hash(label)
+                except TypeError as error:
+                    raise TypeError("mosaic labels must be hashable scalar values") from error
+                positions.setdefault(label, []).append((row_index, col_index))
+        if not positions:
+            raise ValueError("mosaic must contain at least one non-empty label")
+
+        regions: list[tuple[Any, _SubplotSpec]] = []
+        for label, cells in positions.items():
+            row0 = min(row for row, _col in cells)
+            row1 = max(row for row, _col in cells) + 1
+            col0 = min(col for _row, col in cells)
+            col1 = max(col for _row, col in cells) + 1
+            if any(
+                rows[row][col] != label for row in range(row0, row1) for col in range(col0, col1)
+            ):
+                raise ValueError(
+                    f"mosaic label {label!r} specifies a non-rectangular or non-contiguous area"
+                )
+            regions.append((label, _SubplotSpec(grid, (row0, row1), (col0, col1))))
+
+        common_options = dict(subplot_kw or {})
+        per_label_options = dict(per_subplot_kw or {})
+        unknown_labels = set(per_label_options) - set(positions)
+        if unknown_labels:
+            raise ValueError(
+                f"per_subplot_kw contains labels absent from the mosaic: "
+                f"{sorted(map(repr, unknown_labels))}"
+            )
+
+        self._nrows, self._ncols = nrows, ncols
+        self._width_ratios = grid._width_ratios
+        self._height_ratios = grid._height_ratios
+        axes: dict[Any, Axes] = {}
+        for label, spec in regions:
+            options = {**common_options, **per_label_options.get(label, {})}
+            ax = self.add_axes(grid.cell_rect(spec.rows, spec.cols), **options)
+            ax._subplot_spec = spec
+            axes[label] = ax
+
+        apply_sharing(self, sharex, sharey)
+        if sharex or sharey:
+            for ax in axes.values():
+                spec = ax._subplot_spec
+                if sharex and spec.rows[1] < nrows:
+                    ax._axis_props("x")["tick_label_strategy"] = "off"
+                if sharey and spec.cols[0] > 0:
+                    ax._axis_props("y")["tick_label_strategy"] = "off"
+        self._current_ax = next(reversed(axes.values()))
+        self._invalidate()
+        return axes
 
     # -- panel sizing -----------------------------------------------------------
 
