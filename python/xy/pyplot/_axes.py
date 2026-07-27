@@ -2476,6 +2476,7 @@ class Axes(PlotTypeMixin):
         norm = kwargs.pop("norm", None)
         supported_interpolation = {
             None,
+            "auto",
             "none",
             "nearest",
             "bilinear",
@@ -2515,6 +2516,25 @@ class Axes(PlotTypeMixin):
         truecolor = grid.ndim == 3 and grid.shape[-1] in (3, 4)
         if not truecolor and grid.ndim != 2:
             raise ValueError(f"imshow image data must be 2-D or RGB(A), got shape {grid.shape}")
+        truecolor_ceiling = (
+            255.0
+            if truecolor and np.issubdtype(np.asanyarray(z).dtype, np.integer)
+            else 1.0
+        )
+        source_rows, source_cols = grid.shape[:2]
+        effective_interpolation = (
+            rcParams["image.interpolation"] if interpolation is None else interpolation
+        )
+        (
+            effective_interpolation,
+            effective_interpolation_stage,
+            interpolation_width,
+            interpolation_height,
+        ) = _resolve_imshow_sampling(
+            grid.shape[:2],
+            effective_interpolation,
+            interpolation_stage,
+        )
         if norm is not None:
             norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
             if norm_vmin is not None and norm_vmax is not None:
@@ -2615,12 +2635,9 @@ class Axes(PlotTypeMixin):
                 )
                 grid = np.dstack((rgb.reshape(grid.shape + (3,)) / 255.0, alpha_array))
                 truecolor = True
-        effective_interpolation = (
-            rcParams["image.interpolation"] if interpolation is None else interpolation
-        )
         if (
             not truecolor
-            and interpolation_stage == "rgba"
+            and effective_interpolation_stage == "rgba"
             and effective_interpolation not in ("none", "nearest")
         ):
             grid = _scalar_grid_rgba(
@@ -2640,10 +2657,17 @@ class Axes(PlotTypeMixin):
             # resampling matrices. Nearest retains the original source cells.
             grid = _resample_grid(
                 grid,
-                min(1024, max(512, grid.shape[1])),
-                min(1024, max(512, grid.shape[0])),
+                interpolation_width,
+                interpolation_height,
                 effective_interpolation,
             )
+            if truecolor:
+                # Ringing filters legitimately overshoot their input range.
+                # Scalar interpolation keeps that overshoot so normalization
+                # can expose under/over colors, but RGBA output is bounded
+                # channel data in Matplotlib and must be saturated before
+                # static uint conversion instead of wrapping to black.
+                grid = np.clip(grid, 0.0, truecolor_ceiling)
         if transform == self.transAxes and extent is not None:
             xlo, xhi = self._axis_props("x").get("domain", self._entry_extent("x"))
             ylo, yhi = self._axis_props("y").get("domain", self._entry_extent("y"))
@@ -2705,7 +2729,23 @@ class Axes(PlotTypeMixin):
             bounds = (left, right, bottom, top)
         else:
             rows, cols = grid.shape[:2]
-            bounds = (-0.5, cols - 0.5, -0.5, rows - 0.5)
+            bounds = (-0.5, source_cols - 0.5, -0.5, source_rows - 0.5)
+            # Resampling changes texture resolution, never the image's data
+            # coordinates. Give the intermediate samples explicit centers so
+            # the core infers Matplotlib's original MxN half-cell extent
+            # instead of exposing the implementation's 512--1024 grid.
+            if (rows, cols) != (source_rows, source_cols):
+                left, right, bottom, top = bounds
+                entry_kwargs["x"] = np.linspace(
+                    left + (right - left) / (2 * cols),
+                    right - (right - left) / (2 * cols),
+                    cols,
+                )
+                entry_kwargs["y"] = np.linspace(
+                    bottom + (top - bottom) / (2 * rows),
+                    top - (top - bottom) / (2 * rows),
+                    rows,
+                )
         if self._aspect_bounds is None:
             self._aspect_bounds = bounds
         else:
@@ -7269,6 +7309,50 @@ def _plain_text_with_math_italic_ranges(value: Any) -> tuple[str, list[tuple[int
 
 def _masked_float(value: Any) -> np.ndarray:
     return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
+
+
+def _resolve_imshow_sampling(
+    source_shape: tuple[int, int],
+    interpolation: str,
+    interpolation_stage: Any,
+) -> tuple[str, str, int, int]:
+    """Resolve Matplotlib's adaptive image defaults against our bounded surface.
+
+    Matplotlib 3.11 selects ``nearest`` for an image enlarged by more than
+    three times in both dimensions, or by exactly one or two times, and uses
+    ``hanning`` otherwise. Its automatic stage is RGBA for downsampling or
+    enlargement below three times in either dimension, and data otherwise.
+
+    Matplotlib makes that choice against the final display transform. Pyplot
+    pre-renders smooth images into a bounded 512--1024 px intermediate, so that
+    surface is the closest available display-resolution proxy and is also the
+    exact target passed to :func:`_resample_grid`.
+    """
+    source_height, source_width = source_shape
+    target_width = min(1024, max(512, source_width))
+    target_height = min(1024, max(512, source_height))
+
+    if interpolation in {"auto", "antialiased"}:
+        nearest_x = (
+            target_width > 3 * source_width
+            or target_width == source_width
+            or target_width == 2 * source_width
+        )
+        nearest_y = (
+            target_height > 3 * source_height
+            or target_height == source_height
+            or target_height == 2 * source_height
+        )
+        interpolation = "nearest" if nearest_x and nearest_y else "hanning"
+
+    if interpolation_stage in (None, "auto"):
+        interpolation_stage = (
+            "rgba"
+            if target_width < 3 * source_width or target_height < 3 * source_height
+            else "data"
+        )
+
+    return interpolation, interpolation_stage, target_width, target_height
 
 
 def _interpolation_taps(source: int, target: int, method: str) -> tuple[np.ndarray, np.ndarray]:

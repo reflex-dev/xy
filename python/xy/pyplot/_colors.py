@@ -273,11 +273,13 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
             "cyan": (0.0, 1.0, 1.0, 1.0),
             "magenta": (1.0, 0.0, 1.0, 1.0),
         }
-        if resolved.lower() not in named:
-            raise ValueError(
-                f"colormap extremes require a CSS hex/rgb or basic named color, got {color!r}"
-            )
-        result = named[resolved.lower()]
+        result = named.get(resolved.lower())
+        if result is None:
+            # Ordinary plotting colors can be any CSS named color because the
+            # engine validates them natively. Colormap extremes are baked to
+            # RGBA in Python, so route the same vocabulary through the native
+            # CSS parser rather than narrowing it to eight basic names.
+            result = resolve_rgba(resolved)
     if isinstance(alpha, numbers.Real) and not isinstance(alpha, (bool, np.bool_)):
         result = (result[0], result[1], result[2], float(alpha))
     if not all(np.isfinite(result)) or any(channel < 0.0 or channel > 1.0 for channel in result):
