@@ -356,6 +356,53 @@ def _integrate_streamlines(
     return lines
 
 
+def _native_streamline_trajectories(
+    x0: np.ndarray,
+    x1: np.ndarray,
+    y0: np.ndarray,
+    y1: np.ndarray,
+) -> list[np.ndarray]:
+    """Recover native trajectory boundaries without guessing arrow counts.
+
+    The native kernel emits contiguous segments in seed/direction order.  A
+    ``both`` integration therefore produces adjacent backward and forward
+    branches whose first point is the same seed.  Retaining that ordering here
+    reconstructs each full trajectory before pyplot flattens it for the
+    segments mark.
+    """
+    branches: list[np.ndarray] = []
+    points: list[tuple[float, float]] = []
+    for sx, ex, sy, ey in zip(x0, x1, y0, y1, strict=True):
+        start = (float(sx), float(sy))
+        end = (float(ex), float(ey))
+        if not np.isfinite((*start, *end)).all():
+            if len(points) >= 2:
+                branches.append(np.asarray(points, dtype=np.float64))
+            points = []
+            continue
+        if not points or points[-1] != start:
+            if len(points) >= 2:
+                branches.append(np.asarray(points, dtype=np.float64))
+            points = [start, end]
+        else:
+            points.append(end)
+    if len(points) >= 2:
+        branches.append(np.asarray(points, dtype=np.float64))
+
+    trajectories: list[np.ndarray] = []
+    index = 0
+    while index < len(branches):
+        backward = branches[index]
+        if index + 1 < len(branches) and np.array_equal(backward[0], branches[index + 1][0]):
+            forward = branches[index + 1]
+            trajectories.append(np.concatenate((backward[::-1], forward[1:])))
+            index += 2
+        else:
+            trajectories.append(backward)
+            index += 1
+    return trajectories
+
+
 # On/off spans within one dash cycle; segments marks have no screen-space dash
 # primitive, so dash geometry is emitted as data-space sub-segments.
 _DASH_SEGMENT_PATTERNS: dict[str, tuple[tuple[float, float], ...]] = {
@@ -6079,6 +6126,366 @@ class PlotTypeMixin:
         """
         return self._tricontour(True, args, kwargs)
 
+    @staticmethod
+    def _quiver_render_values(values: Any, scale_spec: dict[str, Any]) -> np.ndarray:
+        """Coordinates in the affine space the renderer maps to pixels."""
+        from ._axes import _scale_values
+
+        source = np.asarray(values, dtype=np.float64)
+        if scale_spec.get("name") == "log":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return np.where(source > 0.0, np.log10(source), np.nan)
+        return np.asarray(_scale_values(source, scale_spec), dtype=np.float64)
+
+    @staticmethod
+    def _quiver_render_to_storage(values: Any, scale_spec: dict[str, Any]) -> np.ndarray:
+        """Invert render-space coordinates into the mark's stored space."""
+        source = np.asarray(values, dtype=np.float64)
+        if scale_spec.get("name") == "log":
+            return np.power(10.0, source)
+        # Symlog/logit/asinh entries are already stored in their affine
+        # transformed space; linear values are unchanged.
+        return source
+
+    @staticmethod
+    def _quiver_render_to_raw(values: Any, scale_spec: dict[str, Any]) -> np.ndarray:
+        """Invert renderer-affine coordinates to public data coordinates."""
+        from ._axes import _scale_values
+
+        source = np.asarray(values, dtype=np.float64)
+        if scale_spec.get("name") == "log":
+            return np.power(10.0, source)
+        return np.asarray(_scale_values(source, scale_spec, inverse=True), dtype=np.float64)
+
+    def _quiver_metrics(self) -> dict[str, Any]:
+        """Live axes bbox/view transform used by Matplotlib's Quiver._init."""
+        figure_width, figure_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        rect = self.get_position()
+        plot_width = max(1.0, float(rect.width) * figure_width)
+        plot_height = max(1.0, float(rect.height) * figure_height)
+        x_spec = (self._y2_of or self)._scale_specs["x"]
+        y_key = "y2" if self._y2_of is not None else "y"
+        y_spec = (self._y2_of or self)._scale_specs[y_key]
+        raw_xlim = tuple(map(float, self.get_xlim()))
+        raw_ylim = tuple(map(float, self.get_ylim()))
+        render_xlim = self._quiver_render_values(raw_xlim, x_spec)
+        render_ylim = self._quiver_render_values(raw_ylim, y_spec)
+        x_span = float(render_xlim[1] - render_xlim[0])
+        y_span = float(render_ylim[1] - render_ylim[0])
+        epsilon = np.finfo(float).eps
+        if not np.isfinite(x_span) or abs(x_span) <= epsilon:
+            x_span = 1.0
+        if not np.isfinite(y_span) or abs(y_span) <= epsilon:
+            y_span = 1.0
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
+        return {
+            "figure_width": float(figure_width),
+            "figure_height": float(figure_height),
+            "rect": tuple(map(float, rect.bounds)),
+            "plot_width": plot_width,
+            "plot_height": plot_height,
+            "x_spec": x_spec,
+            "y_spec": y_spec,
+            "render_xlim": render_xlim,
+            "render_ylim": render_ylim,
+            "pixels_per_x": plot_width / x_span,
+            "pixels_per_y": plot_height / y_span,
+            "dpi": dpi,
+        }
+
+    @staticmethod
+    def _quiver_dots_per_unit(units: str, metrics: dict[str, Any]) -> float:
+        """Matplotlib Quiver._dots_per_unit against the live axes bbox."""
+        x_span = abs(float(metrics["render_xlim"][1] - metrics["render_xlim"][0]))
+        y_span = abs(float(metrics["render_ylim"][1] - metrics["render_ylim"][0]))
+        return {
+            "x": metrics["plot_width"] / max(x_span, np.finfo(float).eps),
+            "y": metrics["plot_height"] / max(y_span, np.finfo(float).eps),
+            "xy": float(
+                np.hypot(metrics["plot_width"], metrics["plot_height"])
+                / max(np.hypot(x_span, y_span), np.finfo(float).eps)
+            ),
+            "width": metrics["plot_width"],
+            "height": metrics["plot_height"],
+            "dots": 1.0,
+            "inches": metrics["dpi"],
+        }[units]
+
+    def _quiver_vectors_in_display(
+        self, recipe: dict[str, Any], metrics: dict[str, Any]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+        """Return unit display directions, display lengths, scale, and width."""
+        x = np.asarray(recipe["x"], dtype=np.float64)
+        y = np.asarray(recipe["y"], dtype=np.float64)
+        u = np.asarray(recipe["u"], dtype=np.float64)
+        v = np.asarray(recipe["v"], dtype=np.float64)
+        x_render = self._quiver_render_values(x, metrics["x_spec"])
+        y_render = self._quiver_render_values(y, metrics["y_spec"])
+        angles = recipe["angles"]
+        scale_units = recipe["scale_units"]
+
+        need_transformed_vector = angles == "xy" or scale_units == "xy"
+        if need_transformed_vector:
+            if angles == "xy" and scale_units == "xy":
+                eps = 1.0
+            else:
+                finite_positions = np.concatenate(
+                    (np.abs(x[np.isfinite(x)]), np.abs(y[np.isfinite(y)]))
+                )
+                eps = (
+                    float(np.max(finite_positions, initial=1.0)) * 0.001
+                    if finite_positions.size
+                    else 0.001
+                )
+                eps = max(eps, 0.001)
+            next_x = self._quiver_render_values(x + eps * u, metrics["x_spec"])
+            next_y = self._quiver_render_values(y + eps * v, metrics["y_spec"])
+            transformed_dx = (next_x - x_render) * metrics["pixels_per_x"] / eps
+            transformed_dy = (next_y - y_render) * metrics["pixels_per_y"] / eps
+            transformed_lengths = np.hypot(transformed_dx, transformed_dy)
+        else:
+            transformed_dx, transformed_dy = u, v
+            transformed_lengths = np.hypot(u, v)
+
+        if isinstance(angles, str):
+            if angles == "xy":
+                direction_x, direction_y = transformed_dx, transformed_dy
+            else:
+                direction_x, direction_y = u, v
+        else:
+            radians = np.deg2rad(np.asarray(angles, dtype=np.float64))
+            direction_x, direction_y = np.cos(radians), np.sin(radians)
+        direction_norm = np.hypot(direction_x, direction_y)
+        unit_x = np.divide(
+            direction_x,
+            direction_norm,
+            out=np.zeros_like(direction_x),
+            where=direction_norm > 0.0,
+        )
+        unit_y = np.divide(
+            direction_y,
+            direction_norm,
+            out=np.zeros_like(direction_y),
+            where=direction_norm > 0.0,
+        )
+
+        magnitudes = (
+            transformed_lengths
+            if isinstance(angles, str) and scale_units == "xy"
+            else np.hypot(u, v)
+        )
+        width_dpu = self._quiver_dots_per_unit(recipe["units"], metrics)
+        count = len(x)
+        sn = max(10.0, float(np.sqrt(count)))
+        finite = magnitudes[np.isfinite(magnitudes)]
+        amean = float(np.mean(finite)) if finite.size else 1.0
+        span = metrics["plot_width"] / max(width_dpu, np.finfo(float).eps)
+        auto_scale = 1.8 * amean * sn / max(span, np.finfo(float).eps)
+        explicit_scale = recipe["scale"]
+        if explicit_scale is None:
+            display_lengths = magnitudes * width_dpu / max(auto_scale, np.finfo(float).eps)
+            if scale_units is None:
+                effective_scale = auto_scale
+            elif scale_units == "xy":
+                effective_scale = auto_scale / max(width_dpu, np.finfo(float).eps)
+            else:
+                effective_scale = (
+                    auto_scale
+                    * self._quiver_dots_per_unit(scale_units, metrics)
+                    / max(width_dpu, np.finfo(float).eps)
+                )
+        elif scale_units is None:
+            effective_scale = float(explicit_scale)
+            display_lengths = magnitudes * width_dpu / effective_scale
+        elif scale_units == "xy":
+            effective_scale = float(explicit_scale)
+            display_lengths = magnitudes / effective_scale
+        else:
+            effective_scale = float(explicit_scale)
+            display_lengths = (
+                magnitudes * self._quiver_dots_per_unit(scale_units, metrics) / effective_scale
+            )
+
+        authored_width = recipe["width"]
+        if authored_width is None:
+            rendered_width = 0.06 * metrics["plot_width"] / float(np.clip(np.sqrt(count), 8, 25))
+        else:
+            rendered_width = float(authored_width) * width_dpu
+        return unit_x, unit_y, display_lengths, effective_scale, rendered_width
+
+    def _quiver_segment_arrays(
+        self,
+        anchor_render_x: np.ndarray,
+        anchor_render_y: np.ndarray,
+        display_dx: np.ndarray,
+        display_dy: np.ndarray,
+        metrics: dict[str, Any],
+        pivot: str,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Three line segments per arrow, authored from display-space geometry."""
+        length = np.hypot(display_dx, display_dy)
+        valid = (
+            np.isfinite(anchor_render_x)
+            & np.isfinite(anchor_render_y)
+            & np.isfinite(display_dx)
+            & np.isfinite(display_dy)
+            & (length > np.finfo(float).eps)
+        )
+        anchor_render_x = anchor_render_x[valid]
+        anchor_render_y = anchor_render_y[valid]
+        display_dx = display_dx[valid]
+        display_dy = display_dy[valid]
+        length = length[valid]
+        pivot_fraction = {"tail": 0.0, "middle": 0.5, "tip": 1.0}[pivot]
+        start_rx = anchor_render_x - pivot_fraction * display_dx / metrics["pixels_per_x"]
+        start_ry = anchor_render_y - pivot_fraction * display_dy / metrics["pixels_per_y"]
+        tip_rx = start_rx + display_dx / metrics["pixels_per_x"]
+        tip_ry = start_ry + display_dy / metrics["pixels_per_y"]
+        head = 0.22 * length
+        ux = display_dx / length
+        uy = display_dy / length
+        cosine, sine = np.cos(np.deg2rad(28.0)), np.sin(np.deg2rad(28.0))
+        back_x, back_y = -ux, -uy
+        left_dx = head * (back_x * cosine - back_y * sine)
+        left_dy = head * (back_x * sine + back_y * cosine)
+        right_dx = head * (back_x * cosine + back_y * sine)
+        right_dy = head * (-back_x * sine + back_y * cosine)
+        left_rx = tip_rx + left_dx / metrics["pixels_per_x"]
+        left_ry = tip_ry + left_dy / metrics["pixels_per_y"]
+        right_rx = tip_rx + right_dx / metrics["pixels_per_x"]
+        right_ry = tip_ry + right_dy / metrics["pixels_per_y"]
+
+        # Keep each shaft and its two head strokes adjacent. Collection colors
+        # are repeated per arrow and callers inspecting the segment arrays rely
+        # on this stable three-segment grouping.
+        x0_render = np.column_stack((start_rx, tip_rx, tip_rx)).reshape(-1)
+        y0_render = np.column_stack((start_ry, tip_ry, tip_ry)).reshape(-1)
+        x1_render = np.column_stack((tip_rx, left_rx, right_rx)).reshape(-1)
+        y1_render = np.column_stack((tip_ry, left_ry, right_ry)).reshape(-1)
+        return (
+            self._quiver_render_to_storage(x0_render, metrics["x_spec"]),
+            self._quiver_render_to_storage(y0_render, metrics["y_spec"]),
+            self._quiver_render_to_storage(x1_render, metrics["x_spec"]),
+            self._quiver_render_to_storage(y1_render, metrics["y_spec"]),
+            valid,
+        )
+
+    def _materialize_quiver_geometry(self, width: int, height: int) -> None:
+        """Resolve deferred quiver/key recipes against final axes dimensions."""
+        del width, height  # Figure position is the authoritative axes bbox.
+        entries = [entry for entry in self._entries if entry.get("_quiver_recipe")]
+        if not entries:
+            return
+        metrics = self._quiver_metrics()
+        for entry in entries:
+            recipe = entry["_quiver_recipe"]
+            x_render = self._quiver_render_values(recipe["x"], metrics["x_spec"])
+            y_render = self._quiver_render_values(recipe["y"], metrics["y_spec"])
+            unit_x, unit_y, lengths, effective_scale, rendered_width = (
+                self._quiver_vectors_in_display(recipe, metrics)
+            )
+            args = self._quiver_segment_arrays(
+                x_render,
+                y_render,
+                unit_x * lengths,
+                unit_y * lengths,
+                metrics,
+                recipe["pivot"],
+            )
+            entry["args"] = args[:4]
+            entry["kwargs"]["width"] = max(0.5, rendered_width)
+            entry["vector_scale"] = effective_scale
+            entry["_quiver_valid"] = args[4]
+            source_color = recipe.get("_source_color")
+            if source_color is not None:
+                entry["kwargs"]["color"] = np.repeat(source_color[args[4]], 3)
+            recipe["_resolved_scale"] = effective_scale
+            recipe["_resolved_width"] = rendered_width
+
+        for entry in [item for item in self._entries if item.get("_quiver_key_recipe")]:
+            recipe = entry["_quiver_key_recipe"]
+            source = recipe["source"]
+            left, bottom, rect_width, rect_height = metrics["rect"]
+            if recipe["coordinates"] == "axes":
+                x_fraction, y_fraction = recipe["x"], recipe["y"]
+            elif recipe["coordinates"] == "figure":
+                x_fraction = (recipe["x"] - left) / rect_width
+                y_fraction = (recipe["y"] - bottom) / rect_height
+            elif recipe["coordinates"] == "inches":
+                figure_x = recipe["x"] * metrics["dpi"] / metrics["figure_width"]
+                figure_y = recipe["y"] * metrics["dpi"] / metrics["figure_height"]
+                x_fraction = (figure_x - left) / rect_width
+                y_fraction = (figure_y - bottom) / rect_height
+            else:
+                raw_x, raw_y = recipe["x"], recipe["y"]
+                anchor_rx = self._quiver_render_values([raw_x], metrics["x_spec"])[0]
+                anchor_ry = self._quiver_render_values([raw_y], metrics["y_spec"])[0]
+                x_fraction = y_fraction = None
+            if x_fraction is not None:
+                anchor_rx = float(metrics["render_xlim"][0]) + float(x_fraction) * (
+                    float(metrics["render_xlim"][1]) - float(metrics["render_xlim"][0])
+                )
+                anchor_ry = float(metrics["render_ylim"][0]) + float(y_fraction) * (
+                    float(metrics["render_ylim"][1]) - float(metrics["render_ylim"][0])
+                )
+
+            key_angle = np.deg2rad(recipe["angle"])
+            key_u = float(recipe["magnitude"]) * np.cos(key_angle)
+            key_v = float(recipe["magnitude"]) * np.sin(key_angle)
+            key_magnitude = abs(float(recipe["magnitude"]))
+            if source["scale_units"] == "xy":
+                raw_anchor_x = self._quiver_render_to_raw([anchor_rx], metrics["x_spec"])[0]
+                raw_anchor_y = self._quiver_render_to_raw([anchor_ry], metrics["y_spec"])[0]
+                next_rx = self._quiver_render_values([raw_anchor_x + key_u], metrics["x_spec"])[0]
+                next_ry = self._quiver_render_values([raw_anchor_y + key_v], metrics["y_spec"])[0]
+                key_magnitude = float(
+                    np.hypot(
+                        (next_rx - anchor_rx) * metrics["pixels_per_x"],
+                        (next_ry - anchor_ry) * metrics["pixels_per_y"],
+                    )
+                )
+            effective_scale = max(float(source.get("_resolved_scale", 1.0)), np.finfo(float).eps)
+            if source["scale_units"] is None:
+                key_length = (
+                    key_magnitude
+                    * self._quiver_dots_per_unit(source["units"], metrics)
+                    / effective_scale
+                )
+            elif source["scale_units"] == "xy":
+                key_length = key_magnitude / effective_scale
+            else:
+                key_length = (
+                    key_magnitude
+                    * self._quiver_dots_per_unit(source["scale_units"], metrics)
+                    / effective_scale
+                )
+            sign = -1.0 if float(recipe["magnitude"]) < 0.0 else 1.0
+            key_unit_x = np.asarray([sign * np.cos(key_angle)])
+            key_unit_y = np.asarray([sign * np.sin(key_angle)])
+            key_args = self._quiver_segment_arrays(
+                np.asarray([anchor_rx]),
+                np.asarray([anchor_ry]),
+                key_unit_x * key_length,
+                key_unit_y * key_length,
+                metrics,
+                {"N": "middle", "S": "middle", "E": "tip", "W": "tail"}[recipe["labelpos"]],
+            )
+            entry["args"] = key_args[:4]
+            entry["kwargs"]["width"] = max(0.5, float(source.get("_resolved_width", 1.2)))
+            anchor_x = float(self._quiver_render_to_storage([anchor_rx], metrics["x_spec"])[0])
+            anchor_y = float(self._quiver_render_to_storage([anchor_ry], metrics["y_spec"])[0])
+            text_entry = recipe["text_entry"]
+            text_entry["args"] = (anchor_x, anchor_y, text_entry["args"][2])
+            labelsep = float(recipe["labelsep"]) * metrics["dpi"]
+            dx, dy = {
+                "N": (0.0, labelsep),
+                "S": (0.0, -labelsep),
+                "E": (labelsep, 0.0),
+                "W": (-labelsep, 0.0),
+            }[recipe["labelpos"]]
+            text_entry["kwargs"]["dx"] = dx
+            text_entry["kwargs"]["dy"] = dy
+
     def _vector_field(
         self, args: tuple[Any, ...], kwargs: dict[str, Any], name: str
     ) -> PolyCollection:
@@ -6116,7 +6523,10 @@ class PlotTypeMixin:
             u, v = u_grid.reshape(-1), v_grid.reshape(-1)
         else:
             raise TypeError(f"{name}() expects U, V or X, Y, U, V[, C]")
-        color = kwargs.pop("color", c)
+        # Quiver is one of the Matplotlib collections whose default facecolor
+        # is fixed black rather than the Axes property cycle. A positional C
+        # array still owns colormapping unless color= explicitly overrides it.
+        color = kwargs.pop("color", c if c is not None else "k")
         alpha = kwargs.pop("alpha", None)
         width = kwargs.pop("width", kwargs.pop("linewidth", None))
         scale = kwargs.pop("scale", None)
@@ -6138,119 +6548,74 @@ class PlotTypeMixin:
             raise not_implemented(f"{name}(zorder=...)")
         check_unsupported(kwargs, f"{name}()")
         if not isinstance(angles, str):
-            directions = np.deg2rad(np.asarray(angles, dtype=np.float64).reshape(-1))
+            angles = np.asarray(angles, dtype=np.float64).reshape(-1)
+            directions = np.deg2rad(angles)
             lengths = np.hypot(u, v)
             if directions.shape != lengths.shape:
                 raise ValueError(f"{name} angles must match U and V")
-            u, v = lengths * np.cos(directions), lengths * np.sin(directions)
         elif angles not in ("uv", "xy"):
             raise ValueError(f"invalid {name} angles {angles!r}")
+        pivot = str(pivot).lower()
+        if pivot == "mid":
+            pivot = "middle"
+        if pivot not in {"tail", "middle", "tip"}:
+            raise ValueError(f"{name} pivot must be 'tail', 'middle', or 'tip'")
         if scale_units not in (None, "width", "height", "dots", "inches", "x", "y", "xy"):
             raise ValueError(f"invalid {name} scale_units {scale_units!r}")
         if units not in ("width", "height", "dots", "inches", "x", "y", "xy"):
             raise ValueError(f"invalid {name} units {units!r}")
-        from xy import kernels
-
         magnitudes = np.hypot(u, v)
-        if scale is None:
-            spacings: list[float] = []
-            for positions in (x, y):
-                unique = np.unique(positions[np.isfinite(positions)])
-                if len(unique) > 1:
-                    spacings.append(float(np.median(np.diff(unique))))
-            spacing = min(spacings) if spacings else 1.0
-            finite_magnitudes = magnitudes[np.isfinite(magnitudes) & (magnitudes > 0)]
-            typical = float(np.median(finite_magnitudes)) if len(finite_magnitudes) else 1.0
-            vector_scale = typical / max(0.55 * spacing, np.finfo(float).eps)
-        else:
-            vector_scale = float(scale)
-        color_repeats: Optional[np.ndarray] = None
-        if name == "barbs":
-            starts_x: list[float] = []
-            starts_y: list[float] = []
-            ends_x: list[float] = []
-            ends_y: list[float] = []
-            repeats: list[int] = []
-            for px, py, du, dv, magnitude in zip(x, y, u, v, magnitudes, strict=True):
-                if not np.isfinite(px + py + du + dv + magnitude) or magnitude <= 0:
-                    repeats.append(0)
-                    continue
-                dx, dy = du / magnitude, dv / magnitude
-                length = magnitude / vector_scale
-                tail_x, tail_y = px, py
-                tip_x, tip_y = px + dx * length, py + dy * length
-                starts_x.append(float(tail_x))
-                starts_y.append(float(tail_y))
-                ends_x.append(float(tip_x))
-                ends_y.append(float(tip_y))
-                count = max(2, min(6, int(round(magnitude / 10.0))))
-                for index in range(count):
-                    along = length * (0.08 + index * 0.13)
-                    bx, by = tip_x - dx * along, tip_y - dy * along
-                    starts_x.append(float(bx))
-                    starts_y.append(float(by))
-                    ends_x.append(float(bx - dx * length * 0.16 - dy * length * 0.28))
-                    ends_y.append(float(by - dy * length * 0.16 + dx * length * 0.28))
-                repeats.append(1 + count)
-            x0, y0, x1, y1 = map(np.asarray, (starts_x, starts_y, ends_x, ends_y))
-            color_repeats = np.asarray(repeats, dtype=np.int64)
-        else:
-            x0, x1, y0, y1 = kernels.vector_segments(
-                x,
-                y,
-                u,
-                v,
-                scale=vector_scale,
-                pivot=pivot,
-                head_ratio=0.22,
-            )
+        if scale is not None and (not np.isfinite(float(scale)) or float(scale) <= 0.0):
+            raise ValueError(f"{name} scale must be positive")
+        if width is not None and (not np.isfinite(float(width)) or float(width) <= 0.0):
+            raise ValueError(f"{name} width must be positive")
+        valid = (
+            np.isfinite(x)
+            & np.isfinite(y)
+            & np.isfinite(u)
+            & np.isfinite(v)
+            & (magnitudes > np.finfo(float).eps)
+        )
         segment_color: Any
+        source_color: np.ndarray | None = None
         if color is not None and not isinstance(color, str):
             values = np.asarray(color).reshape(-1)
             if len(values) != len(x):
                 raise ValueError(f"{name} color values must match U and V")
-            keep = np.isfinite(x) & np.isfinite(y) & np.isfinite(u) & np.isfinite(v)
-            keep &= np.hypot(u, v) > 0
-            segment_color = (
-                np.repeat(values, color_repeats)
-                if color_repeats is not None
-                else np.repeat(values[keep], 3)
-            )
+            segment_color = np.repeat(values[valid], 3)
+            source_color = values
         else:
             segment_color = resolve_color(color) if color is not None else self._next_color()
-        if width is None:
-            rendered_width = 1.2
-        else:
-            # Matplotlib's ``units`` controls arrow *width*, while
-            # ``scale_units`` controls length.  Segment widths are pixels in
-            # xy, so convert with a stable nominal 500x370 px Axes viewport;
-            # resizing preserves the important data-unit distinction.
-            x_span = max(float(np.ptp(x[np.isfinite(x)])), np.finfo(float).eps)
-            y_span = max(float(np.ptp(y[np.isfinite(y)])), np.finfo(float).eps)
-            dots_per_unit = {
-                "width": 500.0,
-                "height": 370.0,
-                "dots": 1.0,
-                "inches": 100.0,
-                "x": 500.0 / x_span,
-                "y": 370.0 / y_span,
-                "xy": float(np.hypot(500.0, 370.0) / np.hypot(x_span, y_span)),
-            }[units]
-            rendered_width = max(0.5, float(width) * dots_per_unit)
+        recipe = {
+            "x": np.asarray(x, dtype=np.float64),
+            "y": np.asarray(y, dtype=np.float64),
+            "u": np.asarray(u, dtype=np.float64),
+            "v": np.asarray(v, dtype=np.float64),
+            "angles": angles,
+            "scale": None if scale is None else float(scale),
+            "scale_units": scale_units,
+            "units": units,
+            "width": None if width is None else float(width),
+            "pivot": pivot,
+        }
+        if source_color is not None:
+            recipe["_source_color"] = source_color
         entry = self._add(
             "@mark",
             {
                 "factory": "segments",
-                "args": (x0, y0, x1, y1),
+                "args": (x, y, x, y),
                 "kwargs": {
                     "color": segment_color,
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
-                    "width": rendered_width,
+                    "width": 1.2,
                     "opacity": 1.0 if alpha is None else float(alpha),
                 },
-                "vector_scale": vector_scale,
+                "_quiver_recipe": recipe,
             },
         )
+        figure_width, figure_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        self._materialize_quiver_geometry(figure_width, figure_height)
         return PolyCollection(self, entry)
 
     def _barb_field(
@@ -6661,65 +7026,65 @@ class PlotTypeMixin:
         if kwargs.pop("zorder", None) is not None:
             raise not_implemented("quiverkey(zorder=...)")
         check_unsupported(kwargs, "quiverkey()")
-        from xy import kernels
-
-        if coordinates in ("axes", "figure"):
-            qx = np.concatenate((np.asarray(Q._entry["args"][0]), np.asarray(Q._entry["args"][2])))
-            qy = np.concatenate((np.asarray(Q._entry["args"][1]), np.asarray(Q._entry["args"][3])))
-            x_fraction, y_fraction = float(X), float(Y)
-            if coordinates == "figure":
-                # Default Matplotlib subplot bounds: left/right=.125/.9 and
-                # bottom/top=.11/.88.  Convert figure fractions into the
-                # equivalent axes fractions so keys at (.9, .9) sit on the
-                # outer top-right edge, as in the gallery.
-                x_fraction = (x_fraction - 0.125) / 0.775
-                y_fraction = (y_fraction - 0.11) / 0.77
-            px = float(np.nanmin(qx) + x_fraction * (np.nanmax(qx) - np.nanmin(qx)))
-            py = float(np.nanmin(qy) + y_fraction * (np.nanmax(qy) - np.nanmin(qy)))
-        elif coordinates == "data":
-            px, py = float(X), float(Y)
-        else:
-            raise ValueError("quiverkey coordinates must be 'axes', 'figure', or 'data'")
-        x0, x1, y0, y1 = kernels.vector_segments(
-            np.asarray([px], dtype=np.float64),
-            np.asarray([py], dtype=np.float64),
-            np.asarray([float(U) * np.cos(angle)], dtype=np.float64),
-            np.asarray([float(U) * np.sin(angle)], dtype=np.float64),
-            scale=float(Q._entry.get("vector_scale", 1.0)),
-            head_ratio=0.22,
-        )
+        if coordinates not in {"axes", "figure", "data", "inches"}:
+            raise ValueError("quiverkey coordinates must be 'axes', 'figure', 'data', or 'inches'")
+        labelpos = str(labelpos).upper()
+        if labelpos not in {"N", "S", "E", "W"}:
+            raise ValueError("quiverkey labelpos must be N, S, E, or W")
+        if not np.isfinite(labelsep) or labelsep < 0.0:
+            raise ValueError("quiverkey labelsep must be a non-negative number of inches")
+        source = Q._entry.get("_quiver_recipe")
+        if source is None:
+            raise TypeError("quiverkey Q must be the result of quiver()")
         chosen = (
             resolve_color(color)
             if color is not None and isinstance(color, (str, tuple, list))
-            else self._next_color()
+            else "#000000"
         )
         entry = self._add(
             "@mark",
             {
                 "factory": "segments",
-                "args": (x0, y0, x1, y1),
+                "args": ([0.0], [0.0], [0.0], [0.0]),
                 "kwargs": {"color": chosen, "width": 1.2},
             },
         )
-        offsets = {
-            "N": (0.0, labelsep),
-            "S": (0.0, -labelsep),
-            "E": (labelsep, 0.0),
-            "W": (-labelsep, 0.0),
-        }
-        if labelpos not in offsets:
-            raise ValueError("quiverkey labelpos must be N, S, E, or W")
-        dx, dy = offsets[labelpos]
         # Math mode discards ordinary whitespace, but the plain-text fraction
         # fallback needs a visible word gap before units (`1 m/s`).
         key_label = str(label).replace(r" \frac", r"\ \frac")
-        self._add(
+        text_entry = self._add(
             "@text",
             {
-                "args": (px + dx, py + dy, mathtext_to_unicode(key_label)),
-                "kwargs": {"color": resolve_color(labelcolor)} if labelcolor is not None else {},
+                "args": (0.0, 0.0, mathtext_to_unicode(key_label)),
+                "kwargs": {
+                    "dx": 0.0,
+                    "dy": 0.0,
+                    "anchor": {"N": "middle", "S": "middle", "E": "start", "W": "end"}[labelpos],
+                    "style": {
+                        "vertical_align": {
+                            "N": "bottom",
+                            "S": "top",
+                            "E": "middle",
+                            "W": "middle",
+                        }[labelpos]
+                    },
+                    **({"color": resolve_color(labelcolor)} if labelcolor is not None else {}),
+                },
             },
         )
+        entry["_quiver_key_recipe"] = {
+            "source": source,
+            "x": float(X),
+            "y": float(Y),
+            "magnitude": float(U),
+            "angle": float(np.rad2deg(angle)),
+            "coordinates": coordinates,
+            "labelpos": labelpos,
+            "labelsep": labelsep,
+            "text_entry": text_entry,
+        }
+        figure_width, figure_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        self._materialize_quiver_geometry(figure_width, figure_height)
         return PolyCollection(self, entry)
 
     def streamplot(
@@ -6805,6 +7170,14 @@ class PlotTypeMixin:
             and integration_max_error_scale == 1.0
             and density_xy[0] == density_xy[1]
         )
+
+        def automatic_seeds() -> np.ndarray:
+            seed_x, seed_y = np.meshgrid(
+                np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
+                np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
+            )
+            return np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
+
         if start_points is not None:
             seeds = np.asarray(start_points, dtype=np.float64)
             if seeds.ndim != 2 or seeds.shape[1] != 2:
@@ -6818,11 +7191,7 @@ class PlotTypeMixin:
             if not np.all(inside):
                 raise ValueError("streamplot start_points must lie inside the x/y grid")
         elif not native_fast_path:
-            seed_x, seed_y = np.meshgrid(
-                np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
-                np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
-            )
-            seeds = np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
+            seeds = automatic_seeds()
         if native_fast_path:
             from xy import kernels
 
@@ -6834,10 +7203,39 @@ class PlotTypeMixin:
                 density=float(density_xy[0]),
                 max_steps=max_steps,
             )
+            source_segments = _native_streamline_trajectories(kx0, kx1, ky0, ky1)
+            x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
+            y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
             source_segments = [
-                np.asarray(((sx, sy), (ex, ey)), dtype=np.float64)
-                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
+                streamline
+                for streamline in source_segments
+                if np.hypot(
+                    np.diff(streamline[:, 0]) / x_span,
+                    np.diff(streamline[:, 1]) / y_span,
+                ).sum()
+                >= float(minlength)
             ]
+            if not source_segments:
+                # The current native kernel can return only cell-sized
+                # fragments on fine source grids. Matplotlib rejects those
+                # fragments by minlength and continues seeding; recover with
+                # the same bounded adaptive integrator used by non-default
+                # streamplot options instead of drawing an arrow per fragment.
+                source_segments = _integrate_streamlines(
+                    x_values,
+                    y_values,
+                    u_values,
+                    v_values,
+                    automatic_seeds(),
+                    integration_direction,
+                    max_steps,
+                    float(maxlength),
+                    float(minlength),
+                    broken_streamlines=broken_streamlines,
+                    density=(float(density_xy[0]), float(density_xy[1])),
+                    step_scale=integration_max_step_scale,
+                    error_scale=integration_max_error_scale,
+                )
         else:
             source_segments = _integrate_streamlines(
                 x_values,
@@ -6900,85 +7298,46 @@ class PlotTypeMixin:
             elif original_color.size and float(original_color.min()) != float(original_color.max()):
                 color_domain = (float(original_color.min()), float(original_color.max()))
 
-        entries: list[dict[str, Any]] = []
-        if isinstance(width_value, np.ndarray) and len(width_value) == len(x0):
-            width_array = np.asarray(width_value, dtype=np.float64)
-            finite_width = width_array[np.isfinite(width_array)]
-            if finite_width.size:
-                edges = np.unique(np.quantile(finite_width, np.linspace(0.0, 1.0, 7)))
-                bins = np.clip(np.digitize(width_array, edges[1:-1]), 0, max(0, len(edges) - 2))
-                for bin_index in np.unique(bins):
-                    keep = bins == bin_index
-                    kwargs_for_bin: dict[str, Any] = {
-                        "color": (
-                            np.asarray(chosen_color)[keep]
-                            if not isinstance(chosen_color, str)
-                            else chosen_color
-                        ),
-                        "colormap": colormap,
-                        "width": float(np.nanmean(width_array[keep])),
-                    }
-                    if color_domain is not None and not isinstance(chosen_color, str):
-                        kwargs_for_bin["domain"] = color_domain
-                    entries.append(
-                        self._add(
-                            "@mark",
-                            {
-                                "factory": "segments",
-                                "args": (x0[keep], y0[keep], x1[keep], y1[keep]),
-                                "kwargs": kwargs_for_bin,
-                            },
-                        )
-                    )
-        if not entries:
-            if isinstance(width_value, np.ndarray):
-                width_scalar = float(np.nanmean(width_value)) if width_value.size else 1.2
-            else:
-                width_scalar = float(width_value)
-            entry_kwargs: dict[str, Any] = {
-                "color": chosen_color,
-                "colormap": colormap,
-                "width": width_scalar,
-            }
-            if color_domain is not None and not isinstance(chosen_color, str):
-                entry_kwargs["domain"] = color_domain
-            entries.append(
-                self._add(
-                    "@mark",
-                    {
-                        "factory": "segments",
-                        "args": (x0, y0, x1, y1),
-                        "kwargs": entry_kwargs,
-                    },
-                )
+        entry_kwargs: dict[str, Any] = {
+            "color": chosen_color,
+            "colormap": colormap,
+            # Segments supports a direct per-instance width channel, so keep
+            # every sampled streamline width rather than quantizing it.
+            "width": width_value,
+        }
+        if color_domain is not None and not isinstance(chosen_color, str):
+            entry_kwargs["domain"] = color_domain
+        entries = [
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": entry_kwargs,
+                },
             )
+        ]
         collection = PolyCollection(self, entries[0])
         arrow_collection = collection
         if num_arrows > 0 and len(x0):
-            if native_fast_path:
-                arrow_count = max(
-                    1,
-                    min(len(x0), num_arrows * int(30 * float(density_xy[0]))),
+            arrow_indices_list: list[int] = []
+            segment_offset = 0
+            for streamline in source_segments:
+                lengths = np.hypot(
+                    np.diff(streamline[:, 0]),
+                    np.diff(streamline[:, 1]),
                 )
-                arrow_indices = np.unique(np.linspace(0, len(x0) - 1, arrow_count, dtype=np.int64))
-            else:
-                arrow_indices_list: list[int] = []
-                segment_offset = 0
-                for streamline in source_segments:
-                    deltas = np.diff(streamline, axis=0)
-                    lengths = np.hypot(
-                        deltas[:, 0] / max(float(np.ptp(x_values)), np.finfo(float).eps),
-                        deltas[:, 1] / max(float(np.ptp(y_values)), np.finfo(float).eps),
+                cumulative = np.cumsum(lengths)
+                if cumulative.size and np.isfinite(cumulative[-1]) and cumulative[-1] > 0.0:
+                    targets = cumulative[-1] * (
+                        np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
                     )
-                    cumulative = np.cumsum(lengths)
-                    if cumulative.size and cumulative[-1] > 0.0:
-                        targets = cumulative[-1] * (
-                            np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
-                        )
-                        local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
-                        arrow_indices_list.extend((segment_offset + local).tolist())
-                    segment_offset += len(lengths)
-                arrow_indices = np.unique(np.asarray(arrow_indices_list, dtype=np.int64))
+                    local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
+                    # Do not deduplicate: Matplotlib also emits exactly
+                    # num_arrows when multiple targets select one coarse segment.
+                    arrow_indices_list.extend((segment_offset + local).tolist())
+                segment_offset += len(lengths)
+            arrow_indices = np.asarray(arrow_indices_list, dtype=np.int64)
             dx = x1[arrow_indices] - x0[arrow_indices]
             dy = y1[arrow_indices] - y0[arrow_indices]
             lengths = np.hypot(dx, dy)
@@ -6990,7 +7349,10 @@ class PlotTypeMixin:
                 scale = (
                     0.022 * min(float(np.ptp(x_values)), float(np.ptp(y_values))) * float(arrowsize)
                 )
-                tip_x, tip_y = x1[arrow_indices], y1[arrow_indices]
+                # Matplotlib places the head at the midpoint of the selected
+                # cumulative-distance segment.
+                tip_x = (x0[arrow_indices] + x1[arrow_indices]) * 0.5
+                tip_y = (y0[arrow_indices] + y1[arrow_indices]) * 0.5
                 base_x, base_y = tip_x - ux * scale, tip_y - uy * scale
                 wing = scale * 0.42
                 left_x, left_y = base_x - uy * wing, base_y + ux * wing
@@ -7002,6 +7364,11 @@ class PlotTypeMixin:
                     "color": arrow_color,
                     "colormap": colormap,
                     "opacity": 1.0,
+                    "stroke_width": (
+                        np.asarray(width_value, dtype=np.float64)[arrow_indices]
+                        if isinstance(width_value, np.ndarray)
+                        else float(width_value)
+                    ),
                 }
                 if color_domain is not None and not isinstance(arrow_color, str):
                     arrow_kwargs["domain"] = color_domain

@@ -272,8 +272,26 @@ def test_matplotlib_default_option_values_pass_through() -> None:
 
 def test_quiver_units_control_width_without_changing_vector_length() -> None:
     _fig, ax = plt.subplots()
-    width_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="width", width=0.02, scale=1)
-    x_units = ax.quiver([0, 10], [0, 10], [1, 0], [0, 1], units="x", width=0.02, scale=1)
+    width_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="width",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
+    x_units = ax.quiver(
+        [0, 10],
+        [0, 10],
+        [1, 0],
+        [0, 1],
+        units="x",
+        scale_units="width",
+        width=0.02,
+        scale=1,
+    )
     np.testing.assert_allclose(width_units._entry["args"][0], x_units._entry["args"][0])
     np.testing.assert_allclose(width_units._entry["args"][2], x_units._entry["args"][2])
     assert width_units._entry["kwargs"]["width"] > x_units._entry["kwargs"]["width"]
@@ -746,10 +764,10 @@ def test_streamplot_array_linewidth_and_color_are_sampled_per_segment() -> None:
     _fig, ax = plt.subplots()
     ax.streamplot(x, y, -yy, xx, color=xx, linewidth=1.0 + np.abs(yy), norm=Normalize(-2.0, 2.0))
     segments = [entry for entry in ax._entries if entry.get("factory") == "segments"]
-    assert len(segments) > 1  # varying widths split into width bins
-    assert len({entry["kwargs"]["width"] for entry in segments}) > 1
-    assert all(entry["kwargs"]["domain"] == (-2.0, 2.0) for entry in segments)
-    assert any(np.ptp(np.asarray(entry["kwargs"]["color"])) > 0 for entry in segments)
+    assert len(segments) == 1
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["width"])) > 0
+    assert segments[0]["kwargs"]["domain"] == (-2.0, 2.0)
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["color"])) > 0
     with pytest.raises(NotImplementedError, match=r"streamplot\(norm=LogNorm\)"):
         ax.streamplot(x, y, -yy, xx, color=xx, norm=LogNorm())
 
