@@ -328,7 +328,7 @@ mantissa-1 ticks are labelled, and only every `labelEvery` decade where
 `labelEvery = ceil((decades + 1) / target)` — so minor ticks draw unlabelled.
 If thinning produces nothing, every tick is labelled.
 
-An authored `tick_values` array is the labeled major tier. An optional
+An authored `tick_values` array is the labelled major tier. An optional
 `minor_tick_values` array is drawn separately with `minor_style`; it never
 participates in label formatting or collision handling. Pyplot uses this
 second tier for the automatic log subdivisions from `LogLocator`, so minor

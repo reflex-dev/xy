@@ -11,6 +11,7 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+import warnings
 
 # Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
 # Axes methods must resolve these annotation names (all stdlib or xy-local).
@@ -3362,12 +3363,35 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(left, (tuple, list)):
             left, right = left
-        current = self._axis_props("x").get("domain")
-        lo, hi = current if current is not None else self._entry_extent("x")
         spec = (self._y2_of or self)._scale_specs["x"]
-        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
-        start = float(current_original[0] if left is None else left)
-        end = float(current_original[1] if right is None else right)
+        current_start, current_end = self.get_xlim()
+        if spec["name"] == "log":
+            auto_start, auto_end = self._auto_domain("x")
+            if self._axis_props("x").get("reverse"):
+                auto_start, auto_end = auto_end, auto_start
+            if not np.isfinite(current_start) or current_start <= 0:
+                current_start = auto_start
+            if not np.isfinite(current_end) or current_end <= 0:
+                current_end = auto_end
+        start = float(current_start if left is None else left)
+        end = float(current_end if right is None else right)
+        if not np.isfinite((start, end)).all():
+            raise ValueError("Axis limits cannot be NaN or Inf")
+        if spec["name"] == "log":
+            if start <= 0:
+                warnings.warn(
+                    "Attempt to set non-positive xlim on a log-scaled axis will be ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                start = current_start
+            if end <= 0:
+                warnings.warn(
+                    "Attempt to set non-positive xlim on a log-scaled axis will be ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                end = current_end
         transformed = _scale_values(np.asarray((start, end)), spec)
         self._axis_props("x")["domain"] = tuple(sorted(map(float, transformed)))
         self._axis_props("x")["reverse"] = start > end
@@ -3394,13 +3418,36 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(bottom, (tuple, list)):
             bottom, top = bottom
-        current = self._axis_props("y").get("domain")
-        lo, hi = current if current is not None else self._entry_extent("y")
         key = "y2" if self._y2_of is not None else "y"
         spec = (self._y2_of or self)._scale_specs[key]
-        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
-        start = float(current_original[0] if bottom is None else bottom)
-        end = float(current_original[1] if top is None else top)
+        current_start, current_end = self.get_ylim()
+        if spec["name"] == "log":
+            auto_start, auto_end = self._auto_domain("y")
+            if self._axis_props("y").get("reverse"):
+                auto_start, auto_end = auto_end, auto_start
+            if not np.isfinite(current_start) or current_start <= 0:
+                current_start = auto_start
+            if not np.isfinite(current_end) or current_end <= 0:
+                current_end = auto_end
+        start = float(current_start if bottom is None else bottom)
+        end = float(current_end if top is None else top)
+        if not np.isfinite((start, end)).all():
+            raise ValueError("Axis limits cannot be NaN or Inf")
+        if spec["name"] == "log":
+            if start <= 0:
+                warnings.warn(
+                    "Attempt to set non-positive ylim on a log-scaled axis will be ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                start = current_start
+            if end <= 0:
+                warnings.warn(
+                    "Attempt to set non-positive ylim on a log-scaled axis will be ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                end = current_end
         transformed = _scale_values(np.asarray((start, end)), spec)
         self._axis_props("y")["domain"] = tuple(sorted(map(float, transformed)))
         self._axis_props("y")["reverse"] = start > end
@@ -5012,8 +5059,8 @@ class Axes(PlotTypeMixin):
             base = float(kwargs.pop("base", 10))
             subs = kwargs.pop("subs", None)
             nonpositive = kwargs.pop("nonpositive", "clip")
-            if not np.isfinite(base) or base <= 0 or base == 1:
-                raise ValueError("log scale base must be positive and not equal to 1")
+            if not np.isfinite(base) or base <= 1:
+                raise ValueError("log scale base must be greater than 1")
             if nonpositive not in {"clip", "mask"}:
                 raise ValueError("nonpositive must be 'clip' or 'mask'")
             if subs is not None:
@@ -5843,12 +5890,19 @@ class Axes(PlotTypeMixin):
                 style["grid_dash"] = dash
         if alpha is not None:
             style["grid_opacity"] = float(alpha)
+        stale_style_keys = []
+        if linewidth is not None:
+            stale_style_keys.append("grid_width")
+        if linestyle is not None:
+            stale_style_keys.append("grid_dash")
+        if alpha is not None:
+            stale_style_keys.append("grid_opacity")
         for item in ("x", "y"):
             props = host._axis_props(item)
             for states, style_key in tiers:
                 axis_style = props.setdefault(style_key, {})
                 if item in selected:
-                    for stale in ("grid_width", "grid_dash", "grid_opacity"):
+                    for stale in stale_style_keys:
                         axis_style.pop(stale, None)
                     fallback = (
                         host._grid_color
@@ -7439,6 +7493,14 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     label_color = rcParams[f"{prefix}.labelcolor"]
     result: dict[str, Any] = {}
     result["axis_width"] = float(rcParams["axes.linewidth"]) * point_scale
+    result["grid_width"] = float(rcParams["grid.linewidth"]) * point_scale
+    result["grid_opacity"] = float(rcParams["grid.alpha"])
+    grid_dash = LINESTYLE_TO_DASH.get(
+        rcParams["grid.linestyle"],
+        rcParams["grid.linestyle"],
+    )
+    if grid_dash is not None:
+        result["grid_dash"] = grid_dash
     result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * point_scale
     result["tick_padding"] = float(rcParams[f"{prefix}.major.pad"]) * point_scale
     result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * point_scale
@@ -7467,7 +7529,7 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
 def _rc_minor_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     prefix = "xtick" if axis == "x" else "ytick"
     point_scale = float(dpi) / 72.0
-    return {
+    style = {
         "tick_length": float(rcParams[f"{prefix}.minor.size"]) * point_scale,
         "tick_width": float(rcParams[f"{prefix}.minor.width"]) * point_scale,
         "tick_padding": float(rcParams[f"{prefix}.minor.pad"]) * point_scale,
@@ -7475,6 +7537,13 @@ def _rc_minor_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
         "grid_width": float(rcParams["grid.linewidth"]) * point_scale,
         "grid_opacity": float(rcParams["grid.alpha"]),
     }
+    grid_dash = LINESTYLE_TO_DASH.get(
+        rcParams["grid.linestyle"],
+        rcParams["grid.linestyle"],
+    )
+    if grid_dash is not None:
+        style["grid_dash"] = grid_dash
+    return style
 
 
 def _parse_bounds(value: Any, context: str) -> tuple[float, float, float, float]:

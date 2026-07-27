@@ -32,6 +32,21 @@ def test_grid_selects_axis_and_records_supported_style():
         ax.grid(True, unsupported=True)
 
 
+def test_grid_linestyle_rcparam_reaches_major_and_minor_payload_styles():
+    with plt.rc_context({"axes.grid": True, "grid.linestyle": "--"}):
+        _, ax = plt.subplots()
+        ax.grid(True, which="minor")
+
+        for axis in ("x", "y"):
+            assert ax._axis_props(axis)["style"]["grid_dash"] == "dashed"
+            assert ax._axis_props(axis)["minor_style"]["grid_dash"] == "dashed"
+
+        payload = ax._build_chart(640, 480).figure().axis_options
+        for axis in ("x", "y"):
+            assert payload[axis]["style"]["grid_dash"] == "dashed"
+            assert payload[axis]["minor_style"]["grid_dash"] == "dashed"
+
+
 def test_legend_maps_supported_style_and_rejects_unknown_options():
     _, ax = plt.subplots()
     ax.plot([0, 1], [1, 2], label="line")
