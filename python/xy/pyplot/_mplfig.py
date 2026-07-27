@@ -71,9 +71,7 @@ def _contour_colorbar_lines(contour: Any, host: Axes) -> list[dict[str, Any]]:
             "color": colors[index],
             "width": float(widths[index % len(widths)]) * host._point_scale(),
             "dash": (
-                "dashed"
-                if contour._entry["kwargs"].get("dash_negative") and level < 0
-                else None
+                "dashed" if contour._entry["kwargs"].get("dash_negative") and level < 0 else None
             ),
         }
         for index, level in enumerate(levels)

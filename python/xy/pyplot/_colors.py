@@ -285,6 +285,31 @@ def _rgba_floats(value: object) -> tuple[float, float, float, float]:
     return result
 
 
+def cmap_extreme(
+    cmap: object,
+    name: str,
+    default: object = None,
+) -> np.ndarray | None:
+    """Resolve one shim or Matplotlib colormap extreme to straight RGBA.
+
+    XY's lightweight colormaps store ``_bad``/``_under``/``_over`` while
+    Matplotlib's own colormaps use ``_rgba_bad``/``_rgba_under``/
+    ``_rgba_over``.  Keeping both spellings behind one resolver prevents
+    images, contours, and their colorbars from disagreeing about configured
+    cap and invalid-sample colors.
+    """
+    value = getattr(cmap, f"_{name}", None)
+    if value is None:
+        value = getattr(cmap, f"_rgba_{name}", None)
+    if value is None:
+        value = default
+    if value is None:
+        return None
+    if isinstance(value, tuple) and len(value) == 2 and value[1] is None:
+        value = value[0]
+    return np.asarray(_rgba_floats(value), dtype=np.float64)
+
+
 def _is_color_alpha_pair(value: object) -> TypeGuard[Sequence[Any]]:
     """(color, alpha) where color is a str or RGB(A) sequence — never a bare 2-tuple."""
     if not (isinstance(value, (tuple, list)) and len(value) == 2):
@@ -500,17 +525,11 @@ def scalar_grid_rgba(values: object, cmap: object) -> np.ndarray:
     under_default = (*endpoints[0], 1.0)
     over_default = (*endpoints[1], 1.0)
 
-    def extreme(name: str, default: tuple[float, float, float, float]) -> np.ndarray:
-        value = getattr(cmap, f"_{name}", None)
-        if value is None:
-            value = getattr(cmap, f"_rgba_{name}", None)
-        if value is None:
-            return np.asarray(default, dtype=np.float64)
-        if isinstance(value, tuple) and len(value) == 2 and value[1] is None:
-            value = value[0]
-        return np.asarray(_rgba_floats(value), dtype=np.float64)
-
-    rgba[normalized < 0.0] = extreme("under", under_default)
-    rgba[normalized > 1.0] = extreme("over", over_default)
-    rgba[~np.isfinite(normalized)] = extreme("bad", (0.0, 0.0, 0.0, 0.0))
+    under = cmap_extreme(cmap, "under", under_default)
+    over = cmap_extreme(cmap, "over", over_default)
+    bad = cmap_extreme(cmap, "bad", (0.0, 0.0, 0.0, 0.0))
+    assert under is not None and over is not None and bad is not None
+    rgba[normalized < 0.0] = under
+    rgba[normalized > 1.0] = over
+    rgba[~np.isfinite(normalized)] = bad
     return rgba

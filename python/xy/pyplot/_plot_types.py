@@ -39,6 +39,7 @@ from ._artists import (
 )
 from ._colors import (
     PROP_CYCLE,
+    cmap_extreme,
     normalize_scalar_grid,
     resolve_cmap,
     resolve_color,
@@ -736,10 +737,11 @@ def _contour_visible_segments(
             if not pieces:
                 break
         for piece_start, piece_stop in pieces:
+            if piece_stop <= piece_start:
+                continue
             a = _path_interpolate(path, cumulative, piece_start)
             b = _path_interpolate(path, cumulative, piece_stop)
-            if not np.allclose(a, b):
-                result.append((a, b))
+            result.append((a, b))
     return result
 
 
@@ -3147,8 +3149,8 @@ class PlotTypeMixin:
         # unextended contour. Keep that observable value on the ContourSet
         # while passing the renderer its normalized four-value contract.
         extend = public_extend if public_extend in ("neither", "min", "max", "both") else "neither"
-        cmap_under = getattr(cmap, "_under", None)
-        cmap_over = getattr(cmap, "_over", None)
+        cmap_under = cmap_extreme(cmap, "under")
+        cmap_over = cmap_extreme(cmap, "over")
         hatches = kwargs.pop("hatches", None)
         locator = kwargs.pop("locator", None)
         za = np.asarray(z, dtype=np.float64)
@@ -3305,16 +3307,8 @@ class PlotTypeMixin:
                 "hatches": list(hatches) if hatches is not None else None,
                 "extend": public_extend,
                 "levels": public_levels,
-                "cmap_under": (
-                    np.asarray(resolve_rgba(cmap_under), dtype=np.float64)
-                    if cmap_under is not None
-                    else None
-                ),
-                "cmap_over": (
-                    np.asarray(resolve_rgba(cmap_over), dtype=np.float64)
-                    if cmap_over is not None
-                    else None
-                ),
+                "cmap_under": cmap_under,
+                "cmap_over": cmap_over,
             },
         )
         if filled:
@@ -3686,9 +3680,13 @@ class PlotTypeMixin:
                 # replacements. Keep those replacements adjacent to the
                 # original artist so later marks retain their creation order.
                 source["kwargs"]["opacity"] = 0.0
-                source_index = self._entries.index(source)
-                for entry in generated:
-                    self._entries.remove(entry)
+                source_index = next(
+                    index for index, entry in enumerate(self._entries) if entry is source
+                )
+                generated_ids = {id(entry) for entry in generated}
+                self._entries[:] = [
+                    entry for entry in self._entries if id(entry) not in generated_ids
+                ]
                 self._entries[source_index + 1 : source_index + 1] = generated
                 self._invalidate()
 

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy.pyplot._plot_types import _joined_contour_paths
+from xy.pyplot._plot_types import _contour_visible_segments, _joined_contour_paths
 
 
 def _gaussian_difference() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -105,6 +105,77 @@ def test_joined_contour_paths_finds_true_open_endpoint_after_segment_shuffle() -
 
     assert len(paths) == 1
     np.testing.assert_allclose(paths[0][:, 0], [0.0, 1.0, 2.0, 3.0])
+
+
+def test_inline_clabel_keeps_subnanometric_contour_pieces() -> None:
+    path = np.asarray([[0.0, 0.0], [1e-10, 0.0]])
+    cumulative = np.asarray([0.0, 10.0])
+
+    visible = _contour_visible_segments(path, cumulative, [])
+
+    assert len(visible) == 1
+    np.testing.assert_array_equal(visible[0][0], path[0])
+    np.testing.assert_array_equal(visible[0][1], path[1])
+
+
+def test_clabel_uses_entry_identity_with_filled_and_multiple_line_contours() -> None:
+    y, x = np.mgrid[-1:1:32j, -1:1:32j]
+    values = x**2 - y**2
+    fig, ax = plt.subplots()
+    ax.contourf(x, y, values, levels=[-0.5, 0.0, 0.5])
+    ax.contour(x, y, values, levels=[-0.5, 0.0, 0.5], colors="white")
+    target = ax.contour(x, y, values, levels=[-0.5, 0.0, 0.5], colors="black")
+
+    labels = ax.clabel(target, inline=True)
+
+    assert labels
+    source_index = next(index for index, entry in enumerate(ax._entries) if entry is target._entry)
+    assert ax._entries[source_index]["kwargs"]["opacity"] == 0.0
+    assert ax._entries[source_index + 1]["factory"] == "segments"
+    output = io.BytesIO()
+    fig.savefig(output, format="svg")
+    assert b"<text" in output.getvalue()
+
+
+def test_matplotlib_style_extremes_are_shared_by_images_and_contours() -> None:
+    class MatplotlibStyleCmap:
+        name = "winter"
+        N = 256
+        _rgba_bad = (0.0, 1.0, 0.0, 1.0)
+        _rgba_under = (1.0, 0.0, 0.0, 1.0)
+        _rgba_over = (0.0, 0.0, 1.0, 1.0)
+
+    cmap = MatplotlibStyleCmap()
+    fig, (image_axes, contour_axes) = plt.subplots(ncols=2)
+    image = image_axes.imshow(
+        np.asarray([[-1.0, np.nan], [0.5, 2.0]]),
+        cmap=cmap,
+        vmin=0.0,
+        vmax=1.0,
+        origin="lower",
+    )
+    contour = contour_axes.contourf(
+        np.linspace(-2.0, 2.0, 100).reshape(10, 10),
+        levels=[-1.0, 0.0, 1.0],
+        cmap=cmap,
+        extend="both",
+    )
+    fig.colorbar(contour)
+
+    rgba = np.asarray(image._entry["z"])
+    np.testing.assert_array_equal(rgba[0, 0], cmap._rgba_under)
+    np.testing.assert_array_equal(rgba[0, 1], cmap._rgba_bad)
+    np.testing.assert_array_equal(rgba[1, 1], cmap._rgba_over)
+    assert contour._entry["cmap_under"] == pytest.approx(cmap._rgba_under)
+    assert contour._entry["cmap_over"] == pytest.approx(cmap._rgba_over)
+    assert contour_axes._colorbar["under_color"] == [255, 0, 0]
+    assert contour_axes._colorbar["over_color"] == [0, 0, 255]
+
+    output = io.BytesIO()
+    fig.savefig(output, format="svg")
+    svg = output.getvalue()
+    assert b"rgb(255,0,0)" in svg
+    assert b"rgb(0,0,255)" in svg
 
 
 def test_contour_colorbar_inherits_extend_lines_and_colorbar_axes_state() -> None:

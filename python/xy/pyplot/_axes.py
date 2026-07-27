@@ -38,6 +38,7 @@ from ._artists import (
 )
 from ._colors import (
     PROP_CYCLE,
+    cmap_extreme,
     normalize_scalar_grid,
     resolve_cmap,
     resolve_color,
@@ -2537,22 +2538,20 @@ class Axes(PlotTypeMixin):
             norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
             if norm_vmin is not None and norm_vmax is not None:
                 vmin, vmax = norm_vmin, norm_vmax
-        has_extremes = any(hasattr(cmap, f"_{key}") for key in ("bad", "under", "over"))
+        cmap_extremes = {key: cmap_extreme(cmap, key) for key in ("bad", "under", "over")}
+        bad = cmap_extremes["bad"]
+        has_extremes = (
+            cmap_extremes["under"] is not None
+            or cmap_extremes["over"] is not None
+            or (bad is not None and not np.array_equal(bad, np.zeros(4, dtype=np.float64)))
+        )
         # A resampled colormap (plt.get_cmap(name, N)) with no *customized*
         # extremes must render N flat bands through the ordinary heatmap path so
         # a later plt.clim() still applies; only genuine set_under/over/bad
         # customization needs the Python-baked truecolor branch below.
         imshow_levels = _discrete_levels(cmap) if not truecolor and norm is None else None
         if imshow_levels is not None and has_extremes:
-            default_extremes = (
-                getattr(cmap, "_under", None) is None
-                and getattr(cmap, "_over", None) is None
-                and getattr(cmap, "_bad", "transparent") in ("transparent", None)
-            )
-            if default_extremes:
-                has_extremes = False
-            else:
-                imshow_levels = None
+            imshow_levels = None
         if not truecolor and norm is not None and callable(norm) and not has_extremes:
             mapped = np.ma.asarray(norm(grid), dtype=np.float64)
             cmap_callable = cmap if callable(cmap) else None
@@ -2574,8 +2573,6 @@ class Axes(PlotTypeMixin):
         if not truecolor and has_extremes:
             from xy._svg import _lut
 
-            from ._colors import _rgba_floats
-
             finite = grid[np.isfinite(grid)]
             lo = float(vmin) if vmin is not None else float(finite.min())
             hi = float(vmax) if vmax is not None else float(finite.max())
@@ -2596,19 +2593,13 @@ class Axes(PlotTypeMixin):
             )
             rgba = np.dstack((rgb / 255.0, np.ones(grid.shape, dtype=float)))
 
-            def extreme(name: str, default: tuple[float, float, float, float]) -> np.ndarray:
-                value = getattr(cmap, f"_{name}", None)
-                if value is None:
-                    return np.asarray(default)
-                if isinstance(value, tuple) and len(value) == 2 and value[1] is None:
-                    value = value[0]
-                return np.asarray(_rgba_floats(value), dtype=float)
-
-            rgba[grid < lo] = extreme("under", (0.0, 0.0, 0.0, 1.0))
-            rgba[grid > hi] = extreme("over", (1.0, 1.0, 1.0, 1.0))
-            rgba[~np.isfinite(grid) | np.ma.getmaskarray(masked_grid)] = extreme(
-                "bad", (0.0, 0.0, 0.0, 0.0)
-            )
+            under = cmap_extreme(cmap, "under", (0.0, 0.0, 0.0, 1.0))
+            over = cmap_extreme(cmap, "over", (1.0, 1.0, 1.0, 1.0))
+            bad = cmap_extreme(cmap, "bad", (0.0, 0.0, 0.0, 0.0))
+            assert under is not None and over is not None and bad is not None
+            rgba[grid < lo] = under
+            rgba[grid > hi] = over
+            rgba[~np.isfinite(grid) | np.ma.getmaskarray(masked_grid)] = bad
             grid, truecolor = rgba, True
         alpha_array = (
             None if alpha is None or np.isscalar(alpha) else np.asarray(alpha, dtype=float)

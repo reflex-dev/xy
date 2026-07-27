@@ -4067,8 +4067,7 @@ def _colorbar(
         color = escape(_css(line.get("color"), text_color))
         line_width = _num(max(0.5, float(line.get("width", 1.0))))
         dash = (
-            f' stroke-dasharray="{_num(3.7 * float(line_width))} '
-            f'{_num(1.6 * float(line_width))}"'
+            f' stroke-dasharray="{_num(3.7 * float(line_width))} {_num(1.6 * float(line_width))}"'
             if line.get("dash") == "dashed"
             else ""
         )
