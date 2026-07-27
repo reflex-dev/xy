@@ -2620,9 +2620,11 @@ def _annotation_first_baseline(
 
     Matplotlib aligns ``top`` and ``bottom`` against the full multiline text
     extent, not against a block that has first been centered on the anchor.
+    Its default ``baseline`` alignment pins the final line's baseline at the
+    supplied position, so preceding lines grow upward from that anchor.
     With screen-space y increasing downwards, the first baseline therefore
     sits one ascent below a top anchor, or all later baselines plus one descent
-    above a bottom anchor.  Center/default retain the established exporter
+    above a bottom anchor.  Center retains the established exporter
     approximation.
     """
     line_span = max(0, int(line_count) - 1) * line_height
@@ -2630,6 +2632,8 @@ def _annotation_first_baseline(
         return anchor_y + font_size * 0.8
     if vertical_align == "bottom":
         return anchor_y - line_span - font_size * 0.2
+    if vertical_align in (None, "", "baseline"):
+        return anchor_y - line_span
     first_baseline = anchor_y - line_span / 2
     if vertical_align in ("center", "middle"):
         first_baseline += font_size * 0.35

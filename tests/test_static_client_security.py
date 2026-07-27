@@ -786,6 +786,13 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"
 
 
+def test_client_multiline_text_keeps_matplotlib_baseline_box_anchor() -> None:
+    """Default multiline text anchors its final baseline, including bbox padding."""
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+    assert ': "calc(-100% + 0.35em)";' in annotations
+    assert 'vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB' in annotations
+
+
 def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"
