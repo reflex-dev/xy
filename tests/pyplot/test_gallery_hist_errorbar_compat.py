@@ -136,16 +136,22 @@ def test_stacked_hist_step_outline_connects_to_previous_stack() -> None:
         stacked=True,
     )
 
-    first_connectors, _first_stairs, second_connectors, _second_stairs = ax._entries
-    _x0, first_y0, _x1, first_y1 = first_connectors["args"]
-    np.testing.assert_allclose(first_y0, [0.0, counts[0, -1]])
-    np.testing.assert_allclose(first_y1, [counts[0, 0], 0.0])
-
-    x0, second_y0, x1, second_y1 = second_connectors["args"]
-    np.testing.assert_allclose(x0, [edges[0], edges[-1]])
-    np.testing.assert_allclose(x1, [edges[0], edges[-1]])
-    np.testing.assert_allclose(second_y0, [counts[0, 0], counts[1, -1]])
-    np.testing.assert_allclose(second_y1, [counts[1, 0], counts[0, -1]])
+    # Matplotlib inserts stacked step artists from the top dataset downward,
+    # then restores only the returned container list to dataset order. Keep
+    # this geometry assertion independent of that renderer insertion order.
+    connectors = [entry for entry in ax._entries if entry.get("factory") == "segments"]
+    assert len(connectors) == 2
+    actual = []
+    for connector in connectors:
+        x0, y0, x1, y1 = connector["args"]
+        np.testing.assert_allclose(x0, [edges[0], edges[-1]])
+        np.testing.assert_allclose(x1, [edges[0], edges[-1]])
+        actual.append((tuple(y0), tuple(y1)))
+    expected = [
+        ((0.0, counts[0, -1]), (counts[0, 0], 0.0)),
+        ((counts[0, 0], counts[1, -1]), (counts[1, 0], counts[0, -1])),
+    ]
+    assert sorted(actual) == sorted(expected)
 
 
 def test_hist_dataset_style_lengths_must_match_dataset_count() -> None:
