@@ -12,6 +12,7 @@ import pytest
 import xy
 import xy.pyplot as plt
 from xy import _raster, _svg
+from xy.config import PROTOCOL_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
 TICK_COLOR = "#123456"
@@ -99,6 +100,19 @@ def test_axis_component_validates_and_canonicalizes_tick_sides() -> None:
     assert xy.y_axis(tick_sides=()).tick_sides == []
     with pytest.raises(ValueError, match="tick_sides"):
         xy.x_axis(tick_sides=("left",))
+
+
+def test_tick_sides_bump_wire_protocol_and_client_in_lockstep() -> None:
+    _fig, ax = _anscombe_tick_figure()
+    spec, _buffers = ax._build_chart(320, 240).figure().build_payload_split()
+    header = (ROOT / "js" / "src" / "00_header.ts").read_text(encoding="utf-8")
+    client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
+
+    assert spec["x_axis"]["tick_sides"] == ["bottom", "top"]
+    assert spec["protocol"] == PROTOCOL_VERSION == 9
+    assert f"PROTOCOL = {PROTOCOL_VERSION};" in header
+    assert 'import { PROTOCOL, xyByteSpan } from "./00_header";' in client
+    assert "spec.protocol !== PROTOCOL" in client
 
 
 def test_svg_draws_inward_ticks_on_all_four_requested_sides() -> None:
