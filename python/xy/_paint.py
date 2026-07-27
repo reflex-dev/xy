@@ -81,9 +81,7 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
     # Internal edges occur an even number of times. Degenerate triangles can
     # contribute the same edge twice, so ``count == 1`` incorrectly removes a
     # real boundary edge after a curve touches its baseline.
-    boundary = [
-        edge for edge, count in edge_counts.items() if edge[0] != edge[1] and count % 2
-    ]
+    boundary = [edge for edge, count in edge_counts.items() if edge[0] != edge[1] and count % 2]
     if len(boundary) < 3:
         return None
     adjacency: dict[int, set[int]] = {}

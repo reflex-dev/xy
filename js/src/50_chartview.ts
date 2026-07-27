@@ -2091,10 +2091,16 @@ export class ChartView {
     const hasMarkerSize = Number.isFinite(requestedMarkerSize) && requestedMarkerSize >= 0;
     const markerSize = hasMarkerSize ? requestedMarkerSize : 9;
     const symbol = String(marker?.symbol || "circle");
-    const fillColor = safeCssPaint(this.root, marker?.color || defaultColor);
+    // The generated default can be an internal SVG url(...); sanitize only
+    // user-authored paints so the gradient reference remains intact.
+    const fillColor = marker?.color != null
+      ? safeCssPaint(this.root, marker.color)
+      : defaultColor;
     const hasStroke = marker?.stroke != null || marker?.stroke_width != null;
     const strokeColor = hasStroke
-      ? safeCssPaint(this.root, marker?.stroke || fillColor)
+      ? (marker?.stroke != null
+          ? safeCssPaint(this.root, marker.stroke)
+          : fillColor)
       : (wrapperPaint ? fillColor : "none");
     const paths = {
       square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
