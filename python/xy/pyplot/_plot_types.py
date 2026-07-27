@@ -41,6 +41,7 @@ from ._colors import (
     PROP_CYCLE,
     cmap_extreme,
     normalize_scalar_grid,
+    prepare_boundary_norm,
     resolve_cmap,
     resolve_color,
     resolve_rgba,
@@ -4503,7 +4504,7 @@ class PlotTypeMixin:
         keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
         (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
         ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, ``norm``
-        (``"linear"``/``"log"`` or their Normalize classes),
+        (``"linear"``/``"log"``, their Normalize classes, or ``BoundaryNorm``),
         ``rasterized`` for the regular heatmap path, and ``antialiased``
         (default only).
         Unknown keywords raise loudly.
@@ -4536,15 +4537,29 @@ class PlotTypeMixin:
         cmap_value = cmap if cmap is not None else "viridis"
         colormap = resolve_cmap(cmap_value)
         opacity = 1.0 if alpha is None else float(alpha)
-        render_z, domain, norm_scale = normalize_scalar_grid(z, norm, vmin, vmax)
-        truecolor_z = scalar_grid_rgba(render_z, cmap_value) if norm_scale == "log" else None
+        prepared_boundary = prepare_boundary_norm(z, norm, cmap_value, vmin, vmax)
+        boundary_boundaries: np.ndarray | None = None
+        boundary_colors: np.ndarray | None = None
+        if prepared_boundary is None:
+            render_z, domain, norm_scale = normalize_scalar_grid(z, norm, vmin, vmax)
+            truecolor_z = scalar_grid_rgba(render_z, cmap_value) if norm_scale == "log" else None
+        else:
+            domain = prepared_boundary.domain
+            norm_scale = "boundary"
+            truecolor_z = prepared_boundary.rgba
+            boundary_boundaries = prepared_boundary.boundaries
+            boundary_colors = prepared_boundary.band_colors
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
 
         def finish(entry: dict[str, Any]) -> PolyCollection:
             if domain is not None:
                 entry["_mpl_domain"] = domain
-            if norm_scale != "linear":
+            if norm_scale == "log":
                 entry["_mpl_norm_scale"] = norm_scale
+            if boundary_boundaries is not None and boundary_colors is not None:
+                entry["discrete_levels"] = len(boundary_boundaries) - 1
+                entry["discrete_boundaries"] = boundary_boundaries
+                entry["discrete_colors"] = boundary_colors
             handle = PolyCollection(self, entry)
             handle._rasterized = bool(rasterized)
             return handle
@@ -4644,7 +4659,11 @@ class PlotTypeMixin:
             x0, y0, x1, y1, x2, y2, scalar = (
                 values[finite_triangles] for values in (x0, y0, x1, y1, x2, y2, scalar)
             )
-        if norm_scale == "log":
+        if norm_scale == "boundary":
+            scalar_boundary = prepare_boundary_norm(scalar, norm, cmap_value)
+            assert scalar_boundary is not None
+            painted_scalar = scalar_boundary.rgba
+        elif norm_scale == "log":
             normalized_scalar, _resolved_domain, _scale = normalize_scalar_grid(
                 scalar,
                 norm_scale,
@@ -5323,7 +5342,8 @@ class PlotTypeMixin:
             raise not_implemented(f"{where}(norm={type(norm).__name__})", alternative="vmin=/vmax=")
         # Matplotlib antialiases contour lines but not filled bands by default.
         _reject_non_default(where, "antialiased", kwargs.pop("antialiased", None), not filled)
-        if kwargs.pop("linestyles", None) is not None:
+        linestyles = kwargs.pop("linestyles", None)
+        if linestyles not in (None, "-", "solid"):
             raise not_implemented(f"{where}(linestyles=...)")
         _reject_non_default(where, "extend", kwargs.pop("extend", None), "neither")
         hatches = kwargs.pop("hatches", None)
@@ -5442,7 +5462,8 @@ class PlotTypeMixin:
         Call as ``tricontour(x, y, values[, levels])`` with optional
         ``triangles`` indices. Supported keywords: ``levels``, ``cmap``,
         ``colors``, ``linewidths``, ``alpha``, ``label``, ``norm`` (linear
-        ``Normalize`` only), and ``data``; ``linestyles``, a non-default
+        ``Normalize`` only), and ``data``. ``linestyles`` accepts the solid
+        aliases ``"-"`` and ``"solid"``; other line styles, a non-default
         ``extend``, and unknown keywords raise loudly.
         """
         return self._tricontour(False, args, kwargs)
@@ -5452,7 +5473,8 @@ class PlotTypeMixin:
 
         Same call forms and keywords as ``tricontour``; ``hatches`` fills
         bands with approximate hatch strokes, and ``colors="none"`` renders
-        a fully transparent fill.
+        a fully transparent fill. Filled bands remain a per-triangle color
+        approximation rather than clipped triangular isoband polygons.
         """
         return self._tricontour(True, args, kwargs)
 

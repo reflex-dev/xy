@@ -346,6 +346,10 @@ method accepts the call.
       rotation (`use_clabeltext=True`) fails loudly.
 - [x] `tripcolor`/`tricontour`/`tricontourf`: norms, masks, shading,
       antialiasing, hatches, extends and triangulation-object interoperability.
+- [ ] `tricontourf`: clip each source triangle at every requested level and
+      emit true filled isoband polygons. The current face-mean triangle color
+      is intentionally documented as an approximation and must not count as
+      exact Matplotlib gallery geometry.
 - [x] `spy` and `matshow`: sparse inputs, precision semantics and return types.
 
 ### Pie, table, spectra and vector fields

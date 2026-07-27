@@ -783,6 +783,8 @@ def test_colormap_stops_stay_in_sync_with_js_client() -> None:
 
 
 def test_matplotlib_gallery_colormap_stops_and_reversal() -> None:
+    from xy.pyplot._colors import resolve_cmap
+
     expected = {
         "reds": [
             (255, 245, 240),
@@ -849,11 +851,65 @@ def test_matplotlib_gallery_colormap_stops_and_reversal() -> None:
             (118, 12, 113),
             (77, 0, 75),
         ],
+        "rdylbu": [
+            (165, 0, 38),
+            (214, 47, 38),
+            (244, 109, 67),
+            (252, 172, 96),
+            (254, 224, 144),
+            (254, 254, 192),
+            (224, 243, 247),
+            (169, 216, 232),
+            (116, 173, 209),
+            (68, 115, 179),
+            (49, 54, 149),
+        ],
+        "ylgn": [
+            (255, 255, 229),
+            (248, 252, 194),
+            (229, 244, 171),
+            (200, 232, 154),
+            (162, 216, 137),
+            (119, 197, 120),
+            (75, 176, 98),
+            (46, 146, 76),
+            (21, 120, 62),
+            (0, 96, 51),
+            (0, 69, 41),
+        ],
+        "wistia": [
+            (228, 255, 122),
+            (238, 245, 84),
+            (249, 236, 45),
+            (255, 223, 21),
+            (255, 206, 10),
+            (255, 188, 0),
+            (255, 177, 0),
+            (255, 165, 0),
+            (254, 153, 0),
+            (253, 139, 0),
+            (252, 127, 0),
+        ],
+        "puor": [
+            (127, 59, 8),
+            (177, 87, 6),
+            (224, 130, 20),
+            (252, 182, 97),
+            (254, 224, 182),
+            (246, 246, 246),
+            (216, 218, 235),
+            (177, 169, 209),
+            (128, 115, 172),
+            (83, 38, 134),
+            (45, 0, 75),
+        ],
     }
     for name, stops in expected.items():
         assert COLORMAP_STOPS[name] == stops
         assert channels.is_colormap(name)
         assert channels.is_colormap(f"{name}_r")
+        assert resolve_cmap(name) == name
+        assert resolve_cmap(f"{name}_r") == f"{name}_r"
         assert _colormap_stops(f"{name}_r") == list(reversed(stops))
 
 

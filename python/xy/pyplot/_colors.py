@@ -11,7 +11,7 @@ from __future__ import annotations
 import numbers
 import re
 from collections.abc import Iterable, Sequence
-from typing import Any, Optional, TypeGuard, cast
+from typing import Any, NamedTuple, Optional, TypeGuard, cast
 
 import numpy as np
 
@@ -97,6 +97,10 @@ CMAPS = {
     "bone": "bone",
     "winter": "winter",
     "bupu": "bupu",
+    "rdylbu": "rdylbu",
+    "ylgn": "ylgn",
+    "wistia": "wistia",
+    "puor": "puor",
 }
 
 
@@ -426,6 +430,85 @@ def resolve_cmap(name: object) -> str:
     if key.endswith("_r") and key[:-2] in CMAPS:
         return f"{CMAPS[key[:-2]]}_r"
     raise ValueError(f"unsupported colormap: {text!r}")
+
+
+class BoundaryNormGrid(NamedTuple):
+    """Renderer-ready samples and discrete metadata for a BoundaryNorm."""
+
+    rgba: np.ndarray
+    domain: tuple[float, float]
+    boundaries: np.ndarray
+    band_colors: np.ndarray
+
+
+def prepare_boundary_norm(
+    values: object,
+    norm: object,
+    cmap: object,
+    vmin: object = None,
+    vmax: object = None,
+) -> BoundaryNormGrid | None:
+    """Bake a Matplotlib-like ``BoundaryNorm`` through its callable colormap.
+
+    BoundaryNorm returns integer LUT indices, not normalized floats. Keeping
+    that conversion here prevents ``imshow`` and ``pcolormesh`` from inventing
+    different normalization rules, while the returned boundaries and exact
+    per-band colors let every colorbar renderer reproduce the same discrete
+    mapping.
+    """
+
+    if type(norm).__name__ != "BoundaryNorm":
+        return None
+    if not callable(norm):
+        raise TypeError("BoundaryNorm must be callable")
+    if vmin is not None or vmax is not None:
+        raise ValueError(
+            "Passing a Normalize instance simultaneously with vmin/vmax is not supported; "
+            "set the bounds on the norm instance instead"
+        )
+    boundaries = np.asarray(getattr(norm, "boundaries", None), dtype=np.float64).reshape(-1)
+    if (
+        len(boundaries) < 2
+        or not np.isfinite(boundaries).all()
+        or np.any(np.diff(boundaries) <= 0.0)
+    ):
+        raise ValueError("BoundaryNorm boundaries must be finite and strictly increasing")
+
+    source = np.ma.asarray(values, dtype=np.float64)
+    raw = np.asarray(source.filled(np.nan), dtype=np.float64)
+    mapped = np.ma.asarray(norm(source))
+    cmap_callable = cmap if callable(cmap) else Cmap(resolve_cmap(cmap))
+    rgba = np.asarray(cmap_callable(mapped.filled(0)), dtype=np.float64)
+    expected = raw.shape + (3,)
+    if rgba.shape not in {expected, raw.shape + (4,)}:
+        raise ValueError("BoundaryNorm colormap must return RGB or RGBA samples")
+    if rgba.shape[-1] == 3:
+        rgba = np.concatenate(
+            (rgba, np.ones(raw.shape + (1,), dtype=np.float64)),
+            axis=-1,
+        )
+    invalid = np.ma.getmaskarray(source) | np.ma.getmaskarray(mapped) | ~np.isfinite(raw)
+    bad = cmap_extreme(cmap_callable, "bad", (0.0, 0.0, 0.0, 0.0))
+    assert bad is not None
+    rgba[invalid] = bad
+
+    midpoints = (boundaries[:-1] + boundaries[1:]) * 0.5
+    band_rgba = np.asarray(
+        cmap_callable(np.ma.asarray(norm(midpoints)).filled(0)), dtype=np.float64
+    )
+    if (
+        band_rgba.ndim != 2
+        or band_rgba.shape[0] != len(midpoints)
+        or band_rgba.shape[1] not in (3, 4)
+    ):
+        raise ValueError("BoundaryNorm colormap must return one RGB(A) row per interval")
+    band_colors = np.rint(np.clip(band_rgba[:, :3], 0.0, 1.0) * 255.0).astype(np.uint8)
+    return BoundaryNormGrid(
+        np.ascontiguousarray(rgba),
+        (float(boundaries[0]), float(boundaries[-1])),
+        boundaries,
+        band_colors,
+    )
 
 
 def normalize_scalar_grid(

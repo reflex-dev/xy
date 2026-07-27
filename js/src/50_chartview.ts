@@ -2480,6 +2480,21 @@ export class ChartView {
       const exactColors = Array.isArray(cb.band_colors) && cb.band_colors.length === levels
         ? cb.band_colors
         : null;
+      const boundaries = Array.isArray(cb.boundaries)
+        ? cb.boundaries.map(Number)
+        : [];
+      const proportional =
+        cb.spacing === "proportional" &&
+        boundaries.length === levels + 1 &&
+        boundaries.every(Number.isFinite) &&
+        boundaries.every((value, index) => index === 0 || value > boundaries[index - 1]);
+      const fractions = proportional
+        ? boundaries.map(
+          (value) =>
+            (value - boundaries[0]) /
+            (boundaries[boundaries.length - 1] - boundaries[0]),
+        )
+        : Array.from({ length: levels + 1 }, (_, index) => index / levels);
       const bands = [];
       for (let index = 0; index < levels; index++) {
         const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
@@ -2487,7 +2502,7 @@ export class ChartView {
         const color = row
           ? `rgb(${Number(row[0])},${Number(row[1])},${Number(row[2])})`
           : `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
-        bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+        bands.push(`${color} ${100 * fractions[index]}% ${100 * fractions[index + 1]}%`);
       }
       gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
     } else {
@@ -2569,13 +2584,21 @@ export class ChartView {
     const fractionFor = (value) => logScale
       ? (hi === lo ? 0 : Math.log(value / lo) / Math.log(hi / lo))
       : (value - lo) / span;
-    for (const raw of tickValues) {
+    for (let tickIndex = 0; tickIndex < tickValues.length; tickIndex++) {
+      const raw = tickValues[tickIndex];
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
       const tick = document.createElement("span");
-      tick.textContent = hasExplicitTicks
-        ? fmtGeneral(value)
-        : (logScale ? fmtLog(value) : fmtLinear(value, tickStep));
+      tick.textContent =
+        hasExplicitTicks &&
+          Array.isArray(cb.tick_labels) &&
+          cb.tick_labels.length === tickValues.length
+          ? String(cb.tick_labels[tickIndex])
+          : hasExplicitTicks
+            ? fmtGeneral(value)
+            : logScale
+              ? fmtLog(value)
+              : fmtLinear(value, tickStep);
       const fraction = fractionFor(value);
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${barThickness + 2}px;transform:translateX(-50%);white-space:nowrap;`

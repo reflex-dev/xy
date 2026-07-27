@@ -40,6 +40,7 @@ from ._colors import (
     PROP_CYCLE,
     cmap_extreme,
     normalize_scalar_grid,
+    prepare_boundary_norm,
     resolve_cmap,
     resolve_color,
     resolve_rgba,
@@ -2522,8 +2523,28 @@ class Axes(PlotTypeMixin):
             vmin, vmax = clim
         norm_scale = "linear"
         resolved_norm_domain: tuple[float, float] | None = None
+        boundary_boundaries: np.ndarray | None = None
+        boundary_colors: np.ndarray | None = None
+        prepared_boundary = (
+            None
+            if truecolor
+            else prepare_boundary_norm(
+                masked_grid,
+                norm,
+                cmap if cmap is not None else rcParams["image.cmap"],
+                vmin,
+                vmax,
+            )
+        )
+        if prepared_boundary is not None:
+            grid = prepared_boundary.rgba
+            resolved_norm_domain = prepared_boundary.domain
+            boundary_boundaries = prepared_boundary.boundaries
+            boundary_colors = prepared_boundary.band_colors
+            vmin, vmax = resolved_norm_domain
+            truecolor = True
         bounded_norm = isinstance(norm, str) or type(norm).__name__ in {"Normalize", "LogNorm"}
-        if not truecolor and bounded_norm:
+        if prepared_boundary is None and not truecolor and bounded_norm:
             mapped_grid, resolved_norm_domain, norm_scale = normalize_scalar_grid(
                 masked_grid, norm, vmin, vmax
             )
@@ -2741,6 +2762,10 @@ class Axes(PlotTypeMixin):
             entry["_mpl_domain"] = resolved_norm_domain
         if imshow_levels is not None:
             entry["discrete_levels"] = imshow_levels
+        if boundary_boundaries is not None and boundary_colors is not None:
+            entry["discrete_levels"] = len(boundary_boundaries) - 1
+            entry["discrete_boundaries"] = boundary_boundaries
+            entry["discrete_colors"] = boundary_colors
         image = AxesImage(self, entry)
         if clip_path is not None:
             image.set_clip_path(clip_path)

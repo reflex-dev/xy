@@ -786,6 +786,20 @@ def test_tri_plain_normalize_maps_to_domain() -> None:
     assert ax._entries[-1]["kwargs"]["domain"] == (0.0, 4.0)
 
 
+@pytest.mark.parametrize("linestyle", ["-", "solid"])
+def test_tricontour_accepts_solid_linestyle_aliases(linestyle: str) -> None:
+    _fig, ax = plt.subplots()
+    contour = ax.tricontour(
+        [0.0, 1.0, 0.5],
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 2.0],
+        levels=[0.5, 1.5],
+        triangles=[[0, 1, 2]],
+        linestyles=linestyle,
+    )
+    assert contour._entry["factory"] == "segments"
+
+
 def test_pie_pie_label_and_table_text_options_reach_text_style() -> None:
     _fig, ax = plt.subplots()
     pie = ax.pie(

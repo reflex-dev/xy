@@ -2438,6 +2438,17 @@ def _emit_colorbar(
     else:
         n_seg = 64
         colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, n_seg))
+    fractions = np.linspace(0.0, 1.0, n_seg + 1)
+    boundaries = np.asarray(options.get("boundaries", []), dtype=np.float64).reshape(-1)
+    if (
+        levels
+        and options.get("spacing") == "proportional"
+        and len(boundaries) == n_seg + 1
+        and np.isfinite(boundaries).all()
+        and boundaries[-1] > boundaries[0]
+        and np.all(np.diff(boundaries) > 0.0)
+    ):
+        fractions = (boundaries - boundaries[0]) / (boundaries[-1] - boundaries[0])
     line_only = bool(options.get("line_only"))
     if line_only:
         outline = _rect_pts(x, y, x + width, y + height)
@@ -2445,12 +2456,13 @@ def _emit_colorbar(
         cmd.stroke([*outline, outline[0]], 1.0, _parse_color(text_color))
     else:
         for index, color in enumerate(colors):
+            lower, upper = float(fractions[index]), float(fractions[index + 1])
             if orientation == "horizontal":
-                x0, x1 = x + width * index / n_seg, x + width * (index + 1) / n_seg
+                x0, x1 = x + width * lower, x + width * upper
                 cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
             else:
-                y0 = y + height * (n_seg - 1 - index) / n_seg
-                y1 = y + height * (n_seg - index) / n_seg
+                y0 = y + height * (1.0 - upper)
+                y1 = y + height * (1.0 - lower)
                 cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
     lo, hi = float(domain[0]), float(domain[1])
@@ -2469,6 +2481,18 @@ def _emit_colorbar(
 
     format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     ticks = options.get("ticks")
+    supplied_labels = options.get("tick_labels")
+    tick_label_map = (
+        {float(value): str(supplied_labels[index]) for index, value in enumerate(ticks)}
+        if isinstance(ticks, list)
+        and isinstance(supplied_labels, list)
+        and len(ticks) == len(supplied_labels)
+        else {}
+    )
+
+    def tick_text(value: float) -> str:
+        return tick_label_map.get(float(value), format_tick(value))
+
     extend = options.get("extend")
     if extend in ("max", "both"):
         color = (
@@ -2538,7 +2562,7 @@ def _emit_colorbar(
                 1,
                 10,
                 _parse_color(text_color),
-                format_tick(value),
+                tick_text(value),
             )
         if options.get("label"):
             cmd.text(
@@ -2577,7 +2601,7 @@ def _emit_colorbar(
                 0,
                 10,
                 _parse_color(text_color),
-                format_tick(value),
+                tick_text(value),
             )
         # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
         # alongside the bar, outboard of the tick labels. The native glyph

@@ -392,6 +392,58 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (25, 151, 80),
         (0, 104, 55),
     ],
+    "rdylbu": [
+        (165, 0, 38),
+        (214, 47, 38),
+        (244, 109, 67),
+        (252, 172, 96),
+        (254, 224, 144),
+        (254, 254, 192),
+        (224, 243, 247),
+        (169, 216, 232),
+        (116, 173, 209),
+        (68, 115, 179),
+        (49, 54, 149),
+    ],
+    "ylgn": [
+        (255, 255, 229),
+        (248, 252, 194),
+        (229, 244, 171),
+        (200, 232, 154),
+        (162, 216, 137),
+        (119, 197, 120),
+        (75, 176, 98),
+        (46, 146, 76),
+        (21, 120, 62),
+        (0, 96, 51),
+        (0, 69, 41),
+    ],
+    "wistia": [
+        (228, 255, 122),
+        (238, 245, 84),
+        (249, 236, 45),
+        (255, 223, 21),
+        (255, 206, 10),
+        (255, 188, 0),
+        (255, 177, 0),
+        (255, 165, 0),
+        (254, 153, 0),
+        (253, 139, 0),
+        (252, 127, 0),
+    ],
+    "puor": [
+        (127, 59, 8),
+        (177, 87, 6),
+        (224, 130, 20),
+        (252, 182, 97),
+        (254, 224, 182),
+        (246, 246, 246),
+        (216, 218, 235),
+        (177, 169, 209),
+        (128, 115, 172),
+        (83, 38, 134),
+        (45, 0, 75),
+    ],
     "spectral": [
         (158, 1, 66),
         (212, 61, 79),
@@ -3978,40 +4030,55 @@ def _colorbar(
         return (value - lo) / ((hi - lo) or 1.0)
 
     ticks = options.get("ticks")
-    tick_positions = (
-        [float(value) for value in ticks if lo <= float(value) <= hi]
-        if ticks is not None
-        else (
-            (
-                _log_ticks(
-                    lo,
-                    hi,
-                    _colorbar_tick_target(width if orientation == "horizontal" else height),
-                )[1]
-                if log_scale
-                else _linear_ticks(
-                    lo,
-                    hi,
-                    _colorbar_tick_target(width if orientation == "horizontal" else height),
-                )[0]
-            )
-            or [lo, hi]
-        )
+    supplied_labels = options.get("tick_labels")
+    paired_labels = (
+        supplied_labels
+        if isinstance(supplied_labels, list)
+        and isinstance(ticks, list)
+        and len(supplied_labels) == len(ticks)
+        else None
     )
+    if ticks is not None:
+        tick_pairs = [
+            (
+                float(value),
+                None if paired_labels is None else str(paired_labels[index]),
+            )
+            for index, value in enumerate(ticks)
+            if lo <= float(value) <= hi
+        ]
+    else:
+        automatic_positions = (
+            _log_ticks(
+                lo,
+                hi,
+                _colorbar_tick_target(width if orientation == "horizontal" else height),
+            )[1]
+            if log_scale
+            else _linear_ticks(
+                lo,
+                hi,
+                _colorbar_tick_target(width if orientation == "horizontal" else height),
+            )[0]
+        ) or [lo, hi]
+        tick_pairs = [(float(value), None) for value in automatic_positions]
+    tick_positions = [value for value, _label in tick_pairs]
     format_tick = _fmt_log if log_scale else lambda value: f"{value:g}"
     tick_nodes = (
         "".join(
             f'<text x="{_num(x + width + 4)}" '
             f'y="{_num(y + height * (1 - fraction(value)) + 4)}" '
-            f'fill="{escape(text_color)}">{format_tick(value)}</text>'
-            for value in tick_positions
+            f'fill="{escape(text_color)}">'
+            f"{escape(label if label is not None else format_tick(value))}</text>"
+            for value, label in tick_pairs
         )
         if orientation != "horizontal"
         else "".join(
             f'<text x="{_num(x + width * fraction(value))}" '
             f'y="{_num(y + height + 12)}" text-anchor="middle" '
-            f'fill="{escape(text_color)}">{format_tick(value)}</text>'
-            for value in tick_positions
+            f'fill="{escape(text_color)}">'
+            f"{escape(label if label is not None else format_tick(value))}</text>"
+            for value, label in tick_pairs
         )
     )
     minor_nodes = ""
@@ -4150,19 +4217,32 @@ def _colorbar_body(
         cmap = options.get("colormap", "viridis")
         positions = (np.arange(n, dtype=np.float64) + 0.5) / n
         colors = _lut(cmap, positions)
+    fractions = np.linspace(0.0, 1.0, n + 1)
+    boundaries = np.asarray(options.get("boundaries", []), dtype=np.float64).reshape(-1)
+    if (
+        options.get("spacing") == "proportional"
+        and len(boundaries) == n + 1
+        and np.isfinite(boundaries).all()
+        and boundaries[-1] > boundaries[0]
+        and np.all(np.diff(boundaries) > 0.0)
+    ):
+        fractions = (boundaries - boundaries[0]) / (boundaries[-1] - boundaries[0])
     rects = []
     for index, (r, g, b) in enumerate(colors):
+        lower, upper = float(fractions[index]), float(fractions[index + 1])
         if orientation == "horizontal":
-            bx0 = x + width * index / n
+            bx0 = x + width * lower
+            bx1 = x + width * upper
             rects.append(
-                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(width / n + 0.5)}" '
+                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(bx1 - bx0 + 0.5)}" '
                 f'height="{_num(height)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
             )
         else:
-            by0 = y + height * (n - 1 - index) / n
+            by0 = y + height * (1.0 - upper)
+            by1 = y + height * (1.0 - lower)
             rects.append(
                 f'<rect x="{_num(x)}" y="{_num(by0)}" width="{_num(width)}" '
-                f'height="{_num(height / n + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+                f'height="{_num(by1 - by0 + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
             )
     return "".join(rects)
 

@@ -202,6 +202,42 @@ def test_discrete_colorbar_renders_solid_bands():
     _png()
 
 
+def test_boundary_norm_is_shared_by_imshow_pcolormesh_and_colorbar():
+    pytest.importorskip("matplotlib")
+    from matplotlib.colors import BoundaryNorm
+
+    boundaries = [-3.0, -1.0, 0.0, 4.0]
+    norm = BoundaryNorm(boundaries, ncolors=256)
+    values = np.asarray([[-2.0, -0.5, 2.0]])
+
+    fig, (image_ax, mesh_ax) = plt.subplots(1, 2)
+    image = image_ax.imshow(values, norm=norm, cmap="RdYlBu")
+    mesh = mesh_ax.pcolormesh(values, norm=norm, cmap="RdYlBu")
+
+    for entry in (image._entry, mesh._entry):
+        assert entry["discrete_levels"] == 3
+        np.testing.assert_array_equal(entry["discrete_boundaries"], boundaries)
+        assert np.asarray(entry["discrete_colors"]).shape == (3, 3)
+        rendered = np.asarray(entry["z"] if "z" in entry else entry["args"][0])
+        assert rendered.shape[-1] == 4
+
+    fig.colorbar(
+        image,
+        ax=image_ax,
+        spacing="proportional",
+        ticks=boundaries,
+        format=plt.FuncFormatter(lambda value, _position: f"{value:g} units"),
+    )
+    options = image_ax._colorbar
+    assert options["spacing"] == "proportional"
+    assert options["boundaries"] == boundaries
+    assert options["tick_labels"] == ["-3 units", "-1 units", "0 units", "4 units"]
+    assert len(options["band_colors"]) == 3
+
+    svg = _svg()
+    assert all(f">{value}<" in svg for value in options["tick_labels"])
+
+
 # -- defect 7: contour conventions --------------------------------------------
 
 

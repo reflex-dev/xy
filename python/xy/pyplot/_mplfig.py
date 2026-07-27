@@ -78,6 +78,29 @@ def _contour_colorbar_lines(contour: Any, host: Axes) -> list[dict[str, Any]]:
     ]
 
 
+def _colorbar_tick_labels(formatter: Any, ticks: list[float]) -> list[str]:
+    """Evaluate one colorbar formatter against the exact serialized ticks."""
+
+    labels: list[str] = []
+    for position, value in enumerate(ticks):
+        if isinstance(formatter, str):
+            if "{" in formatter:
+                rendered = formatter.format(x=value, pos=position)
+            elif "%" in formatter:
+                rendered = formatter % value
+            else:
+                rendered = format(value, formatter)
+        elif callable(formatter):
+            try:
+                rendered = formatter(value, position)
+            except TypeError:
+                rendered = formatter(value)
+        else:
+            raise TypeError("colorbar() format must be a format string or callable formatter")
+        labels.append(_plain_text(str(rendered)))
+    return labels
+
+
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
     from xy import _png
@@ -680,6 +703,10 @@ class Figure:
         orientation = str(orientation_arg or "vertical")
         if orientation not in {"vertical", "horizontal"}:
             raise ValueError("colorbar() orientation must be 'vertical' or 'horizontal'")
+        spacing = str(kwargs.pop("spacing", "uniform")).lower()
+        if spacing not in {"uniform", "proportional"}:
+            raise ValueError("colorbar() spacing must be 'uniform' or 'proportional'")
+        formatter = kwargs.pop("format", None)
         shrink = float(kwargs.pop("shrink", 1.0))
         if not np.isfinite(shrink) or not 0.0 < shrink <= 1.0:
             raise ValueError("colorbar() shrink must be finite and in (0, 1]")
@@ -696,6 +723,7 @@ class Figure:
             ),
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
+            "spacing": spacing,
         }
         line_contour = entry.get("factory") == "contour" and not props.get("filled", False)
         if line_contour:
@@ -757,6 +785,13 @@ class Figure:
             options["ticks"] = [
                 0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
             ]
+        if formatter is not None:
+            if "ticks" not in options:
+                raise not_implemented(
+                    "colorbar(format=...) without fixed ticks",
+                    "format= together with ticks= or a discrete mappable",
+                )
+            options["tick_labels"] = _colorbar_tick_labels(formatter, options["ticks"])
         extend = kwargs.pop("extend", None)
         if extend is None:
             # A contour set owns its extend state. Matplotlib colorbars inherit
@@ -777,6 +812,11 @@ class Figure:
         # Keep that table on the colorbar instead of replacing it with samples
         # from the nominal fallback colormap. Extended rows own the cap colors.
         color_table = props.get("color")
+        discrete_colors = entry.get("discrete_colors")
+        if levels is not None and discrete_colors is not None:
+            band_rows = np.asarray(discrete_colors, dtype=np.uint8)
+            if band_rows.shape == (int(levels), 3):
+                options["band_colors"] = band_rows.tolist()
         if levels is not None and color_table is not None and not isinstance(color_table, str):
             table = np.asarray(color_table, dtype=np.float64)
             if table.ndim == 2 and table.shape[1] in (3, 4) and len(table):

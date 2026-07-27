@@ -6,6 +6,16 @@ which covers user-visible releases across the whole package.
 
 ## Contour/colorbar contract corrections — 2026-07-27
 
+- Added Matplotlib 3.11 anchor tables for RdYlBu, YlGn, Wistia, and PuOr,
+  including generic reversed forms in every renderer.
+- `imshow` and `pcolormesh` now share callable `BoundaryNorm` preparation and
+  preserve discrete boundaries and band colors for colorbars.
+- Discrete colorbars honor uniform/proportional spacing and serialize
+  formatter-derived labels beside the exact tick values in browser, PNG, and
+  SVG output.
+- `tricontour` accepts Matplotlib's solid linestyle aliases. Filled triangular
+  contours remain explicitly documented as a per-face approximation until
+  true triangular isoband clipping is implemented.
 - `clabel(zorder=...)` now reaches every returned text artist, and the omitted
   value follows Matplotlib's contour-label default. Dynamic
   `use_clabeltext=True` rotation fails loudly instead of being accepted and
