@@ -345,7 +345,7 @@ class SymmetricalLogLocator(Locator):
             for decade in decades
             for sub in ((1.0,) if decade == 0 else self._subs)
         ]
-        return np.asarray(ticks, dtype=float)
+        return np.asarray(sorted(ticks), dtype=float)
 
 
 class AsinhLocator(Locator):

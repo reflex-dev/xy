@@ -1,104 +1,34 @@
 # Matplotlib compatibility changelog
 
-## Tick/date gallery compatibility
-
-- Tick-label handles now support horizontal alignment; axis proxies can move
-  tick positions and axis-title sides independently.
-- Major and minor tick styling is distinct, including AutoMinorLocator
-  subdivisions, `which=`, `size`/`labelsize`, and legacy both-off
-  `tick1On`/`tick2On` calls. Independent minor-tick rendering uses the core
-  axis tier introduced by PR #336, which is the required lower stack layer.
-- `plot(data=...)` resolves named columns, and foreign Matplotlib date
-  locators/formatters bridge epoch-day APIs to xy's millisecond date axes
-  without discarding batch formatter context.
-- Named annotations accept Matplotlib's relative font-size names.
-
 This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Figure decorations and independent axes titles — 2026-07-27
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- Axes retain Matplotlib's independent left, center, and right title artists,
-  including `loc`, `y`, `pad`, `axes.titlelocation`, `axes.titley`, and
-  `axes.titlepad`; browser, SVG, and native PNG share the same title-slot
-  payload and gutter calculation.
-- `Figure.supxlabel()` and `Figure.supylabel()` are figure-fraction compositor
-  decorations instead of annotations attached to whichever Axes was current.
-- `Figure.legend()` aggregates labeled artists across all Axes and returns a
-  real legend handle. `loc="outside right upper"` participates in
-  tight/constrained layout and renders once at figure level.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
 
-## Figure-title point sizing — 2026-07-27
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- Pyplot suptitle font sizes remain in Matplotlib points in figure state, then
-  resolve against the active output DPI before layout and browser, SVG, or
-  native-PNG serialization. Explicit `fontsize=14` therefore emits 19.44 px at
-  100 dpi and follows temporary `savefig(dpi=...)` overrides.
-
-## Constrained colorbar-grid geometry — 2026-07-27
-
-- `Axes.get_position()` now enters the owning figure's final-content
-  constrained-layout solve before trusting a rectangle cached by the initial
-  empty-axes factory solve. A 2×2 contour grid with four colorbars therefore
-  reports the same balanced cells that sequential PNG/SVG exports render.
-
-## Multiline chrome, tick fidelity, and final layout resolution — 2026-07-26
-
-- `plt.figure(layout="tight"/"constrained"/"compressed")` now retains the
-  deferred layout engine for axes created later through `add_subplot()` or
-  `Figure.subplot_mosaic()`. This is the construction order used by the
-  spectrum gallery; previously the unconsumed keyword left all three plot rows
-  on default GridSpec spacing and their titles, ticks, and labels collided.
-- Newline-delimited axes titles, axis labels, tick/category labels, and
-  suptitles now use one measured text-block contract across browser, SVG, and
-  native PNG output. Each line is emitted separately at a `1.2 × font-size`
-  step; gutters grow by the additional line boxes while historical one-line
-  placement remains unchanged.
-- Tight/constrained layout is dirty after later axes or suptitle mutations and
-  re-resolves from the final per-panel chrome. Inter-panel spacing is the union
-  of neighboring measured gutters, so multiline titles and category labels do
-  not collide across subplot boundaries.
-- Pyplot categorical axes now author all first-seen category locations, and
-  categorical/`FixedLocator`/`set_*ticks` labels use the explicit `preserve`
-  strategy. Core XY axes still default to collision-aware automatic thinning.
-- Native PNG tick labels use the existing arbitrary-angle styled-text command;
-  diagonal labels no longer fall back to a different horizontal subset.
-- Browser, SVG, and PNG layouts measure the final rotated x-label projection
-  into both bottom and top gutters. Tight/constrained figure-factory requests
-  are marked dirty by later plotting/styling and re-solved before output, so
-  layout reflects final strings and angles in every target.
-
-## Gallery table placement — 2026-07-26
-
-- Root cause: the shim previously expanded cells to mesh/segment marks at
-  numeric coordinates `(0, 0, 1, 1)`. The engine correctly interpreted those
-  as data coordinates, so the table entered autoscale, overlaid the bars, and
-  was clipped when moved below the axes.
-- `table(loc="bottom")` now materializes cells in axes-fraction coordinates,
-  preserving data autoscale while keeping cell dimensions readable at the
-  output DPI.
-- Natural tables reserve their bottom layout and render outside the axes
-  without clipping in static PNG/SVG. Cell, row-label, and column-label text
-  honor independent left/center/right alignment; cell keys follow Matplotlib's
-  header-row and row-label-column convention. The live-browser annotation
-  guard band remains a documented limitation for multi-row bottom tables.
-## Built-in scale gallery completion — 2026-07-27
-
-- `asinh`, `symlog`, and `logit` now install scale-specific default locators,
-  formatters, minor ticks, and Matplotlib-shaped transform metadata instead of
-  sharing one fixed candidate-tick approximation.
-- `asinh` accepts `base`/`subs`, `logit` accepts `one_half`/`use_overline`, and
-  the static shim supports `set_*scale("function", functions=(forward,
-  inverse))`. Explicit ticks expand the current view, retaining the zero tick
-  used by the function-scale gallery example.
-- `set_adjustable` and numeric aspects operate in transformed coordinates, so
-  logarithmic box and datalim aspect adjustment use decade spans rather than
-  raw-data spans. Constrained layout no longer probes an empty log axis with
-  the invalid domain `(0, 1)`.
-- Minor tick labels are not part of XY's wire contract. Consequently,
-  conditionally labeled LogitFormatter minors remain an explicit approximation
-  on narrowly zoomed logit axes; their positions are still drawn.
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 

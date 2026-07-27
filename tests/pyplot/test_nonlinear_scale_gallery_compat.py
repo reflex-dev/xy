@@ -143,7 +143,9 @@ def test_symlog_demo_has_mutable_minor_locator_and_transform_metadata() -> None:
         major.tick_values(-60, 60),
         [-10, -1, 0, 1, 10],
     )
-    assert 20 in minor.tick_values(-60, 60)
+    minor_ticks = minor.tick_values(-60, 60)
+    assert 20 in minor_ticks
+    assert np.all(np.diff(minor_ticks) >= 0)
     assert ax.xaxis.get_transform().linthresh == 1
     assert ax.xaxis.get_transform().linscale == 1
 

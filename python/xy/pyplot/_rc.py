@@ -201,6 +201,8 @@ class RcParams(dict):
             value = float(value)
             if value < 0:
                 raise ValueError(f"{key} must be non-negative")
+            if key == "grid.alpha" and value > 1:
+                raise ValueError("grid.alpha must be between 0 and 1")
         if isinstance(value, list):
             value = list(value)  # never share list defaults; rcdefaults() must stay pristine
         super().__setitem__(key, value)

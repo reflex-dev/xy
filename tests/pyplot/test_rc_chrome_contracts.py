@@ -103,6 +103,11 @@ def test_rc_tick_padding_accepts_negative_values() -> None:
     assert built.axis_options["y"]["style"]["tick_padding"] == pytest.approx(-2 * ax._point_scale())
 
 
+def test_grid_alpha_rejects_values_above_one() -> None:
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        plt.rcParams["grid.alpha"] = 1.1
+
+
 def test_spine_controls_and_invalid_cycle_boundaries() -> None:
     plt.rcParams["axes.spines.left"] = False
     plt.rcParams["axes.spines.top"] = True

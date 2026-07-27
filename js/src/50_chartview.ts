@@ -374,6 +374,9 @@ export class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    // Title y/pad placement is a binary geometry column, so it must be
+    // available before the constructor's first layout pass.
+    this._payload = buffer;
     this.interaction = spec.interaction || {};
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
@@ -440,7 +443,6 @@ export class ChartView {
     // Retained for GL context restore: the payload is screen-bounded (§29) so
     // keeping it is cheap, and every GPU object is rebuildable from
     // spec + payload by design (§18/§27).
-    this._payload = buffer;
     this._glLost = false;
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
@@ -622,7 +624,16 @@ export class ChartView {
 
   _titleEntries() {
     if (Array.isArray(this.spec.title_options) && this.spec.title_options.length) {
-      return this.spec.title_options.filter((entry) => entry && entry.text);
+      return this.spec.title_options
+        .filter((entry) => entry && entry.text)
+        .map((entry) => {
+          if (!Number.isInteger(entry.geometry)) return entry;
+          const values = this._columnView(
+            this._payload,
+            this.spec.columns[entry.geometry],
+          );
+          return { ...entry, y: Number(values[0]), pad: Number(values[1]) };
+        });
     }
     return this.spec.title
       ? [{ text: this.spec.title, loc: "center", y: 1, pad: 8, automatic_y: true, style: {} }]

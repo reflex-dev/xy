@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
+import pytest
+
+from xy import _textblock
 from xy import pyplot as plt
+from xy._svg import _decode_title_geometry, render_svg
+from xy.pyplot._grid import _figure_label_baseline, _html_figure_labels
 from xy.pyplot._mplfig import Figure
 
 
@@ -19,16 +25,25 @@ def test_three_axes_title_slots_survive_in_one_renderer_payload() -> None:
     ax.set_title("Center", loc="center", pad=3, color="red")
     ax.set_title("Right", loc="right", y=0.92)
 
-    spec, _blob = ax._build_chart(640, 480).figure().build_payload()
-    titles = {entry["loc"]: entry for entry in spec["title_options"]}
+    spec, blob = ax._build_chart(640, 480).figure().build_payload()
+    assert all("y" not in entry and "pad" not in entry for entry in spec["title_options"])
+    assert all(isinstance(entry["geometry"], int) for entry in spec["title_options"])
+    decoded = _decode_title_geometry(spec, blob)
+    titles = {entry["loc"]: entry for entry in decoded["title_options"]}
 
     assert list(titles) == ["left", "center", "right"]
     assert titles["left"]["text"] == "Left from rc"
-    assert titles["left"]["y"] == 1.04
+    assert titles["left"]["y"] == pytest.approx(1.04)
     assert titles["left"]["automatic_y"] is False
-    assert titles["left"]["pad"] == 12.5
+    assert titles["left"]["pad"] == pytest.approx(12.5)
     assert titles["center"]["style"]["color"] == "red"
-    assert titles["right"]["y"] == 0.92
+    assert titles["right"]["y"] == pytest.approx(0.92)
+    np.testing.assert_allclose(
+        [titles["left"]["y"], titles["left"]["pad"], titles["right"]["y"]],
+        [1.04, 12.5, 0.92],
+    )
+    svg = render_svg(spec, blob)
+    assert all(text in svg for text in ("Left from rc", "Center", "Right"))
     assert ax.get_title("left") == "Left from rc"
     assert ax.get_title() == "Center"
 
@@ -49,6 +64,17 @@ def test_figure_super_labels_are_compositor_owned_and_mutable() -> None:
     assert labels["y"]["rotation"] == 90.0
     assert labels["y"]["color"] == "navy"
     assert fig._effective_rects() is not None
+
+
+def test_figure_label_baseline_and_html_honor_vertical_alignment() -> None:
+    block = _textblock.measure("shared label", 12)
+    label = {"text": "shared label", "y": 0.25, "vertical_align": "baseline"}
+
+    assert _figure_label_baseline(200, label, block) == 150
+    assert "translate(-50%,-100%)" in _html_figure_labels([label])
+    label["vertical_align"] = "top"
+    assert _figure_label_baseline(200, label, block) == 150 + block.ascent
+    assert "translate(-50%,0%)" in _html_figure_labels([label])
 
 
 def test_figure_legend_aggregates_axes_and_reserves_outside_right() -> None:

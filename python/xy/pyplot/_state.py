@@ -49,6 +49,7 @@ def figure(
             toolbar=toolbar,
         )
         _figures[key]._label = "" if isinstance(num, int) else str(num)
+        _apply_factory_layout(_figures[key], layout)
     elif figsize is not None or dpi is not None or toolbar is not None:
         fig = _figures[key]
         fig._figsize = figsize or fig._figsize
@@ -57,7 +58,6 @@ def figure(
         fig._invalidate()
     _current = key
     fig = _figures[key]
-    _apply_factory_layout(fig, layout)
     return fig
 
 
