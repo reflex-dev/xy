@@ -2692,7 +2692,18 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
-    for title_entry in _title_entries(spec):
+    legacy_title = spec.get("title") if not spec.get("title_options") else None
+    if legacy_title:
+        title_slot = slots.get("title") or {}
+        chrome.append(
+            f'<text x="{_num(width / 2)}" '
+            f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
+            f'text-anchor="middle" font-size="{_num(slot_font_size(title_slot, 14.0))}"'
+            f"{slot_text_attrs(title_slot, font_weight='400')} "
+            f'fill="{escape(slot_text_color(title_slot, default_text))}">'
+            f"{escape(str(legacy_title))}</text>"
+        )
+    for title_entry in [] if legacy_title else _title_entries(spec):
         title_style, title_size, title_block = _title_metrics(spec, title_entry)
         # Matplotlib's `axes.titleweight`/`axes.labelweight` both default to
         # "normal", so chrome text stays at 400 unless a style or rcParam asks

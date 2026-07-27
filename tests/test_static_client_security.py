@@ -116,7 +116,7 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     """User labels may be hostile strings; the client must never parse them."""
     required_text_sinks = (
-        "t.textContent = s.title;",
+        "t.textContent = entry.text;",
         "label.textContent = it.name;",
         "badge.textContent = item;",
         "d.textContent = text;",

@@ -579,21 +579,9 @@ class Figure:
             # that already reserves tick and Axes-title chrome; otherwise a
             # one-row gallery places all three titles on the same baseline.
             prior = self._layout_options
-            rect = prior.get("rect")
-            if rect is None:
-                rect = (0.0, 0.0, 1.0, 0.9)
-            self.tight_layout(
-                **{
-                    key: value
-                    for key, value in {
-                        "pad": prior.get("pad"),
-                        "h_pad": prior.get("h_pad"),
-                        "w_pad": prior.get("w_pad"),
-                        "rect": rect,
-                    }.items()
-                    if value is not None
-                }
-            )
+            if prior.get("rect") is None:
+                prior["rect"] = (0.0, 0.0, 1.0, 0.9)
+                prior["suptitle_rect_reserved"] = True
         self._invalidate()
 
     def _resolved_suptitle_style(self) -> dict[str, Any]:
@@ -848,7 +836,7 @@ class Figure:
                             item[3] + chrome[other_index][1],
                         )
 
-            if self._suptitle:
+            if self._suptitle and not options.get("suptitle_rect_reserved"):
                 style = self._resolved_suptitle_style()
                 block = _textblock.measure(self._suptitle, float(style.get("size", 16.0)))
                 y = float(style.get("y", 0.98))
