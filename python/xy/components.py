@@ -589,6 +589,8 @@ def scatter(
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
+    _marker_path: Optional[dict[str, Any]] = None,
+    _marker_glyph: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     key: Any = None,
@@ -651,6 +653,8 @@ def scatter(
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
+            "_marker_path": _marker_path,
+            "_marker_glyph": _marker_glyph,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -5138,6 +5142,8 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
             _artist_alpha=m.props.get("_artist_alpha"),
+            _marker_path=m.props.get("_marker_path"),
+            _marker_glyph=m.props.get("_marker_glyph"),
             style=m.style,
         )
     except Exception:

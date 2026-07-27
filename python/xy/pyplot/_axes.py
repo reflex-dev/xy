@@ -45,6 +45,7 @@ from ._colors import (
     scalar_float,
 )
 from ._fmt import parse_fmt
+from ._markers import marker_render_spec
 from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
@@ -52,7 +53,6 @@ from ._ticker import AutoLocator, Locator, NullLocator, ScalarFormatter, as_form
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
     LINESTYLE_TO_DASH,
-    MARKER_TO_SYMBOL,
     MPL_DASH_PATTERN,
     check_unsupported,
     line_kwargs,
@@ -1412,7 +1412,7 @@ class Axes(PlotTypeMixin):
                     "y": y,
                     "kwargs": {
                         **{k: v for k, v in entry_kwargs.items() if k != "width"},
-                        "symbol": _marker_symbol(this_marker or "o"),
+                        **marker_render_spec(this_marker or "o"),
                         "size": marker_size_px,
                         **marker_edge_style,
                         **(
@@ -1504,7 +1504,7 @@ class Axes(PlotTypeMixin):
                         "kwargs": {
                             "color": entry_kwargs["color"],
                             "opacity": entry_kwargs["opacity"],
-                            "symbol": _marker_symbol(this_marker),
+                            **marker_render_spec(this_marker),
                             # Matplotlib marker sizes are points while the
                             # engine consumes CSS-pixel diameters.  At the
                             # default 96 dpi, 6 pt is 8 px.
@@ -1645,7 +1645,8 @@ class Axes(PlotTypeMixin):
                         edgecolors = edge_array[finite_color]
             x, y, c = xv, yv, cv
 
-        symbol = _marker_symbol(marker) if marker else "circle"
+        marker_spec = marker_render_spec(marker) if marker is not None else {"symbol": "circle"}
+        symbol = str(marker_spec["symbol"])
         marker_path_px = marker_size_to_scatter_size(
             s,
             default=6.0 * self._point_scale(),
@@ -1679,7 +1680,7 @@ class Axes(PlotTypeMixin):
             # core receives alpha through the override channel below.
             "opacity": scalar_float(alpha) if alpha is not None and np.isscalar(alpha) else 1.0,
             "name": str(label) if label is not None else None,
-            "symbol": symbol,
+            **marker_spec,
         }
         if alpha is not None:
             entry_kwargs["_artist_alpha"] = (
@@ -2869,6 +2870,16 @@ class Axes(PlotTypeMixin):
         alpha = kwargs.pop("alpha", None)
         lw = kwargs.pop("linewidth", kwargs.pop("lw", None))
         label = kwargs.pop("label", None)
+        marker = kwargs.pop("marker", None)
+        marker_size = kwargs.pop("markersize", kwargs.pop("ms", None))
+        marker_face = kwargs.pop("markerfacecolor", kwargs.pop("mfc", None))
+        marker_edge = kwargs.pop("markeredgecolor", kwargs.pop("mec", None))
+        marker_edge_width = kwargs.pop("markeredgewidth", kwargs.pop("mew", None))
+        if kind not in {"hline", "vline"} and any(
+            value is not None
+            for value in (marker, marker_size, marker_face, marker_edge, marker_edge_width)
+        ):
+            raise TypeError(f"xy.pyplot ax{kind}() does not accept line marker keywords")
         if kind == "hline":
             span_start = kwargs.pop("xmin", 0.0)
             span_end = kwargs.pop("xmax", 1.0)
@@ -2903,7 +2914,47 @@ class Axes(PlotTypeMixin):
         if dash not in (None, "none"):
             scaled = self._mpl_dash(dash, akw.get("width", rcParams["lines.linewidth"]))
             akw.setdefault("style", {})["dash"] = ",".join(map(str, scaled))
-        return self._add(f"@{kind}", {"args": args, "kwargs": akw})
+        marker_base_color = (
+            resolve_color(color) if color is not None else self._next_color() if marker else None
+        )
+        if marker_base_color is not None:
+            akw.setdefault("color", marker_base_color)
+        entry = self._add(f"@{kind}", {"args": args, "kwargs": akw})
+        if marker is not None:
+            path_size = (
+                float(rcParams["lines.markersize"] if marker_size is None else marker_size)
+                * self._point_scale()
+            )
+            edge_visible = not (isinstance(marker_edge, str) and marker_edge.lower() == "none")
+            edge_width = (
+                float(
+                    rcParams["lines.markeredgewidth"]
+                    if marker_edge_width is None
+                    else marker_edge_width
+                )
+                * self._point_scale()
+                if edge_visible
+                else 0.0
+            )
+            entry["endpoint_marker"] = {
+                **marker_render_spec(marker),
+                "size": path_size + edge_width,
+                "color": resolve_color(
+                    marker_face if marker_face not in (None, "auto") else marker_base_color
+                ),
+                "opacity": float(alpha) if alpha is not None else 1.0,
+                **(
+                    {
+                        "stroke": resolve_color(
+                            marker_edge if marker_edge not in (None, "auto") else marker_base_color
+                        ),
+                        "stroke_width": edge_width,
+                    }
+                    if edge_visible
+                    else {}
+                ),
+            }
+        return entry
 
     def text(
         self,
@@ -5777,10 +5828,36 @@ class Axes(PlotTypeMixin):
                 children.append(getattr(xy, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
                 children.append(xy.hline(*e["args"], **kw))
+                if e.get("endpoint_marker"):
+                    x_domain = self._axis_props("x").get("domain") or self._auto_domain("x")
+                    span = kw.get("style") or {}
+                    start = float(span.get("span_start", 0.0))
+                    end = float(span.get("span_end", 1.0))
+                    x0, x1 = map(float, x_domain)
+                    children.append(
+                        xy.scatter(
+                            x=[x0 + start * (x1 - x0), x0 + end * (x1 - x0)],
+                            y=[float(e["args"][0]), float(e["args"][0])],
+                            **e["endpoint_marker"],
+                        )
+                    )
             elif kind == "@arrow":
                 children.append(xy.arrow(*e["args"], **kw))
             elif kind == "@vline":
                 children.append(xy.vline(*e["args"], **kw))
+                if e.get("endpoint_marker"):
+                    y_domain = self._axis_props("y").get("domain") or self._auto_domain("y")
+                    span = kw.get("style") or {}
+                    start = float(span.get("span_start", 0.0))
+                    end = float(span.get("span_end", 1.0))
+                    y0, y1 = map(float, y_domain)
+                    children.append(
+                        xy.scatter(
+                            x=[float(e["args"][0]), float(e["args"][0])],
+                            y=[y0 + start * (y1 - y0), y0 + end * (y1 - y0)],
+                            **e["endpoint_marker"],
+                        )
+                    )
             elif kind == "@x_band":
                 children.append(xy.x_band(*e["args"], **kw))
             elif kind == "@y_band":
@@ -7264,10 +7341,12 @@ def _title_css_style(style: dict[str, Any], *, point_scale: float) -> dict[str, 
 
 
 def _marker_symbol(marker: Any) -> str:
-    try:
-        return MARKER_TO_SYMBOL.get(marker, "circle")
-    except TypeError:
-        return "circle"
+    """Named-symbol helper retained for plot-type adapters.
+
+    Authored markers need the complete renderer spec and are handled by
+    ``marker_render_spec`` at the direct plot/scatter call sites.
+    """
+    return str(marker_render_spec(marker)["symbol"])
 
 
 _SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")

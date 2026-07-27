@@ -1,4 +1,5 @@
-import { safeCssPaint } from "./20_theme";
+import { buildLutData } from "./10_colormaps";
+import { parseColor, safeCssPaint } from "./20_theme";
 import { ChartView } from "./50_chartview";
 
 // ChartView annotation layer (§ chrome): reference lines/zones already draw
@@ -165,6 +166,100 @@ function xyTaperPolygon(points, w0, w1) {
 }
 
 Object.assign(ChartView.prototype, {
+  _authoredScatterRgba(g, index) {
+    if (g.colorMode === 3 && g._cpu.rgba) {
+      const offset = index * 4;
+      return Array.from(g._cpu.rgba.slice(offset, offset + 4), (value: number) => value / 255);
+    }
+    if (g.colorMode === 2 && g._cpu.color) {
+      const palette = g.trace.color?.palette || [];
+      if (palette.length) {
+        return parseColor(
+          this.root,
+          palette[Math.round(g._cpu.color[index]) % palette.length],
+          g.color,
+        );
+      }
+    }
+    if (g.colorMode === 1 && g._cpu.color) {
+      const lut = buildLutData(g.trace.color?.colormap || "viridis");
+      const slot = Math.max(0, Math.min(255, Math.round(g._cpu.color[index] * 255))) * 4;
+      return [lut[slot] / 255, lut[slot + 1] / 255, lut[slot + 2] / 255, 1];
+    }
+    return g.color || [0.3, 0.47, 0.66, 1];
+  },
+
+  _drawAuthoredScatterMarkers(ctx) {
+    const traces = (this.gpuTraces || []).filter(
+      (g) => g && g.trace?.kind === "scatter" && g.authoredMarker &&
+        g.tier !== "density" && !g._legendHidden
+    );
+    if (!traces.length) return;
+    const p = this.plot;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(p.x, p.y, p.w, p.h);
+    ctx.clip();
+    for (const g of traces) {
+      const style = g.trace.style || {};
+      const markerPath = style.marker_path;
+      const markerGlyph = style.marker_glyph;
+      const zoomStyle = this._pointZoomStyle(g);
+      const traceOpacity = Number(style.opacity ?? 0.8) *
+        Number(style.artist_alpha ?? 1) * zoomStyle.opacity *
+        Number(g._transitionOpacity ?? 1) * Number(g._legendDim ?? 1);
+      for (let index = 0; index < g.n; index++) {
+        const x = this._decodeValue(g._cpu.x, g.xMeta, index);
+        const y = this._decodeValue(g._cpu.y, g.yMeta, index);
+        const px = this._dataPx(g.xAxis, x);
+        const py = this._dataPx(g.yAxis, y);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+        const sizeValue = g.sizeMode === 1 && g._cpu.size
+          ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) * g._cpu.size[index]
+          : g.size;
+        const size = Math.max(0, Number(sizeValue) * zoomStyle.sizeFactor);
+        const rgba = this._authoredScatterRgba(g, index);
+        const alpha = Math.max(0, Math.min(1, rgba[3] * traceOpacity));
+        const paint = `rgba(${Math.round(rgba[0] * 255)},${Math.round(rgba[1] * 255)},${Math.round(rgba[2] * 255)},${alpha})`;
+        const strokeWidth = Math.max(0, Number(style.stroke_width) || 0);
+        const stroke = style.stroke
+          ? safeCssPaint(this.root, style.stroke, rgba)
+          : paint;
+        ctx.save();
+        ctx.fillStyle = paint;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = strokeWidth;
+        if (markerGlyph) {
+          ctx.font = `${size}px "DejaVu Sans", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(markerGlyph), px, py);
+          if (strokeWidth > 0 && style.stroke) ctx.strokeText(String(markerGlyph), px, py);
+        } else if (markerPath) {
+          ctx.beginPath();
+          for (const contour of markerPath.contours || []) {
+            for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+              const vx = px + size * Number(contour[offset]);
+              const vy = py - size * Number(contour[offset + 1]);
+              if (offset === 0) ctx.moveTo(vx, vy);
+              else ctx.lineTo(vx, vy);
+            }
+            if (markerPath.filled) ctx.closePath();
+          }
+          if (markerPath.filled) {
+            ctx.fill("evenodd");
+            if (strokeWidth > 0) ctx.stroke();
+          } else {
+            ctx.lineWidth = Math.max(1, strokeWidth);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  },
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   },

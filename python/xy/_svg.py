@@ -2817,6 +2817,22 @@ def _segment_marks(
 _SVG_MARK_BLOCK = 4096
 
 
+def _authored_marker_path_d(
+    marker_path: dict[str, Any], cx: float, cy: float, diameter: float
+) -> str:
+    parts: list[str] = []
+    for contour in marker_path.get("contours") or ():
+        values = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+        if not len(values):
+            continue
+        points = [(cx + diameter * float(x), cy - diameter * float(y)) for x, y in values]
+        parts.append(f"M {_num(points[0][0])} {_num(points[0][1])}")
+        parts.extend(f"L {_num(x)} {_num(y)}" for x, y in points[1:])
+        if bool(marker_path.get("filled", True)):
+            parts.append("Z")
+    return " ".join(parts)
+
+
 def _scatter_marks(
     t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
 ) -> list[str]:
@@ -2884,6 +2900,8 @@ def _scatter_marks(
     stroke_rgba = _paint.effective_rgba(
         stroke_source, effective_trace, read, component="stroke", default_opacity=0.8
     )
+    marker_path = style.get("marker_path")
+    marker_glyph = style.get("marker_glyph")
     if grouped_alpha:
         fill_group = float(scalar_artist) * _fill_opacity(style, 1.0)
         stroke_group = float(scalar_artist) * _stroke_opacity(style, 1.0)
@@ -2903,13 +2921,16 @@ def _scatter_marks(
         )
         symbol = symbols[i]
         builder = _SYMBOL_BUILDERS.get(symbol)
-        line_symbol = symbol in {"plus_line", "x_line"}
+        authored_line = bool(marker_path) and not bool(marker_path.get("filled", True))
+        line_symbol = symbol in {"plus_line", "x_line"} or authored_line
         stroke_w = float(stroke_widths[i])
         if line_symbol and stroke_w <= 0:
             stroke_w = 1.0
         stroke_color = stroke_rgba[i]
         stroke_value = (
-            escape(stroke_css)
+            fill_value
+            if authored_line
+            else escape(stroke_css)
             if stroke_css_constant
             else f"rgb({round(stroke_color[0] * 255)},{round(stroke_color[1] * 255)},{round(stroke_color[2] * 255)})"
         )
@@ -2926,7 +2947,18 @@ def _scatter_marks(
         )
         # `size` includes the edge; SVG strokes are centered on the path.
         marker_radius = max(0.0, float(radii[i]) - stroke_w / 2)
-        if builder is None:
+        if marker_glyph:
+            out.append(
+                f'<text x="{_num(px[i])}" y="{_num(py[i])}" '
+                f'font-family="DejaVu Sans" font-size="{_num(2 * marker_radius)}" '
+                f'text-anchor="middle" dominant-baseline="central"'
+                f"{fill_attr}{stroke_attr}>{escape(str(marker_glyph))}</text>"
+            )
+        elif marker_path:
+            d = _authored_marker_path_d(marker_path, float(px[i]), float(py[i]), 2 * marker_radius)
+            authored_fill = fill_attr if bool(marker_path.get("filled", True)) else ' fill="none"'
+            out.append(f'<path d="{d}"{authored_fill}{stroke_attr}/>')
+        elif builder is None:
             out.append(
                 f'<circle cx="{_num(px[i])}" cy="{_num(py[i])}" r="{_num(marker_radius)}"'
                 f"{fill_attr}{stroke_attr}/>"
@@ -3811,9 +3843,13 @@ def _legend(
         if kind == "scatter":
             symbol = style.get("symbol", "circle")
             builder = _SYMBOL_BUILDERS.get(symbol)
+            marker_path = style.get("marker_path")
+            marker_glyph = style.get("marker_glyph")
             radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
             stroke_w = float(style.get("stroke_width", 0.0))
-            line_symbol = symbol in {"plus_line", "x_line"}
+            line_symbol = symbol in {"plus_line", "x_line"} or (
+                bool(marker_path) and not bool(marker_path.get("filled", True))
+            )
             if line_symbol and stroke_w <= 0:
                 stroke_w = 1.0
             stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None
@@ -3821,7 +3857,18 @@ def _legend(
                 f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
             )
             cxm = (hx0 + hx1) / 2
-            if builder is None:
+            if marker_glyph:
+                rows.append(
+                    f'<text x="{_num(cxm)}" y="{_num(cy)}" '
+                    f'font-family="DejaVu Sans" font-size="{_num(2 * radius)}" '
+                    f'text-anchor="middle" dominant-baseline="central" '
+                    f'fill="{escape(color)}"{stroke_attr}>{escape(str(marker_glyph))}</text>'
+                )
+            elif marker_path:
+                d = _authored_marker_path_d(marker_path, float(cxm), float(cy), 2 * radius)
+                fill = escape(color) if bool(marker_path.get("filled", True)) else "none"
+                rows.append(f'<path d="{d}" fill="{fill}"{stroke_attr}/>')
+            elif builder is None:
                 rows.append(
                     f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="{_num(radius)}" '
                     f'fill="{escape(color)}"{stroke_attr}/>'

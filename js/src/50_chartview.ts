@@ -1940,7 +1940,6 @@ export class ChartView {
         svg.setAttribute("viewBox", "0 0 18 14");
         svg.setAttribute("width", "18");
         svg.setAttribute("height", "14");
-        const path = document.createElementNS(ns, "path");
         const paths = {
           square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
           thin_diamond: "M9 2l3 5-3 5-3-5z",
@@ -1954,20 +1953,49 @@ export class ChartView {
           star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
         };
         const color = gradientPaint ? gradientPaint(svg) : safeCssPaint(this.root, bg);
-        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
-          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
-          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
-        } else path.setAttribute("d", paths[it.symbol] || paths.square);
-        sw.style.setProperty(
-          "--xy-legend-swatch-fill",
-          it.symbol.endsWith("_line") ? "none" : color,
-        );
-        sw.style.setProperty("--xy-legend-swatch-stroke", color);
-        sw.style.setProperty(
-          "--xy-legend-swatch-stroke-width",
-          String(it.style?.stroke_width || 1),
-        );
-        svg.appendChild(path);
+        if (it.style?.marker_glyph) {
+          const text = document.createElementNS(ns, "text");
+          text.setAttribute("x", "9");
+          text.setAttribute("y", "7");
+          text.setAttribute("font-family", "DejaVu Sans");
+          text.setAttribute("font-size", "10");
+          text.setAttribute("text-anchor", "middle");
+          text.setAttribute("dominant-baseline", "central");
+          text.textContent = String(it.style.marker_glyph);
+          sw.style.setProperty("--xy-legend-swatch-fill", color);
+          sw.style.setProperty("--xy-legend-swatch-stroke", "none");
+          sw.style.setProperty("--xy-legend-swatch-stroke-width", "0");
+          svg.appendChild(text);
+        } else {
+          const path = document.createElementNS(ns, "path");
+          if (it.style?.marker_path) {
+            const commands = [];
+            for (const contour of it.style.marker_path.contours || []) {
+              for (let offset = 0; offset + 1 < contour.length; offset += 2) {
+                const x = 9 + 9 * Number(contour[offset]);
+                const y = 7 - 9 * Number(contour[offset + 1]);
+                commands.push(`${offset === 0 ? "M" : "L"}${x} ${y}`);
+              }
+              if (it.style.marker_path.filled) commands.push("Z");
+            }
+            path.setAttribute("d", commands.join(" "));
+          } else if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+            if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+            else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+          } else path.setAttribute("d", paths[it.symbol] || paths.square);
+          const lineMarker = it.symbol.endsWith("_line") ||
+            (it.style?.marker_path && !it.style.marker_path.filled);
+          sw.style.setProperty(
+            "--xy-legend-swatch-fill",
+            lineMarker ? "none" : color,
+          );
+          sw.style.setProperty("--xy-legend-swatch-stroke", color);
+          sw.style.setProperty(
+            "--xy-legend-swatch-stroke-width",
+            String(it.style?.stroke_width || 1),
+          );
+          svg.appendChild(path);
+        }
         sw.appendChild(svg);
         sw.style.setProperty("--xy-legend-swatch-width", "18px");
         sw.style.setProperty("--xy-legend-swatch-height", "14px");
@@ -2908,6 +2936,7 @@ export class ChartView {
   // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
+    g.authoredMarker = s.marker_path || s.marker_glyph || null;
     g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
@@ -3871,6 +3900,9 @@ export class ChartView {
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
     opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    // Pyplot-authored contours and glyphs keep these resident point buffers
+    // for picking/transitions but paint on the Canvas2D overlay below.
+    if (g.authoredMarker) return;
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
@@ -5354,6 +5386,7 @@ export class ChartView {
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
     // painted, keeping its start attached when an edge clamp moves the text.
+    this._drawAuthoredScatterMarkers(octx);
     this._drawAnnotationShapes(octx);
   }
 

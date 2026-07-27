@@ -1102,6 +1102,15 @@ antialiased SDF in the point shader, so shapes stay crisp at any size and the
 border is a true ring (a stroke width with no color borders in the mark color).
 Symbols compose with the color/size channels.
 
+The Matplotlib shim additionally compiles its authored marker grammar into a
+private bounded style representation: regular polygon/star/asterisk tuples and
+finite custom vertex contours become normalized paths, while a mathtext form
+that resolves to one glyph in the embedded font becomes a glyph marker. This
+is a compatibility path, not an expansion of the public `symbol=` vocabulary;
+unsupported or oversized authored forms raise instead of falling back to a
+circle. Browser, SVG, native PNG, and legend renderers consume the same
+representation.
+
 Glyph geometry follows Matplotlib's marker paths, size convention included.
 `diamond` is the `square` glyph rotated 45°, so its half-diagonal is √2× the
 glyph radius — the rotated square keeps `square`'s side length at the same
