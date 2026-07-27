@@ -984,6 +984,10 @@ class Axes(PlotTypeMixin):
     def _invalidate(self) -> None:
         host = self._y2_of or self
         host._chart = None
+        # Shared render domains are a snapshot from the preceding Figure
+        # materialization pass. Any artist/limit mutation must make the next
+        # pass discover the group's new final view before clipping axlines.
+        host.__dict__.pop("_shared_render_domains", None)
         if host.figure is not None:
             host.figure._invalidate()
 
@@ -5604,7 +5608,9 @@ class Axes(PlotTypeMixin):
 
     def _axline_data(self, entry: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         """Resolve deferred axline point transforms and clip to the final view."""
-        xlim, ylim = self.get_xlim(), self.get_ylim()
+        shared_view = getattr(self, "_shared_render_domains", {})
+        xlim = shared_view["x"] if "x" in shared_view else self.get_xlim()
+        ylim = shared_view["y"] if "y" in shared_view else self.get_ylim()
         xy1 = entry["xy1"]
         xy2 = entry.get("xy2")
         if entry.get("transform_space") == "axes_fraction":
