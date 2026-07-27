@@ -140,7 +140,8 @@ def test_unstyled_output_is_untouched() -> None:
     # `styles=` renders exactly the bytes it rendered before the feature.
     plain = xy.line_chart(xy.line([0.0, 1.0], [0.0, 1.0], name="series"), title="t").figure()
     svg = plain.to_svg()
-    assert '<text x="450" y="28" text-anchor="middle" font-size="14" font-weight="600"' in svg
+    # 400 is Matplotlib's `axes.titleweight: normal`, the chrome-text default.
+    assert '<text x="450" y="28" text-anchor="middle" font-size="14" font-weight="400"' in svg
 
 
 def test_custom_css_is_refused_by_every_native_path() -> None:
@@ -161,24 +162,26 @@ def test_custom_css_is_refused_by_every_native_path() -> None:
 
 def test_native_raster_matches_the_svg_writer_on_slot_styling() -> None:
     # The two native writers must agree with each other, not only with the doc.
-    # A slot the raster honors must change its pixels; the atlas is a single
-    # baked face, so it reads size and paint and leaves weight/style/family to
-    # the vector writers.
+    # The atlas carries a regular, a bold and an italic face, so size, paint,
+    # weight and style all reach the pixels; it has no family axis and no
+    # per-glyph advance control, so those two stay vector-only.
     def figure(**kwargs):
         return xy.line_chart(
             xy.line([0.0, 1.0], [0.0, 1.0], name="series"), title="title", **kwargs
         ).figure()
 
-    plain = _raster.render_raster(*figure().build_payload(), scale=1)
-    painted = _raster.render_raster(
-        *figure(styles={"title": {"fill": "#ff0000"}}).build_payload(), scale=1
-    )
-    weighted = _raster.render_raster(
-        *figure(styles={"title": {"font_weight": 900}}).build_payload(), scale=1
-    )
+    def render(**kwargs):
+        return _raster.render_raster(*figure(**kwargs).build_payload(), scale=1)
 
-    assert not (plain == painted).all(), "the raster writer must honor a slot's paint"
-    assert (plain == weighted).all(), "the baked atlas has one weight; it must ignore font-weight"
+    plain = render()
+    for declaration in ({"fill": "#ff0000"}, {"font_weight": 900}, {"font_style": "italic"}):
+        assert not (plain == render(styles={"title": declaration})).all(), (
+            f"the raster writer must honor {declaration}"
+        )
+    for declaration in ({"font_family": "Georgia"}, {"letter_spacing": "3px"}):
+        assert (plain == render(styles={"title": declaration})).all(), (
+            f"the atlas cannot draw {declaration}; it must not pretend to"
+        )
 
 
 def test_an_extra_legend_is_styled_like_the_main_one_in_both_writers() -> None:
@@ -205,11 +208,10 @@ def test_the_raster_property_subset_is_a_subset_of_the_vector_one() -> None:
     from xy._svg import SLOT_RASTER_PROPS, SLOT_TEXT_PROPS
 
     assert set(SLOT_RASTER_PROPS) < set(SLOT_TEXT_PROPS)
-    # The glyph primitive takes a size and one RGBA paint and nothing else, so
-    # these are vector-only rather than silently approximated.
+    # The atlas has no family axis, no per-glyph advance control and no alpha
+    # channel on the blit, so these stay vector-only rather than being silently
+    # approximated.
     assert set(SLOT_TEXT_PROPS) - set(SLOT_RASTER_PROPS) == {
-        "font-weight",
-        "font-style",
         "font-family",
         "letter-spacing",
         "opacity",

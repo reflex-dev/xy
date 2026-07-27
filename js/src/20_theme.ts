@@ -108,17 +108,28 @@ export function cssColor([r, g, b, a]: any) {
 // convention every host we target uses (Reflex/next-themes, Radix Themes,
 // Tailwind). These remain zero-specificity :where() rules, so public
 // --chart-badge-* / --chart-modebar-* tokens or utility classes override them.
+//
+// Every chrome text slot below either declares `font-weight:400` or declares
+// no weight at all and inherits 400. Matplotlib's `axes.titleweight`,
+// `axes.labelweight` and `font.weight` all default to "normal", and its legend
+// title and colorbar label are normal too, so 400 is the parity default for
+// title, axis titles, annotations, legend titles and colorbar titles alike.
+// The SVG (`python/xy/_svg.py`) and native raster (`python/xy/_raster.py`)
+// exporters carry the same 400 default — the three renderers must not
+// disagree; tests/test_text_weight_defaults.py guards all three. A heavier
+// weight is opt-in, via `styles[slot]`, a mark/axis text style, or the pyplot
+// `axes.titleweight`/`axes.labelweight` rcParams.
 export const XY_CHROME_CSS = `
 @layer base{
-:where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:400;color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="tooltip"]){max-width:calc(100% - 8px);max-height:calc(100% - 8px);box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;overflow:auto;background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 :where(.xy [data-xy-slot="tooltip_label"])::after{content:": "}
 :where(.xy [data-xy-slot="legend"]){left:var(--xy-legend-left,auto);right:var(--xy-legend-right,auto);top:var(--xy-legend-top,auto);bottom:var(--xy-legend-bottom,auto);transform:var(--xy-legend-transform,none);max-width:var(--xy-legend-max-width);max-height:var(--xy-legend-max-height);gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
-:where(.xy [data-xy-slot="legend_title"]){font-weight:600}
+:where(.xy [data-xy-slot="legend_title"]){font-weight:400;text-align:center}
 :where(.xy [data-xy-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
 :where(.xy [data-xy-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
 :where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
-:where(.xy [data-xy-slot="colorbar_title"]){font-weight:500}
+:where(.xy [data-xy-slot="colorbar_title"]){font-weight:400}
 :where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,var(--xy-badge-text));background:var(--chart-badge-bg,var(--xy-badge-bg));box-shadow:var(--xy-badge-shadow)}
 :where(.xy){--xy-badge-text:#0f172a;--xy-badge-bg:rgba(255,255,255,.82);--xy-badge-shadow:0 1px 4px rgba(15,23,42,.14);--xy-modebar-bg:#fff;--xy-modebar-menu-bg:#fff;--xy-modebar-hover:#edf1f6;--xy-modebar-focus:#1b212a;--xy-modebar-text:#5c6573;--xy-modebar-text-strong:#1b212a;--xy-modebar-text-soft:#798495;--xy-modebar-text-subtle:#9aa4b2;--xy-modebar-border:rgba(27,33,42,.12);--xy-modebar-separator:rgba(27,33,42,.08);--xy-modebar-active:#edf1f6;--xy-modebar-shadow:0 8px 24px rgba(28,32,36,.1),0 2px 6px rgba(28,32,36,.06);--xy-modebar-menu-shadow:0 8px 24px rgba(28,32,36,.12);--xy-modebar-button-shadow:0 1px 2px rgba(28,32,36,.06);--xy-selection:rgba(92,101,115,.6);--xy-selection-fill:rgba(92,101,115,.12)}
@@ -171,7 +182,7 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="crosshair_x"],.xy [data-xy-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-xy-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
-:where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:400;color:var(--chart-annotation-text,var(--chart-text,inherit))}
 :where(.xy [data-xy-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
 :where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 :where(.xy [data-xy-slot="canvas"][data-xy-dragmode="none"]){cursor:default}

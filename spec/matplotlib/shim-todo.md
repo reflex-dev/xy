@@ -171,10 +171,19 @@ The shim can be called complete for ordinary 2-D scripts when:
       `tests/pyplot/test_layout_noops.py::test_autofmt_xdate_rotates_x_tick_labels_on_all_axes`
       verifies rotation and horizontal alignment state on every axes.
 - [x] Implement `Axes.margins()` and make it affect automatic domains. Evidence:
-      automatic x/y domains expand by configured margins while explicit limits remain fixed.
+      automatic x/y domains expand by configured margins while explicit limits remain fixed;
+      `tests/pyplot/test_gallery_auto_ticks_compat.py` covers the axis-specific
+      setters and Matplotlib's `axes.autolimit_mode="round_numbers"` gallery.
 - [x] Implement `Axes.set_position()` and preserve the requested figure rect. Evidence:
       `set_position([left, bottom, width, height])` updates `get_position().bounds` and
       `_figure_rect`.
+- [x] Make `Axes.get_position()` grid-aware and render the axes frame on the
+      rectangle it reports. Evidence: `tests/pyplot/test_frame_geometry.py`
+      pins reported-vs-rendered agreement for single axes and for every panel of
+      2x2/1x3/5x5/8x8 grids (including `subplots_adjust` frames and width
+      ratios), distinguishes original and active aspect-adjusted positions,
+      preserves cell identity after an axes is removed, and checks a dense grid
+      composites all 64 panels instead of only its last column.
 - [x] Implement `Axes.set_anchor()` or reject unsupported anchor modes. Evidence:
       Matplotlib compass anchors are stored and unsupported modes raise `ValueError`.
 - [x] Finish `axis("equal")`, `axis("scaled")`, `axis("tight")`, and related
@@ -253,7 +262,7 @@ appear frequently in ordinary scripts and notebooks.
 ### Limits, autoscaling, ticks and axes helpers
 
 - [x] `plt.autoscale()`, `Axes.autoscale()`, `autoscale_view()`, and `relim()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies explicit bounds, relim, autoscale, and tight autoscale behavior.
-- [x] `get/set_xbound`, `get/set_ybound`, x/y margins, and sticky-edge behavior. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies bound setters/getters and margin-aware automatic domains; sticky edges are intentionally out of scope because xy artists do not expose sticky-edge metadata.
+- [x] `get/set_xbound`, `get/set_ybound`, x/y margins, and sticky-edge behavior. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies bound setters/getters and margin-aware automatic domains. Sticky edges are derived from the entry list rather than from artist metadata (`Axes._entry_sticky_edges`): rectangle baselines for bar/histogram/contour, the outer cell edge for mesh and image entries (`imshow`/`pcolormesh`/`hist2d`/`specgram`), and 0/1 for `ecdf`. An axis whose sticky edges pin *both* ends ships a materialized `domain` instead of a `margin` (`Axes._fully_sticky_domain`), which is how a mesh stays flush with its outer cell edge; one-sided baselines still ship a `margin` and are anchored by the engine. Evidence: `tests/pyplot/test_mesh_autoscale_regressions.py`.
 - [x] `ticklabel_format()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies stored style, scientific limits, and offset policy.
 - [x] `minorticks_on()` and `minorticks_off()` with an explicit minor-tick model. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies explicit minor tick state toggles.
 - [x] `get_xlabel`, `get_ylabel`, `get_title`, `get_xaxis`, and `get_yaxis`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies label/title getters and axis proxy identity.
@@ -350,17 +359,15 @@ method accepts the call.
 - [x] `quiver`: units, head geometry, pivots, angles, scaling, norm, z-order and
       scalar-mappable behavior.
 - [x] `barbs`: non-default increments, flags, rounding, empty-barb, flip,
-      color and size options now fail loudly instead of being discarded. The
-      rendered glyph remains a documented visual approximation (bounded tick
-      count, not WMO barb geometry) — see `spec/matplotlib/compat.md`.
+      color, size, length, and pivot options render through fixed-staff
+      WMO-style geometry.
 - [x] `quiverkey`: coordinates, label positions, fonts and sizing.
-- [x] `streamplot`: always integrates with the shim's own bounded fixed-step
-      kernel, so output no longer depends on whether Matplotlib is installed;
+- [x] `streamplot`: always integrates with the shim's own occupancy-aware
+      adaptive Heun kernel, so output no longer depends on whether Matplotlib is installed;
       `start_points`, `integration_direction`, array `linewidth`/`color`,
-      `num_arrows`, `arrowsize`, and plain `Normalize` are implemented, while
-      `transform`, `zorder`, `broken_streamlines=False`, and non-default
-      minlength/arrowstyle/step-scale options fail loudly. Streamline paths
-      are a visual approximation of Matplotlib's adaptive integrator.
+      `num_arrows`, `arrowsize`, `broken_streamlines`, both integration scale
+      controls, and plain `Normalize` are implemented, while `transform`,
+      `zorder`, and non-default minlength/arrowstyle options fail loudly.
 
 ### Scales, units and dates
 
@@ -646,13 +653,11 @@ streamplot
 
 ### Accepted approximations (documented, still divergent)
 
-- Barbs glyph is a bounded tick count, not WMO 50/10/5 geometry.
-- Streamplot uses a fixed-step integrator; paths differ from Matplotlib's
-  adaptive one; density tuples reduce to their max.
-- imshow smoothing-mode names collapse to one bilinear upsample; truecolor
-  RGB(A) is unresampled.
-- `annotate(arrowprops=)` reduces to callout text; errorbar limit flags drop
-  caret arrows.
+- imshow's dependency-free named filters approximate Matplotlib's AGG kernels
+  and use a bounded 512–1024 px intermediate rather than selecting the filter
+  and target size from the final display resolution; explicit
+  `interpolation="auto"` remains unsupported.
+- Errorbar limit flags render one-sided bars without Matplotlib's caret arrows.
 - stem/eventplot/triplot/hlines/vlines dashes are data-space geometry (they
   scale with zoom).
 - Exception types diverge by design: TypeError/NotImplementedError where
@@ -661,7 +666,10 @@ streamplot
 ### Known-inconsistent, still open
 
 - Exporter chrome beyond backgrounds (fonts, tick/legend styling) stays fixed
-  in single-chart PNG/SVG regardless of rcParams.
+  in single-chart PNG/SVG regardless of rcParams — except `axes.titleweight`
+  and `axes.labelweight`, which reach the browser, single-chart SVG, and
+  single-chart native PNG paths and are covered by
+  `tests/pyplot/test_rc_chrome_contracts.py`.
 - `ax.set_facecolor()` mutates the per-Axes plot background after creation,
   but `set_facecolor(None)` is a silent no-op rather than a reset to the rc
   default; restoring it requires passing `rcParams["axes.facecolor"]` back

@@ -383,7 +383,7 @@ Object.assign(ChartView.prototype, {
     const laidOut = [];
     this._resolvedAnnotationAnchors = new Map();
     for (const [annotationIndex, ann] of annotations.entries()) {
-      const text = typeof ann.text === "string" ? ann.text : "";
+      const text: string = typeof ann.text === "string" ? ann.text : "";
       if (!text) continue;
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       let px = null;
@@ -448,7 +448,24 @@ Object.assign(ChartView.prototype, {
         continue;
       }
       const d = document.createElement("div");
-      d.textContent = text;
+      const mathRanges = String(style.math_italic_ranges || "")
+        .split(",")
+        .map((range) => range.split(":").map(Number))
+        .filter(([start, end]) => Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start < end);
+      if (mathRanges.length) {
+        for (const [index, char] of Array.from(text).entries()) {
+          if (mathRanges.some(([start, end]) => start <= index && index < end)) {
+            const italic = document.createElement("span");
+            italic.style.fontStyle = "italic";
+            italic.textContent = char;
+            d.appendChild(italic);
+          } else {
+            d.appendChild(document.createTextNode(char));
+          }
+        }
+      } else {
+        d.textContent = text;
+      }
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       // Rule/band specs carry no anchor; default to the placement that keeps
@@ -520,6 +537,7 @@ Object.assign(ChartView.prototype, {
       const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
+        if (key === "math_italic_ranges") continue;
         if (key === "opacity" && ann.kind === "text") {
           labelStyle[key] = value;
           continue;

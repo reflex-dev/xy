@@ -4,6 +4,7 @@ tune exotic rcParams keep running, and the warning names the compat table."""
 from __future__ import annotations
 
 import contextlib
+import math
 import warnings
 from collections.abc import Iterator
 from typing import Any
@@ -32,6 +33,7 @@ _DEFAULTS: dict[str, Any] = {
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
+    "errorbar.capsize": 0.0,
     "patch.linewidth": 1.0,
     "patch.edgecolor": "black",
     "patch.force_edgecolor": False,
@@ -44,9 +46,12 @@ _DEFAULTS: dict[str, Any] = {
     "axes.edgecolor": "black",
     "axes.labelcolor": "black",
     "axes.labelsize": "medium",
+    "axes.labelweight": "normal",
     "axes.titlesize": "large",
     "axes.titlecolor": "auto",
+    "axes.titleweight": "normal",
     "axes.linewidth": 0.8,
+    "axes.autolimit_mode": "data",
     "axes.xmargin": 0.05,
     "axes.ymargin": 0.05,
     "axes.spines.left": True,
@@ -61,16 +66,28 @@ _DEFAULTS: dict[str, Any] = {
     "ytick.labelsize": "medium",
     "xtick.major.size": 3.5,
     "ytick.major.size": 3.5,
+    "xtick.major.pad": 3.5,
+    "ytick.major.pad": 3.5,
     "xtick.major.width": 0.8,
     "ytick.major.width": 0.8,
     "legend.loc": "best",
     "legend.fontsize": "medium",
     "legend.facecolor": "inherit",
     "legend.edgecolor": "#cccccc",
+    "legend.framealpha": 0.8,
     "legend.frameon": True,
+    "legend.borderpad": 0.4,
+    "legend.labelspacing": 0.5,
+    "legend.borderaxespad": 0.5,
     "text.usetex": False,
     "image.cmap": "viridis",
+    # Matplotlib's "antialiased" default resolves to nearest-neighbor when a
+    # small image is enlarged by more than 3x; pre-rendering has no final plot
+    # size yet, so nearest is the faithful and compact default here.
+    "image.interpolation": "nearest",
     "image.origin": "upper",
+    "contour.corner_mask": True,
+    "contour.negative_linestyle": "dashed",
     "axes.prop_cycle": _PropCycle(),
 }
 
@@ -123,10 +140,20 @@ class RcParams(dict):
             colors = by_key().get("color") if by_key is not None else None
             if not colors:
                 raise ValueError("axes.prop_cycle must provide a non-empty color cycle")
+        if key == "axes.autolimit_mode" and value not in {"data", "round_numbers"}:
+            raise ValueError("axes.autolimit_mode must be 'data' or 'round_numbers'")
+        if key == "contour.negative_linestyle" and value not in {"solid", "dashed"}:
+            raise ValueError("contour.negative_linestyle must be 'solid' or 'dashed'")
+        if key == "contour.corner_mask" and not isinstance(value, bool):
+            raise ValueError("contour.corner_mask must be boolean")
         if key in {"font.size"}:
             value = float(value)
             if value <= 0:
                 raise ValueError(f"{key} must be positive")
+        if key in {"xtick.major.pad", "ytick.major.pad"}:
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(f"{key} must be finite")
         if key in {
             "axes.xmargin",
             "axes.ymargin",

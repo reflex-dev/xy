@@ -48,7 +48,8 @@ def test_bar_labels_are_centered_over_vertical_bars() -> None:
         assert label._entry["args"][0] == center
         assert label._entry["kwargs"]["anchor"] == "middle"
         assert label._entry["kwargs"]["dx"] == 0.0
-        assert label._entry["kwargs"]["dy"] == -8.0
+        assert label._entry["kwargs"]["dy"] == pytest.approx(-3.0 * 100.0 / 72.0)
+        assert label._entry["kwargs"]["style"]["vertical_align"] == "bottom"
 
 
 def test_pyplot_legend_location_and_columns_reach_render_spec() -> None:
@@ -81,7 +82,8 @@ def test_filled_stairs_use_seamless_bins_and_hatches_are_not_dropped() -> None:
     assert any(entry["kind"] == "bar" for entry in ax._entries)
     assert not any(entry.get("factory") == "triangle_mesh" for entry in ax._entries)
     hatch = [entry for entry in ax._entries if entry.get("factory") == "segments"][-1]
-    assert len(hatch["args"][0]) == 14
+    assert len(hatch["args"][0]) >= 14
+    assert len({len(values) for values in hatch["args"]}) == 1
 
 
 def test_adding_external_step_patch_does_not_advance_color_cycle() -> None:

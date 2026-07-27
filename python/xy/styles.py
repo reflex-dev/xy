@@ -40,8 +40,18 @@ _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 _AXIS_COLOR_PROPERTIES = frozenset(
     {"grid_color", "axis_color", "tick_color", "tick_label_color", "label_color"}
 )
-_AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
+_AXIS_LENGTH_PROPERTIES = frozenset(
+    {
+        "grid_width",
+        "axis_width",
+        "tick_length",
+        "tick_label_pad",
+        "tick_padding",
+        "tick_width",
+    }
+)
 _AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
+_AXIS_FONT_PROPERTIES = frozenset({"label_font_family", "label_font_style", "label_font_weight"})
 _AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
 _AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
 _AXIS_DIRECTIONS = frozenset({"in", "out", "inout"})
@@ -148,19 +158,30 @@ def normalize_css_style(value: StyleMapping | None, label: str = "style") -> dic
     return out
 
 
-def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+def _parse_px(value: StyleValue, label: str) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        number = float(value)
+        return float(value)
     elif isinstance(value, str):
         match = _PX_RE.match(value)
         if match is None:
             raise ValueError(f"{label} must be a finite CSS px length")
-        number = float(match.group(1))
+        return float(match.group(1))
     else:  # pragma: no cover - normalize_css_style rejects this first
         raise ValueError(f"{label} must be a finite CSS px length")
+
+
+def _px(value: StyleValue, label: str, *, positive: bool = False) -> float:
+    number = _parse_px(value, label)
     if not np.isfinite(number) or number < 0 or (positive and number <= 0):
         qualifier = "positive " if positive else "non-negative "
         raise ValueError(f"{label} must be a {qualifier}finite CSS px length")
+    return number
+
+
+def _signed_px(value: StyleValue, label: str) -> float:
+    number = _parse_px(value, label)
+    if not np.isfinite(number):
+        raise ValueError(f"{label} must be a finite CSS px length")
     return number
 
 
@@ -369,6 +390,7 @@ def _compile_axis_style(
         _AXIS_COLOR_PROPERTIES
         | _AXIS_LENGTH_PROPERTIES
         | _AXIS_SIZE_PROPERTIES
+        | _AXIS_FONT_PROPERTIES
         | _AXIS_COMPAT_PROPERTIES
         | {"tick_direction", "tick_label_anchor"}
     )
@@ -381,10 +403,20 @@ def _compile_axis_style(
             raise ValueError(f"{label} has unsupported property {css_prop!r}; supports: {expected}")
         if prop in _AXIS_COLOR_PROPERTIES:
             parsed: StyleValue = _paint(raw, f"{label}[{css_prop!r}]")
+        elif prop in {"tick_label_pad", "tick_padding"}:
+            parsed = _signed_px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_LENGTH_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]")
         elif prop in _AXIS_SIZE_PROPERTIES:
             parsed = _px(raw, f"{label}[{css_prop!r}]", positive=True)
+        elif prop == "label_font_style":
+            if not isinstance(raw, str) or raw not in {"normal", "italic", "oblique"}:
+                raise ValueError(f"{label}[{css_prop!r}] must be 'normal', 'italic', or 'oblique'")
+            parsed = raw
+        elif prop in {"label_font_family", "label_font_weight"}:
+            if not isinstance(raw, (str, int, float)) or isinstance(raw, bool):
+                raise ValueError(f"{label}[{css_prop!r}] must be a CSS font value")
+            parsed = raw
         elif prop == "grid_opacity":
             parsed = _opacity(raw, f"{label}[{css_prop!r}]")
         elif prop == "grid_dash":
@@ -399,7 +431,8 @@ def _compile_axis_style(
             if not isinstance(raw, str) or raw not in _AXIS_DIRECTIONS:
                 raise ValueError(f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DIRECTIONS)}")
             parsed = raw
-        _set(out, prop, parsed, css_prop, sources)
+        canonical = "tick_padding" if prop == "tick_label_pad" else prop
+        _set(out, canonical, parsed, css_prop, sources)
     return out
 
 

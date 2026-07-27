@@ -2698,6 +2698,7 @@ fn marching_squares_scan<F>(
     x_coords: &[f64],
     y_coords: &[f64],
     levels: &[f64],
+    corner_mask: bool,
     mut emit: F,
 ) -> usize
 where
@@ -2714,11 +2715,55 @@ where
             let v10 = z[row * cols + col + 1];
             let v11 = z[(row + 1) * cols + col + 1];
             let v01 = z[(row + 1) * cols + col];
-            if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
-                continue;
-            }
-            let local_min = v00.min(v10).min(v11).min(v01);
-            let local_max = v00.max(v10).max(v11).max(v01);
+            let all_finite =
+                v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite();
+            let (local_min, local_max, triangle_edges): (
+                f64,
+                f64,
+                Option<&[(usize, usize); 3]>,
+            ) = if all_finite {
+                (
+                    v00.min(v10).min(v11).min(v01),
+                    v00.max(v10).max(v11).max(v01),
+                    None,
+                )
+            } else {
+                if !corner_mask {
+                    continue;
+                }
+                let finite = [
+                    v00.is_finite(),
+                    v10.is_finite(),
+                    v11.is_finite(),
+                    v01.is_finite(),
+                ];
+                if finite.iter().filter(|&&value| value).count() != 3 {
+                    continue;
+                }
+                let values = [v00, v10, v11, v01];
+                let local_min = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::INFINITY, f64::min);
+                let local_max = values
+                    .iter()
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let edges = match finite.iter().position(|value| !value).unwrap() {
+                    0 => &[(1, 2), (2, 3), (3, 1)],
+                    1 => &[(0, 2), (2, 3), (3, 0)],
+                    2 => &[(0, 1), (1, 3), (3, 0)],
+                    3 => &[(0, 1), (1, 2), (2, 0)],
+                    _ => unreachable!(),
+                };
+                (
+                    local_min,
+                    local_max,
+                    Some(edges),
+                )
+            };
             let corners = [
                 (x_coords[col], y_coords[row], v00),
                 (x_coords[col + 1], y_coords[row], v10),
@@ -2726,6 +2771,34 @@ where
                 (x_coords[col], y_coords[row + 1], v01),
             ];
             let mut process_level = |level: f64| {
+                if let Some(edges) = triangle_edges {
+                    let mut intersections = [(0.0, 0.0); 2];
+                    let mut n_intersections = 0usize;
+                    for &(a, b) in edges {
+                        let (xa, ya, va) = corners[a];
+                        let (xb, yb, vb) = corners[b];
+                        if (va >= level) == (vb >= level) {
+                            continue;
+                        }
+                        let fraction = ((level - va) / (vb - va)).clamp(0.0, 1.0);
+                        if n_intersections < intersections.len() {
+                            intersections[n_intersections] =
+                                (xa + (xb - xa) * fraction, ya + (yb - ya) * fraction);
+                        }
+                        n_intersections += 1;
+                    }
+                    if n_intersections == 2 {
+                        emit(
+                            intersections[0].0,
+                            intersections[1].0,
+                            intersections[0].1,
+                            intersections[1].1,
+                            level,
+                        );
+                        count += 1;
+                    }
+                    return;
+                }
                 let mask = u8::from(v00 >= level)
                     | (u8::from(v10 >= level) << 1)
                     | (u8::from(v11 >= level) << 2)
@@ -2787,6 +2860,7 @@ pub fn marching_squares_into(
     x_coords: &[f64],
     y_coords: &[f64],
     levels: &[f64],
+    corner_mask: bool,
     x0_out: &mut [f64],
     x1_out: &mut [f64],
     y0_out: &mut [f64],
@@ -2806,6 +2880,7 @@ pub fn marching_squares_into(
         x_coords,
         y_coords,
         levels,
+        corner_mask,
         |x0, x1, y0, y1, level| {
             if written < capacity {
                 x0_out[written] = x0;
@@ -5954,6 +6029,7 @@ mod tests {
             &x,
             &y,
             &levels,
+            false,
             &mut x0,
             &mut x1,
             &mut y0,
@@ -5987,6 +6063,7 @@ mod tests {
                 &x,
                 &y,
                 &levels,
+                false,
                 &mut x0,
                 &mut x1,
                 &mut y0,
@@ -6028,6 +6105,7 @@ mod tests {
             &[0.0, 1.0],
             &[0.0, 1.0],
             &[0.5],
+            false,
             &mut x0,
             &mut x1,
             &mut y0,
@@ -6035,6 +6113,36 @@ mod tests {
             &mut emitted_levels,
         );
         assert_eq!(written, 0);
+    }
+
+    #[test]
+    fn marching_squares_corner_mask_retains_the_opposite_triangle() {
+        let z = [f64::NAN, 1.0, 0.0, 0.0];
+        let mut x0 = [0.0; 1];
+        let mut x1 = [0.0; 1];
+        let mut y0 = [0.0; 1];
+        let mut y1 = [0.0; 1];
+        let mut emitted_levels = [0.0; 1];
+        let written = marching_squares_into(
+            &z,
+            2,
+            2,
+            &[0.0, 1.0],
+            &[0.0, 1.0],
+            &[0.5],
+            true,
+            &mut x0,
+            &mut x1,
+            &mut y0,
+            &mut y1,
+            &mut emitted_levels,
+        );
+        assert_eq!(written, 1);
+        assert_eq!(x0[0].min(x1[0]), 0.5);
+        assert_eq!(x0[0].max(x1[0]), 1.0);
+        assert_eq!(y0, [0.5]);
+        assert_eq!(y1, [0.5]);
+        assert_eq!(emitted_levels, [0.5]);
     }
 
     #[test]

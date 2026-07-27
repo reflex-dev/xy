@@ -335,6 +335,7 @@ def segments(
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
+    dash: Union[str, Sequence[float], None] = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independent line segments through the shared instanced renderer."""
@@ -342,6 +343,7 @@ def segments(
     color = css.get("color", color)
     width = css.get("width", width)
     opacity = css.get("opacity", opacity)
+    dash = css.get("dash", dash)
     arrays = [self._as_1d_float(values, "segments color geometry") for values in (x0, y0, x1, y1)]
     if len({len(values) for values in arrays}) != 1:
         raise ValueError("segments coordinate columns must have equal length")
@@ -357,6 +359,7 @@ def segments(
             raise ValueError("segments domain requires a continuous numeric color array")
         color_ch.domain = self._finite_increasing_pair(domain, "segments domain")
     constant = color_ch.constant if color_ch.mode == "constant" else None
+    dash_spec = _validate.dash(dash, "segments dash")
     self._append_segment_trace(
         "segments",
         arrays[0],
@@ -368,6 +371,7 @@ def segments(
         opacity=opacity,
         width=width,
         role="segments",
+        dash=dash_spec,
         color_ch=None if color_ch.mode == "constant" else color_ch,
         extra_style=styles._opacity_channels(css),
     )
@@ -390,6 +394,7 @@ def triangle_mesh(
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independently colored filled triangles as one instanced mesh."""
@@ -451,10 +456,22 @@ def triangle_mesh(
         if color_ch.mode != "continuous":
             raise ValueError("triangle_mesh domain requires a continuous numeric color array")
         color_ch.domain = self._finite_increasing_pair(domain, "triangle_mesh domain")
+    # A width without an explicit stroke means "outline in the face color".
+    # Constant paints already get that fallback from the renderer; direct and
+    # semantic color channels need the explicit buffer-free match mode.
+    if (
+        stroke_value is None
+        and stroke_ch is None
+        and color_ch.mode != "constant"
+        and (stroke_width_value or "stroke_width" in style_channels)
+    ):
+        stroke_ch = channels.ColorChannel(mode="match_fill")
     checkpoint = self._checkpoint()
     try:
         x0c, y0c, x1c, y1c, x2c, y2c = [self.store.ingest(values) for values in arrays]
         style: dict[str, Any] = {"opacity": opacity_value, "role": "triangle-mesh"}
+        if _joined_fill:
+            style["joined_fill"] = True
         style.update(styles._opacity_channels(css))
         if stroke_value is not None:
             style["stroke"] = stroke_value
@@ -605,10 +622,15 @@ def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, 
 
 
 def _contour_segments(
-    z: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray, levels: np.ndarray
+    z: np.ndarray,
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    levels: np.ndarray,
+    *,
+    corner_mask: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Extract flat contour segments through the native marching-squares kernel."""
-    return kernels.marching_squares(z, x_coords, y_coords, levels)
+    return kernels.marching_squares(z, x_coords, y_coords, levels, corner_mask=corner_mask)
 
 
 def _bar_like(
@@ -620,7 +642,7 @@ def _bar_like(
     name: Optional[str],
     color: Any,
     colors: Optional[list[str]],
-    width: float,
+    width: Any,
     base: Union[Scalar, ArrayLike],
     mode: str,
     orientation: str,
@@ -634,13 +656,45 @@ def _bar_like(
     style_extra: Optional[dict[str, Any]] = None,
 ) -> "Figure":
     name = self._optional_text(name, f"{kind} name")
-    width = self._positive_scalar(width, f"{kind} width")
     if mode not in {"grouped", "stacked", "normalized"}:
         raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
+    if np.isscalar(width):
+        # Scalar widths are overwhelmingly the common path. Preserve the
+        # established scalar validator (including bool rejection) without
+        # allocating two temporary NumPy arrays for every bar chart.
+        try:
+            width_values: float | np.ndarray = self._positive_scalar(width, f"{kind} width")
+        except ValueError as exc:
+            if isinstance(width, (str, bytes)):
+                raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
+            raise
+    elif isinstance(width, np.ndarray) and width.ndim == 0:
+        if np.issubdtype(width.dtype, np.bool_):
+            raise ValueError(f"{kind} width must be scalar or contain numeric values")
+        width_values = self._positive_scalar(width.item(), f"{kind} width")
+    else:
+        try:
+            raw_width_array = np.asarray(width)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
+        if np.issubdtype(raw_width_array.dtype, np.bool_):
+            raise ValueError(f"{kind} width must be scalar or contain numeric values")
+        try:
+            width_array = raw_width_array.astype(np.float64, copy=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
+        try:
+            width_values = np.broadcast_to(width_array, (len(pos),)).astype(np.float64, copy=False)
+        except ValueError:
+            raise ValueError(
+                f"{kind} width must be scalar or broadcast to the {len(pos)} bars"
+            ) from None
+        if not np.isfinite(width_values).all() or np.any(width_values <= 0.0):
+            raise ValueError(f"{kind} width values must be finite and positive")
     vals = self._bar_value_matrix(y, len(pos), kind)
     n_series, n_items = vals.shape
     if mode == "normalized":
@@ -723,11 +777,22 @@ def _bar_like(
             mark_style["artist_alpha"] = alpha_values[index]
         series_styles.append(mark_style)
         series_channels.append(merged_channels)
+    if direct_strokes is None and direct_colors is not None:
+        resolved_strokes: list[Optional[channels.ColorChannel]] = [
+            (
+                channels.ColorChannel(mode="match_fill")
+                if stroke_width_values[index] or "stroke_width" in series_channels[index]
+                else None
+            )
+            for index in range(n_series)
+        ]
+    else:
+        resolved_strokes = [None] * n_series if direct_strokes is None else list(direct_strokes)
     checkpoint = self._checkpoint()
     try:
         if category_labels is not None:
             self._commit_category_labels(category_labels, category_axis)
-        half = width / 2.0
+        half = width_values / 2.0
         if vals.shape[0] == 1:
             self._append_bar_rect(
                 kind,
@@ -744,11 +809,11 @@ def _bar_like(
                 role=f"{kind}-normalized" if mode == "normalized" else kind,
                 extra_style=series_styles[0],
                 color_ch=None if direct_colors is None else direct_colors[0],
-                stroke_ch=None if direct_strokes is None else direct_strokes[0],
+                stroke_ch=resolved_strokes[0],
                 style_channels=series_channels[0],
             )
         elif mode == "grouped":
-            slot = width / vals.shape[0]
+            slot = width_values / vals.shape[0]
             for i, row in enumerate(vals):
                 p0 = pos - half + i * slot
                 self._append_bar_rect(
@@ -764,7 +829,7 @@ def _bar_like(
                     role=f"{kind}-grouped",
                     extra_style=series_styles[i],
                     color_ch=None if direct_colors is None else direct_colors[i],
-                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    stroke_ch=resolved_strokes[i],
                     style_channels=series_channels[i],
                 )
         else:
@@ -786,7 +851,7 @@ def _bar_like(
                     role=f"{kind}-{mode}",
                     extra_style=series_styles[i],
                     color_ch=None if direct_colors is None else direct_colors[i],
-                    stroke_ch=None if direct_strokes is None else direct_strokes[i],
+                    stroke_ch=resolved_strokes[i],
                     style_channels=series_channels[i],
                 )
                 pos_base = np.where(row >= 0, y1, pos_base)
@@ -2138,16 +2203,24 @@ def hexbin(
 
 
 def _interpolate_contourf_grid(
-    arr: np.ndarray, xpos: np.ndarray, ypos: np.ndarray
+    arr: np.ndarray,
+    xpos: np.ndarray,
+    ypos: np.ndarray,
+    *,
+    corner_mask: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Bilinearly densify a contour field before assigning discrete bands."""
     rows, cols = arr.shape
 
     def sample_count(size: int) -> int:
-        # Eight samples per source interval removes visible cell stair-steps for
-        # common scientific grids. The 512 target keeps the shipped grid bounded;
-        # inputs already larger than that are never downsampled.
-        return min((size - 1) * 8 + 1, max(size, 512))
+        # Eight samples per source interval is sufficient for ordinary grids,
+        # but very small masked grids need a pixel-like floor or their diagonal
+        # corner-mask boundaries become visibly stair-stepped in static output.
+        # The floor/cap keeps that approximation bounded at 256²–512² samples;
+        # already-larger inputs are never downsampled.
+        if size > 512:
+            return size
+        return min(512, max(256, (size - 1) * 8 + 1))
 
     out_rows, out_cols = sample_count(rows), sample_count(cols)
     if (out_rows, out_cols) == (rows, cols):
@@ -2166,7 +2239,11 @@ def _interpolate_contourf_grid(
     z10 = arr[row0[:, None], col1[None, :]]
     z01 = arr[row1[:, None], col0[None, :]]
     z11 = arr[row1[:, None], col1[None, :]]
-    valid = np.isfinite(z00) & np.isfinite(z10) & np.isfinite(z01) & np.isfinite(z11)
+    finite00 = np.isfinite(z00)
+    finite10 = np.isfinite(z10)
+    finite01 = np.isfinite(z01)
+    finite11 = np.isfinite(z11)
+    valid = finite00 & finite10 & finite01 & finite11
     interpolated = (
         z00 * (1.0 - row_weight) * (1.0 - col_weight)
         + z10 * (1.0 - row_weight) * col_weight
@@ -2174,6 +2251,44 @@ def _interpolate_contourf_grid(
         + z11 * row_weight * col_weight
     )
     interpolated[~valid] = np.nan
+    if corner_mask:
+        # contourpy's corner_mask=True retains the triangle opposite a single
+        # masked vertex instead of discarding the whole quad.  Interpolate
+        # that valid triangle in barycentric coordinates; quads with two or
+        # more missing vertices remain wholly masked.
+        finite_count = (
+            finite00.astype(np.uint8)
+            + finite10.astype(np.uint8)
+            + finite01.astype(np.uint8)
+            + finite11.astype(np.uint8)
+        )
+        u = np.broadcast_to(col_weight, interpolated.shape)
+        v = np.broadcast_to(row_weight, interpolated.shape)
+        safe00 = np.nan_to_num(z00)
+        safe10 = np.nan_to_num(z10)
+        safe01 = np.nan_to_num(z01)
+        safe11 = np.nan_to_num(z11)
+        triangular = finite_count == 3
+        cases = (
+            (
+                triangular & ~finite00 & (u + v >= 1.0),
+                safe10 * (1.0 - v) + safe01 * (1.0 - u) + safe11 * (u + v - 1.0),
+            ),
+            (
+                triangular & ~finite10 & (v >= u),
+                safe00 * (1.0 - v) + safe01 * (v - u) + safe11 * u,
+            ),
+            (
+                triangular & ~finite01 & (u >= v),
+                safe00 * (1.0 - u) + safe10 * (u - v) + safe11 * v,
+            ),
+            (
+                triangular & ~finite11 & (u + v <= 1.0),
+                safe00 * (1.0 - u - v) + safe10 * u + safe01 * v,
+            ),
+        )
+        for keep, values in cases:
+            interpolated[keep] = values[keep]
     dense_x = np.interp(col_at, np.arange(cols), xpos)
     dense_y = np.interp(row_at, np.arange(rows), ypos)
     return interpolated, dense_x, dense_y
@@ -2189,10 +2304,12 @@ def contour(
     filled: bool = False,
     name: Optional[str] = None,
     colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
-    color: Optional[str] = None,
-    width: float = 1.1,
+    color: Any = None,
+    width: Any = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    extend: str = "neither",
+    corner_mask: bool = False,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add regular-grid contour isolines, optionally over a filled heatmap.
@@ -2238,11 +2355,49 @@ def contour(
         )
     colormap = channels.resolve_colormap(colormap)
     name = self._optional_text(name, "contour name")
-    # No `color=` means "colormap the level set", not "take a palette slot" —
-    # `color_ch` below keys off exactly this None.
-    color = self._optional_css_color(color, "contour color")
-    width = self._positive_scalar(width, "contour width")
+    if extend not in ("neither", "min", "max", "both"):
+        raise ValueError("contour extend must be 'neither', 'min', 'max', or 'both'")
+    extend_min = filled and extend in ("min", "both")
+    extend_max = filled and extend in ("max", "both")
+    color_table: Optional[np.ndarray]
+    if color is None or isinstance(color, str):
+        color = self._optional_css_color(color, "contour color")
+        color_table = None
+    else:
+        expected = (
+            len(level_values) - 1 + int(extend_min) + int(extend_max)
+            if filled
+            else len(level_values)
+        )
+        color_channel = channels.resolve_color(
+            color,
+            expected,
+            colormap=colormap,
+            default_constant=self.palette_color(len(self.traces)),
+            palette=self.palette,
+        )
+        if color_channel.mode != "direct_rgba" or color_channel.rgba is None:
+            raise ValueError("contour color arrays must contain direct RGB/RGBA rows")
+        color_table = color_channel.rgba
+        color = None
+    width_array = np.asarray(width)
+    if width_array.ndim == 0:
+        # Unwrap before scalar validation so a 0-D boolean array remains a
+        # boolean (and is rejected) instead of coercing silently to 0.0/1.0.
+        width = self._positive_scalar(width_array.item(), "contour width")
+        width_values = None
+    else:
+        width_values = self._as_1d_float(width, "contour width")
+        if (
+            not len(width_values)
+            or not np.isfinite(width_values).all()
+            or np.any(width_values <= 0)
+        ):
+            raise ValueError("contour width must contain positive finite values")
+        width = float(width_values[0])
     opacity = self._opacity(opacity, "contour opacity")
+    if not isinstance(corner_mask, (bool, np.bool_)):
+        raise TypeError("contour corner_mask must be boolean")
     # Checkpoint spans the optional filled heatmap too: a level set that never
     # intersects the grid must not leave a stray heatmap trace behind.
     checkpoint = self._checkpoint()
@@ -2255,21 +2410,47 @@ def contour(
             # Values outside the level range stay unpainted (extend='neither').
             edges = np.asarray(level_values, dtype=np.float64)
             if len(edges) >= 2 and edges[0] < edges[-1]:
-                dense, dense_x, dense_y = _interpolate_contourf_grid(arr, xpos, ypos)
-                band = np.searchsorted(edges, dense, side="right") - 1
-                mids = (edges[:-1] + edges[1:]) * 0.5
-                banded = np.full(dense.shape, np.nan, dtype=np.float64)
-                inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
-                banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
-                self.heatmap(
-                    banded,
-                    x=dense_x,
-                    y=dense_y,
-                    name=name,
-                    colormap=colormap,
-                    domain=(float(edges[0]), float(edges[-1])),
-                    opacity=min(opacity, 0.9),
+                dense, dense_x, dense_y = _interpolate_contourf_grid(
+                    arr, xpos, ypos, corner_mask=bool(corner_mask)
                 )
+                band = np.searchsorted(edges, dense, side="right") - 1
+                # Matplotlib includes the final level in the final filled
+                # interval; only values strictly above it are outside.
+                band[np.isfinite(dense) & (dense == edges[-1])] = len(edges) - 2
+                mids = (edges[:-1] + edges[1:]) * 0.5
+                inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
+                if color_table is None:
+                    banded = np.full(dense.shape, np.nan, dtype=np.float64)
+                    banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
+                    self.heatmap(
+                        banded,
+                        x=dense_x,
+                        y=dense_y,
+                        name=name,
+                        colormap=colormap,
+                        domain=(float(edges[0]), float(edges[-1])),
+                        opacity=min(opacity, 0.9),
+                    )
+                else:
+                    # Listed contour colors are discrete paint, not a request
+                    # for the named colormap.  Carry exact RGBA through the
+                    # truecolor heatmap path so every renderer sees the same
+                    # per-band cycle.
+                    rgba = np.zeros(dense.shape + (4,), dtype=np.float64)
+                    offset = int(extend_min)
+                    rgba[inside] = color_table[offset + band[inside]]
+                    finite_dense = np.isfinite(dense)
+                    if extend_min:
+                        rgba[finite_dense & (dense < edges[0])] = color_table[0]
+                    if extend_max:
+                        rgba[finite_dense & (dense > edges[-1])] = color_table[-1]
+                    self.heatmap(
+                        rgba,
+                        x=dense_x,
+                        y=dense_y,
+                        name=name,
+                        opacity=opacity,
+                    )
             else:
                 self.heatmap(
                     arr,
@@ -2279,28 +2460,55 @@ def contour(
                     colormap=colormap,
                     opacity=min(opacity, 0.7),
                 )
-        x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
+        contour_levels = level_values
+        x0, x1, y0, y1, segment_levels = _contour_segments(
+            arr,
+            xpos,
+            ypos,
+            contour_levels,
+            corner_mask=bool(corner_mask),
+        )
         if len(x0) == 0:
             raise ValueError("contour levels do not intersect the finite grid")
-        domain = self._auto_domain((float(np.min(level_values)), float(np.max(level_values))))
-        color_ch = (
-            channels.ColorChannel(
-                mode="continuous", values=level_values, domain=domain, colormap=colormap
+        domain = self._auto_domain((float(np.min(segment_levels)), float(np.max(segment_levels))))
+        if color_table is not None and not filled:
+            level_indices = np.searchsorted(contour_levels, segment_levels)
+            level_indices = np.clip(level_indices, 0, len(contour_levels) - 1)
+            color_ch = channels.ColorChannel(
+                mode="direct_rgba",
+                rgba=np.ascontiguousarray(color_table[level_indices]),
             )
-            if color is None
-            else None
-        )
+        else:
+            color_ch = (
+                channels.ColorChannel(
+                    mode="continuous", values=segment_levels, domain=domain, colormap=colormap
+                )
+                if color is None and color_table is None
+                else None
+            )
         # contourf paints bands without outlining their boundaries. Users can
         # explicitly overlay contour() when isolines are desired.
         if not filled:
             # Matplotlib dashes negative isolines for a single-color contour. Split
             # the segment set by level sign so the negative group ships dashed; a
             # colormapped contour keeps every level solid.
-            lv = np.asarray(level_values)
+            lv = np.asarray(segment_levels)
+            if width_values is not None:
+                level_indices = np.searchsorted(contour_levels, lv)
+                level_indices = np.clip(level_indices, 0, len(contour_levels) - 1)
+                segment_widths = width_values[level_indices % len(width_values)]
+            else:
+                segment_widths = width
             if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
                 # Matplotlib's dashed preset is scaled by the contour linewidth:
                 # 3.7 on / 1.6 off times the rendered width.
-                groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+                if width_values is None:
+                    groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+                else:
+                    # Per-level widths cannot share one dash array. Splitting
+                    # by sign still retains the correct widths; the native
+                    # renderer uses its standard dashed contour preset.
+                    groups = ((lv >= 0, None), (lv < 0, [3.7, 1.6]))
             else:
                 groups = ((np.ones(len(lv), dtype=bool), None),)
             for mask, dash in groups:
@@ -2313,7 +2521,11 @@ def contour(
                     name=name if dash is None else None,
                     color=color,
                     opacity=opacity,
-                    width=width,
+                    width=(
+                        np.asarray(segment_widths, dtype=np.float64)[mask]
+                        if isinstance(segment_widths, np.ndarray)
+                        else segment_widths
+                    ),
                     role="contour",
                     color_ch=color_ch,
                     dash=dash,
@@ -2333,7 +2545,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Any = 0.8,
     base: Union[Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -2390,7 +2602,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Any = 0.8,
     base: Union[Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",

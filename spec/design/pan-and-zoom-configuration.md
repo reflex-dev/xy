@@ -457,11 +457,33 @@ single coordinated keymap design.
 xy.x_axis(
     domain=(20, 80),   # initial/home view
     bounds=(0, 100),   # hard navigation envelope
+    margin=0.05,       # padding around an *automatic* domain
 )
 ```
 
 Domain is never a hard limit. `bounds="data"` resolves the canonical data range in
 Python independently of an explicit domain.
+
+`margin` is a non-negative fraction of the data span padded onto both ends of an
+**automatic** domain (matplotlib's `Axes.margins`; the pyplot shim routes
+`margins()`/`rcParams["axes.{x,y}margin"]` through it). An explicit `domain`
+short-circuits autoscaling entirely, so `margin` and `domain` never combine —
+the axis takes `domain` verbatim. Unset, the axis keeps the historical 3% pad, so
+`margin` is additive public API and changes no existing chart. Details that are
+part of the contract, not incidental:
+
+| Case | Behavior |
+| --- | --- |
+| `margin` unset | 3% of the data span on each end. A log axis additionally floors the low edge at `max(lo / 10, nextafter(0, 1))`. |
+| `margin=0` | The domain is exactly the data range — no pad, on any scale kind. |
+| Log axis with an explicit `margin` | The pad is applied in log10 space (`10 ** (log10(lo) - span * margin)`), so it is multiplicative and symmetric on screen. The `lo / 10` floor does not apply: an authored margin is the authority on the low edge. |
+| Singleton data range (`lo == hi`) with an explicit `margin` | The extent becomes `[lo, lo + 1]` and the margin pads that unit interval — matching mpl's singleton handling. Without a margin the legacy fallback still applies: `±5%` of `abs(lo)`, or `±0.5` at zero. |
+| Zero-baseline marks (bars, areas) | Unchanged: the padded edge still snaps back to `0` when the data range touches it, so a bar chart's baseline does not float off the spine. |
+| Both ends sticky (mesh, image, ECDF cumulative axis) | The axis takes the data range verbatim, as matplotlib's sticky edges do for `imshow`/`pcolormesh`/`hist2d`/`specgram` and for an ECDF's 0/1 axis. The engine has no sticky concept beyond the zero-baseline anchor above, so the pyplot shim resolves this case itself and ships a materialized `domain` in place of `margin` (`Axes._fully_sticky_domain`) — the two never combine. A *one-sided* sticky edge is the zero baseline and stays with `margin`, anchored by the engine. |
+
+`margin` is resolved in Python, in f64, by `Figure._range` — only the resulting
+domain crosses the wire, so it is not a renderer-side concept and needs no
+client, SVG, or raster support.
 
 `bounds` and `zoom_limits` are complementary:
 

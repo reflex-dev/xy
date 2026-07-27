@@ -1,0 +1,1162 @@
+{
+  "generated_at_utc": "2026-07-27T02:37:15.458453Z",
+  "repetitions_requested": 3,
+  "aggregation": "arithmetic mean of successful fresh-process runs",
+  "sizes": [
+    10000,
+    100000,
+    1000000,
+    10000000,
+    1000000000
+  ],
+  "software_browser": true,
+  "static": [],
+  "interactive": [
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 49561600,
+          "python_render_ms": 1.8725410336628556,
+          "output_bytes": 446199,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 52117504,
+          "wall_ms": 129.46854205802083,
+          "browser_probe": {
+            "ready_ms": 975.2000000476837,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 14073,
+            "js_heap_bytes": 2696563,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1213726720,
+            "browser_wall_ms": 1351.2030830606818
+          },
+          "end_to_end_ttfr_ms": 977.0725410813466,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 49627136,
+          "python_render_ms": 1.8726669950410724,
+          "output_bytes": 446199,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 52166656,
+          "wall_ms": 134.754833066836,
+          "browser_probe": {
+            "ready_ms": 951.5,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 14073,
+            "js_heap_bytes": 2698107,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1170866176,
+            "browser_wall_ms": 1477.6160839246586
+          },
+          "end_to_end_ttfr_ms": 953.3726669950411,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 49528832,
+          "python_render_ms": 1.91399990580976,
+          "output_bytes": 446199,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 52084736,
+          "wall_ms": 129.87870804499835,
+          "browser_probe": {
+            "ready_ms": 963.6000000238419,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 14073,
+            "js_heap_bytes": 2703127,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1173520384,
+            "browser_wall_ms": 1268.9155840780586
+          },
+          "end_to_end_ttfr_ms": 965.5139999296516,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 965.3197360020131,
+      "median_ms": 965.5139999296516,
+      "stdev_ms": 11.851131244816669,
+      "min_ms": 953.3726669950411,
+      "max_ms": 977.0725410813466,
+      "library": "xy",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59244544,
+          "python_render_ms": 127.76441604364663,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 128040960,
+          "wall_ms": 268.7966669909656,
+          "browser_probe": {
+            "ready_ms": 1163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 15705,
+            "js_heap_bytes": 24721003,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1389445120,
+            "browser_wall_ms": 1456.892624963075
+          },
+          "end_to_end_ttfr_ms": 1290.7644160436466,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59375616,
+          "python_render_ms": 123.69670800399035,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 134397952,
+          "wall_ms": 268.50470900535583,
+          "browser_probe": {
+            "ready_ms": 1214.1000000238419,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 15705,
+            "js_heap_bytes": 19707043,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1385971712,
+            "browser_wall_ms": 1451.299124979414
+          },
+          "end_to_end_ttfr_ms": 1337.7967080278322,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59359232,
+          "python_render_ms": 126.69437506701797,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 128679936,
+          "wall_ms": 267.3736250726506,
+          "browser_probe": {
+            "ready_ms": 1228.6999999284744,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 15705,
+            "js_heap_bytes": 19718415,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1385627648,
+            "browser_wall_ms": 1511.9776669889688
+          },
+          "end_to_end_ttfr_ms": 1355.3943749954924,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 1327.9851663556572,
+      "median_ms": 1337.7967080278322,
+      "stdev_ms": 33.41343533697095,
+      "min_ms": 1290.7644160436466,
+      "max_ms": 1355.3943749954924,
+      "library": "plotly",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 76316672,
+          "build_ms": 21.27825003117323,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 1016.3999999761581,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333513,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93143040,
+          "browser_peak_rss_bytes": 1183662080,
+          "browser_wall_ms": 1286.2334999954328,
+          "end_to_end_ttfr_ms": 1037.6782500073314
+        },
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 76349440,
+          "build_ms": 20.991583936847746,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 1173.6000000238419,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333513,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93192192,
+          "browser_peak_rss_bytes": 1167130624,
+          "browser_wall_ms": 1384.634750080295,
+          "end_to_end_ttfr_ms": 1194.5915839606896
+        },
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 76677120,
+          "build_ms": 20.904292003251612,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 1025.5,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333513,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93241344,
+          "browser_peak_rss_bytes": 1115734016,
+          "browser_wall_ms": 1283.3977079717442,
+          "end_to_end_ttfr_ms": 1046.4042920032516
+        }
+      ],
+      "mean_ms": 1092.8913753237575,
+      "median_ms": 1046.4042920032516,
+      "stdev_ms": 88.182964793804,
+      "min_ms": 1037.6782500073314,
+      "max_ms": 1194.5915839606896,
+      "library": "matplotlib",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 49922048,
+          "python_render_ms": 4.493582993745804,
+          "output_bytes": 1406204,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 62767104,
+          "wall_ms": 124.26937511190772,
+          "browser_probe": {
+            "ready_ms": 964.1000000238419,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16349,
+            "js_heap_bytes": 5335745,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1173651456,
+            "browser_wall_ms": 1333.0259580397978
+          },
+          "end_to_end_ttfr_ms": 968.5935830175877,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 49872896,
+          "python_render_ms": 4.614833043888211,
+          "output_bytes": 1406204,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 58441728,
+          "wall_ms": 134.32095805183053,
+          "browser_probe": {
+            "ready_ms": 958.7999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16349,
+            "js_heap_bytes": 5333805,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1175715840,
+            "browser_wall_ms": 1375.465041026473
+          },
+          "end_to_end_ttfr_ms": 963.4148329962045,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 49840128,
+          "python_render_ms": 4.4401249615475535,
+          "output_bytes": 1406204,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 58851328,
+          "wall_ms": 131.53354194946587,
+          "browser_probe": {
+            "ready_ms": 955.1000000238419,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16349,
+            "js_heap_bytes": 5341305,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1146765312,
+            "browser_wall_ms": 1326.1052500456572
+          },
+          "end_to_end_ttfr_ms": 959.5401249853894,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 963.8495136663938,
+      "median_ms": 963.4148329962045,
+      "stdev_ms": 4.542354681106591,
+      "min_ms": 959.5401249853894,
+      "max_ms": 968.5935830175877,
+      "library": "xy",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59359232,
+          "python_render_ms": 127.86283297464252,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 128024576,
+          "wall_ms": 330.114166950807,
+          "browser_probe": {
+            "ready_ms": 1240.2999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 39964581,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1431142400,
+            "browser_wall_ms": 1546.5170830721036
+          },
+          "end_to_end_ttfr_ms": 1368.1628329269588,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59310080,
+          "python_render_ms": 127.0048749865964,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 131514368,
+          "wall_ms": 267.78429199475795,
+          "browser_probe": {
+            "ready_ms": 1218.5,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 39449933,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1432518656,
+            "browser_wall_ms": 1506.842041038908
+          },
+          "end_to_end_ttfr_ms": 1345.5048749865964,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59260928,
+          "python_render_ms": 126.87849998474121,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 132513792,
+          "wall_ms": 268.0399169912562,
+          "browser_probe": {
+            "ready_ms": 1209.9000000953674,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 39186577,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1428996096,
+            "browser_wall_ms": 1441.829124931246
+          },
+          "end_to_end_ttfr_ms": 1336.7785000801086,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 1350.148735997888,
+      "median_ms": 1345.5048749865964,
+      "stdev_ms": 16.199326247705944,
+      "min_ms": 1336.7785000801086,
+      "max_ms": 1368.1628329269588,
+      "library": "plotly",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 76808192,
+          "build_ms": 22.803458967246115,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 1125.6999999284744,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 3864255,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 98041856,
+          "browser_peak_rss_bytes": 1111785472,
+          "browser_wall_ms": 1380.4550420027226,
+          "end_to_end_ttfr_ms": 1148.5034588957205
+        },
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 76611584,
+          "build_ms": 22.302875062450767,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 1025.8999999761581,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 3864319,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 96534528,
+          "browser_peak_rss_bytes": 1125318656,
+          "browser_wall_ms": 1237.2742090374231,
+          "end_to_end_ttfr_ms": 1048.202875038609
+        },
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 76644352,
+          "build_ms": 22.336458903737366,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 1177.8000000715256,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 3864319,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 96649216,
+          "browser_peak_rss_bytes": 1171947520,
+          "browser_wall_ms": 1441.8471249518916,
+          "end_to_end_ttfr_ms": 1200.136458975263
+        }
+      ],
+      "mean_ms": 1132.2809309698641,
+      "median_ms": 1148.5034588957205,
+      "stdev_ms": 77.25497583449216,
+      "min_ms": 1048.202875038609,
+      "max_ms": 1200.136458975263,
+      "library": "matplotlib",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 57720832,
+          "python_render_ms": 4.837792017497122,
+          "output_bytes": 692682,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 57720832,
+          "wall_ms": 134.02820902410895,
+          "browser_probe": {
+            "ready_ms": 1078.2999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 6010280,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1182482432,
+            "browser_wall_ms": 1324.640833074227
+          },
+          "end_to_end_ttfr_ms": 1083.1377919698134,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 57753600,
+          "python_render_ms": 5.054000066593289,
+          "output_bytes": 692682,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 50839552,
+          "wall_ms": 130.1507499301806,
+          "browser_probe": {
+            "ready_ms": 1068.2000000476837,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 5952164,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1149566976,
+            "browser_wall_ms": 1383.9554160367697
+          },
+          "end_to_end_ttfr_ms": 1073.254000114277,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 57720832,
+          "python_render_ms": 4.786417004652321,
+          "output_bytes": 692682,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 57737216,
+          "wall_ms": 133.39458301197737,
+          "browser_probe": {
+            "ready_ms": 1089.5,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 5927164,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1146290176,
+            "browser_wall_ms": 1340.1952920248732
+          },
+          "end_to_end_ttfr_ms": 1094.2864170046523,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 1083.5594030295808,
+      "median_ms": 1083.1377919698134,
+      "stdev_ms": 10.522545175808224,
+      "min_ms": 1073.254000114277,
+      "max_ms": 1094.2864170046523,
+      "library": "xy",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67469312,
+          "python_render_ms": 155.57699999772012,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 342966272,
+          "wall_ms": 325.72866696864367,
+          "browser_probe": {
+            "ready_ms": 1770.2999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253431939,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1716977664,
+            "browser_wall_ms": 2060.4360420256853
+          },
+          "end_to_end_ttfr_ms": 1925.8769999500364,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67485696,
+          "python_render_ms": 154.76762491744012,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 342999040,
+          "wall_ms": 334.69875005539507,
+          "browser_probe": {
+            "ready_ms": 1772.6000000238419,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253302643,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1715437568,
+            "browser_wall_ms": 2015.8297079615295
+          },
+          "end_to_end_ttfr_ms": 1927.367624941282,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67502080,
+          "python_render_ms": 157.00370899867266,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 342966272,
+          "wall_ms": 331.3744160113856,
+          "browser_probe": {
+            "ready_ms": 1784.8999999761581,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253278763,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1717026816,
+            "browser_wall_ms": 2075.9954580571502
+          },
+          "end_to_end_ttfr_ms": 1941.9037089748308,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 1931.7161112887163,
+      "median_ms": 1927.367624941282,
+      "stdev_ms": 8.854143136222964,
+      "min_ms": 1925.8769999500364,
+      "max_ms": 1941.9037089748308,
+      "library": "plotly",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 84459520,
+          "build_ms": 34.786458942107856,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 1197.3000000715256,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13002260,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 167870464,
+          "browser_peak_rss_bytes": 1166573568,
+          "browser_wall_ms": 1430.2420410094783,
+          "end_to_end_ttfr_ms": 1232.0864590136334
+        },
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 84426752,
+          "build_ms": 35.15179199166596,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 1183.7000000476837,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13002260,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 167706624,
+          "browser_peak_rss_bytes": 1132494848,
+          "browser_wall_ms": 1449.3936249054968,
+          "end_to_end_ttfr_ms": 1218.8517920393497
+        },
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 84459520,
+          "build_ms": 35.32833291683346,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 1212,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13002844,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 167919616,
+          "browser_peak_rss_bytes": 1132625920,
+          "browser_wall_ms": 1429.9619159428403,
+          "end_to_end_ttfr_ms": 1247.3283329168335
+        }
+      ],
+      "mean_ms": 1232.7555279899389,
+      "median_ms": 1232.0864590136334,
+      "stdev_ms": 14.25005561596312,
+      "min_ms": 1218.8517920393497,
+      "max_ms": 1247.3283329168335,
+      "library": "matplotlib",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 129630208,
+          "python_render_ms": 16.557374969124794,
+          "output_bytes": 690102,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 306479104,
+          "wall_ms": 200.79833292402327,
+          "browser_probe": {
+            "ready_ms": 1021.5,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 6067413,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1192280064,
+            "browser_wall_ms": 1311.4087090361863
+          },
+          "end_to_end_ttfr_ms": 1038.0573749691248,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 129744896,
+          "python_render_ms": 16.85870799701661,
+          "output_bytes": 690102,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 306642944,
+          "wall_ms": 201.1575410142541,
+          "browser_probe": {
+            "ready_ms": 1023.9000000953674,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 5911677,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1174716416,
+            "browser_wall_ms": 1322.9892919771373
+          },
+          "end_to_end_ttfr_ms": 1040.758708092384,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 129712128,
+          "python_render_ms": 17.022292013280094,
+          "output_bytes": 690102,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 305512448,
+          "wall_ms": 193.52916709613055,
+          "browser_probe": {
+            "ready_ms": 1009.7999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 5930017,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1176354816,
+            "browser_wall_ms": 1395.9190000314265
+          },
+          "end_to_end_ttfr_ms": 1026.8222919655964,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 1035.2127916757017,
+      "median_ms": 1038.0573749691248,
+      "stdev_ms": 7.390850032280657,
+      "min_ms": 1026.8222919655964,
+      "max_ms": 1040.758708092384,
+      "library": "xy",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139280384,
+          "python_render_ms": 436.2220000475645,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1952890880,
+          "wall_ms": 661.399667034857,
+          "browser_probe": {
+            "ready_ms": 7637.100000023842,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2513470235,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4315561984,
+            "browser_wall_ms": 7884.096499998122
+          },
+          "end_to_end_ttfr_ms": 8073.322000071406,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139542528,
+          "python_render_ms": 443.33966600243,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1953103872,
+          "wall_ms": 657.8744170255959,
+          "browser_probe": {
+            "ready_ms": 7669.699999928474,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2523976827,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4330160128,
+            "browser_wall_ms": 7975.973916938528
+          },
+          "end_to_end_ttfr_ms": 8113.039665930904,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139296768,
+          "python_render_ms": 447.8023339761421,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1952956416,
+          "wall_ms": 670.2299999305978,
+          "browser_probe": {
+            "ready_ms": 7632.200000047684,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2513647911,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4314185728,
+            "browser_wall_ms": 7883.396917022765
+          },
+          "end_to_end_ttfr_ms": 8080.002334023826,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 8088.7880000087125,
+      "median_ms": 8080.002334023826,
+      "stdev_ms": 21.26650395411002,
+      "min_ms": 8073.322000071406,
+      "max_ms": 8113.039665930904,
+      "library": "plotly",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 156565504,
+          "build_ms": 159.41641596145928,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 3447.7999999523163,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 9823867,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903102464,
+          "browser_peak_rss_bytes": 1459355648,
+          "browser_wall_ms": 3720.6797500839457,
+          "end_to_end_ttfr_ms": 3607.2164159137756
+        },
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 156286976,
+          "build_ms": 155.84124997258186,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 3470.7000000476837,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 9823867,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903036928,
+          "browser_peak_rss_bytes": 1454424064,
+          "browser_wall_ms": 3686.843458097428,
+          "end_to_end_ttfr_ms": 3626.5412500202656
+        },
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 156549120,
+          "build_ms": 155.8598750270903,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 3446.7000000476837,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 12868179,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903102464,
+          "browser_peak_rss_bytes": 1534492672,
+          "browser_wall_ms": 3717.438542051241,
+          "end_to_end_ttfr_ms": 3602.559875074774
+        }
+      ],
+      "mean_ms": 3612.1058470029384,
+      "median_ms": 3607.2164159137756,
+      "stdev_ms": 12.716386607476846,
+      "min_ms": 3602.559875074774,
+      "max_ms": 3626.5412500202656,
+      "library": "matplotlib",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8049606656,
+          "python_render_ms": 1091.401332989335,
+          "output_bytes": 690091,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24069488640,
+          "wall_ms": 6298.97104203701,
+          "browser_probe": {
+            "ready_ms": 1025.2000000476837,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 6038716,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1174863872,
+            "browser_wall_ms": 1373.0688749346882
+          },
+          "end_to_end_ttfr_ms": 2116.601333037019,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8049754112,
+          "python_render_ms": 1104.2680419050157,
+          "output_bytes": 690091,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24069439488,
+          "wall_ms": 6424.472708022222,
+          "browser_probe": {
+            "ready_ms": 1135.2999999523163,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 6031048,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1162199040,
+            "browser_wall_ms": 1406.2282919185236
+          },
+          "end_to_end_ttfr_ms": 2239.568041857332,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8049623040,
+          "python_render_ms": 1085.5401660082862,
+          "output_bytes": 690091,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24069586944,
+          "wall_ms": 6798.109499970451,
+          "browser_probe": {
+            "ready_ms": 1088.2000000476837,
+            "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 6168804,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1201471488,
+            "browser_wall_ms": 1351.1300419922918
+          },
+          "end_to_end_ttfr_ms": 2173.74016605597,
+          "browser_renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)"
+        }
+      ],
+      "mean_ms": 2176.6365136501067,
+      "median_ms": 2173.74016605597,
+      "stdev_ms": 61.53449838557613,
+      "min_ms": 2116.601333037019,
+      "max_ms": 2239.568041857332,
+      "library": "xy",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "memory_limit"
+      ],
+      "samples": [
+        {
+          "status": "memory_limit",
+          "library": "plotly",
+          "n": 1000000000,
+          "wall_ms": 7308.831875096075,
+          "python_peak_rss_bytes": 39544111104,
+          "stderr_tail": ""
+        }
+      ],
+      "library": "plotly",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "memory_limit"
+      ],
+      "samples": [
+        {
+          "status": "memory_limit",
+          "n": 1000000000,
+          "python_peak_rss_bytes": 39186071552,
+          "phase": "figure-build"
+        }
+      ],
+      "library": "matplotlib",
+      "n": 1000000000
+    }
+  ]
+}

@@ -351,13 +351,13 @@ def test_imshow_accepts_descending_extent_with_upper_origin() -> None:
     assert trace.kind == "heatmap"
 
 
-def test_fill_arrow_and_axline_compile_to_native_mesh_and_segments() -> None:
+def test_fill_arrow_and_axline_compile_to_native_mesh_segments_and_line() -> None:
     _fig, ax = plt.subplots()
     patches = ax.fill([0, 2, 2, 1, 0], [0, 0, 2, 1, 2], "tab:blue", alpha=0.5)
     arrow = ax.arrow(0, 0, 2, 1, head_width=0.4)
     line = ax.axline((0, 1), slope=0.5, color="red")
     assert len(patches) == 1 and arrow is not None and line is not None
-    assert [trace.kind for trace in _traces(ax)] == ["triangle_mesh", "segments", "segments"]
+    assert [trace.kind for trace in _traces(ax)] == ["triangle_mesh", "segments", "line"]
 
 
 def test_spectral_family_dispatches_fft_welch_and_correlation_to_rust() -> None:
@@ -382,14 +382,15 @@ def test_spectral_family_dispatches_fft_welch_and_correlation_to_rust() -> None:
     assert "heatmap" in kinds and "segments" in kinds
 
 
-def test_quiver_and_barbs_use_native_vector_segments() -> None:
+def test_quiver_and_barbs_translate_to_vector_segments() -> None:
     _fig, ax = plt.subplots()
     q = ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], angles="xy", scale_units="xy", scale=1)
     b = ax.barbs([0, 1], [1, 2], [0.5, 1.0], [1.0, 0.5])
     assert q is not None and b is not None
     traces = _traces(ax)
     assert [trace.kind for trace in traces] == ["segments", "segments"]
-    assert all(len(trace.x0.values) == 6 for trace in traces)
+    assert len(traces[0].x0.values) == 6
+    assert len(traces[1].x0.values) > 2
 
 
 def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
@@ -404,6 +405,28 @@ def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
     assert len(traces[0].x0.values) > 0
     assert traces[-1].kind == "triangle_mesh"
     assert len(traces[-1].x0.values) > 0
+
+
+def test_default_streamplot_uses_the_native_integrator(monkeypatch) -> None:
+    from xy import kernels
+
+    called = False
+    native = kernels.streamlines
+
+    def tracked(*args, **kwargs):
+        nonlocal called
+        called = True
+        return native(*args, **kwargs)
+
+    monkeypatch.setattr(kernels, "streamlines", tracked)
+    _fig, ax = plt.subplots()
+    x = np.linspace(-1.0, 1.0, 10)
+    y = np.linspace(-1.0, 1.0, 8)
+    xx, yy = np.meshgrid(x, y)
+
+    ax.streamplot(x, y, -yy, xx)
+
+    assert called
 
 
 def test_artist_set_ydata_rebuilds() -> None:
@@ -526,11 +549,12 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
         cellColours=[["#fee2e2", "#dcfce7"], ["#dbeafe", "#fef3c7"]],
     )
     quiver = ax.quiver([0, 1], [0, 1], [1, 1], [1, 0], [0.2, 0.8], cmap="plasma")
-    key = ax.quiverkey(quiver, 0.5, 0.5, 1.0, "1 m/s")
+    key = ax.quiverkey(quiver, 0.9, 0.9, 1.0, r"$1 \frac{m}{s}$", coordinates="figure")
     assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
     assert len(contour_labels) > 2
     assert len(table.get_celld()) == 9
     assert key is not None
+    assert ax._entries[-1]["args"][2] == "1 m/s"
     assert {trace.kind for trace in _traces(ax)} >= {"contour", "triangle_mesh", "segments"}
 
 

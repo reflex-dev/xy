@@ -33,6 +33,28 @@ def _scale_range(vmin: float, vmax: float, n: int) -> tuple[float, float]:
     return scale, offset
 
 
+def _nonsingular(
+    vmin: float,
+    vmax: float,
+    *,
+    expander: float,
+    tiny: float,
+) -> tuple[float, float]:
+    """Matplotlib's finite, increasing fallback for a singular interval."""
+    if not (np.isfinite(vmin) and np.isfinite(vmax)):
+        return -expander, expander
+    if vmax < vmin:
+        vmin, vmax = vmax, vmin
+    vmin, vmax = float(vmin), float(vmax)
+    max_abs = max(abs(vmin), abs(vmax))
+    if max_abs < (1e6 / tiny) * np.finfo(float).tiny:
+        return -expander, expander
+    if vmax - vmin <= max_abs * tiny:
+        vmin -= expander * abs(vmin)
+        vmax += expander * abs(vmax)
+    return vmin, vmax
+
+
 class _EdgeInteger:
     """matplotlib's ``ticker._Edge_integer``: offset-tolerant edge rounding."""
 
@@ -135,7 +157,9 @@ class MaxNLocator(Locator):
             ]
         )
 
-    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+    def _raw_ticks(self, vmin: float, vmax: float) -> np.ndarray:
+        from ._rc import rcParams
+
         vmin, vmax = sorted((float(vmin), float(vmax)))
         if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmin == vmax:
             return np.asarray([vmin], dtype=float)
@@ -152,7 +176,14 @@ class MaxNLocator(Locator):
             # For steps > 1, keep only integer values.
             steps = steps[(steps < 1) | (np.abs(steps - np.round(steps)) < 0.001)]
         raw_step = (_vmax - _vmin) / nbins
-        large = np.nonzero(steps >= raw_step)[0]
+        large_steps = steps >= raw_step
+        if rcParams["axes.autolimit_mode"] == "round_numbers":
+            # Match Matplotlib's MaxNLocator round-number mode: reject a step
+            # that cannot span the entire padded view in ``nbins`` intervals.
+            floored_vmins = (_vmin // steps) * steps
+            floored_vmaxs = floored_vmins + steps * nbins
+            large_steps &= floored_vmaxs >= _vmax
+        large = np.nonzero(large_steps)[0]
         istep = int(large[0]) if len(large) else len(steps) - 1
         # Start at the smallest step >= the raw step; walk down only if it
         # leaves fewer than min_n_ticks ticks inside the view.
@@ -169,6 +200,20 @@ class MaxNLocator(Locator):
             if ((ticks >= _vmin) & (ticks <= _vmax)).sum() >= self._min_n_ticks:
                 break
         return ticks + offset
+
+    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
+        vmin, vmax = _nonsingular(vmin, vmax, expander=1e-13, tiny=1e-14)
+        return self._raw_ticks(vmin, vmax)
+
+    def view_limits(self, vmin: float, vmax: float) -> tuple[float, float]:
+        """Return data limits, or edge ticks in Matplotlib round-number mode."""
+        from ._rc import rcParams
+
+        vmin, vmax = _nonsingular(vmin, vmax, expander=1e-12, tiny=1e-13)
+        if rcParams["axes.autolimit_mode"] != "round_numbers":
+            return vmin, vmax
+        ticks = self._raw_ticks(vmin, vmax)
+        return float(ticks[0]), float(ticks[-1])
 
 
 class AutoLocator(MaxNLocator):

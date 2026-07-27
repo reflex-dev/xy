@@ -7,10 +7,16 @@ description: Inspect XY's recorded launch benchmark with its exact output contra
 
 XY's large-data architecture reduces source rows to the representation useful
 for a fixed-size output instead of drawing every row as an individual marker.
-The committed 0.1.0 launch baseline measures identical seeded scatter data at
+The committed launch baseline measures identical seeded scatter data at
 900×420 pixels on an Apple M5 Pro with 64 GiB RAM. Each successful cell below
 is the mean of three isolated cold runs. The machine name and memory are copied
 verbatim from the committed environment record.
+
+The numbers on this page come from the 2026-07-26 rerun of that benchmark. It
+repeats the original 0.1.0 launch contracts on the same machine with the same
+pinned Plotly, Kaleido, Matplotlib, NumPy, and Python versions, so the intended
+variables are the XY revision and a Chrome patch bump. The 0.1.0 baseline stays
+committed and unchanged next to it.
 
 > **How to read this comparison.** XY switches dense scatter output to a
 > screen-bounded density representation, while the default Plotly and
@@ -28,15 +34,15 @@ benchmark_launch_snapshot = launch_snapshot_demo
 
 | 900×420 output contract | XY | Matplotlib | Plotly | XY representation |
 | --- | ---: | ---: | ---: | --- |
-| Static CPU PNG | 0.0232 s | 2.7842 s | 9.5834 s | density |
-| Interactive first render, default GPU | 0.1797 s | 3.0029 s | 3.6434 s | density + sample |
-| Interactive first render, CPU fallback | 0.9920 s | 3.6735 s | 8.2152 s | density + sample |
+| Static CPU PNG | 0.0184 s | 2.7432 s | 9.6433 s | density |
+| Interactive first render, default GPU | 0.1875 s | 2.9842 s | 3.3729 s | density + sample |
+| Interactive first render, CPU fallback | 1.0352 s | 3.6121 s | 8.0888 s | density + sample |
 
 These summary tables show means only; the linked launch report publishes the
 sample standard deviation for every successful timing cell. Small reversals in
-adjacent means, such as 100k versus 1M on the default interactive path, are
-within the observed three-run variation and should not be read as evidence that
-more rows are inherently faster.
+adjacent means, such as 100k versus 1M on the static path, are within the
+observed three-run variation and should not be read as evidence that more rows
+are inherently faster.
 
 The output contracts are intentionally separate. Static PNG rows compare
 validated CPU-rendered images. Interactive rows include figure construction,
@@ -60,12 +66,12 @@ At 10 million points, the static CPU output contract recorded:
 
 | Peak process-tree RSS | XY | Matplotlib | Plotly / Kaleido |
 | --- | ---: | ---: | ---: |
-| Static 900×420 PNG | 0.283 GiB | 0.834 GiB | 5.671 GiB |
+| Static 900×420 PNG | 0.286 GiB | 0.831 GiB | 5.298 GiB |
 
 Plotly's static value includes the Kaleido and Chrome processes used by
 `to_image()`. RSS was sampled across each complete process tree every 50 ms, so
 very brief peaks may be missed. At one billion points, XY's successful static
-row peaked at 22.414 GiB; Matplotlib crossed the 36 GiB guardrail and Plotly did
+row peaked at 22.413 GiB; Matplotlib crossed the 36 GiB guardrail and Plotly did
 not produce a PNG on its first guarded attempt.
 
 ## What scales with rows—and what does not
@@ -80,11 +86,11 @@ That distinction is visible in the recorded sweep:
 
 | Points | Native static PNG | Interactive, default GPU | XY representation |
 | ---: | ---: | ---: | --- |
-| 10k | 0.0085 s | 0.1533 s | direct |
-| 100k | 0.0108 s | 0.1742 s | direct |
-| 1M | 0.0114 s | 0.1688 s | density; density + sample interactive |
-| 10M | 0.0232 s | 0.1797 s | density; density + sample interactive |
-| 1B | 1.1452 s | 1.2530 s | density; density + sample interactive |
+| 10k | 0.0036 s | 0.1643 s | direct |
+| 100k | 0.0060 s | 0.1680 s | direct |
+| 1M | 0.0058 s | 0.1762 s | density; density + sample interactive |
+| 10M | 0.0184 s | 0.1875 s | density; density + sample interactive |
+| 1B | 1.1288 s | 1.2419 s | density; density + sample interactive |
 
 At one billion points, XY ingested the rows and produced a validated density
 PNG and interactive density overview. It did **not** draw one billion markers.
@@ -127,19 +133,21 @@ competitors, and environments.
 
 ## Inspect and reproduce the evidence
 
-The baseline records its source commit (`7228f99`), exact dependency lock,
+The baseline records its source commit (`7604775`), exact dependency lock,
 hardware, browser, raw samples, failure rows, and render oracles:
 
-- [Launch report](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
-- [Environment](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/environment.json)
-- [Raw default-path results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/default-results.json)
+- [Launch report](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md)
+- [Environment](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/environment.json)
+- [Raw default-path results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/default-results.json)
+- [Raw CPU-fallback results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/cpu-fallback-results.json)
+- [Original 0.1.0 launch baseline](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
 - [Benchmark runbook](https://github.com/reflex-dev/xy/blob/main/benchmarks/README.md)
 
 After completing the runbook setup, reproduce the frozen default-path sweep
 from the source revision recorded in the environment file:
 
 ```bash
-BASELINE=benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro
+BASELINE=benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro
 uv sync --project "$BASELINE" --frozen --python 3.14.5
 CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
 

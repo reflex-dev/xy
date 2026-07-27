@@ -229,6 +229,8 @@ class Axis(Component):
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    # New fields append after the v0.0.3 positional surface.
+    margin: Optional[float] = None
 
 
 @dataclass
@@ -246,6 +248,7 @@ class Legend(Component):
     # construction over the released field order must keep binding.
     highlight: bool = True
     toggle: bool = True
+    anchor: Optional[tuple[float, ...]] = None
 
 
 @dataclass
@@ -924,6 +927,7 @@ def segments(
     domain: Optional[tuple[float, float]] = None,
     width: Any = 1.2,
     opacity: Any = 1.0,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -945,6 +949,7 @@ def segments(
         domain: Explicit minimum and maximum for continuous colors.
         width: Segment width in pixels.
         opacity: Segment opacity from zero to one.
+        dash: Optional line dash pattern.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -966,6 +971,7 @@ def segments(
             "domain": domain,
             "width": width,
             "opacity": opacity,
+            "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -988,6 +994,7 @@ def triangle_mesh(
     opacity: Any = 1.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
+    _joined_fill: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1012,6 +1019,7 @@ def triangle_mesh(
         opacity: Triangle opacity from zero to one.
         stroke: Optional triangle outline color.
         stroke_width: Triangle outline width in pixels.
+        _joined_fill: Internal pyplot hint for suppressing shared triangle edges.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -1036,6 +1044,7 @@ def triangle_mesh(
             "opacity": opacity,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_joined_fill": _joined_fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1453,10 +1462,12 @@ def contour(
     filled: bool = False,
     name: Optional[str] = None,
     colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
-    color: Optional[str] = None,
-    width: float = 1.1,
+    color: Any = None,
+    width: Any = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    extend: str = "neither",
+    corner_mask: bool = False,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1473,10 +1484,12 @@ def contour(
         filled: Whether to fill intervals between contours.
         name: Series label used by legends and tooltips.
         colormap: Colormap used for contour values.
-        color: Constant isoline color.
-        width: Isoline width in pixels.
+        color: Constant isoline color or direct RGBA colors cycled by level.
+        width: Isoline width in pixels, scalar or cycled by contour level.
         opacity: Contour opacity from zero to one.
         dash_negative: Whether negative isolines use a dashed stroke.
+        extend: Whether filled contours paint values below or above the levels.
+        corner_mask: Preserve the valid triangle of a quad with one missing corner.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -1499,6 +1512,8 @@ def contour(
             "width": width,
             "opacity": opacity,
             "dash_negative": dash_negative,
+            "extend": extend,
+            "corner_mask": corner_mask,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1625,7 +1640,7 @@ def bar(
     name: Optional[str] = None,
     color: Any = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1652,7 +1667,7 @@ def bar(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Bar width in category units.
+        width: Scalar or per-bar widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: ``vertical`` or ``horizontal`` orientation.
@@ -1708,7 +1723,7 @@ def column(
     name: Optional[str] = None,
     color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
-    width: float = 0.8,
+    width: Union[Scalar, ArrayLike] = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
@@ -1734,7 +1749,7 @@ def column(
         name: Series label used by legends and tooltips.
         color: Constant color, values, or a column name.
         colors: Colors assigned to multiple series.
-        width: Column width in category units.
+        width: Scalar or per-column widths in category units.
         base: Baseline value, values, or a column name.
         mode: ``grouped``, ``stacked``, or ``normalized`` layout.
         orientation: Orientation forwarded to the bar renderer.
@@ -2342,6 +2357,7 @@ def x_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2371,6 +2387,7 @@ def x_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2417,6 +2434,7 @@ def x_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "x_axis constant"),
         domain=_axis_domain(domain, "x_axis domain"),
+        margin=_optional_nonnegative_number(margin, "x_axis margin"),
         bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
@@ -2446,6 +2464,7 @@ def y_axis(
     type_: Optional[str] = None,
     constant: Optional[float] = None,
     domain: Optional[tuple[float, float]] = None,
+    margin: Optional[float] = None,
     bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
@@ -2475,6 +2494,7 @@ def y_axis(
         type_: Scale type, such as ``linear``, ``time``, ``log``, or ``symlog``.
         constant: Width of the linear region around zero for ``symlog``.
         domain: Explicit minimum and maximum scale values.
+        margin: Fractional padding around an automatic domain.
         bounds: Hard navigation limits, or ``"data"`` to use the data range.
             Pan and zoom are clamped within these limits; ``None`` leaves
             navigation unrestricted.
@@ -2521,6 +2541,7 @@ def y_axis(
         type_=type_,
         constant=_axis_constant(constant, type_, "y_axis constant"),
         domain=_axis_domain(domain, "y_axis domain"),
+        margin=_optional_nonnegative_number(margin, "y_axis margin"),
         bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
@@ -2544,6 +2565,7 @@ def legend(
     *children: Any,
     show: bool = True,
     loc: Optional[str] = None,
+    anchor: Optional[tuple[float, ...]] = None,
     ncols: int = 1,
     title: Optional[str] = None,
     highlight: bool = True,
@@ -2558,6 +2580,7 @@ def legend(
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
         loc: Legend placement within or around the plot.
+        anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.
         highlight: Whether hovering a legend entry emphasizes its series by
@@ -2569,9 +2592,16 @@ def legend(
         style: Legend style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "legend")
+    if anchor is not None:
+        if isinstance(anchor, (str, bytes)) or len(anchor) not in (2, 4):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
+        anchor = tuple(float(value) for value in anchor)
+        if not all(math.isfinite(value) for value in anchor):
+            raise ValueError("legend anchor must contain 2 or 4 finite numbers")
     return Legend(
         show=_strict_bool(show, "legend show"),
         loc=_validate.legend_loc(loc, "legend loc"),
+        anchor=anchor,
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         title=_optional_string(title, "legend title"),
         highlight=_strict_bool(highlight, "legend highlight"),
@@ -3232,6 +3262,7 @@ class Chart(Component):
                 type_=axis.type_,
                 constant=axis.constant,
                 domain=axis.domain,
+                margin=axis.margin,
                 bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,
@@ -3397,6 +3428,8 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.anchor is not None:
+                fig.legend_options["anchor"] = list(node.anchor)
             if node.title is not None:
                 fig.legend_options["title"] = node.title
             if not _strict_bool(node.highlight, "legend highlight"):
@@ -5238,6 +5271,7 @@ def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
         domain=m.props["domain"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        dash=m.props["dash"],
         style=m.style,
     )
 
@@ -5258,6 +5292,7 @@ def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _joined_fill=m.props["_joined_fill"],
         style=m.style,
     )
 
@@ -5391,6 +5426,8 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash_negative=m.props.get("dash_negative", False),
+        extend=m.props.get("extend", "neither"),
+        corner_mask=m.props.get("corner_mask", False),
         style=m.style,
     )
 

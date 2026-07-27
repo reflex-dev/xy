@@ -23,12 +23,13 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from itertools import pairwise
 from os import PathLike
 from typing import Any, Optional
 
 import numpy as np
 
-from . import _native, _paint, _png
+from . import _fontmetrics, _native, _paint, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -57,6 +58,11 @@ def escape(data: str, entities: dict[str, str] | None = None) -> str:
     return data
 
 
+def _escape_attr(data: Any) -> str:
+    """Escape arbitrary text for a double-quoted XML attribute."""
+    return escape(str(data), {'"': "&quot;"})
+
+
 def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     """CSS whole-mark opacity multiplied by the fill-only channel."""
     return float(style.get("opacity", default)) * float(style.get("fill_opacity", 1.0))
@@ -67,9 +73,91 @@ def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
 
 
+def _flag_stops() -> list[tuple[int, int, int]]:
+    """Matplotlib's high-frequency ``flag`` map at the native 256 LUT positions."""
+    x = np.linspace(0.0, 1.0, 256)
+    channels = np.column_stack(
+        (
+            0.75 * np.sin((x * 31.5 + 0.25) * np.pi) + 0.5,
+            np.sin(x * 31.5 * np.pi),
+            0.75 * np.sin((x * 31.5 - 0.25) * np.pi) + 0.5,
+        )
+    )
+    # Match Matplotlib's ``bytes=True`` conversion, which truncates rather than
+    # rounds each clipped channel after scaling it to the uint8 range.
+    rgb = (np.clip(channels, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return [tuple(int(channel) for channel in row) for row in rgb]
+
+
 # Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
     "binary": [(255, 255, 255), (0, 0, 0)],
+    "flag": _flag_stops(),
+    "reds": [
+        (255, 245, 240),
+        (254, 229, 216),
+        (253, 202, 181),
+        (252, 171, 143),
+        (252, 138, 106),
+        (251, 105, 74),
+        (241, 68, 50),
+        (217, 37, 35),
+        (188, 20, 26),
+        (152, 12, 19),
+        (103, 0, 13),
+    ],
+    "bone": [
+        (0, 0, 0),
+        (22, 22, 30),
+        (45, 45, 62),
+        (66, 66, 93),
+        (89, 92, 121),
+        (112, 123, 144),
+        (134, 154, 166),
+        (157, 185, 188),
+        (185, 210, 210),
+        (221, 233, 233),
+        (255, 255, 255),
+    ],
+    "autumn": [
+        (255, 0, 0),
+        (255, 25, 0),
+        (255, 51, 0),
+        (255, 76, 0),
+        (255, 102, 0),
+        (255, 128, 0),
+        (255, 153, 0),
+        (255, 179, 0),
+        (255, 204, 0),
+        (255, 230, 0),
+        (255, 255, 0),
+    ],
+    "winter": [
+        (0, 0, 255),
+        (0, 25, 242),
+        (0, 51, 230),
+        (0, 76, 217),
+        (0, 102, 204),
+        (0, 128, 191),
+        (0, 153, 178),
+        (0, 179, 166),
+        (0, 204, 153),
+        (0, 230, 140),
+        (0, 255, 128),
+    ],
+    "bupu": [
+        (247, 252, 253),
+        (229, 239, 246),
+        (204, 221, 236),
+        (178, 202, 225),
+        (154, 180, 214),
+        (140, 149, 198),
+        (140, 116, 181),
+        (138, 81, 165),
+        (133, 45, 144),
+        (118, 12, 113),
+        (77, 0, 75),
+    ],
     "gray": [
         (0, 0, 0),
         (25, 25, 25),
@@ -802,12 +890,19 @@ SLOT_TEXT_PROPS: tuple[str, ...] = (
     "opacity",
 )
 
-#: What the RASTER writer honors. Its glyph primitive takes a size and one RGBA
-#: paint and nothing else, so the typeface properties have no argument to land
-#: in — and `opacity` and `letter-spacing` are not read either, rather than
-#: being silently approximated (§28). `SLOT_TEXT_PROPS` minus this tuple is the
-#: documented vector-only set.
-SLOT_RASTER_PROPS: tuple[str, ...] = ("font-size", "fill", "color")
+#: What the RASTER writer honors. The baked atlas carries a regular, a bold and
+#: an italic face, so weight and style survive — a weight >= 600 rounds up to
+#: the bold face (`_raster._native_font_emphasis`). It has no family axis and no
+#: per-glyph advance control, so `font-family` and `letter-spacing` are
+#: vector-only, and `opacity` is not read rather than being silently
+#: approximated (§28). `SLOT_TEXT_PROPS` minus this tuple is the vector-only set.
+SLOT_RASTER_PROPS: tuple[str, ...] = (
+    "font-size",
+    "font-weight",
+    "font-style",
+    "fill",
+    "color",
+)
 
 #: The `colorbar` slot's own font size, from its stylesheet rule in
 #: `js/src/20_theme.ts`. Every writer names it so none of them inherits a
@@ -935,7 +1030,10 @@ def slot_text_attrs(style: dict[str, Any], **defaults: Any) -> str:
             continue
         if prop == "letter-spacing" and not isinstance(value, str):
             value = _num(_px_size(value, 0.0))
-        parts.append(f' {prop}="{escape(str(value))}"')
+        # `_escape_attr`, not `escape`: a font-family stack quotes any name with
+        # a space (`"Times New Roman", serif`), and a bare `"` closes the
+        # attribute and breaks the document.
+        parts.append(f' {prop}="{_escape_attr(value)}"')
     return "".join(parts)
 
 
@@ -1272,10 +1370,16 @@ _SYMBOL_BUILDERS = {
         f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
     ),
     "diamond": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - r)} {_num(cy)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy - 2**0.5 * r)} '
+        f"L {_num(cx + 2**0.5 * r)} {_num(cy)} "
+        f"L {_num(cx)} {_num(cy + 2**0.5 * r)} "
+        f'L {_num(cx - 2**0.5 * r)} {_num(cy)} Z"'
     ),
     "thin_diamond": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.6 * r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - 0.6 * r)} {_num(cy)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy - 2**0.5 * r)} '
+        f"L {_num(cx + 0.6 * 2**0.5 * r)} {_num(cy)} "
+        f"L {_num(cx)} {_num(cy + 2**0.5 * r)} "
+        f'L {_num(cx - 0.6 * 2**0.5 * r)} {_num(cy)} Z"'
     ),
     "triangle": lambda cx, cy, r: (
         f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + r)} Z"'
@@ -1440,34 +1544,143 @@ def _colorbar_right_axis_room(
     return 0.0
 
 
-def _left_tick_label_room(spec: dict[str, Any], axes: dict[str, Any], plot_h: float) -> float:
-    """Pixels the left y-axis tick labels actually need, or 0.0 if they fit.
+# Smallest gap between the canvas edge and the outermost axis ink.
+# Antialiased leading glyphs must not land on the export boundary.
+_AXIS_TEXT_EDGE_PAD = 4.0
+# Gap between the y title's ink and the nearest tick label's ink, as a fraction
+# of the title's font size. Matplotlib leaves 5.6 px at its 13.89 px (10 pt at
+# 100 dpi) default — measured with `Text.get_window_extent` on 3.11.1.
+_Y_TITLE_TICK_GAP = 0.4
 
-    The gutter is otherwise a constant sized for bare `-0.5`-style labels, so
-    a `format="$,.0f"` axis drew `$1,000,000` off the left edge of the canvas.
-    Only ever widens: a chart whose labels already fit keeps its historical
-    geometry byte for byte."""
-    widest = 0.0
-    for axis_id, axis in axes.items():
+
+def _text_cell(font_size: float) -> tuple[float, float]:
+    """(ascent, descent) in px of the core's DejaVu face at `font_size`."""
+    return (
+        font_size * _fontmetrics.ASCENT / _fontmetrics.BASE_PX,
+        font_size * _fontmetrics.DESCENT / _fontmetrics.BASE_PX,
+    )
+
+
+def _has_outside_y_title(axis: dict[str, Any]) -> bool:
+    """Whether a y-axis title needs space outside the plot rectangle."""
+    if not axis.get("label"):
+        return False
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    return not position.replace("-", "_").startswith("inside_")
+
+
+def _axis_text_paint_visible(
+    axis: dict[str, Any],
+    key: str,
+    fallback_key: Optional[str] = None,
+) -> bool:
+    """Whether an axis text paint can contribute visible ink.
+
+    Axis visibility shorthands are compiled to transparent CSS colors. Layout
+    must not measure that invisible text back into an explicit zero padding,
+    or ``show=False`` cannot produce the documented edge-to-edge sparkline.
+    Unknown/browser-only paints stay conservative and reserve their room.
+    """
+    style = axis.get("style") or {}
+    paint = style.get(key)
+    if paint is None and fallback_key is not None:
+        paint = style.get(fallback_key)
+    if paint is None:
+        return True
+    return _paint_rgba8(_css(paint, _TEXT))[3] != 0
+
+
+def _y_title_baseline(
+    axis: dict[str, Any],
+    plot: dict[str, float],
+) -> Optional[float]:
+    """Baseline x of a quarter-turned y-axis title, or None when it has none.
+
+    Matplotlib positions a y title from the outer edge of the tick-label union,
+    not from the canvas edge. A static exporter emits a baseline while the
+    browser positions a centered line box; the returned coordinate includes
+    that box-to-baseline correction.
+    """
+    if not _has_outside_y_title(axis):
+        return None  # absent or drawn over the plot; it needs no gutter
+    style = axis.get("style") or {}
+    font_size = float(style.get("label_size", 12))
+    side = axis.get("side", "left")
+    ascent, descent = _text_cell(font_size)
+    if side == "right":
+        # Right-side axes still use the existing fixed 42/54 px reservation.
+        # Keep their plot-relative placement unchanged; this repair only
+        # measures the left gutter that can otherwise clip against x=0.
+        angle = float(axis.get("label_angle", 90.0))
+        shift = (ascent - descent) / 2 if abs(abs(angle) - 90.0) < 0.5 else 0.0
+        return plot["x"] + plot["w"] + 40.0 - shift + float(axis.get("label_offset", 0.0))
+    tick_offset, tick_room = _y_tick_label_room(axis, plot["h"])
+    gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * font_size))
+    return plot["x"] - tick_offset - tick_room - gap - descent
+
+
+def _y_tick_label_room(axis: dict[str, Any], plot_h: float) -> tuple[float, float]:
+    """(offset from the spine, widest tick-label extent) for a y axis, in px.
+
+    Measured from the advance widths of the strings that will actually be drawn,
+    using the same DejaVu metrics the Rust rasterizer blits (`src/font.rs`) —
+    which is also Matplotlib's default face, so an advance measured here is the
+    advance Matplotlib lays out.
+    """
+    if _axis_tick_label_strategy(axis) in {"none", "off"} or not _axis_text_paint_visible(
+        axis, "tick_label_color", "tick_color"
+    ):
+        return 0.0, 0.0
+    font_size = _axis_tick_font_size(axis)
+    ascent, descent = _text_cell(font_size)
+    raw_angle = axis.get("tick_label_angle")
+    angle = abs(float(raw_angle or 0.0)) * math.pi / 180.0
+    _values, labels, step = axis_ticks(axis, plot_h, False)
+    room = 0.0
+    for value in labels:
+        advance = _fontmetrics.advance(str(_tick_text(axis, value, step)), font_size)
+        # A rotated label trades width for height about its pinned edge.
+        room = max(room, advance * math.cos(angle) + (ascent + descent) * math.sin(angle))
+    # Match the SVG y-label placement below.  A y label's anchored edge is
+    # already the glyph-side edge, so unlike an x-label baseline it needs no
+    # extra font-room term.
+    return _axis_tick_label_offset(axis, 8.0), room
+
+
+def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
+    """Left gutter the y-axis text needs, measured rather than assumed.
+
+    `layout()`'s fixed 46/62 px default fits ordinary numeric ticks under a
+    12 px title. Matplotlib's rcParam fonts (13.89 px at 100 dpi), long category
+    names, and authored tick labels all exceed it, and the shortfall lands as a
+    title drawn on top of the tick labels — or off the canvas — instead of as a
+    wider gutter.
+
+    Right-side y axes deliberately keep the flat 42/54 px reservation above:
+    ChartView pins a right title plot-relative (`plot-right+40`) rather than to
+    a canvas inset, so widening only the static exporters' right gutter would
+    move their title away from the browser's. That asymmetry is recorded in
+    `spec/api/styling.md`, not silently fixed here.
+    """
+    room = 0.0
+    for axis_id, axis in _axes_by_id(spec).items():
         if not axis_id.startswith("y") or axis.get("side", "left") == "right":
             continue
-        if _axis_tick_label_strategy(axis) in {"none", "off"}:
+        tick_offset, tick_room = _y_tick_label_room(axis, plot_h)
+        title_visible = _has_outside_y_title(axis) and _axis_text_paint_visible(axis, "label_color")
+        if not title_visible:
+            if tick_offset == 0.0 and tick_room == 0.0:
+                continue
+            room = max(room, _AXIS_TEXT_EDGE_PAD + tick_offset + tick_room)
             continue
-        _ticks, labeled, step = axis_ticks(axis, plot_h, False)
-        font_size = _axis_tick_font_size(axis)
-        for value in labeled:
-            text = _tick_text(axis, value, step)
-            # The same width model `_axis_tick_label_layout` collides with.
-            widest = max(widest, len(str(text)) * font_size * 0.62)
-    if widest <= 0.0:
-        return 0.0
-    # Right-anchored at `plot.x - 8`; a rotated axis title parks further left.
-    room = widest + 8.0
-    if any(
-        axis_id.startswith("y") and axis.get("side", "left") != "right" and axis.get("label")
-        for axis_id, axis in axes.items()
-    ):
-        room += 22.0
+        label_size = float((axis.get("style") or {}).get("label_size", 12))
+        ascent, descent = _text_cell(label_size)
+        gap = float(axis.get("label_offset", _Y_TITLE_TICK_GAP * label_size))
+        room = max(
+            room,
+            _AXIS_TEXT_EDGE_PAD + ascent + descent + gap + tick_offset + tick_room,
+        )
     return room
 
 
@@ -1526,11 +1739,14 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # secondary-y tick labels/title. Multiple right axes intentionally
         # overlay in both renderers until offset axes become part of the API.
         right += 42 if compact else 54
-    if not (isinstance(pad, list) and len(pad) == 4):
-        # An explicit `padding=` is the author's call; otherwise make room for
-        # the labels this axis will actually draw. Independent of `left`, so
-        # measuring here is not circular.
-        left = max(left, _left_tick_label_room(spec, axes, max(40, height - top - bottom)))
+    # Measured y-axis text room, applied last. The vertical extent is already
+    # final (only top/bottom feed it), so the tick density the reservation
+    # measures is the density that will be drawn. This raises a *floor*: an
+    # authored `padding` and the 46/62 default both stand whenever they already
+    # fit, exactly as the colorbar/right-axis room above is additive rather
+    # than authoritative. Reserving less than the ink is not an option — a
+    # static export has no ellipsis to fall back on the way the DOM does.
+    left = max(left, _y_axis_left_room(spec, max(40, height - top - bottom)))
     plot = {
         "x": left,
         "y": top,
@@ -1597,6 +1813,62 @@ def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
 def _axis_tick_font_size(axis: dict[str, Any]) -> float:
     style = axis.get("style") or {}
     return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
+
+
+def _axis_tick_geometry_authored(axis: dict[str, Any]) -> bool:
+    """True when the axis authored tick geometry (label pad or mark length).
+
+    Core's default ``tick_length`` is 0 and it has no default ``tick_padding``,
+    so deriving the spine-to-label distance from tick geometry unconditionally
+    would move the tick labels of *every* chart that styles no ticks. Charts
+    that author neither key therefore keep the historical placement, and only
+    authored geometry — an explicit ``tick_length``/``tick_padding``, or
+    pyplot's rc-supplied ``{x,y}tick.major.pad`` — opts into matplotlib's rule.
+    The visibility shorthand's exact ``tick_length=0, tick_width=0`` sentinel
+    only suppresses paint and therefore keeps the historical label placement.
+    """
+    style = axis.get("style") or {}
+    if "tick_padding" in style:
+        return True
+    if "tick_length" not in style:
+        return False
+    return not (
+        float(style.get("tick_length", 0)) == 0.0 and float(style.get("tick_width", 1)) == 0.0
+    )
+
+
+def _axis_tick_label_offset(axis: dict[str, Any], unstyled: float, font_room: float = 0.0) -> float:
+    """Distance from the axis spine to a tick label's anchor point, in px.
+
+    Matplotlib measures tick padding from the outward end of the tick mark
+    rather than from the spine, and the anchor then sits ``font_room`` times the
+    tick font size further out (the SVG/raster anchor is the text baseline, so
+    an x label below the plot must clear the ascent). Axes that author no tick
+    geometry keep `unstyled`, the caller's historical gap for that side — see
+    `_axis_tick_geometry_authored`. Those gaps were already asymmetric per side
+    (16/7/8 px for bottom/top/y here), so per-side defaults reproduce the
+    existing contract rather than approximate it.
+    """
+    if not _axis_tick_geometry_authored(axis):
+        return unstyled
+    style = axis.get("style") or {}
+    length = max(0.0, float(style.get("tick_length", 0)))
+    direction = str(style.get("tick_direction", "out"))
+    outward = 0.0 if direction == "in" else length / 2 if direction == "inout" else length
+    pad = outward + float(style.get("tick_padding", 4))
+    return pad + _axis_tick_font_size(axis) * font_room
+
+
+def _axis_tick_label_baseline_shift(axis: dict[str, Any]) -> float:
+    """Baseline nudge that centers a y tick label on its tick, in px.
+
+    Font-proportional once tick geometry is authored (matplotlib centers the
+    label on its cap height); unstyled axes keep the historical flat 4 px so
+    core charts do not shift. See `_axis_tick_geometry_authored`.
+    """
+    if not _axis_tick_geometry_authored(axis):
+        return 4.0
+    return _axis_tick_font_size(axis) * 0.35
 
 
 def _axis_tick_label_layout(
@@ -1753,10 +2025,21 @@ def _axis_label_geometry(
         text_anchor = "start" if anchor == "start" else "end" if anchor == "end" else "middle"
         angle = float(axis.get("label_angle", 0.0))
     else:
-        outside_x = plot["x"] + plot["w"] + 40 if side == "right" else 10
-        inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
-        x = inside_x if inside else outside_x
-        x += (-offset if inside else offset) if side == "right" else (offset if inside else -offset)
+        if inside:
+            inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
+            x = inside_x + (-offset if side == "right" else offset)
+        else:
+            # The rotated title's *line box* is centered on ChartView's inset
+            # (`left:10px` / `plot-right+40px`); a static exporter emits a
+            # baseline. `_y_title_baseline` applies that half-line-box
+            # correction and the axis's own `label_offset`, and is the same
+            # function `layout()` reserves the gutter from.
+            baseline = _y_title_baseline(axis, plot)
+            x = (
+                baseline
+                if baseline is not None
+                else (plot["x"] + plot["w"] + 40 + offset if side == "right" else 10 - offset)
+            )
         y = plot["y"] + plot["h"] * (1.0 - anchor_fraction)
         text_anchor = "middle"
         angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))
@@ -1846,6 +2129,16 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         font_size = slot_font_size(slot, _axis_tick_font_size(axis))
         slot_attrs = slot_text_attrs(slot)
         side = axis.get("side", "bottom" if is_x else "left")
+        # Unstyled defaults reproduce the pre-`tick_label_pad` placement exactly.
+        if is_x:
+            label_offset = (
+                _axis_tick_label_offset(axis, 7.0, 0.2)
+                if side == "top"
+                else _axis_tick_label_offset(axis, 16.0, 0.8)
+            )
+        else:
+            label_offset = _axis_tick_label_offset(axis, 8.0)
+        baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # angle/side-derived default. Anchored labels rotate about the tick
         # point (the rotate() pivot below), so anchor and rotation compose —
@@ -1857,9 +2150,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 row_offset = float(item["row"]) * (font_size + 4)
                 x = float(item["pos"])
                 y = (
-                    plot["y"] - 7 - row_offset
+                    plot["y"] - label_offset - row_offset
                     if side == "top"
-                    else plot["y"] + plot["h"] + 16 + row_offset
+                    else plot["y"] + plot["h"] + label_offset + row_offset
                 )
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
@@ -1870,8 +2163,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 else:
                     anchor = "start"
             else:
-                x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
-                y = float(item["pos"]) + 4
+                x = (
+                    plot["x"] + plot["w"] + label_offset
+                    if side == "right"
+                    else plot["x"] - label_offset
+                )
+                y = float(item["pos"]) + baseline_shift
                 if explicit_anchor:
                     anchor = _TEXT_ANCHORS[explicit_anchor]
                 else:
@@ -1998,7 +2295,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<text x="{_num(width / 2)}" '
             f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
             f'text-anchor="middle" font-size="{_num(slot_font_size(title_slot, 14.0))}"'
-            f"{slot_text_attrs(title_slot, font_weight='600')} "
+            f"{slot_text_attrs(title_slot, font_weight='400')} "
             f'fill="{escape(slot_text_color(title_slot, default_text))}">'
             f"{escape(str(spec['title']))}</text>"
         )
@@ -2012,13 +2309,23 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
-        # The axis's own `label_color` is the narrower selector, so it wins over
-        # the chart-wide slot; the slot still supplies size, weight and family.
+        # The axis's own label_* keys are the narrower selector, so they win
+        # over the chart-wide slot; the slot supplies whatever they leave unset.
+        family = axis_style.get("label_font_family")
+        font_style = axis_style.get("label_font_style")
+        weight = axis_style.get("label_font_weight", 400)
         paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, default_text)
+        font_attrs = (f' font-family="{_escape_attr(family)}"' if family is not None else "") + (
+            f' font-style="{_escape_attr(font_style)}"' if font_style is not None else ""
+        )
+        if not font_attrs:
+            font_attrs = slot_text_attrs(slot, font_weight=weight)
+        else:
+            font_attrs = f' font-weight="{_escape_attr(weight)}"' + font_attrs
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
             f'font-size="{_num(slot_font_size(slot, float(geometry["font_size"])))}"'
-            f"{slot_text_attrs(slot, font_weight='500')} "
+            f"{font_attrs} "
             f'fill="{escape(paint)}"{transform}>'
             f"{escape(str(axis['label']))}</text>"
         )
@@ -2032,12 +2339,14 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     named = legend_items(spec["traces"], spec_palette)
     legend_label_slot = slots.get("legend_label") or {}
     legend_title_slot = slots.get("legend_title") or {}
-    if spec.get("show_legend", True) and named:
+    main_legend = spec.get("legend") or {}
+    main_items = main_legend.get("items") or named
+    if spec.get("show_legend", True) and main_items:
         chrome.append(
             _legend(
-                named,
+                main_items,
                 plot,
-                legend_options_with_slot(spec, spec.get("legend") or {}),
+                legend_options_with_slot(spec, main_legend),
                 clip_id,
                 default_text,
                 spec_palette,
@@ -2081,9 +2390,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # baselines above the marks, matching the client's overlay rules
     baselines = ""
     frame_sides = spec.get("frame_sides")
+    explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
-    if not hide_y:
+    if not hide_y or explicit_frame_sides:
         for side, x in (("left", plot["x"]), ("right", plot["x"] + plot["w"])):
             if side in frame_sides:
                 baselines += (
@@ -2092,7 +2402,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
                     f'stroke-width="{_num(float(ystyle.get("axis_width", 1)))}"/>'
                 )
-    if not hide_x:
+    if not hide_x or explicit_frame_sides:
         for side, y in (("top", plot["y"]), ("bottom", plot["y"] + plot["h"])):
             if side in frame_sides:
                 baselines += (
@@ -2443,15 +2753,18 @@ def _annotation_svg(
                         style.get("opacity", 1.0) if kind == "text" else 1.0,
                     )
                 )
+                line_offset = 0
                 for index, line in enumerate(lines):
                     bx = tx + float(ann.get("dx", 0)) + base + index * stack
+                    styled_line = _svg_mathtext_spans(line, style, line_offset)
                     labels.append(
                         f'<text text-anchor="{along}" font-size="{_num(font_size)}" '
                         f'transform="rotate({90 if cw else -90} {_num(bx)} {_num(by)})" '
                         f'x="{_num(bx)}" y="{_num(by)}" '
                         + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
-                        + f'fill="{color}">{escape(line)}</text>'
+                        + f'fill="{color}">{styled_line}</text>'
                     )
+                    line_offset += len(line) + 1
                 continue
             x_text = tx + float(ann.get("dx", 0))
             y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
@@ -2460,11 +2773,18 @@ def _annotation_svg(
                 y_text += font_size * 0.35
             elif vertical_align == "top":
                 y_text += font_size * 0.8
-            tspans = "".join(
-                f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
-                f"{escape(line)}</tspan>"
-                for index, line in enumerate(lines)
-            )
+            elif vertical_align == "bottom":
+                y_text -= font_size * 0.2
+            line_offset = 0
+            tspan_parts = []
+            for index, line in enumerate(lines):
+                styled_line = _svg_mathtext_spans(line, style, line_offset)
+                tspan_parts.append(
+                    f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
+                    f"{styled_line}</tspan>"
+                )
+                line_offset += len(line) + 1
+            tspans = "".join(tspan_parts)
             text_opacity = float(
                 style.get(
                     "label_opacity",
@@ -2473,12 +2793,173 @@ def _annotation_svg(
             )
             # A callout's `color` paints its arrow; the label prefers its own.
             label_color = escape(_css(style.get("label_color"), "")) or color
+            labels.extend(
+                _svg_text_box(style, lines, x_text, y_text, line_height, font_size, anchor)
+            )
+            font_attrs = _svg_font_attrs(style)
+            rotation_attr = (
+                f' transform="rotate({_num(-rotation)} {_num(x_text)} {_num(y_text)})"'
+                if rotation
+                else ""
+            )
             labels.append(
-                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
+                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}"{font_attrs}'
+                f"{rotation_attr} "
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
     return marks, labels
+
+
+def _svg_font_attrs(style: dict[str, Any]) -> str:
+    attrs = []
+    for key, attribute in (
+        ("font_family", "font-family"),
+        ("font_weight", "font-weight"),
+        ("font_style", "font-style"),
+    ):
+        if style.get(key) is not None:
+            attrs.append(f' {attribute}="{escape(str(style[key]))}"')
+    return "".join(attrs)
+
+
+def _svg_mathtext_spans(line: str, style: dict[str, Any], offset: int) -> str:
+    ranges: list[tuple[int, int]] = []
+    for item in str(style.get("math_italic_ranges", "")).split(","):
+        try:
+            start, end = (int(value) for value in item.split(":", 1))
+        except ValueError:
+            continue
+        start, end = max(0, start - offset), min(len(line), end - offset)
+        if start < end:
+            ranges.append((start, end))
+    if not ranges:
+        return escape(line)
+    ranges.sort()
+    merged: list[tuple[int, int]] = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1]:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = previous_start, max(previous_end, end)
+        else:
+            merged.append((start, end))
+    out: list[str] = []
+    cursor = 0
+    for start, end in merged:
+        start = max(start, cursor)
+        if start >= end:
+            continue
+        if cursor < start:
+            out.append(escape(line[cursor:start]))
+        out.append(f'<tspan font-style="italic">{escape(line[start:end])}</tspan>')
+        cursor = end
+    out.append(escape(line[cursor:]))
+    return "".join(out)
+
+
+def _svg_text_box(
+    style: dict[str, Any],
+    lines: list[str],
+    x: float,
+    first_y: float,
+    line_height: float,
+    font_size: float,
+    anchor: str,
+) -> list[str]:
+    """SVG counterpart of the pyplot text-bbox CSS approximation."""
+    background = style.get("background")
+    border = str(style.get("border", ""))
+    if background is None and not border:
+        return []
+    pad_parts = str(style.get("padding", "0")).split()
+
+    def px(value: str) -> float:
+        try:
+            return max(0.0, float(value.removesuffix("px")))
+        except ValueError:
+            return 0.0
+
+    pad_y = px(pad_parts[0]) if pad_parts else 0.0
+    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
+    text_width = _estimated_text_width(lines, font_size)
+    left = (
+        x
+        - (text_width / 2 if anchor == "middle" else text_width if anchor == "end" else 0.0)
+        - pad_x
+    )
+    top = first_y - font_size * 0.8 - pad_y
+    height = font_size + (len(lines) - 1) * line_height + pad_y * 2
+    fill = "none" if background is None else escape(str(background))
+    stroke = "none"
+    stroke_width = 0.0
+    if border:
+        parts = border.split()
+        stroke = escape(parts[-1])
+        try:
+            stroke_width = max(0.0, float(parts[0].removesuffix("px")))
+        except (IndexError, ValueError):
+            stroke_width = 1.0
+    # `boxstyle="round"`/`round4` set border_radius; the browser gets it as CSS
+    # border-radius, so the exporters have to round the same corners or an
+    # exported box is square where the live one is not.
+    radius = _box_corner_radius(style, text_width + pad_x * 2, height)
+    radius_attr = f' rx="{_num(radius)}"' if radius > 0 else ""
+    return [
+        f'<rect x="{_num(left)}" y="{_num(top)}" '
+        f'width="{_num(text_width + pad_x * 2)}" height="{_num(height)}"{radius_attr} '
+        f'fill="{fill}" stroke="{stroke}" stroke-width="{_num(stroke_width)}"/>'
+    ]
+
+
+def _box_corner_radius(style: dict[str, Any], width: float, height: float) -> float:
+    """`border_radius` in px, clamped to the box like CSS does.
+
+    Shared by the SVG and native raster text-box emitters so an exported
+    ``boxstyle="round"`` bbox is rounded exactly once, the same way.
+    """
+    try:
+        radius = float(str(style.get("border_radius", 0) or 0).removesuffix("px"))
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(radius, width / 2.0, height / 2.0))
+
+
+def _fontmetrics_text_width(
+    value: Any,
+    font_size: float,
+    *,
+    missing_advance: float,
+) -> float:
+    """Embedded-face advance with a conservative fallback for unknown glyphs."""
+    text = str(value)
+    missing = sum(
+        1
+        for char in text
+        if not (
+            _fontmetrics.FIRST <= ord(char) <= _fontmetrics.LAST
+            or ord(char) in _fontmetrics.EXTRA_ADVANCES
+        )
+    )
+    embedded_fallback = font_size * _fontmetrics.EXTRA_ADVANCES[0xFFFD] / _fontmetrics.BASE_PX
+    # The generated metrics now include the visible U+FFFD replacement advance
+    # for every unknown codepoint. Only add room when a caller deliberately
+    # requests a wider fallback; adding the full fallback again would double
+    # count every unsupported glyph.
+    extra = max(0.0, float(missing_advance) - embedded_fallback)
+    return _fontmetrics.advance(text, font_size) + missing * extra
+
+
+def _estimated_text_width(lines: list[str], font_size: float) -> float:
+    """Measured label-box width using the embedded DejaVu face.
+
+    The native rasterizer blits the same generated face metrics, and DejaVu is
+    also the default SVG/Matplotlib face. The generated metrics reserve the
+    visible U+FFFD replacement advance for each unsupported codepoint.
+    """
+    return max(
+        (_fontmetrics_text_width(line, font_size, missing_advance=font_size) for line in lines),
+        default=0.0,
+    )
 
 
 def _segment_marks(
@@ -2788,7 +3269,9 @@ def _triangle_mesh_marks(
 
     face = _trace_paint_rgba(t, "color", n, fallback, read)
     fills = _paint.effective_rgba(face, t, read, component="fill", default_opacity=1.0)
-    if t.get("stroke") is not None:
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif t.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(t, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(
@@ -2802,6 +3285,21 @@ def _triangle_mesh_marks(
         t, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
     )
     x0, y0, x1, y1, x2, y2 = vertices
+    if (
+        style.get("joined_fill")
+        and n
+        and np.all(fills == fills[0])
+        and np.all(stroke_widths == 0.0)
+    ):
+        boundary = _paint.triangle_mesh_boundary(x0, y0, x1, y1, x2, y2)
+        if boundary is not None:
+            points = " ".join(f"{_num(float(sx(x)))},{_num(float(sy(y)))}" for x, y in boundary)
+            fill = fills[0]
+            return (
+                f'<polygon points="{points}" fill="rgb({round(fill[0] * 255)},'
+                f'{round(fill[1] * 255)},{round(fill[2] * 255)})" '
+                f'fill-opacity="{_num(float(fill[3]))}"/>'
+            )
     out = ["<g>"]
     for i in range(n):
         points = " ".join(
@@ -2871,7 +3369,9 @@ def _rect_svg_styles(
 
     face = _trace_paint_rgba(trace, "color", n, fallback, read)
     fills_rgba = _paint.effective_rgba(face, trace, read, component="fill", default_opacity=0.85)
-    if trace.get("stroke") is not None:
+    if (trace.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_face = face
+    elif trace.get("stroke") is not None:
         stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
     elif style.get("stroke") is not None:
         stroke_face = np.tile(
@@ -3152,19 +3652,83 @@ _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"
 
 
 _LEGEND_CHAR_WIDTH = 6.2
+#: Font size the legend emitters set labels at, and the size at which
+#: ``_LEGEND_CHAR_WIDTH`` is the nominal *average* advance.
+_LEGEND_FONT_PX = 11.0
+#: Exact-fit comparisons are made against a measured float sum, so absorb the
+#: binary-float underflow at the boundary rather than ellipsizing a label that
+#: fits to the last subpixel.
+_LEGEND_FIT_EPS = 1e-9
 
 
-def _legend_text(value: Any, max_width: float) -> str:
-    """Conservatively ellipsize a static legend string to a pixel budget."""
+def _legend_font_size(style: dict[str, Any]) -> float:
+    """Resolve the bounded pixel font size used by static legend geometry."""
+    value = str(style.get("fontSize", "")).strip()
+    if value.endswith("px"):
+        try:
+            return max(1.0, float(value[:-2]))
+        except ValueError:
+            pass
+    return 11.0
+
+
+def _legend_em(style: dict[str, Any], key: str, default: float) -> float:
+    value = str(style.get(key, "")).strip()
+    if value.endswith("em"):
+        try:
+            return max(0.0, float(value[:-2]))
+        except ValueError:
+            pass
+    return default
+
+
+def _legend_text_width(value: Any, char_width: float = _LEGEND_CHAR_WIDTH) -> float:
+    """Measured advance width, in pixels, of a static legend string.
+
+    Legend columns used to be sized as ``len(text) * _LEGEND_CHAR_WIDTH``. A
+    flat average cannot bound a proportional face — DejaVu's ``m`` is over
+    three times the width of its ``l`` — so ``"gamma"`` really sets 42.6 px at
+    11 px against a 31.0 px estimate, and a frame sized from the estimate was
+    narrower than its own labels. Advances come from the same face the native
+    rasterizer blits (``_fontmetrics``, generated beside ``src/font.rs`` by
+    ``scripts/gen_font.py``), which is what makes a frame sized from this
+    actually contain the text the SVG and raster emitters draw. It is also what
+    the browser does natively, sizing each legend column to ``max-content``.
+
+    ``char_width`` carries the nominal average advance, so scaling the legend
+    font scales the measurement with it.
+
+    A codepoint the atlas lacks reserves the nominal ``char_width`` instead of
+    the rasterizer's zero advance: SVG resolves it against the viewer's own
+    fonts and does paint it, and over-reserving only widens the frame, which
+    can never spill a label.
+    """
+    font_size = char_width * (_LEGEND_FONT_PX / _LEGEND_CHAR_WIDTH)
+    return _fontmetrics_text_width(value, font_size, missing_advance=char_width)
+
+
+def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_WIDTH) -> str:
+    """Conservatively ellipsize a static legend string to a pixel budget.
+
+    The budget is measured, not counted, so the returned string's own advance
+    width is ``<= max_width`` and therefore fits the column it was sized for.
+    """
     text = str(value)
-    # ``cell_w`` is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
-    # compensate for the tiny binary-float underflow at exact-fit boundaries.
-    max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
-    if len(text) <= max_chars:
+    if _legend_text_width(text, char_width) <= max_width + _LEGEND_FIT_EPS:
         return text
-    if max_chars <= 3:
-        return "." * max_chars
-    return text[: max_chars - 3] + "..."
+    # Longest prefix that still leaves room for the ellipsis.
+    keep = 0
+    for index in range(1, len(text)):
+        if _legend_text_width(f"{text[:index]}...", char_width) > max_width + _LEGEND_FIT_EPS:
+            break
+        keep = index
+    if keep:
+        return f"{text[:keep]}..."
+    # Too narrow for even one glyph plus an ellipsis: emit the dots that fit.
+    for count in (3, 2, 1):
+        if _legend_text_width("." * count, char_width) <= max_width + _LEGEND_FIT_EPS:
+            return "." * count
+    return ""
 
 
 def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -> list[dict]:
@@ -3195,84 +3759,180 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     Static files cannot offer the browser legend's scrollbar, so an oversized
     legend is kept inside the plot and its labels are visibly ellipsized. A
-    legend that already fits keeps its historical geometry byte-for-byte.
+    Columns follow Matplotlib's handle/text/column spacing and size to their
+    own labels rather than inheriting the width of the longest label.
     """
     style_opts = options.get("style") or {}
-    pad, handle, gap, line_h = 8.0, 20.0, 5.0, 16.0
-    if str(style_opts.get("padding", "")).endswith("em"):
-        pad = 11.0 * float(str(style_opts["padding"])[:-2])
-    if str(style_opts.get("rowGap", "")).endswith("em"):
-        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
+    font_size = _legend_font_size(style_opts)
+    char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)
+    text_h = font_size * 1.03
+    borderpad = _legend_em(style_opts, "padding", 0.4)
+    labelspacing = _legend_em(style_opts, "rowGap", 0.5)
+    # Matplotlib's legend dimensions are expressed in font-size units:
+    # borderpad is applied on both sides, handlelength=2, handletextpad=.8,
+    # columnspacing=2, and labelspacing=.5 by default.
+    pad = 2.0 * borderpad * font_size
+    handle = 2.0 * font_size
+    gap = 0.8 * font_size
+    column_gap = 2.0 * font_size
+    row_gap = labelspacing * font_size
+    line_h = text_h + row_gap
+    requested_handleheight = options.get("handleheight")
+    swatch_h = 8.0
+    if requested_handleheight is not None:
+        swatch_h = max(8.0, 11.0 * float(requested_handleheight))
+        line_h = max(line_h, swatch_h + 2.0)
 
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
     title = options.get("title")
-    title_h = 16.0 if title else 0.0
-    natural_cell_w = (
-        max(len(str(t.get("name", ""))) for t in named) * _LEGEND_CHAR_WIDTH
-        + handle
-        + gap
-        + 2 * pad
-    )
+    title_h = line_h if title else 0.0
     inset = 6.0
-    available_w = max(1.0, float(plot["w"]) - 2 * inset)
+    anchor = options.get("anchor")
+    # An anchored legend is positioned from ``bbox_to_anchor`` rather than
+    # inset from both plot edges.  Charging it the unanchored 6 px inset on
+    # both sides unnecessarily shortened otherwise fitting labels.  The
+    # Matplotlib survey-gallery legend is the boundary case: its measured
+    # five-column box fits the axes width, but not ``axes width - 12 px``.
+    # Keep the plot-width cap so genuinely oversized static legends still
+    # ellipsize instead of escaping the bounded export.
+    available_w = max(
+        1.0,
+        float(plot["w"]) if anchor and len(anchor) in (2, 4) else float(plot["w"]) - 2 * inset,
+    )
     ncols = requested_cols
-    if ncols * natural_cell_w + pad > available_w:
-        # A cell must at least retain its handle and a visible ellipsis. Reduce
-        # an impossible column count before shortening the individual labels.
-        min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
-        max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
+    min_column_w = handle + gap + 4 * char_width
+    if ncols * min_column_w + (ncols - 1) * column_gap + pad > available_w:
+        # A column must at least retain its handle and a visible ellipsis.
+        max_fit_cols = max(
+            1,
+            int(max(0.0, available_w - pad + column_gap) // (min_column_w + column_gap)),
+        )
         ncols = min(ncols, max_fit_cols)
-    cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
-    box_w = min(available_w, ncols * cell_w + pad)
+
+    natural_text_widths = [
+        max(
+            _legend_text_width(named[index].get("name", ""), char_width)
+            for index in range(column, len(named), ncols)
+        )
+        for column in range(ncols)
+    ]
+    available_text_w = max(
+        0.0,
+        available_w - pad - ncols * (handle + gap) - (ncols - 1) * column_gap,
+    )
+    minimum_text_w = 4 * char_width
+    text_widths = [min(width, minimum_text_w) for width in natural_text_widths]
+    remaining = max(0.0, available_text_w - sum(text_widths))
+    needs = [
+        max(0.0, width - current)
+        for width, current in zip(natural_text_widths, text_widths, strict=True)
+    ]
+    needed = sum(needs)
+    if needed:
+        scale = min(1.0, remaining / needed)
+        text_widths = [
+            current + need * scale for current, need in zip(text_widths, needs, strict=True)
+        ]
+    column_widths = [handle + gap + width for width in text_widths]
+    box_w = min(available_w, sum(column_widths) + (ncols - 1) * column_gap + pad)
+    if title:
+        # ``pad`` is the sum of the two side pads. The previous one-sided
+        # calculation expanded the box to the title's glyph width but then
+        # ellipsized against ``box_w - 2 * pad`` (e.g. "Classes" -> "Cl...").
+        title_w = _legend_text_width(title, char_width) + pad
+        if title_w > box_w:
+            extra = min(available_w - box_w, title_w - box_w)
+            column_widths = [width + extra / ncols for width in column_widths]
+            text_widths = [width + extra / ncols for width in text_widths]
+            box_w += extra
+    column_offsets = []
+    cursor = pad / 2
+    for width in column_widths:
+        column_offsets.append(cursor)
+        cursor += width + column_gap
 
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
     visible_rows = nrows
-    natural_box_h = nrows * line_h + pad + title_h
+    content_rows = nrows + (1 if title else 0)
+    natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
     if natural_box_h > available_h:
-        visible_rows = max(0, int((available_h - pad - title_h) // line_h))
+        title_room = text_h + row_gap if title else 0.0
+        available_entries_h = max(0.0, available_h - pad - title_room)
+        visible_rows = max(0, int((available_entries_h + row_gap) // line_h))
     visible_count = min(len(named), visible_rows * ncols)
-    box_h = min(available_h, visible_rows * line_h + pad + title_h)
+    visible_content_rows = visible_rows + (1 if title else 0)
+    box_h = min(
+        available_h,
+        visible_content_rows * text_h + max(0, visible_content_rows - 1) * row_gap + pad,
+    )
 
     loc = options.get("loc") or "upper right"
-    if "left" in loc:
-        x = float(plot["x"]) + inset
-    elif "right" in loc:
-        x = float(plot["x"]) + float(plot["w"]) - box_w - inset
+    loc_tokens = set(re.split(r"[\s_-]+", loc))
+    loc_is_upper = "upper" in loc or "top" in loc_tokens
+    loc_is_lower = "lower" in loc or "bottom" in loc_tokens
+    if anchor and len(anchor) in (2, 4):
+        ax, ay = float(anchor[0]), float(anchor[1])
+        aw, ah = (0.0, 0.0) if len(anchor) == 2 else (float(anchor[2]), float(anchor[3]))
+        hx = 0.0 if "left" in loc else 1.0 if "right" in loc else 0.5
+        vy = 0.0 if loc_is_lower else 1.0 if loc_is_upper else 0.5
+        target_x = float(plot["x"]) + (ax + hx * aw) * float(plot["w"])
+        target_y = float(plot["y"]) + (1.0 - ay - vy * ah) * float(plot["h"])
+        x = target_x - hx * box_w
+        y = target_y - (1.0 - vy) * box_h
+        border_axes_pad = max(0.0, float(options.get("border_pad", 0.0)))
+        x += border_axes_pad if hx == 0.0 else -border_axes_pad if hx == 1.0 else 0.0
+        # SVG/raster coordinates increase downward, so a "lower" legend is
+        # moved upward from its anchor and an "upper" legend moves downward.
+        y += border_axes_pad if vy == 1.0 else -border_axes_pad if vy == 0.0 else 0.0
     else:
-        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
-    if "upper" in loc:
-        y = float(plot["y"]) + inset
-    elif "lower" in loc:
-        y = float(plot["y"]) + float(plot["h"]) - box_h - inset
-    else:
-        y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
-    x = min(
-        max(x, float(plot["x"]) + inset),
-        float(plot["x"]) + float(plot["w"]) - box_w - inset,
-    )
-    y = min(
-        max(y, float(plot["y"]) + inset),
-        float(plot["y"]) + float(plot["h"]) - box_h - inset,
-    )
+        if "left" in loc:
+            x = float(plot["x"]) + inset
+        elif "right" in loc:
+            x = float(plot["x"]) + float(plot["w"]) - box_w - inset
+        else:
+            x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
+        if loc_is_upper:
+            y = float(plot["y"]) + inset
+        elif loc_is_lower:
+            y = float(plot["y"]) + float(plot["h"]) - box_h - inset
+        else:
+            y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
+        x = min(
+            max(x, float(plot["x"]) + inset),
+            float(plot["x"]) + float(plot["w"]) - box_w - inset,
+        )
+        y = min(
+            max(y, float(plot["y"]) + inset),
+            float(plot["y"]) + float(plot["h"]) - box_h - inset,
+        )
 
-    text_width = max(0.0, cell_w - handle - gap - 2 * pad)
     return {
         "style": style_opts,
         "pad": pad,
         "handle": handle,
         "gap": gap,
+        "column_gap": column_gap,
+        "row_gap": row_gap,
+        "font_size": font_size,
+        "text_h": text_h,
         "line_h": line_h,
+        "swatch_h": swatch_h,
         "ncols": ncols,
-        "title": _legend_text(title, max(0.0, box_w - 2 * pad)) if title else None,
+        "title": _legend_text(title, max(0.0, box_w - pad), char_width) if title else None,
         "title_h": title_h,
-        "cell_w": cell_w,
+        "cell_w": max(column_widths),
+        "column_widths": column_widths,
+        "column_offsets": column_offsets,
         "box_w": box_w,
         "box_h": box_h,
         "x": x,
         "y": y,
         "visible_count": visible_count,
-        "names": [_legend_text(t.get("name", ""), text_width) for t in named[:visible_count]],
+        "names": [
+            _legend_text(t.get("name", ""), text_widths[index % ncols], char_width)
+            for index, t in enumerate(named[:visible_count])
+        ],
     }
 
 
@@ -3296,8 +3956,10 @@ def _legend(
     style_opts = legend["style"]
     pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
     line_h, ncols = legend["line_h"], legend["ncols"]
+    swatch_h = legend["swatch_h"]
     title, title_h = legend["title"], legend["title_h"]
-    cell_w = legend["cell_w"]
+    font_size, text_h = legend["font_size"], legend["text_h"]
+    column_offsets = legend["column_offsets"]
     box_w, box_h = legend["box_w"], legend["box_h"]
     x, y = legend["x"], legend["y"]
     if style_opts.get("background") != "transparent":
@@ -3321,18 +3983,24 @@ def _legend(
         else:
             background = _css(background_value, "#808080")
             fill_attrs = f'fill="{escape(background)}" fill-opacity="{_num(alpha)}"'
+        border = _css(style_opts.get("borderColor"), "#cccccc")
         rows.append(
             f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
-            f'rx="{radius}" {fill_attrs}/>'
+            f'rx="{radius}" {fill_attrs} stroke="{escape(border)}" '
+            f'stroke-opacity="{_num(alpha)}" stroke-width="1"/>'
         )
     if title:
+        # The layout's measured size is the default; a slot may override it.
+        title_size_attr = _slot_size_attr(title_slot) or f' font-size="{_num(font_size)}"'
         rows.append(
-            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}"'
-            f"{_slot_size_attr(title_slot)}"
-            f"{slot_text_attrs(title_slot, font_weight='600')} "
+            f'<text x="{_num(x + box_w / 2)}" '
+            f'y="{_num(y + pad / 2 + font_size * 0.82)}" text-anchor="middle"'
+            f"{title_size_attr}"
+            f"{slot_text_attrs(title_slot, font_weight='400')} "
             f'fill="{escape(slot_text_color(title_slot, text_color))}">'
             f"{escape(str(title))}</text>"
         )
+    label_size_attr = _slot_size_attr(label_slot) or f' font-size="{_num(font_size)}"'
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color = _css(
@@ -3340,12 +4008,13 @@ def _legend(
             palette[i % len(palette)],
         )
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
         kind = t.get("kind")
         if kind == "scatter":
             symbol = style.get("symbol", "circle")
             builder = _SYMBOL_BUILDERS.get(symbol)
+            radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
             stroke_w = float(style.get("stroke_width", 0.0))
             line_symbol = symbol in {"plus_line", "x_line"}
             if line_symbol and stroke_w <= 0:
@@ -3357,12 +4026,13 @@ def _legend(
             cxm = (hx0 + hx1) / 2
             if builder is None:
                 rows.append(
-                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="4" '
+                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="{_num(radius)}" '
                     f'fill="{escape(color)}"{stroke_attr}/>'
                 )
             else:
                 rows.append(
-                    builder(float(cxm), float(cy), 4.0) + f' fill="{escape(color)}"{stroke_attr}/>'
+                    builder(float(cxm), float(cy), radius)
+                    + f' fill="{escape(color)}"{stroke_attr}/>'
                 )
         elif kind in _LEGEND_LINE_KINDS:
             rows.append(
@@ -3372,16 +4042,55 @@ def _legend(
             )
         else:
             rows.append(
-                f'<rect x="{_num(hx0)}" y="{_num(cy - 4)}" width="{handle}" height="8" '
+                f'<rect x="{_num(hx0)}" y="{_num(cy - swatch_h / 2)}" '
+                f'width="{handle}" height="{_num(swatch_h)}" '
                 f'rx="2" fill="{escape(color)}"/>'
             )
+            if style.get("hatch"):
+                rows.append(
+                    _legend_hatch_svg(
+                        hx0,
+                        hx1,
+                        cy - swatch_h / 2,
+                        cy + swatch_h / 2,
+                        str(style["hatch"]),
+                        _css(style.get("hatch_color"), "#222222"),
+                    )
+                )
         rows.append(
-            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}"'
-            f"{_slot_size_attr(label_slot)}{slot_text_attrs(label_slot)} "
+            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + font_size * 0.82)}"'
+            f"{label_size_attr}"
+            f"{slot_text_attrs(label_slot)} "
             f'fill="{escape(slot_text_color(label_slot, text_color))}">'
             f"{escape(legend['names'][i])}</text>"
         )
-    return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
+    clip = "" if options.get("anchor") else f' clip-path="url(#{clip_id})"'
+    return f"<g{clip}>{''.join(rows)}</g>"
+
+
+def _legend_hatch_svg(x0: float, x1: float, y0: float, y1: float, hatch: str, color: str) -> str:
+    """Small, bounded hatch sample for explicit patch legend handles."""
+    paths: list[str] = []
+    mid_y = (y0 + y1) / 2
+    if "-" in hatch or "*" in hatch:
+        paths.append(f"M{_num(x0)},{_num(mid_y)} L{_num(x1)},{_num(mid_y)}")
+    for char, direction in (("/", 1), ("\\", -1)):
+        count = min(3, hatch.count(char))
+        for index in range(count):
+            center = x0 + (index + 1) * (x1 - x0) / (count + 1)
+            half = min((x1 - x0) / 4, (y1 - y0) / 2)
+            paths.append(
+                f"M{_num(center - half)},{_num(mid_y + direction * half)} "
+                f"L{_num(center + half)},{_num(mid_y - direction * half)}"
+            )
+    if "." in hatch:
+        for fraction in (0.3, 0.7):
+            paths.append(f"M{_num(x0 + fraction * (x1 - x0))},{_num(mid_y)} l0.1,0")
+    if "*" in hatch:
+        paths.append(f"M{_num((x0 + x1) / 2)},{_num(y0)} L{_num((x0 + x1) / 2)},{_num(y1)}")
+    if not paths:
+        return ""
+    return f'<path d="{" ".join(paths)}" fill="none" stroke="{escape(color)}" stroke-width="1"/>'
 
 
 def _colorbar(
@@ -3417,17 +4126,22 @@ def _colorbar(
         for index, (r, g, b) in enumerate(stops)
     )
     orientation = options.get("orientation", "vertical")
+    shrink = float(options.get("shrink", 1.0))
+    anchor = options.get("anchor") or [0.5, 0.5]
     domain = options.get("domain", [0.0, 1.0])
     if orientation == "horizontal":
-        x = plot["x"]
+        width = plot["w"] * shrink
+        x = plot["x"] + (plot["w"] - width) * float(anchor[0])
         y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
-        width, height = plot["w"], 18
+        height = 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
         # right_axis_room shifts the whole colorbar clear of right-side named
         # y-axis chrome (layout() reserves room for both additively).
         x = plot["x"] + plot["w"] + right_axis_room + 24
-        y, width, height = plot["y"], 18, plot["h"]
+        height = plot["h"] * shrink
+        y = plot["y"] + (plot["h"] - height) * (1.0 - float(anchor[1]))
+        width = 18
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
     label_node = (
@@ -3448,7 +4162,14 @@ def _colorbar(
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
         if ticks is not None
-        else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+        else (
+            _linear_ticks(
+                lo,
+                hi,
+                _colorbar_tick_target(width if orientation == "horizontal" else height),
+            )[0]
+            or [lo, hi]
+        )
     )
     tick_nodes = (
         "".join(
@@ -3465,6 +4186,32 @@ def _colorbar(
             for value in tick_positions
         )
     )
+    minor_nodes = ""
+    if options.get("minor_ticks") and len(tick_positions) >= 2:
+        ordered = sorted(set(tick_positions))
+        minor_positions = [
+            left + (right - left) * step / 5.0
+            for left, right in pairwise(ordered)
+            for step in range(1, 5)
+        ]
+        if orientation != "horizontal":
+            minor_nodes = "".join(
+                f'<line data-xy-colorbar-minor="true" x1="{_num(x + width)}" '
+                f'x2="{_num(x + width + 3)}" '
+                f'y1="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'y2="{_num(y + height * (1 - (value - lo) / span))}" '
+                f'stroke="{escape(text_color)}"/>'
+                for value in minor_positions
+            )
+        else:
+            minor_nodes = "".join(
+                f'<line data-xy-colorbar-minor="true" '
+                f'x1="{_num(x + width * (value - lo) / span)}" '
+                f'x2="{_num(x + width * (value - lo) / span)}" '
+                f'y1="{_num(y + height)}" y2="{_num(y + height + 3)}" '
+                f'stroke="{escape(text_color)}"/>'
+                for value in minor_positions
+            )
     extend = options.get("extend")
     extend_nodes = ""
     if extend in ("max", "both"):
@@ -3490,8 +4237,13 @@ def _colorbar(
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
         f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
-        f"{extend_nodes}{tick_nodes}{label_node}"
+        f"{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
+
+
+def _colorbar_tick_target(length: float) -> int:
+    """Major-tick budget for the rendered colorbar length in CSS pixels."""
+    return max(2, min(8, int(max(0.0, float(length)) // 48.0) + 1))
 
 
 def _colorbar_body(

@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 45
+ABI_VERSION = 46
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -415,6 +415,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # y_coords (rows f64s)
         ctypes.c_void_p,  # levels (n_levels f64s)
         ctypes.c_size_t,  # n_levels
+        ctypes.c_uint8,  # corner_mask
         ctypes.c_void_p,  # x0 output
         ctypes.c_void_p,  # x1 output
         ctypes.c_void_p,  # y0 output
@@ -2078,6 +2079,8 @@ def marching_squares(
     x_coords: npt.NDArray[np.float64],
     y_coords: npt.NDArray[np.float64],
     levels: npt.NDArray[np.float64],
+    *,
+    corner_mask: bool = False,
 ) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
@@ -2145,6 +2148,7 @@ def marching_squares(
                 _ptr_f64(y_coords),
                 _ptr_f64(levels),
                 len(levels),
+                int(bool(corner_mask)),
                 *(_ptr_f64(output) for output in outputs),
                 len(outputs[0]),
             )
