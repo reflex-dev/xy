@@ -795,7 +795,7 @@ somewhere else (§28):
 
 | | |
 | --- | --- |
-| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so placement costs O(1) on a large series. If that sample holds no finite pair, the full array is used instead, so a sparse-but-finite series is still scored. |
+| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so the common path costs O(1) in the series length. That is a fast path, not a bound: if the 4096-point sample holds no finite pair, the full array is scanned instead, so a mostly-NaN series is still scored rather than silently dropped from placement. Worst case is therefore O(n), once, at build time. |
 | Finite cap | at most **512** finite points per series, evenly strided. |
 | Coordinate space | **display** space: the axis's `log`/`symlog` transform is applied first, so occupancy is measured where the marks are drawn. |
 | Off-plot marks | **dropped, not clamped.** Every renderer clips them, so folding them onto an edge would guard a corner the viewer sees as empty. |

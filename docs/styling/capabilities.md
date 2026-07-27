@@ -115,7 +115,6 @@ an undocumented difference reads as a bug; a documented one is a contract.
 | what | browser | svg | native png | visible when |
 |---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle |
-| Colorbar tick and title text with no slot style set | 10px (the `colorbar` slot's stylesheet rule) | 11px — the writer emits no font-size, so the text inherits the root <svg> | 10px (the writer passes an explicit size to the glyph blitter) | always, on any colorbar the author has not styled |
 
 For what is still alpha, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).

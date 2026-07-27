@@ -225,18 +225,6 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="stroke-width above ~4px at a sharp angle",
         tracked_by="no style property selects a join; the default is the whole contract",
     ),
-    RendererDivergence(
-        id="colorbar_text_default_size",
-        what="Colorbar tick and title text with no slot style set",
-        webgl="10px (the `colorbar` slot's stylesheet rule)",
-        svg="11px — the writer emits no font-size, so the text inherits the root <svg>",
-        native="10px (the writer passes an explicit size to the glyph blitter)",
-        visible_when="always, on any colorbar the author has not styled",
-        tracked_by="styles={'colorbar_tick'/'colorbar_title': {'font_size': ...}} sets all "
-        "three to the same value; only the unstyled default disagrees. Predates the "
-        "per-slot writer support and is left alone here because closing it changes "
-        "the pixels of every existing unstyled colorbar.",
-    ),
 )
 
 

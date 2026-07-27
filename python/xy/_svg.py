@@ -809,6 +809,11 @@ SLOT_TEXT_PROPS: tuple[str, ...] = (
 #: documented vector-only set.
 SLOT_RASTER_PROPS: tuple[str, ...] = ("font-size", "fill", "color")
 
+#: The `colorbar` slot's own font size, from its stylesheet rule in
+#: `js/src/20_theme.ts`. Every writer names it so none of them inherits a
+#: different one from its document root.
+COLORBAR_FONT_SIZE = 10.0
+
 #: Slots the native writers style. Every one names chrome that a static file
 #: actually contains; the rest of `CHART_DOM_SLOTS` is live-only chrome
 #: (tooltip, modebar, crosshair, selection, badge) or a container with no
@@ -3389,9 +3394,19 @@ def _colorbar(
 ) -> str:
     title_slot = title_slot or {}
     tick_slot = tick_slot or {}
-    title_attrs = _slot_size_attr(title_slot) + slot_text_attrs(title_slot)
+    # The `colorbar` slot's stylesheet rule is `font-size:10px`, and the raster
+    # writer passes 10 explicitly. The SVG writer used to emit no size at all
+    # and inherit the root <svg>'s 11px, which made it the odd renderer out on
+    # every unstyled colorbar. Name the size instead of inheriting it.
+    title_attrs = (
+        f' font-size="{_num(slot_font_size(title_slot, COLORBAR_FONT_SIZE))}"'
+        + slot_text_attrs(title_slot)
+    )
     title_paint = escape(slot_text_color(title_slot, text_color))
-    tick_attrs = _slot_size_attr(tick_slot) + slot_text_attrs(tick_slot)
+    tick_attrs = (
+        f' font-size="{_num(slot_font_size(tick_slot, COLORBAR_FONT_SIZE))}"'
+        + slot_text_attrs(tick_slot)
+    )
     tick_paint = escape(slot_text_color(tick_slot, text_color))
     cmap = options.get("colormap", "viridis")
     gradient_id = f"xy-colorbar-{_colormap_key(cmap)}"

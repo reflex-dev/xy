@@ -26,6 +26,7 @@ from ._svg import (
     _GRID,
     _STATIC_COLOR_FALLBACK,
     _TEXT,
+    COLORBAR_FONT_SIZE,
     DEFAULT_PALETTE,
     _axis_label_geometry,
     _axis_scales,
@@ -2092,9 +2093,9 @@ def _emit_colorbar(
 
     title_slot = title_slot or {}
     tick_slot = tick_slot or {}
-    title_size = slot_font_size(title_slot, 10.0)
+    title_size = slot_font_size(title_slot, COLORBAR_FONT_SIZE)
     title_paint = _parse_color(slot_text_color(title_slot, text_color))
-    tick_size = slot_font_size(tick_slot, 10.0)
+    tick_size = slot_font_size(tick_slot, COLORBAR_FONT_SIZE)
     tick_paint = _parse_color(slot_text_color(tick_slot, text_color))
 
     orientation = options.get("orientation", "vertical")

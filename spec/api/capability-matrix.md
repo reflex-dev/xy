@@ -16,7 +16,7 @@ which is sometimes deliberate, and the notes say which.
 - **10** mark style properties across **20** mark kinds, drawn by all three renderers.
 - **29** stable chrome slots, CSS- and Tailwind-addressable in the browser; **10** of them reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag.
 - **1** shipped extension point.
-- **2** known default divergences between renderers, listed below rather than left to be discovered.
+- **1** known default divergence between renderers, listed below rather than left to be discovered.
 
 ## Mark style properties
 
@@ -52,8 +52,11 @@ one honors.
 ## Chrome slots
 
 Stable `data-xy-slot` names that accept `class_names=` and `styles=` in the
-browser. The native raster and vector writers have no cascade: they read the
-chart-level `style=` token bag and nothing per-slot. That boundary is
+browser. The native raster and vector writers have no cascade, so they read a
+property subset rather than a stylesheet: the chart-level `style=` token bag,
+plus `styles={slot: ...}` for the slots that name chrome a file actually
+contains. `class_names=` reaches neither — a class selects a rule out of a
+stylesheet an exported file does not have. That boundary is
 contracted in [export.md](export.md) §9 and pinned by
 `tests/test_export_style_survival.py`.
 
@@ -126,7 +129,6 @@ until someone diffs two exports. Listed here for that reason.
 | what | webgl | svg | native | visible when | tracked by |
 |---|---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle | no style property selects a join; the default is the whole contract |
-| Colorbar tick and title text with no slot style set | 10px (the `colorbar` slot's stylesheet rule) | 11px — the writer emits no font-size, so the text inherits the root <svg> | 10px (the writer passes an explicit size to the glyph blitter) | always, on any colorbar the author has not styled | styles={'colorbar_tick'/'colorbar_title': {'font_size': ...}} sets all three to the same value; only the unstyled default disagrees. Predates the per-slot writer support and is left alone here because closing it changes the pixels of every existing unstyled colorbar. |
 
 ## Regenerating
 

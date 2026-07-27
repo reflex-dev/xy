@@ -161,18 +161,36 @@ def test_the_core_and_the_pyplot_shim_agree() -> None:
 # --- display-space scoring ----------------------------------------------------
 
 
+#: A scatter whose display-space and value-space occupancy disagree. Four marks
+#: sit in the top two decades and one near the origin: on screen (log) they
+#: crowd the right edge and free the lower-left, while raw subtraction spreads
+#: them and frees the upper-right instead. A fixture on the diagonal cannot
+#: tell the two apart — both spaces see a diagonal — so it would pass with the
+#: transform removed.
+_LOG_X = [5000.0, 7500.0, 1.0, 3000.0, 8000.0]
+_LOG_Y = [7000.0, 4.0, 8000.0, 3600.0, 2000.0]
+
+
 def test_best_scores_a_log_axis_in_display_space() -> None:
-    # Raw subtraction crushes 1..10000 into the last decade and would hand
-    # `best` a corner the marks actually occupy. The decades are evenly spaced
-    # on screen, so the diagonal leaves upper-left free.
-    decades = [1.0, 10.0, 100.0, 1000.0, 10000.0]
-    figure = xy.line_chart(
-        xy.line(decades, decades, name="a"),
-        xy.x_axis(type_="log"),
-        xy.y_axis(type_="log"),
+    figure = xy.scatter_chart(
+        xy.scatter(x=_LOG_X, y=_LOG_Y, name="a"),
+        xy.x_axis(type_="log", domain=(1.0, 10000.0)),
+        xy.y_axis(type_="log", domain=(1.0, 10000.0)),
         xy.legend(loc="best"),
     ).figure()
-    assert _loc(figure) == "upper left"
+    assert _loc(figure) == "lower left"
+
+
+def test_the_log_fixture_would_fail_without_the_transform() -> None:
+    # Guards the test above: it is only meaningful if value-space scoring gives
+    # a different answer on this fixture.
+    domain = (1.0, 10000.0)
+    raw = _legendfit.normalize(np.array(_LOG_X), np.array(_LOG_Y), domain, domain)
+    logged = _legendfit.normalize(
+        np.array(_LOG_X), np.array(_LOG_Y), domain, domain, x_scale="log", y_scale="log"
+    )
+    assert _legendfit.best_loc([raw], ["a"]) == "upper right"
+    assert _legendfit.best_loc([logged], ["a"]) == "lower left"
 
 
 def test_log_normalization_spreads_decades_evenly() -> None:
@@ -184,11 +202,27 @@ def test_log_normalization_spreads_decades_evenly() -> None:
 
 
 def test_symlog_normalization_uses_the_axis_constant() -> None:
-    values = np.array([-100.0, 0.0, 100.0])
-    xn, _yn = _legendfit.normalize(
-        values, values, (-100.0, 100.0), (-100.0, 100.0), x_scale="symlog", y_scale="symlog"
-    )
-    assert np.allclose(xn, [0.0, 0.5, 1.0])
+    # Interior, asymmetric values: `[-100, 0, 100]` on a symmetric domain is
+    # invariant to the constant (symlog is odd), so it cannot detect whether the
+    # constant is read at all.
+    values = np.array([0.0, 1.0, 10.0, 100.0])
+
+    def positions(constant: float) -> np.ndarray:
+        xn, _yn = _legendfit.normalize(
+            values,
+            values,
+            (0.0, 100.0),
+            (0.0, 100.0),
+            x_scale="symlog",
+            y_scale="symlog",
+            x_constant=constant,
+            y_constant=constant,
+        )
+        return xn
+
+    assert np.allclose(positions(1.0), [0.0, 0.15, 0.52, 1.0], atol=0.01)
+    assert np.allclose(positions(25.0), [0.0, 0.024, 0.209, 1.0], atol=0.01)
+    assert not np.allclose(positions(1.0), positions(25.0))
 
 
 def test_off_plot_marks_are_dropped_not_clamped() -> None:
