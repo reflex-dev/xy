@@ -2384,6 +2384,9 @@ def contour(
                     arr, xpos, ypos, corner_mask=bool(corner_mask)
                 )
                 band = np.searchsorted(edges, dense, side="right") - 1
+                # Matplotlib includes the final level in the final filled
+                # interval; only values strictly above it are outside.
+                band[np.isfinite(dense) & (dense == edges[-1])] = len(edges) - 2
                 mids = (edges[:-1] + edges[1:]) * 0.5
                 inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
                 if color_table is None:

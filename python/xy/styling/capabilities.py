@@ -358,6 +358,7 @@ def axis_style_keys() -> tuple[str, ...]:
     return tuple(
         sorted(
             styles._AXIS_COLOR_PROPERTIES
+            | styles._AXIS_FONT_PROPERTIES
             | styles._AXIS_LENGTH_PROPERTIES
             | styles._AXIS_SIZE_PROPERTIES
             | styles._AXIS_COMPAT_PROPERTIES

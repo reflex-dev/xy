@@ -144,6 +144,24 @@ def test_triangle_mesh_boundary_rejects_nonfinite_coordinates(nonfinite: float) 
     assert boundary is None
 
 
+def test_triangle_mesh_boundary_merges_vertices_across_bucket_edges() -> None:
+    # span=1 gives tolerance=2e-5. These are two encoded copies of the same
+    # vertex on opposite sides of the old round(... / tolerance) boundary.
+    lower = 0.9999e-5
+    upper = 1.0001e-5
+    boundary = _paint.triangle_mesh_boundary(
+        np.array([lower, upper]),
+        np.array([lower, upper]),
+        np.array([1.0, 1.0]),
+        np.array([0.0, 1.0]),
+        np.array([1.0, 0.0]),
+        np.array([1.0, 1.0]),
+    )
+
+    assert boundary is not None
+    assert boundary.shape == (4, 2)
+
+
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:
     fig = Figure().line([0, 1], [1, 2])
     with pytest.raises(ValueError, match="errorbar requires"):

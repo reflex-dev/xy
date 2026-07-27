@@ -149,6 +149,34 @@ def test_categorical_bar_domain_covers_every_category() -> None:
     assert _axis_domain(ax, "x") == pytest.approx((-0.59, 3.59))
 
 
+def test_repeated_categorical_bars_share_the_renderers_category_map() -> None:
+    _fig, ax = plt.subplots()
+    ax.bar(["same", "same"], [1.0, 2.0])
+
+    assert ax.get_xlim() == pytest.approx((-0.44, 0.44))
+    assert _axis_domain(ax, "x") == pytest.approx(ax.get_xlim())
+
+
+def test_nonzero_bar_base_stays_sticky_in_the_rendered_domain() -> None:
+    _fig, ax = plt.subplots()
+    ax.bar([0.0, 1.0], [1.0, 2.0], bottom=10.0)
+
+    assert ax.get_ylim() == pytest.approx((10.0, 12.1))
+    assert _axis_domain(ax, "y") == pytest.approx(ax.get_ylim())
+
+
+def test_fill_between_and_errorbar_geometry_contribute_to_autoscale() -> None:
+    _fig, fill_ax = plt.subplots()
+    fill_ax.fill_between([0.0, 1.0], [2.0, 3.0], [-5.0, -4.0])
+    assert fill_ax.get_ylim() == pytest.approx((-5.4, 3.4))
+    assert _axis_domain(fill_ax, "y") == pytest.approx(fill_ax.get_ylim())
+
+    _fig, error_ax = plt.subplots()
+    error_ax.errorbar([0.0, 1.0], [2.0, 3.0], yerr=[5.0, 6.0])
+    assert error_ax.get_ylim() == pytest.approx((-3.6, 9.6))
+    assert _axis_domain(error_ax, "y") == pytest.approx(error_ax.get_ylim())
+
+
 def test_default_bar_margin_reserves_visible_headroom_for_edge_labels() -> None:
     _fig, ax = plt.subplots()
     bars = ax.bar([0.0, 1.0, 2.0], [1.2, 1.8, 1.4], width=0.55)

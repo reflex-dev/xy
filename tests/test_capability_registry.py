@@ -54,6 +54,18 @@ def test_registry_covers_exactly_the_public_dom_slots() -> None:
     assert tuple(slot.id for slot in caps.CHART_SLOTS) == CHART_DOM_SLOTS
 
 
+def test_axis_style_registry_covers_the_compiler_vocabulary() -> None:
+    expected = (
+        styles._AXIS_COLOR_PROPERTIES
+        | styles._AXIS_FONT_PROPERTIES
+        | styles._AXIS_LENGTH_PROPERTIES
+        | styles._AXIS_SIZE_PROPERTIES
+        | styles._AXIS_COMPAT_PROPERTIES
+        | {"tick_direction", "tick_label_anchor"}
+    )
+    assert set(caps.axis_style_keys()) == expected
+
+
 def test_property_kinds_are_derived_not_restated() -> None:
     # `kinds` reads from styles.py at access time rather than being typed out,
     # so there is no second list to keep in sync. Guard that it stays that way.

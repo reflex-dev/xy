@@ -199,7 +199,6 @@ class Figure:
         ax = Axes(self)
         self._axes.append(ax)
         ax._figure_rect = parsed
-        self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
         if kwargs:
             ax.set(**kwargs)
@@ -459,7 +458,8 @@ class Figure:
         # engine performs from artist extents; the shim uses its deterministic
         # renderer margins instead of a second text-layout engine.
         if self._axes and not any(
-            ax._figure_rect is not None and ax._subplot_spec is None for ax in self._axes
+            ax._figure_rect is not None and ax._subplot_spec is None and ax._subplot_index is None
+            for ax in self._axes
         ):
             canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
             compact = canvas_w / max(1, self._ncols) < 520

@@ -610,6 +610,10 @@ class PlotTypeMixin:
 
         def _next_color(self) -> str: ...
 
+        def _mpl_dash(self, dash: Any, linewidth: Any) -> Any: ...
+
+        def _point_scale(self) -> float: ...
+
         def _entry_extent(self, axis: str) -> tuple[float, float]: ...
 
         def _categorical_position(self, axis: str, label: Any) -> float: ...
@@ -1814,7 +1818,9 @@ class PlotTypeMixin:
         )
 
         base_color, base_linestyle, _base_marker = parse_fmt(str(basefmt or "C3-"))
-        base_dash = _dash_segment_pattern("stem", base_linestyle)
+        base_dash = LINESTYLE_TO_DASH.get(base_linestyle)
+        if base_dash is not None:
+            base_dash = self._mpl_dash(base_dash, 1.5)
         baseline_entry = self._add(
             "line",
             {
@@ -5132,6 +5138,8 @@ class PlotTypeMixin:
         empty = ~(halves | (nflags > 0) | (nbarbs > 0))
 
         def visible_span(values: np.ndarray) -> float:
+            if values.size == 0:
+                return 1.0
             span = float(np.ptp(values))
             if span > np.finfo(float).eps:
                 return span
@@ -5572,6 +5580,14 @@ class PlotTypeMixin:
         if np.any(density_xy <= 0):
             raise ValueError("streamplot density must be positive")
         max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
+        native_fast_path = (
+            start_points is None
+            and integration_direction == "both"
+            and broken_streamlines
+            and integration_max_step_scale == 1.0
+            and integration_max_error_scale == 1.0
+            and density_xy[0] == density_xy[1]
+        )
         if start_points is not None:
             seeds = np.asarray(start_points, dtype=np.float64)
             if seeds.ndim != 2 or seeds.shape[1] != 2:
@@ -5584,28 +5600,44 @@ class PlotTypeMixin:
             )
             if not np.all(inside):
                 raise ValueError("streamplot start_points must lie inside the x/y grid")
-        else:
+        elif not native_fast_path:
             seed_x, seed_y = np.meshgrid(
                 np.linspace(x_values[0], x_values[-1], max(2, int(18 * density_xy[0]))),
                 np.linspace(y_values[0], y_values[-1], max(2, int(18 * density_xy[1]))),
             )
             seeds = np.column_stack((seed_x.reshape(-1), seed_y.reshape(-1)))
-        source_segments = _integrate_streamlines(
-            x_values,
-            y_values,
-            u_values,
-            v_values,
-            seeds,
-            integration_direction,
-            max_steps,
-            float(maxlength),
-            float(minlength),
-            broken_streamlines=broken_streamlines,
-            density=(float(density_xy[0]), float(density_xy[1])),
-            step_scale=integration_max_step_scale,
-            error_scale=integration_max_error_scale,
-            skip_occupied_seeds=start_points is None,
-        )
+        if native_fast_path:
+            from xy import kernels
+
+            kx0, kx1, ky0, ky1 = kernels.streamlines(
+                x_values,
+                y_values,
+                u_values,
+                v_values,
+                density=float(density_xy[0]),
+                max_steps=max_steps,
+            )
+            source_segments = [
+                np.asarray(((sx, sy), (ex, ey)), dtype=np.float64)
+                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
+            ]
+        else:
+            source_segments = _integrate_streamlines(
+                x_values,
+                y_values,
+                u_values,
+                v_values,
+                seeds,
+                integration_direction,
+                max_steps,
+                float(maxlength),
+                float(minlength),
+                broken_streamlines=broken_streamlines,
+                density=(float(density_xy[0]), float(density_xy[1])),
+                step_scale=integration_max_step_scale,
+                error_scale=integration_max_error_scale,
+                skip_occupied_seeds=start_points is None,
+            )
         x0_values: list[float] = []
         y0_values: list[float] = []
         x1_values: list[float] = []
@@ -5706,23 +5738,30 @@ class PlotTypeMixin:
         collection = PolyCollection(self, entries[0])
         arrow_collection = collection
         if num_arrows > 0 and len(x0):
-            arrow_indices_list: list[int] = []
-            segment_offset = 0
-            for streamline in source_segments:
-                deltas = np.diff(streamline, axis=0)
-                lengths = np.hypot(
-                    deltas[:, 0] / max(float(np.ptp(x_values)), np.finfo(float).eps),
-                    deltas[:, 1] / max(float(np.ptp(y_values)), np.finfo(float).eps),
+            if native_fast_path:
+                arrow_count = max(
+                    1,
+                    min(len(x0), num_arrows * int(30 * float(density_xy[0]))),
                 )
-                cumulative = np.cumsum(lengths)
-                if cumulative.size and cumulative[-1] > 0.0:
-                    targets = cumulative[-1] * (
-                        np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
+                arrow_indices = np.unique(np.linspace(0, len(x0) - 1, arrow_count, dtype=np.int64))
+            else:
+                arrow_indices_list: list[int] = []
+                segment_offset = 0
+                for streamline in source_segments:
+                    deltas = np.diff(streamline, axis=0)
+                    lengths = np.hypot(
+                        deltas[:, 0] / max(float(np.ptp(x_values)), np.finfo(float).eps),
+                        deltas[:, 1] / max(float(np.ptp(y_values)), np.finfo(float).eps),
                     )
-                    local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
-                    arrow_indices_list.extend((segment_offset + local).tolist())
-                segment_offset += len(lengths)
-            arrow_indices = np.unique(np.asarray(arrow_indices_list, dtype=np.int64))
+                    cumulative = np.cumsum(lengths)
+                    if cumulative.size and cumulative[-1] > 0.0:
+                        targets = cumulative[-1] * (
+                            np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
+                        )
+                        local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
+                        arrow_indices_list.extend((segment_offset + local).tolist())
+                    segment_offset += len(lengths)
+                arrow_indices = np.unique(np.asarray(arrow_indices_list, dtype=np.int64))
             dx = x1[arrow_indices] - x0[arrow_indices]
             dy = y1[arrow_indices] - y0[arrow_indices]
             lengths = np.hypot(dx, dy)

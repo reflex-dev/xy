@@ -58,6 +58,11 @@ def escape(data: str, entities: dict[str, str] | None = None) -> str:
     return data
 
 
+def _escape_attr(data: Any) -> str:
+    """Escape arbitrary text for a double-quoted XML attribute."""
+    return escape(str(data), {'"': "&quot;"})
+
+
 def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
     """CSS whole-mark opacity multiplied by the fill-only channel."""
     return float(style.get("opacity", default)) * float(style.get("fill_opacity", 1.0))
@@ -2019,15 +2024,17 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         title_family = title_style.get("font-family")
         title_font_style = title_style.get("font-style")
         title_font_attrs = (
-            f' font-family="{escape(str(title_family))}"' if title_family is not None else ""
+            f' font-family="{_escape_attr(title_family)}"' if title_family is not None else ""
         ) + (
-            f' font-style="{escape(str(title_font_style))}"' if title_font_style is not None else ""
+            f' font-style="{_escape_attr(title_font_style)}"'
+            if title_font_style is not None
+            else ""
         )
         chrome.append(
             f'<text x="{_num(width / 2)}" '
             f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
             f'text-anchor="middle" font-size="{_num(title_size)}" '
-            f'font-weight="{escape(str(title_weight))}"{title_font_attrs} '
+            f'font-weight="{_escape_attr(title_weight)}"{title_font_attrs} '
             f'fill="{escape(_css(title_style.get("color"), default_text))}">'
             f"{escape(str(spec['title']))}</text>"
         )
@@ -2042,13 +2049,13 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
         family = axis_style.get("label_font_family")
         font_style = axis_style.get("label_font_style")
-        font_attrs = (f' font-family="{escape(str(family))}"' if family is not None else "") + (
-            f' font-style="{escape(str(font_style))}"' if font_style is not None else ""
+        font_attrs = (f' font-family="{_escape_attr(family)}"' if family is not None else "") + (
+            f' font-style="{_escape_attr(font_style)}"' if font_style is not None else ""
         )
         chrome.append(
             f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
             f'font-size="{_num(float(geometry["font_size"]))}" '
-            f'font-weight="{escape(str(axis_style.get("label_font_weight", 400)))}"{font_attrs} '
+            f'font-weight="{_escape_attr(axis_style.get("label_font_weight", 400))}"{font_attrs} '
             f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
             f"{escape(str(axis['label']))}</text>"
         )

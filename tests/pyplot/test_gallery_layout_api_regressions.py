@@ -78,6 +78,20 @@ def test_tight_layout_reserves_subplot_tick_chrome() -> None:
     assert vertical_gap >= 43
 
 
+def test_tight_layout_recomputes_materialized_subplot_rectangles() -> None:
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(6.4, 4.8))
+
+    fig.tight_layout()
+    first = axes[0, 0]._figure_rect
+    fig.tight_layout(pad=3.0)
+    second = axes[0, 0]._figure_rect
+
+    assert first is not None and second is not None
+    assert second != first
+    assert second[0] > first[0]
+    assert second[2] < first[2]
+
+
 def test_subplots_constrained_layout_reserves_subplot_tick_chrome() -> None:
     plt.close("all")
     fig, _axes = plt.subplots(nrows=1, ncols=3, figsize=(8, 4), layout="constrained")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+
 import pytest
 
 import xy.pyplot as plt
@@ -90,6 +92,17 @@ def test_rc_fonts_and_axis_strokes_scale_with_figure_dpi() -> None:
     assert built.axis_options["x"]["style"]["tick_padding"] == pytest.approx(7.0)
 
 
+def test_rc_tick_padding_accepts_negative_values() -> None:
+    plt.rcParams["xtick.major.pad"] = -4
+    plt.rcParams["ytick.major.pad"] = -2
+
+    _fig, ax = plt.subplots()
+    built = ax._build_chart(640, 480).figure()
+
+    assert built.axis_options["x"]["style"]["tick_padding"] == pytest.approx(-4 * ax._point_scale())
+    assert built.axis_options["y"]["style"]["tick_padding"] == pytest.approx(-2 * ax._point_scale())
+
+
 def test_spine_controls_and_invalid_cycle_boundaries() -> None:
     plt.rcParams["axes.spines.left"] = False
     plt.rcParams["axes.spines.top"] = True
@@ -148,6 +161,18 @@ def test_explicit_set_title_weight_still_beats_the_rc_default() -> None:
 
     assert built.chrome_styles["title"]["font-weight"] == "bold"
     assert built.axis_options["x"]["style"]["label_font_weight"] == "light"
+
+
+def test_quoted_font_families_remain_well_formed_in_svg() -> None:
+    _fig, ax = plt.subplots()
+    ax.set_title("title", fontfamily='"Foo Bar", serif')
+    ax.set_xlabel("x", fontfamily='"Foo Bar", serif')
+    ax.set_ylabel("y", fontfamily='"Foo Bar", serif')
+
+    svg = ax._build_chart(640, 480).figure().to_svg()
+
+    ET.fromstring(svg)
+    assert svg.count('font-family="&quot;Foo Bar&quot;, serif"') == 3
 
 
 def test_spine_open_slice_targets_every_side_like_matplotlib() -> None:

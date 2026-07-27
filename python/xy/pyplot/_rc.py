@@ -164,8 +164,6 @@ class RcParams(dict):
             "ytick.major.size",
             "xtick.major.width",
             "ytick.major.width",
-            "xtick.major.pad",
-            "ytick.major.pad",
         }:
             value = float(value)
             if value < 0:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -34,11 +35,33 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
     # generous relative bucket is still far below meaningful edge spacing.
     tolerance = max(span * 2e-5, 1e-12)
 
-    def vertex_key(point: tuple[float, float]) -> tuple[int, int]:
-        return (round(point[0] / tolerance), round(point[1] / tolerance))
+    # A single rounded bucket is not a proximity test: two float32-decoded
+    # copies of one source vertex can straddle its boundary. Search the
+    # neighboring cells and snap each copy to a stable representative instead.
+    buckets: dict[tuple[int, int], list[int]] = {}
+    points_by_key: list[tuple[float, float]] = []
 
-    edge_counts: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
-    points_by_key: dict[tuple[int, int], tuple[float, float]] = {}
+    def vertex_key(point: tuple[float, float]) -> int:
+        cell = (math.floor(point[0] / tolerance), math.floor(point[1] / tolerance))
+        best: int | None = None
+        best_distance = math.inf
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for candidate in buckets.get((cell[0] + dx, cell[1] + dy), ()):
+                    other = points_by_key[candidate]
+                    delta_x, delta_y = abs(point[0] - other[0]), abs(point[1] - other[1])
+                    if delta_x <= tolerance and delta_y <= tolerance:
+                        distance = delta_x * delta_x + delta_y * delta_y
+                        if distance < best_distance:
+                            best, best_distance = candidate, distance
+        if best is not None:
+            return best
+        key = len(points_by_key)
+        points_by_key.append(point)
+        buckets.setdefault(cell, []).append(key)
+        return key
+
+    edge_counts: dict[tuple[int, int], int] = {}
     for index in range(n):
         points = (
             (float(arrays[0][index]), float(arrays[1][index])),
@@ -47,14 +70,12 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
         )
         for start, end in zip(points, points[1:] + points[:1], strict=True):
             start_key, end_key = vertex_key(start), vertex_key(end)
-            points_by_key.setdefault(start_key, start)
-            points_by_key.setdefault(end_key, end)
             edge = (start_key, end_key) if start_key <= end_key else (end_key, start_key)
             edge_counts[edge] = edge_counts.get(edge, 0) + 1
     boundary = [edge for edge, count in edge_counts.items() if count == 1]
     if len(boundary) < 3:
         return None
-    adjacency: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    adjacency: dict[int, list[int]] = {}
     for start, end in boundary:
         adjacency.setdefault(start, []).append(end)
         adjacency.setdefault(end, []).append(start)
@@ -62,7 +83,7 @@ def triangle_mesh_boundary(*vertices: np.ndarray) -> np.ndarray | None:
         return None
     first = boundary[0][0]
     ring = [first]
-    previous: tuple[int, int] | None = None
+    previous: int | None = None
     current = first
     for _ in range(len(boundary)):
         neighbors = adjacency[current]

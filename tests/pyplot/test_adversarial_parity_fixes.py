@@ -126,6 +126,18 @@ def test_subplots_adjust_overrides_set_position_for_gridspec_axes():
     assert np.allclose(ax.get_position().bounds, (0.35, 0.11, 0.25, 0.77))
 
 
+def test_add_axes_does_not_reshape_the_subplot_grid() -> None:
+    fig = plt.figure()
+    subplot = fig.gca()
+    absolute = fig.add_axes((0.7, 0.7, 0.2, 0.2))
+
+    fig.subplots_adjust(left=0.2)
+
+    assert subplot.get_position().bounds == pytest.approx((0.2, 0.11, 0.7, 0.77))
+    assert absolute.get_position().bounds == pytest.approx((0.7, 0.7, 0.2, 0.2))
+    assert (fig._nrows, fig._ncols) == (1, 1)
+
+
 def test_month_locator_bymonth_subset_keeps_rrule_stride():
     # rrule's MONTHLY interval strides over *all* months; bymonth filters the
     # survivors (matplotlib 3.11 reference).

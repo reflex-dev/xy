@@ -430,6 +430,28 @@ def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
     assert len(traces[-1].x0.values) > 0
 
 
+def test_default_streamplot_uses_the_native_integrator(monkeypatch) -> None:
+    from xy import kernels
+
+    called = False
+    native = kernels.streamlines
+
+    def tracked(*args, **kwargs):
+        nonlocal called
+        called = True
+        return native(*args, **kwargs)
+
+    monkeypatch.setattr(kernels, "streamlines", tracked)
+    _fig, ax = plt.subplots()
+    x = np.linspace(-1.0, 1.0, 10)
+    y = np.linspace(-1.0, 1.0, 8)
+    xx, yy = np.meshgrid(x, y)
+
+    ax.streamplot(x, y, -yy, xx)
+
+    assert called
+
+
 def test_artist_set_ydata_rebuilds() -> None:
     _fig, ax = plt.subplots()
     (line,) = ax.plot([0, 1, 2], [1, 2, 3])

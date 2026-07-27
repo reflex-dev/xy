@@ -65,6 +65,19 @@ def test_margins_expand_only_automatic_domains() -> None:
     assert ax.get_xlim() == (0.0, 1.0)
 
 
+def test_negative_margins_shrink_the_rendered_domain() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [100.0, 140.0])
+
+    ax.margins(x=-0.1, y=-0.25)
+
+    assert ax.get_xlim() == (1.0, 9.0)
+    assert ax.get_ylim() == (110.0, 130.0)
+    figure = ax._build_chart(640, 480).figure()
+    assert figure.x_range() == (1.0, 9.0)
+    assert figure.y_range() == (110.0, 130.0)
+
+
 def test_axis_tight_sets_data_domains_and_equal_expands_to_panel_ratio() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0.0, 2.0], [0.0, 1.0])
