@@ -1563,6 +1563,25 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
         axis, "tick_label_color", "tick_color"
     ):
         return 0.0
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    outside_label = (
+        axis.get("label")
+        and _axis_text_paint_visible(axis, "label_color")
+        and not position.replace("-", "_").startswith("inside_")
+    )
+    if (
+        strategy == "auto"
+        and axis.get("tick_label_angle") is None
+        and axis.get("tick_values") is None
+        and axis.get("kind") != "category"
+        and (not outside_label or len(_textblock.split_lines(axis["label"])) == 1)
+    ):
+        # Numeric auto ticks are selected from the plot width and remain in the
+        # established horizontal band. Only authored/category locations can
+        # force rotation or staggering; avoid building and measuring the full
+        # label layout merely to rediscover the ordinary zero-extra case.
+        return 0.0
     _ticks, values, step = axis_ticks(axis, plot_w, True)
     scale = _Scale(axis, 0.0, max(1.0, plot_w))
     items = _axis_tick_label_layout(axis, values, step, scale, True)
@@ -1570,17 +1589,14 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
         return 0.0
     has_adaptive_layout = any(float(item["angle"]) or int(item.get("row", 0)) for item in items)
     font_size = _axis_tick_font_size(axis)
-    has_multiline_ticks = any(
-        _textblock.measure(item["text"], font_size).line_count > 1 for item in items
-    )
-    raw_position = axis.get("label_position")
-    position = raw_position if isinstance(raw_position, str) else "center"
+    has_multiline_ticks = any(len(_textblock.split_lines(item["text"])) > 1 for item in items)
     label_size = float((axis.get("style") or {}).get("label_size", 12))
     label_block = (
         _textblock.measure(axis["label"], label_size)
         if axis.get("label")
         and _axis_text_paint_visible(axis, "label_color")
         and not position.replace("-", "_").startswith("inside_")
+        and len(_textblock.split_lines(axis["label"])) > 1
         else None
     )
     label_extra = (
@@ -1698,7 +1714,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     # static export has no ellipsis to fall back on the way the DOM does.
     left = max(left, _y_axis_left_room(spec, max(40, height - top - bottom)))
     final_w = max(40.0, width - left - right)
-    measured_top, measured_bottom, final_measured_bottom = _x_axis_rooms(axes, final_w, compact)
+    if final_w == provisional_w:
+        measured_top = top_axis_room
+        measured_bottom = bottom_axis_room
+        final_measured_bottom = measured_bottom_room
+    else:
+        measured_top, measured_bottom, final_measured_bottom = _x_axis_rooms(axes, final_w, compact)
     if measured_top > top_axis_room:
         top += measured_top - top_axis_room
         top_axis_room = measured_top
@@ -2027,6 +2048,7 @@ def _axis_label_geometry(
     }
 
 
+@_textblock.cached_measurements
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
     spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)

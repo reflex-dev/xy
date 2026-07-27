@@ -6395,14 +6395,17 @@ class Axes(PlotTypeMixin):
         angle = float(props.get("tick_label_angle", 0.0))
         extra = 0.0
         for label in labels:
+            lines = _textblock.split_lines(label)
+            if len(lines) == 1:
+                continue
             block = _textblock.measure(label, size)
-            first = _textblock.measure(block.lines[0], size)
+            first = _textblock.measure(lines[0], size)
             extra = max(
                 extra,
                 _textblock.rotated_extent(block, angle)[1]
                 - _textblock.rotated_extent(first, angle)[1],
             )
-        if props.get("label"):
+        if props.get("label") and len(_textblock.split_lines(props["label"])) > 1:
             label_size = float(style.get("label_size", 12.0))
             label_lines = _textblock.measure(props["label"], label_size).line_count
             extra = max(extra, max(0, label_lines - 1) * label_size * _textblock.LINE_HEIGHT)
@@ -6458,6 +6461,11 @@ class Axes(PlotTypeMixin):
             return self._y2_of._build_chart(width, height)
         if self._chart is not None:
             return self._chart
+        with _textblock.measurement_cache():
+            return self._build_chart_uncached(width, height)
+
+    def _build_chart_uncached(self, width: int, height: int) -> Any:
+        """Build a fresh chart while one pass owns repeated text metrics."""
         self._materialize_insets()
         chart_padding = (
             self._frame_padding(width, height) if self._padding is None else list(self._padding)

@@ -23,8 +23,16 @@ from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
+_Chrome = tuple[float, float, float, float]
+_ChromeCache = dict[tuple[int, int, int], _Chrome]
 
-def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
+
+def _panel_chrome(
+    ax: Axes,
+    plot_w: int,
+    *,
+    cache: Optional[_ChromeCache] = None,
+) -> _Chrome:
     """``(left, top, right, bottom)`` px of chrome around a free-form panel.
 
     One definition for the whole absolute-placement path: `_charts` sizes the
@@ -38,6 +46,15 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
     title is the case matplotlib makes obvious: it draws above the axes without
     changing its position.
     """
+    figure = ax.figure
+    probe_h = 0
+    cache_key: Optional[tuple[int, int, int]] = None
+    if figure is not None:
+        _canvas_w, canvas_h = rc_figsize_px(figure._figsize, figure._dpi)
+        probe_h = max(120, round(canvas_h / max(1, figure._nrows)))
+        cache_key = (id(ax), int(plot_w), probe_h)
+        if cache is not None and cache_key in cache:
+            return cache[cache_key]
     compact = plot_w + 54 < 520
     left, top = (46.0, 6.0) if compact else (62.0, 10.0)
     right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
@@ -73,17 +90,22 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
         right + extra_right,
         max(bottom + extra_bottom, table_bottom),
     )
-    figure = ax.figure
     if figure is None:
         return defaults
-    _canvas_w, canvas_h = rc_figsize_px(figure._figsize, figure._dpi)
-    probe_h = max(120, round(canvas_h / max(1, figure._nrows)))
     measured = _measured_axis_chrome(
         ax,
         max(120, round(plot_w + defaults[0] + defaults[2])),
         probe_h,
     )
-    return tuple(max(default, actual) for default, actual in zip(defaults, measured, strict=True))
+    resolved: _Chrome = (
+        max(defaults[0], measured[0]),
+        max(defaults[1], measured[1]),
+        max(defaults[2], measured[2]),
+        max(defaults[3], measured[3]),
+    )
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = resolved
+    return resolved
 
 
 def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
@@ -574,16 +596,16 @@ class Figure:
         # still re-solved from final content at render time.
         self._ensure_layout()
 
-    def _ensure_layout(self) -> None:
+    def _ensure_layout(self, chrome_cache: Optional[_ChromeCache] = None) -> None:
         if not self._layout_dirty or self._applying_layout:
             return
         self._applying_layout = True
         try:
-            self._apply_tight_layout()
+            self._apply_tight_layout(chrome_cache)
         finally:
             self._applying_layout = False
 
-    def _apply_tight_layout(self) -> None:
+    def _apply_tight_layout(self, chrome_cache: Optional[_ChromeCache] = None) -> None:
         options = self._layout_options
         pad = options.get("pad")
         h_pad = options.get("h_pad")
@@ -602,7 +624,7 @@ class Figure:
             canvas_w, canvas_h = rc_figsize_px(self._figsize, self._dpi)
             compact = canvas_w / max(1, self._ncols) < 520
             nominal_plot_w = max(40, round(canvas_w / max(1, self._ncols)))
-            chrome = [_panel_chrome(ax, nominal_plot_w) for ax in self._axes]
+            chrome = [_panel_chrome(ax, nominal_plot_w, cache=chrome_cache) for ax in self._axes]
             left_px = max((item[0] for item in chrome), default=46.0 if compact else 62.0)
             right_px = max(
                 20.0 if compact else 26.0,
@@ -1089,7 +1111,10 @@ class Figure:
         w, h = rc_figsize_px(self._figsize, self._dpi)
         return max(120, w // self._ncols), max(120, h // self._nrows)
 
-    def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
+    def _effective_rects(
+        self,
+        chrome_cache: Optional[_ChromeCache] = None,
+    ) -> Optional[list[tuple[float, float, float, float]]]:
         """Per-axes figure rects when the figure needs free-form placement, else None.
 
         A figure is free-form when any axes carries an explicit rect (the
@@ -1102,7 +1127,7 @@ class Figure:
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
         """
-        self._ensure_layout()
+        self._ensure_layout(chrome_cache)
         if not self._axes:
             return None
         if (
@@ -1169,9 +1194,9 @@ class Figure:
         heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
         return widths, heights
 
-    def _charts(self) -> list[Any]:
+    def _charts(self, chrome_cache: Optional[_ChromeCache] = None) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
-        rects = self._effective_rects()
+        rects = self._effective_rects(chrome_cache)
         if rects is not None:
             charts = []
             for ax, rect in zip(self._axes, rects, strict=True):
@@ -1182,7 +1207,7 @@ class Figure:
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
-                left, top, right, bottom = _panel_chrome(ax, plot_w)
+                left, top, right, bottom = _panel_chrome(ax, plot_w, cache=chrome_cache)
                 ax._absolute_plot_ratio = plot_w / plot_h
                 # Pin the plot rect inside the panel: the exporters place the
                 # panel assuming its plot box sits at exactly this inset, so
@@ -1237,8 +1262,8 @@ class Figure:
             ]
         return [list(range(count))]
 
-    def _single(self) -> Optional[Any]:
-        charts = self._charts()
+    def _single(self, chrome_cache: Optional[_ChromeCache] = None) -> Optional[Any]:
+        charts = self._charts(chrome_cache)
         if (
             self._nrows == self._ncols == 1
             and len(charts) == 1
@@ -1252,6 +1277,7 @@ class Figure:
         self,
         rects: list[tuple[float, float, float, float]],
         canvas_size: tuple[int, int],
+        chrome_cache: Optional[_ChromeCache] = None,
     ) -> list[tuple[float, float, float, float]]:
         """Expand plot-box rects into whole-panel rects including chart chrome.
 
@@ -1264,7 +1290,11 @@ class Figure:
             # The same chrome `_charts` built the panel with — including the
             # axes title, which grows the panel upward so the plot box stays
             # on the rect.
-            left, top, right, bottom = _panel_chrome(ax, max(1, round(canvas_size[0] * rect[2])))
+            left, top, right, bottom = _panel_chrome(
+                ax,
+                max(1, round(canvas_size[0] * rect[2])),
+                cache=chrome_cache,
+            )
             positions.append(
                 (
                     rect[0] - left / canvas_size[0],
@@ -1277,6 +1307,7 @@ class Figure:
 
     # -- output -----------------------------------------------------------------
 
+    @_textblock.cached_measurements
     def savefig(
         self, fname: Any, dpi: Any = None, format: Optional[str] = None, **kwargs: Any
     ) -> None:
@@ -1331,20 +1362,23 @@ class Figure:
                 if metadata:
                     data = _png_with_metadata(data, metadata)
             elif suffix == "svg":
-                single = self._single()
+                chrome_cache: _ChromeCache = {}
+                single = self._single(chrome_cache)
                 if single is None or self._suptitle is not None:
                     from ._grid import compose_svg
 
                     canvas_size = rc_figsize_px(self._figsize, self._dpi)
-                    rects = self._effective_rects()
+                    rects = self._effective_rects(chrome_cache)
                     data = compose_svg(
-                        self._charts(),
+                        self._charts(chrome_cache),
                         self._nrows,
                         self._ncols,
                         self._suptitle,
                         self._suptitle_style,
                         positions=(
-                            None if rects is None else self._panel_positions(rects, canvas_size)
+                            None
+                            if rects is None
+                            else self._panel_positions(rects, canvas_size, chrome_cache)
                         ),
                         canvas_size=None if rects is None else canvas_size,
                     ).encode()
@@ -1384,15 +1418,19 @@ class Figure:
         else:
             fname.write(data)  # file-like
 
+    @_textblock.cached_measurements
     def _to_png(self, *, bbox_tight: bool = False, pad_inches: float = 0.1) -> bytes:
         from ._grid import stitch_png
 
+        chrome_cache: _ChromeCache = {}
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
-        rects = self._effective_rects()
-        positions = None if rects is None else self._panel_positions(rects, canvas_size)
+        rects = self._effective_rects(chrome_cache)
+        positions = (
+            None if rects is None else self._panel_positions(rects, canvas_size, chrome_cache)
+        )
 
         return stitch_png(
-            self._charts(),
+            self._charts(chrome_cache),
             self._nrows,
             self._ncols,
             self._suptitle,
@@ -1405,29 +1443,34 @@ class Figure:
             pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0))),
         )
 
+    @_textblock.cached_measurements
     def _to_html(self) -> str:
         if self._html_cache is None:
-            single = self._single()
+            chrome_cache: _ChromeCache = {}
+            single = self._single(chrome_cache)
             if single is not None and self._suptitle is None:
                 self._html_cache = single.to_html()
             else:
                 from ._grid import compose_html
 
                 canvas_size = rc_figsize_px(self._figsize, self._dpi)
-                rects = self._effective_rects()
+                rects = self._effective_rects(chrome_cache)
                 self._html_cache = compose_html(
-                    self._charts(),
+                    self._charts(chrome_cache),
                     self._nrows,
                     self._ncols,
                     self._suptitle,
                     self._suptitle_style,
                     positions=(
-                        None if rects is None else self._panel_positions(rects, canvas_size)
+                        None
+                        if rects is None
+                        else self._panel_positions(rects, canvas_size, chrome_cache)
                     ),
                     canvas_size=None if rects is None else canvas_size,
                 )
         return self._html_cache
 
+    @_textblock.cached_measurements
     def _to_notebook_html(self) -> tuple[str, int, int]:
         """Notebook-only tight layout matching Matplotlib's inline backend."""
         width, height = rc_figsize_px(self._figsize, self._dpi)

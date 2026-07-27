@@ -11,6 +11,7 @@ import pytest
 
 import xy.pyplot as plt
 from xy import _raster, _svg, _textblock
+from xy.pyplot import _mplfig
 from xy.pyplot._grid import _suptitle_baseline
 from xy.pyplot._mplfig import _panel_chrome
 
@@ -87,6 +88,50 @@ def test_multiline_gutters_grow_by_measured_line_steps_without_moving_single_lin
     assert single_plot["y"] + single_plot["h"] - (
         multi_plot["y"] + multi_plot["h"]
     ) == pytest.approx(tick_size * _textblock.LINE_HEIGHT, abs=0.3)
+
+
+def test_single_line_x_chrome_skips_block_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fig, ax = plt.subplots()
+    ax.set_xticks([0, 1], ["first label", "second label"])
+    ax.set_xlabel("single line title")
+
+    def unexpected_measurement(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("single-line x chrome must not run font measurement")
+
+    monkeypatch.setattr(_textblock, "measure", unexpected_measurement)
+
+    assert ax._x_multiline_extra() == 0.0
+
+
+def test_one_export_pass_reuses_panel_chrome_probe_per_axes_and_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fig, axes = plt.subplots(2, 1, figsize=(6.4, 4.8), dpi=100)
+    for ax in np.asarray(axes).ravel():
+        ax.plot([0, 1], [0, 1])
+        ax.set_ylabel("value")
+
+    calls: list[tuple[int, int, int]] = []
+
+    def measured(ax, width: int, height: int) -> tuple[float, float, float, float]:
+        calls.append((id(ax), width, height))
+        return 62.0, 10.0, 14.0, 42.0
+
+    monkeypatch.setattr(_mplfig, "_measured_axis_chrome", measured)
+    cache: _mplfig._ChromeCache = {}
+    canvas = (640, 480)
+    rects = fig._effective_rects(cache)
+    assert rects is not None
+
+    first_positions = fig._panel_positions(rects, canvas, cache)
+    fig._charts(cache)
+    second_positions = fig._panel_positions(rects, canvas, cache)
+
+    assert second_positions == first_positions
+    assert len(calls) == len(fig.axes)
+    assert len(cache) == len(fig.axes)
 
 
 def test_constrained_layout_reflows_after_late_multiline_chrome_and_suptitle() -> None:
