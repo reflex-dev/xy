@@ -34,6 +34,7 @@ from ._artists import (
     PathCollection,
     PolyCollection,
     Text,
+    _PatchFacade,
     unit_converted_values,
 )
 from ._colors import (
@@ -778,6 +779,11 @@ class _SpineProxy:
             raise KeyError(next(iter(unknown)))
         return _SpineProxy(self.axes, names)
 
+    def __getattr__(self, name: str) -> "_SpineProxy":
+        if name in {"left", "bottom", "top", "right"}:
+            return self[name]
+        raise AttributeError(name)
+
     def values(self) -> list["_SpineProxy"]:
         return [_SpineProxy(self.axes, (name,)) for name in self.names]
 
@@ -797,6 +803,9 @@ class _SpineProxy:
             else:
                 self.axes._hidden_spines.add(name)
         self.axes._invalidate()
+
+    def get_visible(self) -> bool:
+        return all(name not in self.axes._hidden_spines for name in self.names)
 
 
 def _cached_theme(grid: bool, tokens: dict[str, Any], style: dict[str, Any]) -> Any:
@@ -921,6 +930,7 @@ class Axes(PlotTypeMixin):
         self._patch_cycle = 0
         self._prop_cycle: Optional[list[str]] = None
         self._load_rc_chrome()
+        self.patch = _PatchFacade(self)
         self._chart: Any = None
         self._twin: Optional[Axes] = None
         self._y2_of = y2_of  # when set, our marks target axis id "y2" on the host
@@ -1764,7 +1774,7 @@ class Axes(PlotTypeMixin):
         self,
         x: float | ArrayLike,
         height: float | ArrayLike,
-        width: float = 0.8,
+        width: float | ArrayLike = 0.8,
         bottom: float | ArrayLike | None = None,
         **kwargs: Any,
     ) -> BarContainer:
@@ -1784,7 +1794,7 @@ class Axes(PlotTypeMixin):
         self,
         y: float | ArrayLike,
         width: float | ArrayLike,
-        height: float = 0.8,
+        height: float | ArrayLike = 0.8,
         left: float | ArrayLike | None = None,
         **kwargs: Any,
     ) -> BarContainer:
@@ -1833,6 +1843,26 @@ class Axes(PlotTypeMixin):
         vals = materialize_iterable(vals)
         thickness = materialize_iterable(thickness)
         base = materialize_iterable(base)
+        thickness_is_scalar = np.asarray(thickness).ndim == 0
+        base_is_none = base is None
+        base_is_scalar = base_is_none or np.asarray(base).ndim == 0
+        try:
+            cats, vals, broadcast_thickness, broadcast_base = np.broadcast_arrays(
+                np.atleast_1d(cats),
+                np.atleast_1d(vals),
+                np.atleast_1d(thickness),
+                np.atleast_1d(0.0 if base_is_none else base),
+                subok=True,
+            )
+        except ValueError:
+            raise ValueError(
+                "shape mismatch: bar positional inputs cannot be broadcast to a single shape"
+            ) from None
+        if cats.ndim != 1:
+            raise ValueError("bar positional inputs must be scalar or 1-D")
+        thickness = thickness if thickness_is_scalar else broadcast_thickness
+        if not base_is_none:
+            base = base if base_is_scalar else np.array(broadcast_base, copy=True)
         cat_array = np.asarray(cats)
         if cat_array.dtype.kind == "U" and cat_array.dtype.isnative:
             # _plain_text only rewrites labels containing TeX markers; a
@@ -2453,20 +2483,23 @@ class Axes(PlotTypeMixin):
                         )
                     )
         if not entries:
-            entries.append(
-                self._add(
-                    "area",
-                    {
-                        "x": [0.0, 0.0],
-                        "y": [np.nan, np.nan],
-                        "kwargs": {
-                            "base": [np.nan, np.nan],
-                            "color": resolved_color,
-                            "opacity": 0.0,
-                        },
-                    },
-                )
-            )
+            # Matplotlib still returns a collection handle, but there is no
+            # polygon to retain when no pair of adjacent points is selected.
+            # Keep that logical empty artist out of the render-entry list
+            # instead of exporting an all-NaN transparent area.
+            empty = {
+                "kind": "area",
+                "y_axis": "y2" if self._y2_of is not None else "y",
+                "x": np.empty(0, dtype=np.float64),
+                "y": np.empty(0, dtype=np.float64),
+                "kwargs": {
+                    "base": np.empty(0, dtype=np.float64),
+                    "color": resolved_color,
+                    "opacity": float(alpha) if alpha is not None else 1.0,
+                    "name": str(label) if label is not None else None,
+                },
+            }
+            return PolyCollection(self, empty)
         return PolyCollection(self, entries[0])
 
     def imshow(self, z: ArrayLike, cmap: Any = None, **kwargs: Any) -> AxesImage:

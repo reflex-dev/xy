@@ -20,6 +20,21 @@ from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
 
+class _PatchFacade:
+    """Stable facecolor facade for the figure and axes background patches."""
+
+    def __init__(self, owner: Any) -> None:
+        self._owner = owner
+
+    def set_facecolor(self, color: Any) -> None:
+        self._owner.set_facecolor(color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._owner.get_facecolor()
+
+
 def unit_converted_values(values: Any) -> Any:
     """Datetime-like values in the engine's converted unit — f64 ms since
     epoch (columns.py); every other dtype is already its own converted form."""
@@ -1173,6 +1188,41 @@ class _LegendProxy:
         self._entry = entry
 
 
+class _LegendFrame:
+    """Mutable facade over the frame options owned by one shim legend."""
+
+    def __init__(self, legend: "Legend") -> None:
+        self._legend = legend
+
+    def set_facecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("facecolor", color)
+
+    set_fc = set_facecolor
+
+    def get_facecolor(self) -> Any:
+        return self._legend._frame_style().get("background")
+
+    def set_edgecolor(self, color: Any) -> None:
+        self._legend._set_frame_option("edgecolor", color)
+
+    set_ec = set_edgecolor
+
+    def get_edgecolor(self) -> Any:
+        return self._legend._frame_style().get("borderColor")
+
+    def set_alpha(self, alpha: float | None) -> None:
+        self._legend._set_frame_option("framealpha", alpha)
+
+    def get_alpha(self) -> Any:
+        return self._legend._frame_style().get("--xy-legend-frame-alpha")
+
+    def set_visible(self, visible: bool) -> None:
+        self._legend._set_frame_option("frameon", bool(visible))
+
+    def get_visible(self) -> bool:
+        return bool(self._legend._kwargs.get("frameon", rcParams["legend.frameon"]))
+
+
 def _contour_legend_colors(entry: dict[str, Any], count: int) -> list[str]:
     """Resolve a contour's scalar/listed color channel to CSS proxy colors."""
     if count <= 0:
@@ -1471,6 +1521,7 @@ class Legend:
         self._kwargs = dict(kwargs)
         if loc is not None:
             self._kwargs.setdefault("loc", loc)
+        self._frame = _LegendFrame(self)
         self._attach(parent)
 
     def _attach(self, parent: Any) -> None:
@@ -1487,6 +1538,22 @@ class Legend:
             _legend_item_from_entry(entry, label, scale, marker_entry)
             for entry, label, marker_entry in self._pairs
         ]
+
+    def _frame_style(self) -> dict[str, Any]:
+        return self._options.get("style", {})
+
+    def _set_frame_option(self, name: str, value: Any) -> None:
+        self._kwargs[name] = value
+        self._attach(self._parent)
+        host = self._parent._y2_of or self._parent
+        if host._legend_handle is self:
+            host._legend_options = dict(self._options)
+            if host._legend_items is not None:
+                host._legend_items = list(self._items)
+        host._invalidate()
+
+    def get_frame(self) -> _LegendFrame:
+        return self._frame
 
     def spec(self) -> dict[str, Any]:
         """The option dict plus explicit items, ready for the render payload."""

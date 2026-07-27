@@ -866,9 +866,9 @@ def step(
 
 
 def bar(
-    x: ArrayLike,
+    x: float | ArrayLike,
     height: float | ArrayLike,
-    width: float = 0.8,
+    width: float | ArrayLike = 0.8,
     bottom: float | ArrayLike | None = None,
     *,
     color: ColorsLike | None = None,
@@ -917,9 +917,9 @@ def bar(
 
 
 def barh(
-    y: ArrayLike,
+    y: float | ArrayLike,
     width: float | ArrayLike,
-    height: float = 0.8,
+    height: float | ArrayLike = 0.8,
     left: float | ArrayLike | None = None,
     *,
     color: ColorsLike | None = None,

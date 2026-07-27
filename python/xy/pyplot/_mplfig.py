@@ -14,7 +14,7 @@ from typing import Any, Literal, Optional, overload
 
 import numpy as np
 
-from ._artists import Text
+from ._artists import Text, _PatchFacade
 from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
@@ -104,6 +104,7 @@ class Figure:
         # short-circuits) assumes a string.
         self._facecolor = (resolve_color(facecolor) if facecolor is not None else None) or "white"
         self._edgecolor = "white"
+        self.patch = _PatchFacade(self)
         self._suptitle: Optional[str] = None
         self._suptitle_style: dict[str, Any] = {}
         self._supxlabel: Optional[str] = None
