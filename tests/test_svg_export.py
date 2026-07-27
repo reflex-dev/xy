@@ -35,6 +35,15 @@ def _parse(svg: str) -> ET.Element:
     return ET.fromstring(svg)
 
 
+def _text_element(root: ET.Element, value: str) -> ET.Element:
+    """Return the SVG ``text`` owner whether content is direct or in tspans."""
+    return next(
+        node
+        for node in root.iter()
+        if node.tag.endswith("text") and "".join(node.itertext()) == value
+    )
+
+
 def test_every_chart_kind_exports_wellformed_svg() -> None:
     rng = np.random.default_rng(0)
     x = np.linspace(0.0, 10.0, 50)
@@ -132,7 +141,7 @@ def test_svg_tick_padding_starts_after_the_outward_tick() -> None:
     spec, _blob = chart.figure().build_payload()
     _width, _height, _compact, plot = _svg.layout(spec)
     root = _parse(chart.figure().to_svg())
-    label = next(node for node in root.iter() if node.text == "middle")
+    label = _text_element(root, "middle")
 
     # SVG text y is its baseline. The label's top begins after the 6 px
     # outward tick plus the independent 5 px Matplotlib-style pad.
@@ -467,7 +476,7 @@ def test_svg_vertical_colorbar_label_is_rotated_beside_the_bar_inside_the_canvas
     width, _height, _compact, plot = _svg.layout(spec)
     root = _parse(fig.to_svg())
 
-    label = next(node for node in root.iter() if node.text == "counts in bin")
+    label = _text_element(root, "counts in bin")
     label_x, label_y = float(label.get("x", "nan")), float(label.get("y", "nan"))
     bar = next(
         node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
@@ -518,7 +527,7 @@ def test_svg_colorbar_clears_primary_right_axis_and_bottom_axis_chrome() -> None
         for node in vertical_root.iter()
         if (node.get("fill") or "").startswith("url(#xy-colorbar-")
     )
-    right_title = next(node for node in vertical_root.iter() if node.text == "Primary right")
+    right_title = _text_element(vertical_root, "Primary right")
     assert float(vertical_bar.get("x", "nan")) > float(right_title.get("x", "nan"))
     assert float(vertical_bar.get("x", "nan")) > vertical_plot["x"] + vertical_plot["w"] + 40
 
@@ -537,7 +546,7 @@ def test_svg_colorbar_clears_primary_right_axis_and_bottom_axis_chrome() -> None
         for node in horizontal_root.iter()
         if (node.get("fill") or "").startswith("url(#xy-colorbar-")
     )
-    bottom_title = next(node for node in horizontal_root.iter() if node.text == "Bottom axis")
+    bottom_title = _text_element(horizontal_root, "Bottom axis")
     assert float(horizontal_bar.get("y", "nan")) > float(bottom_title.get("y", "nan"))
     assert float(horizontal_bar.get("y", "nan")) >= (
         horizontal_plot["y"] + horizontal_plot["h"] + horizontal_plot["bottom_axis_room"]
@@ -672,9 +681,7 @@ def test_svg_rotated_x_tick_labels_anchor_away_from_plot(
 
     root = _parse(chart.figure().to_svg())
     labels = {
-        node.text: node
-        for node in root.iter()
-        if node.text in {"Long category alpha", "Long category beta"}
+        value: _text_element(root, value) for value in ("Long category alpha", "Long category beta")
     }
     assert set(labels) == {"Long category alpha", "Long category beta"}
     assert {node.get("text-anchor") for node in labels.values()} == {expected_anchor}
@@ -745,7 +752,7 @@ def test_svg_named_axis_collision_and_title_placement_controls() -> None:
 
     rendered_tick_labels = [node.text for node in root.iter() if node.text in tick_labels]
     assert 0 < len(rendered_tick_labels) < len(tick_labels)
-    title = next(node for node in root.iter() if node.text == "Secondary positioned title")
+    title = _text_element(root, "Secondary positioned title")
     assert float(title.get("x", "nan")) == plot["x"] + plot["w"]
     assert plot["y"] < float(title.get("y", "nan")) < plot["y"] + plot["h"]
     assert title.get("text-anchor") == "end"
