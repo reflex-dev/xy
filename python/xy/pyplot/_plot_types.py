@@ -85,6 +85,29 @@ def _sequence_param(value: Any, n: int, name: str) -> list[Any]:
     return result
 
 
+def _cycled_colors(value: Any, n: int, name: str) -> list[str]:
+    """Resolve a scalar color or cycle a non-empty color sequence to length ``n``."""
+    if n == 0:
+        return []
+    try:
+        scalar = resolve_color(value)
+    except (TypeError, ValueError):
+        sequence = list(value)
+    else:
+        if scalar is None:
+            raise ValueError(f"{name} must not be None")
+        return [scalar] * n
+    if not sequence:
+        raise ValueError(f"{name} must not be empty")
+    resolved: list[str] = []
+    for color in sequence:
+        item = resolve_color(color)
+        if item is None:
+            raise ValueError(f"{name} entries must not be None")
+        resolved.append(item)
+    return [resolved[index % len(resolved)] for index in range(n)]
+
+
 def _float(value: Any) -> float:
     return float(value)
 
@@ -2174,7 +2197,7 @@ class PlotTypeMixin:
         autorange: bool = False,
         zorder: float | None = None,
         capwidths: float | ArrayLike | None = None,
-        label: str | None = None,
+        label: str | Sequence[str] | None = None,
         data: TableLike = None,
     ) -> dict[str, list[Artist]]:
         """Box-and-whisker plots of one dataset or a sequence of datasets.
@@ -2304,8 +2327,8 @@ class PlotTypeMixin:
         points: int = 100,
         bw_method: Any = None,
         side: str = "both",
-        facecolor: ColorLike | None = None,
-        linecolor: ColorLike | None = None,
+        facecolor: ColorsLike | None = None,
+        linecolor: ColorsLike | None = None,
         data: TableLike = None,
     ) -> dict[str, Any]:
         """Violin plots (kernel density estimates) of one or more datasets.
@@ -3126,11 +3149,9 @@ class PlotTypeMixin:
         manage_ticks: bool = True,
         zorder: float | None = None,
         capwidths: float | ArrayLike | None = None,
-        label: str | None = None,
+        label: str | Sequence[str] | None = None,
     ) -> dict[str, list[Artist]]:
         """Draw exact precomputed box geometry with generic segment/scatter marks."""
-        if patch_artist:
-            raise not_implemented("bxp(patch_artist=True)")
         stats = list(bxpstats)
         count = len(stats)
         if vert is not None:
@@ -3155,6 +3176,7 @@ class PlotTypeMixin:
             ),
             dtype=np.float64,
         )
+        from xy import kernels
 
         def style(
             props: Any, fallback: Any = None
@@ -3199,6 +3221,52 @@ class PlotTypeMixin:
                 },
             )
             return Artist(self, entry)
+
+        def emit_patch(
+            coords: list[tuple[float, float, float, float]],
+            props: Any,
+        ) -> PolyCollection:
+            source = dict(props or {})
+            combined = source.pop("color", None)
+            facecolor = source.pop("facecolor", source.pop("fc", combined or "C0"))
+            edgecolor = source.pop(
+                "edgecolor",
+                source.pop("ec", combined or rcParams["patch.edgecolor"]),
+            )
+            linewidth = source.pop(
+                "linewidth",
+                source.pop("lw", rcParams["patch.linewidth"]),
+            )
+            alpha = source.pop("alpha", 1.0)
+            linestyle = source.pop("linestyle", source.pop("ls", None))
+            if linestyle not in (None, "solid", "-"):
+                raise not_implemented(
+                    "bxp patch box linestyle",
+                    "solid patch boundaries",
+                )
+            check_unsupported(source, "bxp patch properties")
+            vertices = np.asarray([(x0, y0) for x0, y0, _x1, _y1 in coords])
+            topology = kernels.polygon_triangles(vertices[:, 0], vertices[:, 1])
+            x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(
+                vertices[:, 0],
+                vertices[:, 1],
+                topology,
+            )
+            entry = self._add(
+                "@mark",
+                {
+                    "factory": "triangle_mesh",
+                    "args": (x0, y0, x1, y1, x2, y2),
+                    "kwargs": {
+                        "color": resolve_color(facecolor),
+                        "stroke": resolve_color(edgecolor),
+                        "stroke_width": float(linewidth),
+                        "opacity": float(alpha),
+                        "_joined_fill": True,
+                    },
+                },
+            )
+            return PolyCollection(self, entry)
 
         def emit_points(
             x_values: Sequence[float],
@@ -3344,7 +3412,11 @@ class PlotTypeMixin:
                         mean_point = (mean, center)
 
             if showbox:
-                result["boxes"].append(emit(box_segments, boxprops, "black"))
+                result["boxes"].append(
+                    emit_patch(box_segments, boxprops)
+                    if patch_artist
+                    else emit(box_segments, boxprops, "black")
+                )
             result["medians"].append(emit([median_segment], medianprops, "C1"))
             result["whiskers"].extend(
                 emit([segment], whiskerprops, "black") for segment in whisker_segments
@@ -3379,8 +3451,16 @@ class PlotTypeMixin:
                         default_edge="black",
                     )
                 )
-        if label is not None and result["medians"]:
-            result["medians"][0].set_label(str(label))
+        legend_handles = result["boxes"] if patch_artist and showbox else result["medians"]
+        if label is not None and legend_handles:
+            if isinstance(label, str):
+                legend_handles[0].set_label(label)
+            else:
+                labels = list(label)
+                if len(labels) != len(legend_handles):
+                    raise ValueError("bxp label sequence must match the number of boxes")
+                for handle, item_label in zip(legend_handles, labels, strict=True):
+                    handle.set_label(str(item_label))
         if zorder is not None:
             for artists in result.values():
                 for artist in artists:
@@ -3390,7 +3470,15 @@ class PlotTypeMixin:
             category_extent = np.concatenate((pos - 0.5, pos + 0.5))
             result["medians"][0]._entry["_mpl_extent"] = {category_axis: category_extent}
             result["medians"][0]._entry["_mpl_sticky_edges"] = {category_axis: category_extent}
-            (self.set_xticks if orientation == "vertical" else self.set_yticks)(pos)
+            set_ticks = self.set_xticks if orientation == "vertical" else self.set_yticks
+            if any("label" in item for item in stats):
+                datalabels = [
+                    str(item.get("label", position))
+                    for item, position in zip(stats, pos, strict=True)
+                ]
+                set_ticks(pos, datalabels)
+            else:
+                set_ticks(pos)
         return result
 
     def violin(
@@ -3405,8 +3493,8 @@ class PlotTypeMixin:
         showextrema: bool = True,
         showmedians: bool = False,
         side: str = "both",
-        facecolor: ColorLike | None = None,
-        linecolor: ColorLike | None = None,
+        facecolor: ColorsLike | None = None,
+        linecolor: ColorsLike | None = None,
     ) -> dict[str, Any]:
         """Draw violin bodies from precomputed coordinates and densities."""
         stats = list(vpstats)
@@ -3424,11 +3512,23 @@ class PlotTypeMixin:
         width_values = np.asarray(_sequence_param(widths, len(stats), "widths"), dtype=float)
         if pos.shape != (len(stats),):
             raise ValueError("violin positions must match vpstats")
-        body_color = resolve_color(facecolor) if facecolor is not None else self._next_color()
-        edge_color = resolve_color(linecolor) if linecolor is not None else body_color
+        default_color = (
+            self._next_color() if stats and (facecolor is None or linecolor is None) else "C0"
+        )
+        body_colors = (
+            [default_color] * len(stats)
+            if facecolor is None
+            else _cycled_colors(facecolor, len(stats), "violin facecolor")
+        )
+        line_colors = (
+            [default_color] * len(stats)
+            if linecolor is None
+            else _cycled_colors(linecolor, len(stats), "violin linecolor")
+        )
+        body_opacity = 0.3 if facecolor is None else 1.0
         from xy import kernels
 
-        bodies: list[Artist] = []
+        bodies: list[PolyCollection] = []
         center_segments: dict[str, list[tuple[float, float, float, float]]] = {
             "cmeans": [],
             "cmedians": [],
@@ -3437,6 +3537,7 @@ class PlotTypeMixin:
             "cbars": [],
             "cquantiles": [],
         }
+        center_colors: dict[str, list[str]] = {name: [] for name in center_segments}
         for index, item in enumerate(stats):
             coords = np.asarray(item["coords"], dtype=np.float64)
             vals = np.asarray(item["vals"], dtype=np.float64)
@@ -3463,7 +3564,7 @@ class PlotTypeMixin:
                         "y": [np.nan, np.nan],
                         "kwargs": {
                             "base": [np.nan, np.nan],
-                            "color": body_color,
+                            "color": body_colors[index],
                             "opacity": 0.0,
                         },
                     },
@@ -3479,13 +3580,13 @@ class PlotTypeMixin:
                         "factory": "triangle_mesh",
                         "args": (x0, y0, x1, y1, x2, y2),
                         "kwargs": {
-                            "color": body_color,
-                            "opacity": 0.3,
+                            "color": body_colors[index],
+                            "opacity": body_opacity,
                             "_joined_fill": True,
                         },
                     },
                 )
-            bodies.append(Artist(self, entry))
+            bodies.append(PolyCollection(self, entry))
             half = width_values[index] * 0.25
 
             def line_at(
@@ -3503,30 +3604,39 @@ class PlotTypeMixin:
             )
             if showextrema:
                 center_segments["cmins"].append(line_at(minimum))
+                center_colors["cmins"].append(line_colors[index])
                 center_segments["cmaxes"].append(line_at(maximum))
+                center_colors["cmaxes"].append(line_colors[index])
                 center_segments["cbars"].append(
                     (center, minimum, center, maximum)
                     if orientation == "vertical"
                     else (minimum, center, maximum, center)
                 )
+                center_colors["cbars"].append(line_colors[index])
             if showmeans and "mean" in item:
                 center_segments["cmeans"].append(line_at(float(item["mean"])))
+                center_colors["cmeans"].append(line_colors[index])
             if showmedians and "median" in item:
                 center_segments["cmedians"].append(line_at(float(item["median"])))
-            center_segments["cquantiles"].extend(
-                line_at(float(value)) for value in item.get("quantiles", ())
-            )
+                center_colors["cmedians"].append(line_colors[index])
+            quantiles = list(item.get("quantiles", ()))
+            center_segments["cquantiles"].extend(line_at(float(value)) for value in quantiles)
+            center_colors["cquantiles"].extend([line_colors[index]] * len(quantiles))
         result: dict[str, Any] = {"bodies": bodies}
         for name, coordinates in center_segments.items():
             if not coordinates:
                 continue
             values = np.asarray(coordinates, dtype=np.float64)
+            colors = center_colors[name]
+            rendered_color: Any = (
+                colors[0] if all(color == colors[0] for color in colors) else colors
+            )
             entry = self._add(
                 "@mark",
                 {
                     "factory": "segments",
                     "args": (values[:, 0], values[:, 1], values[:, 2], values[:, 3]),
-                    "kwargs": {"color": edge_color, "width": 1.0},
+                    "kwargs": {"color": rendered_color, "width": 1.0},
                 },
             )
             result[name] = Artist(self, entry)
@@ -3550,8 +3660,9 @@ class PlotTypeMixin:
 
         ``bins``/``range``/``density``/``weights`` follow
         ``numpy.histogram2d``; ``cmin``/``cmax`` blank cells outside the
-        count window. Supported keywords: ``cmap``, ``alpha``, and
-        ``vmin``/``vmax``; ``norm`` and unknown keywords raise loudly.
+        count window. Supported keywords: ``cmap``, ``alpha``,
+        ``vmin``/``vmax``, and linear or logarithmic normalization.
+        Unknown keywords raise loudly.
         Returns ``(counts, xedges, yedges, image)`` as matplotlib does.
         """
         x = np.asarray(_from_data(x, data), dtype=np.float64)
@@ -3626,35 +3737,66 @@ class PlotTypeMixin:
         vmin = kwargs.pop("vmin", None)
         vmax = kwargs.pop("vmax", None)
         norm = kwargs.pop("norm", None)
-        if norm is not None:
-            raise not_implemented("hist2d(norm=...)")
         check_unsupported(kwargs, "hist2d()")
-        x_uniform = np.allclose(np.diff(xedges), np.diff(xedges)[0])
-        y_uniform = np.allclose(np.diff(yedges), np.diff(yedges)[0])
-        if not (x_uniform and y_uniform):
-            image = self.pcolormesh(
-                xedges,
-                yedges,
-                h.T,
-                cmap=cmap,
-                alpha=alpha,
-                vmin=vmin,
-                vmax=vmax,
-            )
-            return h, xedges, yedges, image
-        mark_kwargs: dict[str, Any] = {
-            "x": (xedges[:-1] + xedges[1:]) * 0.5,
-            "y": (yedges[:-1] + yedges[1:]) * 0.5,
-            "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
-            "opacity": 0.95 if alpha is None else float(alpha),
-        }
-        if vmin is not None and vmax is not None:
-            mark_kwargs["domain"] = (float(vmin), float(vmax))
-        entry = self._add(
-            "@mark",
-            {"factory": "heatmap", "args": (h.T,), "kwargs": mark_kwargs, "source_z": h.T},
+        mesh_values = h.T
+        mesh_norm = norm
+        mesh_vmin, mesh_vmax = vmin, vmax
+        norm_name = norm.lower() if isinstance(norm, str) else type(norm).__name__
+        log_domain: tuple[float, float] | None = None
+        if norm_name == "linear":
+            mesh_norm = None
+        elif norm_name in {"log", "LogNorm"}:
+            if not isinstance(norm, str) and (vmin is not None or vmax is not None):
+                raise ValueError(
+                    "Passing a Normalize instance simultaneously with vmin/vmax "
+                    "is not supported; set the bounds on the norm instance instead"
+                )
+            raw = np.asarray(mesh_values, dtype=np.float64)
+            finite_positive = raw[np.isfinite(raw) & (raw > 0.0)]
+            lo_arg = getattr(norm, "vmin", None) if vmin is None else vmin
+            hi_arg = getattr(norm, "vmax", None) if vmax is None else vmax
+            if not finite_positive.size and (lo_arg is None or hi_arg is None):
+                raise ValueError("log normalization requires at least one positive finite value")
+            lo = float(lo_arg) if lo_arg is not None else float(finite_positive.min())
+            hi = float(hi_arg) if hi_arg is not None else float(finite_positive.max())
+            if not np.isfinite([lo, hi]).all() or lo <= 0.0 or hi <= 0.0:
+                raise ValueError("Invalid vmin or vmax")
+            if hi < lo:
+                raise ValueError("vmin must be less than or equal to vmax")
+            invalid = ~np.isfinite(raw) | (raw <= 0.0)
+            if callable(norm):
+                normalized = np.ma.asarray(
+                    norm(np.ma.masked_where(invalid, raw)),
+                    dtype=np.float64,
+                ).filled(np.nan)
+            elif hi == lo:
+                normalized = np.zeros(raw.shape, dtype=np.float64)
+            else:
+                normalized = (np.log(raw, where=~invalid, out=np.zeros_like(raw)) - np.log(lo)) / (
+                    np.log(hi) - np.log(lo)
+                )
+            if normalized.shape != raw.shape:
+                raise ValueError("normalization must preserve the histogram grid shape")
+            normalized[invalid] = np.nan
+            mesh_values = normalized
+            mesh_norm = None
+            mesh_vmin, mesh_vmax = 0.0, 1.0
+            log_domain = (lo, hi)
+        image = self.pcolormesh(
+            xedges,
+            yedges,
+            mesh_values,
+            cmap=cmap,
+            alpha=alpha,
+            vmin=mesh_vmin,
+            vmax=mesh_vmax,
+            norm=mesh_norm,
         )
-        return h, xedges, yedges, PolyCollection(self, entry)
+        if log_domain is not None:
+            image._entry["source_z"] = h.T
+            image._entry["_mpl_domain"] = log_domain
+            image._entry["_mpl_norm_scale"] = "log"
+        return h, xedges, yedges, image
 
     def eventplot(
         self,

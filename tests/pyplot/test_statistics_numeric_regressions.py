@@ -79,6 +79,53 @@ def test_uniform_multihist_keeps_a_scalar_swatch_width_for_legend() -> None:
     assert ax.legend() is not None
 
 
+def test_hist2d_lognorm_uses_opaque_mesh_and_retains_count_domain() -> None:
+    class LogNorm:
+        def __init__(self) -> None:
+            self.vmin: float | None = None
+            self.vmax: float | None = None
+
+        def __call__(self, values: object) -> np.ma.MaskedArray:
+            source = np.ma.asarray(values, dtype=np.float64)
+            positive = source.compressed()
+            positive = positive[positive > 0.0]
+            if self.vmin is None:
+                self.vmin = float(positive.min())
+            if self.vmax is None:
+                self.vmax = float(positive.max())
+            masked = np.ma.masked_less_equal(source, 0.0)
+            if self.vmin == self.vmax:
+                return np.ma.zeros(masked.shape)
+            return (np.ma.log(masked) - np.log(self.vmin)) / (np.log(self.vmax) - np.log(self.vmin))
+
+    x = np.asarray([0.1, 0.2, 0.3, 1.2, 1.3, 2.4])
+    y = np.asarray([0.1, 0.2, 0.3, 1.2, 1.3, 2.4])
+    _fig, ax = plt.subplots()
+
+    counts, xedges, yedges, image = ax.hist2d(
+        x,
+        y,
+        bins=3,
+        range=((0.0, 3.0), (0.0, 3.0)),
+        norm=LogNorm(),
+    )
+
+    np.testing.assert_array_equal(xedges, [0.0, 1.0, 2.0, 3.0])
+    np.testing.assert_array_equal(yedges, [0.0, 1.0, 2.0, 3.0])
+    np.testing.assert_array_equal(
+        counts,
+        [[3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+    )
+    assert image._entry["factory"] == "heatmap"
+    assert image._entry["kwargs"]["opacity"] == pytest.approx(1.0)
+    assert image._entry["_mpl_domain"] == (1.0, 3.0)
+    assert image._entry["_mpl_norm_scale"] == "log"
+    np.testing.assert_array_equal(image._entry["source_z"], counts.T)
+    normalized = np.asarray(image._entry["args"][0])
+    assert np.isnan(normalized[counts.T == 0.0]).all()
+    assert np.isfinite(normalized[counts.T > 0.0]).all()
+
+
 def test_spectral_defaults_match_matplotlib_311_detrend_none() -> None:
     values = np.arange(32.0) + 10.0
     paired = values * 2.0 + 3.0

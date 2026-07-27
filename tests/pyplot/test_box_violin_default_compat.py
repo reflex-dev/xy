@@ -49,6 +49,70 @@ def test_default_boxplot_returns_one_empty_flier_handle_per_group() -> None:
     assert all(len(artist._entry["x"]) == 0 for artist in result["fliers"])
 
 
+def test_patch_boxplot_returns_mutable_filled_boxes_with_labels() -> None:
+    _fig, ax = plt.subplots()
+    result = ax.bxp(
+        [
+            {
+                "med": 2.0,
+                "q1": 1.0,
+                "q3": 3.0,
+                "whislo": 0.0,
+                "whishi": 4.0,
+                "fliers": [],
+                "label": "A",
+            },
+            {
+                "med": 3.0,
+                "q1": 2.0,
+                "q3": 4.0,
+                "whislo": 1.0,
+                "whishi": 5.0,
+                "fliers": [],
+                "label": "B",
+            },
+        ],
+        patch_artist=True,
+        boxprops={"facecolor": "bisque", "edgecolor": "navy", "linewidth": 2.0},
+        label=["first", "second"],
+    )
+
+    assert [box._entry["factory"] for box in result["boxes"]] == [
+        "triangle_mesh",
+        "triangle_mesh",
+    ]
+    assert all(box._entry["kwargs"]["color"] == "bisque" for box in result["boxes"])
+    assert all(box._entry["kwargs"]["stroke"] == "navy" for box in result["boxes"])
+    assert ax._axis_props("x")["tick_labels"] == ["A", "B"]
+    assert ax.get_legend_handles_labels()[1] == ["first", "second"]
+
+    first = result["boxes"][0]
+    first.set_facecolor("tomato")
+    first.set_edgecolor("black")
+    first.set_linewidth(3.0)
+    np.testing.assert_allclose(first.get_facecolor(), [[1.0, 99 / 255, 71 / 255, 1.0]])
+    np.testing.assert_allclose(first.get_edgecolor(), [[0.0, 0.0, 0.0, 1.0]])
+    np.testing.assert_array_equal(first.get_linewidth(), [3.0])
+
+
+def test_boxplot_patch_mutation_matches_custom_fill_gallery_idiom() -> None:
+    _fig, ax = plt.subplots()
+    result = ax.boxplot(
+        [[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]],
+        patch_artist=True,
+        tick_labels=["peaches", "oranges"],
+    )
+
+    for patch, color in zip(result["boxes"], ["peachpuff", "orange"], strict=True):
+        patch.set_facecolor(color)
+
+    assert [patch._entry["kwargs"]["color"] for patch in result["boxes"]] == [
+        "rgba(255,218,185,1)",
+        "rgba(255,165,0,1)",
+    ]
+    assert ax._axis_props("x")["tick_labels"] == ["peaches", "oranges"]
+
+
 @pytest.mark.parametrize(
     ("bw_method", "factor"),
     [
@@ -105,6 +169,45 @@ def test_violinplot_returns_one_joined_body_per_group_and_renders() -> None:
     pixels = np.asarray(plt.imread(BytesIO(fig._to_png())))
     assert pixels.shape[:2] == (300, 400)
     assert np.count_nonzero(np.any(pixels[..., :3] < 242, axis=-1)) > 500
+
+
+def test_violinplot_cycles_explicit_colors_and_returns_mutable_bodies() -> None:
+    _fig, ax = plt.subplots()
+    result = ax.violinplot(
+        [
+            [0.0, 1.0, 2.0],
+            [1.0, 2.0, 4.0],
+            [2.0, 3.0, 5.0],
+        ],
+        facecolor=[("yellow", 0.3), ("blue", 0.4)],
+        linecolor=["black", "red"],
+    )
+
+    assert [body._entry["kwargs"]["color"] for body in result["bodies"]] == [
+        "rgba(255,255,0,0.3)",
+        "rgba(0,0,255,0.4)",
+        "rgba(255,255,0,0.3)",
+    ]
+    assert all(body._entry["kwargs"]["opacity"] == 1.0 for body in result["bodies"])
+    assert result["cmins"]._entry["kwargs"]["color"] == ["black", "red", "black"]
+
+    body = result["bodies"][0]
+    body.set_edgecolor("black")
+    body.set_linewidth(1.5)
+    body.set_alpha(0.8)
+    assert body._entry["kwargs"]["stroke"] == "rgba(0,0,0,1)"
+    assert body._entry["kwargs"]["stroke_width"] == pytest.approx(1.5)
+    assert body._entry["kwargs"]["opacity"] == pytest.approx(0.8)
+
+
+def test_default_violin_body_keeps_artist_alpha_after_facecolor_mutation() -> None:
+    _fig, ax = plt.subplots()
+    body = ax.violinplot([[0.0, 1.0, 2.0]])["bodies"][0]
+
+    body.set_facecolor("red")
+
+    assert body._entry["kwargs"]["color"] == "rgba(255,0,0,1)"
+    assert body._entry["kwargs"]["opacity"] == pytest.approx(0.3)
 
 
 def test_native_core_box_and_violin_marks_keep_their_fast_paths() -> None:
