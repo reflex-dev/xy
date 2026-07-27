@@ -175,8 +175,8 @@ def test_existing_core_plot_families_are_exposed_by_adapter() -> None:
     assert set(violin) == {"bodies", "cbars", "cmins", "cmaxes"}
     kinds = [trace.kind for trace in _traces(ax)]
     assert "stem" in kinds
-    assert "box" in kinds
-    assert "violin" in kinds
+    assert "segments" in kinds
+    assert "triangle_mesh" in kinds
     assert "errorbar" in kinds
     assert "hexbin" in kinds
     assert kinds.count("contour") == 1

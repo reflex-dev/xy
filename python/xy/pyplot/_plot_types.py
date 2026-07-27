@@ -2187,75 +2187,6 @@ class PlotTypeMixin:
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
         values = _from_data(x, data)
-        advanced = any(
-            (
-                bool(notch),
-                whis not in (None, 1.5),
-                bootstrap is not None,
-                usermedians is not None,
-                conf_intervals is not None,
-                bool(showmeans),
-                showcaps is False,
-                showbox is False,
-                sym is not None,
-                autorange,
-                capwidths is not None,
-                bool(patch_artist),
-                not manage_ticks,
-                zorder is not None,
-                tick_labels is not None,
-                any(
-                    item is not None
-                    for item in (
-                        boxprops,
-                        flierprops,
-                        medianprops,
-                        meanprops,
-                        capprops,
-                        whiskerprops,
-                    )
-                ),
-            )
-        )
-        if not advanced:
-            color = self._next_color()
-            if positions is None:
-                if (
-                    isinstance(values, (list, tuple))
-                    and values
-                    and all(np.ndim(value) == 1 for value in values)
-                ):
-                    count = len(values)
-                else:
-                    array = np.asarray(values)
-                    count = array.shape[1] if array.ndim == 2 else 1
-                positions = np.arange(1, count + 1, dtype=np.float64)
-            entry = self._add(
-                "@mark",
-                {
-                    "factory": "box",
-                    "args": (values,),
-                    "kwargs": {
-                        "x": positions,
-                        "name": str(label) if label is not None else None,
-                        "color": color,
-                        "width": _float(widths)
-                        if np.isscalar(widths) and widths is not None
-                        else 0.6,
-                        "orientation": orientation,
-                        "show_outliers": True if showfliers is None else bool(showfliers),
-                    },
-                },
-            )
-            artist = Artist(self, entry)
-            return {
-                "whiskers": [artist],
-                "caps": [artist],
-                "boxes": [artist],
-                "medians": [artist],
-                "fliers": [artist] if showfliers is not False else [],
-                "means": [],
-            }
         if isinstance(values, (list, tuple)) and values and all(np.ndim(v) == 1 for v in values):
             groups = [np.asarray(v, dtype=np.float64) for v in values]
         else:
@@ -2399,60 +2330,6 @@ class PlotTypeMixin:
                 if array.ndim == 1
                 else [np.asarray(array[:, index]) for index in range(array.shape[1])]
             )
-        if bw_method is None and side == "both" and quantiles is None:
-            entry = self._add(
-                "@mark",
-                {
-                    "factory": "violin",
-                    "args": (values,),
-                    "kwargs": {
-                        "x": positions,
-                        "color": resolve_color(facecolor)
-                        if facecolor is not None
-                        else self._next_color(),
-                        "width": float(widths),
-                        "bins": max(4, min(1024, int(points))),
-                        "orientation": orientation,
-                    },
-                },
-            )
-            result: dict[str, Any] = {"bodies": [Artist(self, entry)]}
-            centers = np.arange(1, len(groups) + 1) if positions is None else np.asarray(positions)
-            extrema_color = linecolor if linecolor is not None else "#222222"
-            minima = np.asarray([np.nanmin(group) for group in groups])
-            maxima = np.asarray([np.nanmax(group) for group in groups])
-            if showextrema:
-                if orientation == "vertical":
-                    result["cbars"] = self.vlines(centers, minima, maxima, colors=extrema_color)
-                    result["cmins"] = self.hlines(
-                        minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                    )
-                    result["cmaxes"] = self.hlines(
-                        maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                    )
-                else:
-                    result["cbars"] = self.hlines(centers, minima, maxima, colors=extrema_color)
-                    result["cmins"] = self.vlines(
-                        minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                    )
-                    result["cmaxes"] = self.vlines(
-                        maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                    )
-            if showmeans:
-                made = np.asarray([np.nanmean(group) for group in groups])
-                result["cmeans"] = (
-                    self.hlines(made, centers - widths * 0.2, centers + widths * 0.2)
-                    if orientation == "vertical"
-                    else self.vlines(made, centers - widths * 0.2, centers + widths * 0.2)
-                )
-            if showmedians:
-                made = np.asarray([np.nanmedian(group) for group in groups])
-                result["cmedians"] = (
-                    self.hlines(made, centers - widths * 0.2, centers + widths * 0.2)
-                    if orientation == "vertical"
-                    else self.vlines(made, centers - widths * 0.2, centers + widths * 0.2)
-                )
-            return result
         if points < 2:
             raise ValueError("violinplot points must be at least 2")
         vpstats: list[dict[str, Any]] = []
@@ -3267,7 +3144,11 @@ class PlotTypeMixin:
         )
         if pos.shape != (count,):
             raise ValueError("bxp positions must match bxpstats")
-        box_widths = np.asarray(_sequence_param(0.5 if widths is None else widths, count, "widths"))
+        default_width = float(np.clip(0.15 * np.ptp(pos), 0.15, 0.5)) if count else 0.15
+        box_widths = np.asarray(
+            _sequence_param(default_width if widths is None else widths, count, "widths"),
+            dtype=np.float64,
+        )
         cap_width_values = np.asarray(
             _sequence_param(
                 box_widths * 0.5 if capwidths is None else capwidths, count, "capwidths"
@@ -3294,13 +3175,13 @@ class PlotTypeMixin:
                 dash_pattern,
             )
 
-        default_color = self._next_color()
-
-        def emit(coords: list[tuple[float, float, float, float]], props: Any) -> list[Artist]:
-            if not coords:
-                return []
+        def emit(
+            coords: list[tuple[float, float, float, float]],
+            props: Any,
+            fallback: Any,
+        ) -> Artist:
             values = np.asarray(coords, dtype=np.float64)
-            rendered_style, dash_pattern = style(props, default_color)
+            rendered_style, dash_pattern = style(props, fallback)
             x0, y0, x1, y1 = (
                 values[:, 0],
                 values[:, 1],
@@ -3317,130 +3198,18 @@ class PlotTypeMixin:
                     "kwargs": rendered_style,
                 },
             )
-            return [Artist(self, entry)]
-
-        box_segments: list[tuple[float, float, float, float]] = []
-        median_segments: list[tuple[float, float, float, float]] = []
-        whisker_segments: list[tuple[float, float, float, float]] = []
-        cap_segments: list[tuple[float, float, float, float]] = []
-        mean_segments: list[tuple[float, float, float, float]] = []
-        mean_x: list[float] = []
-        mean_y: list[float] = []
-        flier_x: list[float] = []
-        flier_y: list[float] = []
-        for index, item in enumerate(stats):
-            required = ("med", "q1", "q3", "whislo", "whishi")
-            if any(name not in item for name in required):
-                raise ValueError(f"bxpstats[{index}] is missing a required statistic")
-            center = float(pos[index])
-            half = float(box_widths[index]) * 0.5
-            cap_half = float(cap_width_values[index]) * 0.5
-            q1, q3 = float(item["q1"]), float(item["q3"])
-            med = float(item["med"])
-            low, high = float(item["whislo"]), float(item["whishi"])
-            if orientation == "vertical":
-                if shownotches:
-                    cilo = float(item.get("cilo", med))
-                    cihi = float(item.get("cihi", med))
-                    notch_half = half * 0.5
-                    box_segments.extend(
-                        [
-                            (center - half, q1, center + half, q1),
-                            (center + half, q1, center + half, cilo),
-                            (center + half, cilo, center + notch_half, med),
-                            (center + notch_half, med, center + half, cihi),
-                            (center + half, cihi, center + half, q3),
-                            (center + half, q3, center - half, q3),
-                            (center - half, q3, center - half, cihi),
-                            (center - half, cihi, center - notch_half, med),
-                            (center - notch_half, med, center - half, cilo),
-                            (center - half, cilo, center - half, q1),
-                        ]
-                    )
-                else:
-                    box_segments.extend(
-                        [
-                            (center - half, q1, center + half, q1),
-                            (center + half, q1, center + half, q3),
-                            (center + half, q3, center - half, q3),
-                            (center - half, q3, center - half, q1),
-                        ]
-                    )
-                median_segments.append((center - half, med, center + half, med))
-                whisker_segments.extend([(center, low, center, q1), (center, q3, center, high)])
-                cap_segments.extend(
-                    [
-                        (center - cap_half, low, center + cap_half, low),
-                        (center - cap_half, high, center + cap_half, high),
-                    ]
-                )
-                flier_x.extend([center] * len(item.get("fliers", ())))
-                flier_y.extend(float(value) for value in item.get("fliers", ()))
-                if showmeans and "mean" in item:
-                    mean = float(item["mean"])
-                    if meanline:
-                        mean_segments.append((center - half, mean, center + half, mean))
-                    else:
-                        mean_x.append(center)
-                        mean_y.append(mean)
-            else:
-                if shownotches:
-                    cilo = float(item.get("cilo", med))
-                    cihi = float(item.get("cihi", med))
-                    notch_half = half * 0.5
-                    box_segments.extend(
-                        [
-                            (q1, center - half, q1, center + half),
-                            (q1, center + half, cilo, center + half),
-                            (cilo, center + half, med, center + notch_half),
-                            (med, center + notch_half, cihi, center + half),
-                            (cihi, center + half, q3, center + half),
-                            (q3, center + half, q3, center - half),
-                            (q3, center - half, cihi, center - half),
-                            (cihi, center - half, med, center - notch_half),
-                            (med, center - notch_half, cilo, center - half),
-                            (cilo, center - half, q1, center - half),
-                        ]
-                    )
-                else:
-                    box_segments.extend(
-                        [
-                            (q1, center - half, q1, center + half),
-                            (q1, center + half, q3, center + half),
-                            (q3, center + half, q3, center - half),
-                            (q3, center - half, q1, center - half),
-                        ]
-                    )
-                median_segments.append((med, center - half, med, center + half))
-                whisker_segments.extend([(low, center, q1, center), (q3, center, high, center)])
-                cap_segments.extend(
-                    [
-                        (low, center - cap_half, low, center + cap_half),
-                        (high, center - cap_half, high, center + cap_half),
-                    ]
-                )
-                flier_x.extend(float(value) for value in item.get("fliers", ()))
-                flier_y.extend([center] * len(item.get("fliers", ())))
-                if showmeans and "mean" in item:
-                    mean = float(item["mean"])
-                    if meanline:
-                        mean_segments.append((mean, center - half, mean, center + half))
-                    else:
-                        mean_x.append(mean)
-                        mean_y.append(center)
+            return Artist(self, entry)
 
         def emit_points(
-            x_values: list[float],
-            y_values: list[float],
+            x_values: Sequence[float],
+            y_values: Sequence[float],
             props: Any,
             *,
             default_marker: str,
             default_face: Any,
             default_size: float,
             default_edge: Any = None,
-        ) -> list[Artist]:
-            if not x_values:
-                return []
+        ) -> Artist:
             source = dict(props or {})
             color = source.pop("color", default_face)
             marker = source.pop("marker", default_marker)
@@ -3469,44 +3238,158 @@ class PlotTypeMixin:
                     },
                 },
             )
-            return [Artist(self, entry)]
+            return Artist(self, entry)
 
-        result = {
-            "boxes": emit(box_segments, boxprops) if showbox else [],
-            "medians": emit(median_segments, medianprops),
-            "whiskers": emit(whisker_segments, whiskerprops),
-            "caps": emit(cap_segments, capprops) if showcaps else [],
-            "means": (
-                emit(mean_segments, meanprops)
-                if meanline
-                else emit_points(
-                    mean_x,
-                    mean_y,
-                    meanprops,
-                    default_marker="^",
-                    default_face="C2",
-                    default_size=6.0,
-                )
-            ),
+        result: dict[str, list[Artist]] = {
+            "boxes": [],
+            "medians": [],
+            "whiskers": [],
+            "caps": [],
+            "means": [],
             "fliers": [],
         }
-        if showfliers and flier_x:
-            result["fliers"] = emit_points(
-                flier_x,
-                flier_y,
-                flierprops,
-                default_marker="o",
-                default_face="transparent",
-                default_size=5.0,
-                default_edge=default_color,
+        for index, item in enumerate(stats):
+            required = ("med", "q1", "q3", "whislo", "whishi")
+            if any(name not in item for name in required):
+                raise ValueError(f"bxpstats[{index}] is missing a required statistic")
+            center = float(pos[index])
+            half = float(box_widths[index]) * 0.5
+            cap_half = float(cap_width_values[index]) * 0.5
+            q1, q3 = float(item["q1"]), float(item["q3"])
+            med = float(item["med"])
+            low, high = float(item["whislo"]), float(item["whishi"])
+            if orientation == "vertical":
+                if shownotches:
+                    cilo = float(item.get("cilo", med))
+                    cihi = float(item.get("cihi", med))
+                    notch_half = half * 0.5
+                    box_segments = [
+                        (center - half, q1, center + half, q1),
+                        (center + half, q1, center + half, cilo),
+                        (center + half, cilo, center + notch_half, med),
+                        (center + notch_half, med, center + half, cihi),
+                        (center + half, cihi, center + half, q3),
+                        (center + half, q3, center - half, q3),
+                        (center - half, q3, center - half, cihi),
+                        (center - half, cihi, center - notch_half, med),
+                        (center - notch_half, med, center - half, cilo),
+                        (center - half, cilo, center - half, q1),
+                    ]
+                else:
+                    box_segments = [
+                        (center - half, q1, center + half, q1),
+                        (center + half, q1, center + half, q3),
+                        (center + half, q3, center - half, q3),
+                        (center - half, q3, center - half, q1),
+                    ]
+                median_segment = (center - half, med, center + half, med)
+                whisker_segments = [
+                    (center, low, center, q1),
+                    (center, q3, center, high),
+                ]
+                cap_segments = [
+                    (center - cap_half, low, center + cap_half, low),
+                    (center - cap_half, high, center + cap_half, high),
+                ]
+                flier_values = [float(value) for value in item.get("fliers", ())]
+                flier_x = [center] * len(flier_values)
+                flier_y = flier_values
+                if showmeans and "mean" in item:
+                    mean = float(item["mean"])
+                    if meanline:
+                        mean_segment = (center - half, mean, center + half, mean)
+                    else:
+                        mean_point = (center, mean)
+            else:
+                if shownotches:
+                    cilo = float(item.get("cilo", med))
+                    cihi = float(item.get("cihi", med))
+                    notch_half = half * 0.5
+                    box_segments = [
+                        (q1, center - half, q1, center + half),
+                        (q1, center + half, cilo, center + half),
+                        (cilo, center + half, med, center + notch_half),
+                        (med, center + notch_half, cihi, center + half),
+                        (cihi, center + half, q3, center + half),
+                        (q3, center + half, q3, center - half),
+                        (q3, center - half, cihi, center - half),
+                        (cihi, center - half, med, center - notch_half),
+                        (med, center - notch_half, cilo, center - half),
+                        (cilo, center - half, q1, center - half),
+                    ]
+                else:
+                    box_segments = [
+                        (q1, center - half, q1, center + half),
+                        (q1, center + half, q3, center + half),
+                        (q3, center + half, q3, center - half),
+                        (q3, center - half, q1, center - half),
+                    ]
+                median_segment = (med, center - half, med, center + half)
+                whisker_segments = [
+                    (low, center, q1, center),
+                    (q3, center, high, center),
+                ]
+                cap_segments = [
+                    (low, center - cap_half, low, center + cap_half),
+                    (high, center - cap_half, high, center + cap_half),
+                ]
+                flier_values = [float(value) for value in item.get("fliers", ())]
+                flier_x = flier_values
+                flier_y = [center] * len(flier_values)
+                if showmeans and "mean" in item:
+                    mean = float(item["mean"])
+                    if meanline:
+                        mean_segment = (mean, center - half, mean, center + half)
+                    else:
+                        mean_point = (mean, center)
+
+            if showbox:
+                result["boxes"].append(emit(box_segments, boxprops, "black"))
+            result["medians"].append(emit([median_segment], medianprops, "C1"))
+            result["whiskers"].extend(
+                emit([segment], whiskerprops, "black") for segment in whisker_segments
             )
+            if showcaps:
+                result["caps"].extend(
+                    emit([segment], capprops, "black") for segment in cap_segments
+                )
+            if showmeans and "mean" in item:
+                if meanline:
+                    result["means"].append(emit([mean_segment], meanprops, "C2"))
+                else:
+                    result["means"].append(
+                        emit_points(
+                            [mean_point[0]],
+                            [mean_point[1]],
+                            meanprops,
+                            default_marker="^",
+                            default_face="C2",
+                            default_size=6.0,
+                        )
+                    )
+            if showfliers:
+                result["fliers"].append(
+                    emit_points(
+                        flier_x,
+                        flier_y,
+                        flierprops,
+                        default_marker="o",
+                        default_face="transparent",
+                        default_size=5.0,
+                        default_edge="black",
+                    )
+                )
         if label is not None and result["medians"]:
             result["medians"][0].set_label(str(label))
         if zorder is not None:
             for artists in result.values():
                 for artist in artists:
                     artist.set_zorder(float(zorder))
-        if manage_ticks:
+        if manage_ticks and result["medians"]:
+            category_axis = "x" if orientation == "vertical" else "y"
+            category_extent = np.concatenate((pos - 0.5, pos + 0.5))
+            result["medians"][0]._entry["_mpl_extent"] = {category_axis: category_extent}
+            result["medians"][0]._entry["_mpl_sticky_edges"] = {category_axis: category_extent}
             (self.set_xticks if orientation == "vertical" else self.set_yticks)(pos)
         return result
 
@@ -3595,7 +3478,11 @@ class PlotTypeMixin:
                     {
                         "factory": "triangle_mesh",
                         "args": (x0, y0, x1, y1, x2, y2),
-                        "kwargs": {"color": body_color, "opacity": 0.8},
+                        "kwargs": {
+                            "color": body_color,
+                            "opacity": 0.3,
+                            "_joined_fill": True,
+                        },
                     },
                 )
             bodies.append(Artist(self, entry))
