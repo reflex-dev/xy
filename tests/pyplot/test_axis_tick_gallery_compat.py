@@ -64,6 +64,39 @@ def test_axis_proxy_grid_targets_only_its_dimension_and_minor_is_accepted() -> N
     assert ax._axis_props("y")["style"]["grid_color"] == "#1f77b4"
 
 
+def test_axis_proxy_set_tick_params_matches_dollar_ticks_source_idiom() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1500])
+    ax.yaxis.set_major_formatter("${x:1.2f}")
+
+    ax.yaxis.set_tick_params(
+        which="major",
+        labelcolor="green",
+        labelleft=False,
+        labelright=True,
+    )
+
+    assert "tick_label_color" not in ax._axis_props("x")["style"]
+    assert ax._axis_props("y")["style"]["tick_label_color"] == "green"
+    assert ax._tick_label_sides["y"] == {"labelleft": False, "labelright": True}
+    formatter = ax.yaxis.get_major_formatter()
+    assert isinstance(formatter, plt.StrMethodFormatter)
+    assert formatter(1234.5) == "$1234.50"
+    spec, _buffers = ax._build_chart(640, 480).figure().build_payload_split()
+    labels = spec["y_axis"]["tick_labels"]
+    assert labels
+    assert all(label.startswith("$") for label in labels)
+
+
+def test_axis_proxy_set_tick_params_rejects_unimplemented_minor_and_reset() -> None:
+    _fig, ax = plt.subplots()
+
+    with pytest.raises(NotImplementedError, match="which='minor'"):
+        ax.yaxis.set_tick_params(which="minor", labelcolor="green")
+    with pytest.raises(NotImplementedError, match="reset=True"):
+        ax.yaxis.set_tick_params(reset=True)
+
+
 def test_tick_params_side_flags_and_xtick_rotation_mode() -> None:
     _fig, ax = plt.subplots()
     default_x_length = ax._axis_props("x")["style"]["tick_length"]
