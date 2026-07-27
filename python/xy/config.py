@@ -20,9 +20,9 @@ import warnings
 # same silent-misrender case v6 itself was cut for.
 # v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
 # add wire values an older v7 client would accept but silently misrender.
-# v9: an axis may carry `tick_sides` independently from its label-bearing
-# `side`. A cached v8 client ignores the new field and silently draws tick
-# marks on only the label-bearing side.
+# v9: an axis may carry `tick_sides` and `tick_label_sides` independently
+# from `side`. Without this bump, a cached v8 client would ignore both fields
+# and silently draw tick marks and labels only on `side`; v9 rejects it first.
 PROTOCOL_VERSION = 9
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
