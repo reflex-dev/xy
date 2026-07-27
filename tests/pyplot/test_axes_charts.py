@@ -552,10 +552,18 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
     key = ax.quiverkey(quiver, 0.9, 0.9, 1.0, r"$1 \frac{m}{s}$", coordinates="figure")
     assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
     assert len(contour_labels) > 2
-    assert len(table.get_celld()) == 9
+    assert len(table.get_celld()) == 8
     assert key is not None
     assert ax._entries[-1]["args"][2] == "1 m/s"
-    assert {trace.kind for trace in _traces(ax)} >= {"contour", "triangle_mesh", "segments"}
+    assert {trace.kind for trace in _traces(ax)} >= {"contour", "segments"}
+    spec, _buffers = ax._build_chart(640, 480).figure().build_payload_split()
+    assert (
+        sum(
+            annotation.get("class_name") == "xy-mpl-table-cell"
+            for annotation in spec["annotations"]
+        )
+        == 16
+    )
 
 
 def test_chart_option_variants_do_not_fall_through_to_notimplemented() -> None:

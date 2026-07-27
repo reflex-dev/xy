@@ -188,9 +188,6 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.streamplot(*_stream_args(), arrowstyle="->"), "arrowstyle"),
         (lambda ax: ax.pcolormesh(_Z, antialiased=False), "antialiased"),
         (lambda ax: ax.pcolor(_Z, antialiased=False), "antialiased"),
-        (lambda ax: ax.table(cellText=[["a"]], cellLoc="center"), "cellLoc"),
-        (lambda ax: ax.table(cellText=[["a"]], rowLoc="center"), "rowLoc"),
-        (lambda ax: ax.table(cellText=[["a"]], colLoc="left"), "colLoc"),
         (lambda ax: ax.table(cellText=[["a"]], loc="top"), "loc"),
         (
             lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", fontproperties={"size": 9}),
@@ -696,6 +693,6 @@ def test_pie_pie_label_and_table_text_options_reach_text_style() -> None:
 
     _fig, ax = plt.subplots()
     ax.table(cellText=[["a", "b"]], fontsize=10)
-    cell_texts = [entry for entry in ax._entries if entry["kind"] == "@text"]
+    cell_texts = [entry for entry in ax._entries if entry["kind"] == "@table_cell"]
     assert len(cell_texts) == 2
     assert all(entry["kwargs"]["style"]["font_size"] == 10.0 for entry in cell_texts)
