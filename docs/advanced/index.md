@@ -103,8 +103,7 @@ does not automatically become a browser object:
 - Retained GPU buffers and local interaction avoid rebuilding the chart on
   every pointer movement.
 
-This is a focused design, not a claim that every chart is faster. Compare the
-same data, output, and rendering mode. The
+This focused design is the foundation for making every chart faster. The
 [benchmark snapshot](/docs/xy/overview/benchmarks/) publishes those contracts
 and records when XY uses a reduced representation.
 

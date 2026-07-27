@@ -9,6 +9,12 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- `xy.box(...)` exposes its four visible parts without a parallel styling
+  language: the main `style=` now controls body fill and border, while
+  `whisker_style=`, `median_style=`, and `outlier_style=` reuse the validated
+  segment/scatter CSS vocabularies. Contrasting borders, emphasized medians,
+  muted whiskers, and independently shaped/bordered outliers survive WebGL,
+  SVG/PDF, and native raster output.
 - `xy.tooltip(labels={...})` gives source columns readable display names
   without changing lookup, formatting keys, title placeholders, or hover-event
   payloads; without `fields=`, labels rename matching default channel rows.
@@ -16,6 +22,14 @@ in the README).
   `tooltip_label`, and `tooltip_value` DOM slots for independent typography
   and layout; legends likewise expose `legend_title` and `legend_label`.
   User-provided labels remain text-only and are never parsed as HTML.
+- `xy.theme(palette=...)` also accepts a **`{category: color}` mapping**, which
+  pins colors to category *labels* rather than positions. A positional cycle can
+  only ever say "the first category is blue", so the same category changes color
+  whenever the set of categories does — most visibly across facet panels, where
+  a panel missing one species silently repaints the other two. The mapping
+  survives that. Categories the map does not name take the next default color it
+  has not already spent, with a warning; unnamed series cycle the map's values
+  in order.
 - `colormap=` accepts a **custom ramp** built from your own colors, not only one
   of the twenty built-in names: a sequence of 2–256 CSS colors, `(position,
   color)` pairs, or a CSS `linear-gradient(...)`. Every form resolves once, in
@@ -44,6 +58,31 @@ in the README).
   that don't use them are byte-identical.
 
 ### Changed
+- Stable animation `key=` identity planes are now retained and shipped only
+  when the resolved animation spec can actually key-match. `match` defaults to
+  `"index"`, so `key=` combined with a bare `xy.animation(...)`, with
+  `enabled=False`, or with no animation at all previously put two dead `u32`
+  columns in the payload — 8 B/row held for the widget lifetime and 8 B/row on
+  the wire (400 KB at 50k rows) that no client code read. Encoding still runs
+  in every case: duplicate-key and row-count errors are construction contract,
+  not animation policy, and are unchanged. Payloads that do key-match are
+  byte-identical.
+- Stable animation `key=` identity encoding now uses one native Rust row scan
+  for homogeneous fixed-width strings, bytes, booleans, and signed or unsigned
+  integers, plus finite floating arrays, including non-native-endian NumPy
+  arrays. Float16/32 values widen exactly to the f64 token contract. It
+  preserves the existing 64-bit identities and duplicate-row errors; mixed
+  objects, dates, and non-finite row diagnostics stay on the conservative
+  Python reference path. Highly padded Python string/bytes sequences also stay
+  there to bound fixed-width temporary memory. Fixed-width NumPy strings retain
+  their exact embedded-NUL semantics natively.
+  Routing follows the values rather than the container, so a key column passed
+  as a pandas Series or as homogeneous object storage — what `data=df,
+  key="id"` actually resolves to — takes the same path as an ndarray instead of
+  falling back. Only keys that *end* in NUL stay on the reference encoder,
+  where fixed-width padding would otherwise absorb them; interior NULs are
+  encoded natively.
+  This adds the C ABI v44 transition-key kernel.
 - Host theme changes made through an ancestor `data-theme` attribute now
   refresh canvas/SVG paint just like `.dark` class and inline-style changes;
   DOM chrome continues to follow the cascade automatically.
@@ -83,6 +122,20 @@ in the README).
   - The native rasterizer's serial point and segment passes no longer
     materialize an `0..n` index vector to read back in order (4 bytes per mark),
     and the per-point density quantizer keeps one temporary instead of three.
+  - The JPEG token pipeline carries every field at its natural width. It held
+    ~20 parallel `int64` arrays over the nonzero coefficients — positions that
+    top out at 62, categories at 12, symbols that are a byte by definition —
+    while the coefficients themselves fit `int16`, because an orthonormal 8×8
+    DCT of level-shifted 8-bit samples is bounded by 1024 and quantizers are
+    ≥ 1. The RGB→YCbCr transform also promoted the whole frame to interleaved
+    float before splitting it into planes. A 3200×2400 photographic encode now
+    peaks at **200 MB instead of 731 MB** and is ~3% faster; the chart-shaped
+    export in the memory suite drops 418 MB → 205 MB.
+  - The lossless WebP packer scatters bits in bounded entry blocks instead of
+    one masked pass per bit position over the whole token stream (five machine
+    words per entry, per position), and the header now rides in the token
+    buffer rather than being concatenated onto the front of it. A 3200×2400
+    export peaks at 135 MB instead of 216 MB at unchanged speed.
 - `memory_report()` reports `capacity_bytes` per column and
   `canonical_capacity_bytes` per store, and builds `resident_array_bytes` from
   the capacity total. A streamed column's `values` is a prefix view of its
@@ -91,6 +144,52 @@ in the README).
   never appended report exactly what they did before.
 
 ### Fixed
+- **The native raster exporter silently deleted every character outside its
+  glyph atlas.** No glyph and no advance, so `Zürich` came out of `to_png()` as
+  `Zrich`, a `format="€,.0f"` axis lost its symbol on every tick, and a CJK tick
+  label exported as blank space — while the same figure's SVG rendered all of
+  them correctly. The atlas now carries Latin-1 Supplement and Latin Extended-A
+  (every Latin-script language) plus non-ASCII currency, and anything still
+  unbaked — CJK, Cyrillic, emoji — renders as the U+FFFD replacement box with
+  its advance reserved, so the limitation is visible rather than silent (§28).
+  Costs ~48 KB of baked coverage (+4% on the core dylib).
+- **The categorical palette cycled per trace instead of per series.** A box is
+  four traces and a stem is two, so four box series under a four-color
+  `xy.theme(palette=...)` all wore `palette[0]`, and eight box series drew two
+  colors out of the built-in eight. Adding an outlier to one series repainted a
+  different one, because it changed the trace count. Marks now take one slot per
+  logical series (`Figure.next_series_color`), a mark given an explicit `color=`
+  takes none — matching matplotlib's property cycle — and a multi-trace mark no
+  longer shifts every series after it.
+- **`x_axis(format=...)` / `y_axis(format=...)` were dropped by every static
+  exporter.** `format="$,.0f"` read `$1,000,000` in the browser and `1.0e6` in
+  the PNG exported from the same figure; `".1%"` read `15.0%` and `0.15`. The
+  SVG/raster path now shares the client's grammar, including the strftime subset
+  on time axes, and the left gutter grows for labels that need it instead of
+  running them off the canvas.
+- **A categorical `color=` channel produced no legend in any static export.**
+  One trace carries N categories, and the exporters listed rows per *named
+  trace*, so `color="species"` drew a single row bearing the trace's name and
+  the trace's constant color — a legend that misdescribed the three colors
+  printed beside it. Both exporters now expand categories the way the client
+  does.
+- **`text=` on `hline`/`vline`/bands/`threshold`/`arrow` was silently dropped by
+  the static exporters, and `xy.marker()` drew nothing at all.** Labels were
+  emitted for `text`/`callout` annotations only, and `marker` had no geometry
+  branch. Placement is now one shared helper ported from the client's
+  `_drawAnnotationLabels`, so the badge lands in the same place in all three
+  renderers.
+- **Log-axis decades below 1.0 all rendered as `0`.** Tick precision came from
+  the tick *step*, which is meaningless on a multiplicative axis: `0.001` and
+  `0.01` became two identical, wrong labels in the client and both exporters.
+  Sub-unit decades are now labeled from their own magnitude.
+- **A list of CSS colors was re-encoded as categories.**
+  `color=["#ff0000", "#00ff00", "#0000ff"]` factorized the three hex strings,
+  sorted them alphabetically, and repainted them from the palette, so the marks
+  came out in palette colors in the wrong order. `#rrggbb`/`rgb()`/`hsl()` lists
+  now paint the colors asked for. Named colors stay categorical on purpose: a
+  column of `["red", "green", "blue"]` is ordinary category data, and guessing
+  wrong there would turn an encoding into a paint.
 - The colorbar stringified its colormap, so a custom ramp reached it as an
   unparseable name and silently painted viridis while the marks beside it
   painted the ramp correctly.

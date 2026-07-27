@@ -1,8 +1,9 @@
-# Scatter benchmark: xy vs Python charting libraries
+# Competitive benchmark program
 
-The same scatter (a correlated 2-D cloud) at growing point counts, across
-popular Python charting libraries, on four factors: **how many points each can
-render, how fast, how much memory, and the render payload size.**
+The recorded launch comparison uses the same scatter (a correlated 2-D cloud)
+at growing point counts across popular Python charting libraries, measuring
+four factors: **how many points each can render, how fast, how much memory, and
+the render payload size.**
 
 The cross-library harness lives in `benchmarks/bench_vs.py` and includes
 optional adapters for xy, matplotlib, seaborn, Plotly, Bokeh, Altair,
@@ -25,12 +26,32 @@ python benchmarks/bench_vs.py
 The xy-only arm also runs with no dependencies via
 `benchmarks/bench_scatter_native.py`.
 
+## Competitive product goal
+
+XY's product goal is to outperform every competing charting library across
+user-visible performance, chart breadth, and customization. The benchmark
+program is the evidence system for that goal, not a showcase for one favorable
+workload.
+
+Every major competitor should be represented wherever it leads or defines
+user expectations. Comparisons should cover small through massive datasets,
+exact and aggregated rendering, static and interactive output, cold and warm
+paths, interaction latency, memory, transport and export size, and multi-chart
+applications. Environments, raw machine-readable results, output contracts,
+and reproduction commands belong in the repository so every result can be
+inspected and rerun.
+
+Timing alone cannot prove chart breadth or design control. Those dimensions
+use the generated capability matrix, matched visual examples, renderer
+coverage, and compatibility corpora as evidence. When another library is
+better on a relevant workload or capability, record the loss as a product gap,
+add a reproducible comparison, and keep it visible until XY wins it.
+
 ## Benchmark categories and goals
 
-The performance story should be measured by mode, not with one blanket
-"fastest charting library" number. A small exact scatter, a 10M density view, a
-large line, and a 30-chart dashboard stress different parts of the system. These
-are the categories we track or plan to add to CI.
+Performance is tracked by mode and workload. A small exact scatter, a 10M
+density view, a large line, and a 30-chart dashboard stress different parts of
+the system. These are the categories we track or plan to add to CI.
 
 The stable category IDs live in `benchmarks/categories.py`. CI's benchmark JSON
 artifacts (`benchmark.json`, `line.json`, `install.json`, `install-fresh.json`,
@@ -190,25 +211,6 @@ largest stable loss-free
 count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/incremental-pyramid
 updates, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.
-
-## Copyable claim taxonomy
-
-Use these shapes when turning benchmark rows into public prose, release notes,
-or posts. The goal is to make every public claim reproducible from a row in
-this document or from a verified JSON artifact.
-
-| Claim shape | Safe wording pattern | Required context |
-|---|---|---|
-| Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 17.3x faster than Plotly." | chart type, workload, backend, compared library, metric |
-| Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.0x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
-| Large scatter overview | "The 100M scatter overview uses density mode with a 258 KB wire payload; it is not drawing 100M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
-| Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
-| Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
-
-Do not shorten those into broad slogans such as "xy is faster than
-Plotly" or "renders 10M points" without the row context. If a sentence does not
-name the chart type, workload, mode, backend, metric, and render target where
-they matter, it is not ready to publish.
 
 ## `xy.pyplot` versus Matplotlib/Agg
 
@@ -1010,6 +1012,5 @@ falls over. This is the path xy exists to replace.
 - xy memory is Python-side `tracemalloc` peak; its GPU/native bytes are
   separate and itemized by `Figure.memory_report()` (§27). The payload column is
   the transport cost across the kernel→browser boundary.
-- Single CI machine, one run; treat as order-of-magnitude, not a spec. Re-run in
-  CI (`benchmark` job) or locally. No universal claims — every number is
-  mode-scoped (dossier §2/§31).
+- Single CI machine, one run; re-run in CI (`benchmark` job) or locally and
+  expand the committed baselines across hardware, workloads, and competitors.

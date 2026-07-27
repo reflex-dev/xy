@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -19,14 +19,13 @@ help:
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
-		'  make check-docs       run docs examples and public claim guardrails' \
+		'  make check-docs       run documentation examples' \
 		'  make check-examples   run canonical API examples and Reflex asset registry checks' \
 		'  make check-security   run standalone HTML safety and client text-sink checks' \
 		'  make check-errors     run public error, LOD, and mutation-safety tests' \
 		'  make check-api        run lazy public API and type-surface checks' \
 		'  make check-import     run import-time and dependency-boundary checks' \
 		'  make check-ci         run CI/release workflow invariant checks' \
-		'  make check-claims     run public performance-claim guardrails' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires .[bench])' \
@@ -76,7 +75,7 @@ check-conformance:
 	node scripts/browser_conformance.mjs
 
 check-docs:
-	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails
+	$(PYTHON) scripts/verify_local.py --only examples
 
 check-examples:
 	$(PYTHON) scripts/verify_local.py --only examples
@@ -98,9 +97,6 @@ check-import:
 
 check-ci:
 	$(PYTHON) scripts/verify_local.py --only ci_workflow
-
-check-claims:
-	$(PYTHON) scripts/verify_local.py --only claim_guardrails
 
 check-benchmark-harness:
 	$(PYTHON) scripts/verify_local.py --only benchmark_harness

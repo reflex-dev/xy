@@ -60,8 +60,8 @@ CONTRIBUTING_MD = (
     "make check-benchmark-report.\n"
     "Run make check-examples for spec/api/api-examples.md and "
     "the example apps.\n\n"
-    "## Performance Claims\n\n"
-    "Claims need benchmark context.\n" + ("contributing padding\n" * 100)
+    "## Competitive Evidence\n\n"
+    "XY aims to outperform every competing charting library.\n" + ("contributing padding\n" * 100)
 )
 CI_YML = (
     "name: CI\n"

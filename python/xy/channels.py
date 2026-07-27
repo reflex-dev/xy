@@ -12,9 +12,10 @@ matching the §2 "typical scatter ≤ 24 B/pt" budget with headroom.
 from __future__ import annotations
 
 import numbers
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -257,6 +258,53 @@ def _is_categorical(arr: np.ndarray) -> bool:
     return False
 
 
+# `#rrggbb` and `rgb()/hsl()` cannot be mistaken for data; a bare `red` can.
+_FUNCTIONAL_COLOR = re.compile(r"^\s*(#|rgba?\s*\(|hsla?\s*\()", re.IGNORECASE)
+
+
+def _literal_color_rgba(arr: np.ndarray) -> Optional[npt.NDArray[np.float64]]:
+    """Straight-alpha RGBA when every entry is a written-out CSS color, else None.
+
+    `["#ff0000", "#00ff00"]` is paint, not data: factorizing it sorted the two
+    hex strings into categories and repainted them from the palette, so the
+    caller asked for red and green and got the palette's first two colors in
+    alphabetical order.
+
+    Deliberately restricted to `#rrggbb` / `rgb()` / `hsl()`. A bare `red` also
+    parses as a color, but a column of `["red", "green", "blue"]` is a perfectly
+    ordinary category column, and guessing wrong there would silently change an
+    encoding into a paint. Unambiguous syntax only, so nothing is guessed."""
+    if arr.dtype.kind not in ("U", "O") or arr.size == 0:
+        return None
+    # Gate on the first entry before materializing anything. `_factorize_
+    # categories` goes to real trouble to identify equal records in Rust
+    # WITHOUT creating N Python objects, and an unconditional `tolist()` here
+    # threw that away for every categorical scatter — measured at ~39% of the
+    # payload build for a 500k-row species column. A category column fails this
+    # test on its very first value, so it pays O(1); only an array that already
+    # looks like paint pays for the full scan below.
+    #
+    # Requiring entry zero to match is exactly as strict as the `all(...)`
+    # below, which already demands every entry be a color string.
+    first = arr.flat[0]
+    if not isinstance(first, str) or not _FUNCTIONAL_COLOR.match(first):
+        return None
+    values = arr.tolist()
+    if not all(isinstance(v, str) and _FUNCTIONAL_COLOR.match(v) for v in values):
+        return None
+    # Distinct-first: a million-row column of a handful of colors parses each
+    # one once, through the same grammar a scalar `color=` is validated with.
+    resolved: dict[str, tuple[float, float, float, float]] = {}
+    for value in set(values):
+        status, rgba = kernels.css_check(kernels.CSS_COLOR, value)
+        if status != 1 or rgba is None:
+            # A malformed `#gg0000`, or a `var()` no DOM-free renderer can
+            # resolve: not paint this function can hand on.
+            return None
+        resolved[value] = rgba
+    return np.array([resolved[v] for v in values], dtype=np.float64)
+
+
 def _is_missing_category(value: Any) -> bool:
     if value is None:
         return True
@@ -490,9 +538,9 @@ def resolve_color(
     n: int,
     *,
     colormap: ColormapLike = DEFAULT_COLORMAP,
-    default_constant: str,
+    default_constant: Union[str, Callable[[], str]],
     domain: Optional[tuple[float, float]] = None,
-    palette: Optional[list[str]] = None,
+    palette: Union[list[str], dict[str, str], None] = None,
 ) -> ColorChannel:
     """Interpret the `color=` argument.
 
@@ -504,9 +552,15 @@ def resolve_color(
     vmin/vmax); values outside clip to the colormap ends. `palette` is the
     categorical color cycle (the chart's `xy.theme(palette=...)`, else the
     built-in CVD-safe default).
+
+    `default_constant` may be a callable, invoked only on the branch that
+    actually needs it. Marks pass `Figure.next_series_color` that way so a
+    mark given an explicit `color=` never takes a palette slot.
     """
     colormap = resolve_colormap(colormap)
-    palette = list(palette) if palette else list(config.DEFAULT_PALETTE)
+    palette_map = palette if isinstance(palette, dict) else None
+    cycle = list(palette_map.values()) if palette_map is not None else list(palette or ())
+    cycle = cycle or list(config.DEFAULT_PALETTE)
     if domain is not None:
         lo, hi = float(domain[0]), float(domain[1])
         if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
@@ -517,7 +571,8 @@ def resolve_color(
     # ramp when the trace aggregates (§5 Tier 2), and a typo'd name must
     # error here rather than render a silently wrong ramp.
     if color is None:
-        return ColorChannel(mode="constant", constant=default_constant, colormap=colormap)
+        constant = default_constant if isinstance(default_constant, str) else default_constant()
+        return ColorChannel(mode="constant", constant=constant, colormap=colormap)
     if isinstance(color, str):
         # Literal constant color: validated against the native CSS grammar so
         # a typo errors here instead of rendering a silently wrong mark.
@@ -543,6 +598,14 @@ def resolve_color(
         raise ValueError(f"color array must be 1-D length {n}, got shape {arr.shape}")
 
     if _is_categorical(arr):
+        literal = _literal_color_rgba(arr)
+        if literal is not None:
+            # A list of CSS colors is a per-point paint, not a set of category
+            # labels. Factorizing it turned `["#ff0000", "#00ff00"]` into two
+            # categories sorted alphabetically and repainted them from the
+            # palette — the user asked for red and green and got blue and
+            # green, in the wrong order, with a legend of hex codes.
+            return ColorChannel(mode="direct_rgba", rgba=literal)
         cats, codes, counts = _factorize_categories(arr)
         if len(cats) > MAX_CATEGORIES:
             import warnings
@@ -557,7 +620,7 @@ def resolve_color(
                 RuntimeWarning,
                 stacklevel=3,
             )
-        elif len(cats) > len(palette):
+        elif palette_map is None and len(cats) > len(cycle):
             import warnings
 
             # The default palette is deliberately eight slots (its adjacency
@@ -566,19 +629,63 @@ def resolve_color(
             # `xy.theme(palette=...)`. Allowed, never silent (§28).
             warnings.warn(
                 f"categorical color has {len(cats)} categories but the palette "
-                f"has {len(palette)} colors; colors repeat every {len(palette)} "
-                f"categories (category {len(palette) + 1} wears category 1's "
+                f"has {len(cycle)} colors; colors repeat every {len(cycle)} "
+                f"categories (category {len(cycle) + 1} wears category 1's "
                 "color). Pass a longer palette, group rare categories, or use a "
                 "continuous encoding.",
                 RuntimeWarning,
                 stacklevel=3,
             )
+        if palette_map is not None:
+            # Pinned by label, so a category keeps its color whatever else
+            # shares the chart and whichever facet panel it lands in. A
+            # category the map does not name takes the next default color the
+            # map has NOT already spent — cycling the map's own values would
+            # paint every unmapped category the same as a mapped one.
+            spent = set(palette_map.values())
+            spare = [color for color in config.DEFAULT_PALETTE if color not in spent]
+            # A map that pins every built-in color leaves nothing distinct for
+            # an unmapped category, so it necessarily reuses one — say which,
+            # rather than let two categories quietly share a color (§28).
+            exhausted = not spare
+            if exhausted:
+                spare = list(config.DEFAULT_PALETTE)
+            resolved: list[str] = []
+            unmapped: list[str] = []
+            for category in cats:
+                if category in palette_map:
+                    resolved.append(palette_map[category])
+                else:
+                    resolved.append(spare[len(unmapped) % len(spare)])
+                    unmapped.append(category)
+            if unmapped:
+                import warnings
+
+                warnings.warn(
+                    f"{len(unmapped)} categor{'y' if len(unmapped) == 1 else 'ies'} "
+                    f"({', '.join(map(repr, unmapped[:4]))}"
+                    f"{', ...' if len(unmapped) > 4 else ''}) are not in the "
+                    "xy.theme(palette={...}) map and fall back to the cycle. Add "
+                    "them to the map to pin their colors."
+                    + (
+                        " The map already pins every built-in color, so those "
+                        "fallbacks repeat a color the map assigned to another "
+                        "category."
+                        if exhausted
+                        else ""
+                    ),
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+            palette_out = resolved
+        else:
+            palette_out = cycle
         return ColorChannel(
             mode="categorical",
             codes=codes,
             categories=cats,
             counts=counts,
-            palette=palette,
+            palette=palette_out,
         )
 
     vals = _as_real_array(arr, "color array")

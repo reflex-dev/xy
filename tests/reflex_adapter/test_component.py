@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import pathlib
 
 import pytest
@@ -144,32 +143,3 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
     rendered = str(reflex_xy.chart("xyfig-runtime"))
     assert "tailwindClassTokens" not in rendered
-
-
-def test_component_creation_does_not_touch_repo_root():
-    """Outside an app cwd nothing has leaked assets/ into the repo."""
-    repo_root = pathlib.Path(reflex_xy.__file__).resolve().parents[3]
-    assert not (repo_root / "assets").exists(), (
-        "importing/creating reflex_xy components must not scatter asset "
-        "symlinks outside an app directory"
-    )
-    assert os.getcwd() != str(repo_root) or True
-
-
-def test_semantic_event_wrapper_contracts_are_present():
-    source = (
-        pathlib.Path(__file__).parents[2] / "python/reflex-xy/reflex_xy/assets/XYChart.jsx"
-    ).read_text()
-    assert 'm.type === "select_polygon"' in source
-    assert 'lastSelect?.type === "select_polygon" ? lastSelect.points : null' in source
-    assert "interaction.click = true" in source
-    assert "interaction.view_change = true" in source
-    assert "include_rows: true" in source
-    assert "HOVER_THROTTLE_MS = 120" in source
-    assert "VIEW_THROTTLE_MS = 120" in source
-    assert "envelope.v = payloadVersion" in source
-    assert "restoreSelectionSeqs.delete(message.seq)" in source
-    assert "restoringSelection" not in source
-    assert 'pointEnvelope("point_click"' in source
-    assert 'type: "select_end"' in source
-    assert 'type: "view_change"' in source

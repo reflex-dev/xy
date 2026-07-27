@@ -295,7 +295,9 @@ class PayloadMixin(_Host):
             # style color. The browser client never reads it — it works from
             # `trace.color.palette` — which is why omitting it (no chart
             # palette set) leaves existing specs byte-identical.
-            spec["palette"] = list(self.palette)
+            # `palette_cycle`, not `list(self.palette)`: a `{category: color}`
+            # palette would otherwise ship its category NAMES as colors.
+            spec["palette"] = self.palette_cycle
         if self.legend_options:
             spec["legend"] = self.legend_options
         extra_legends = getattr(self, "extra_legends", None)

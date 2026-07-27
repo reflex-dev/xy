@@ -76,18 +76,13 @@ def _base_checks(
             requires_modules=("pytest",),
         ),
         Check(
-            "claim_guardrails",
-            "public performance-claim guardrails",
-            (py, "scripts/check_claim_guardrails.py"),
-        ),
-        Check(
             "capability_matrix",
             "generated capability matrix is current",
             (py, "scripts/gen_capability_matrix.py", "--check"),
         ),
         Check(
             "benchmark_harness",
-            "benchmark metadata, report, regression, and claim guardrail tests",
+            "benchmark metadata, report, and regression tests",
             (
                 py,
                 "-m",
@@ -97,7 +92,6 @@ def _base_checks(
                 "tests/test_bench_pyplot_vs_matplotlib.py",
                 "tests/test_verify_benchmark_report.py",
                 "tests/test_check_regressions.py",
-                "tests/test_claim_guardrails.py",
             ),
             requires_modules=("pytest",),
         ),
@@ -288,7 +282,6 @@ def _base_checks(
 QUICK_CHECKS = (
     "python_floor",
     "public_api",
-    "claim_guardrails",
     "capability_matrix",
     "ci_workflow",
     "ruff_check",

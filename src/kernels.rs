@@ -3306,7 +3306,17 @@ pub(crate) fn bin_2d_counts(
             .collect()
     });
 
-    let mut grid = vec![0u32; w * h];
+    // Fold into the last worker's grid rather than a fresh one. Every other
+    // member of this family merges into a caller-owned buffer; this one
+    // allocated and zeroed a whole extra `w * h` u32 grid that it then
+    // overwrote completely, so peak was (threads + 1) grids instead of
+    // `threads` — 16.8 MB of surplus on a 2048^2 pyramid build, and far more
+    // out-of-core, where an adaptive `base_dim` keeps the parallel branch live
+    // at much larger grids. Integer addition is associative and the single
+    // saturation point is unchanged, so the result is bitwise identical for
+    // any thread count.
+    let mut grids = grids;
+    let mut grid = grids.pop().expect("at least one worker grid");
     let cell_chunk = (w * h).div_ceil(threads);
     let grids_ref = &grids;
     std::thread::scope(|s| {
@@ -3314,11 +3324,9 @@ pub(crate) fn bin_2d_counts(
             let base = ci * cell_chunk;
             s.spawn(move || {
                 for (j, cell) in out.iter_mut().enumerate() {
-                    *cell = grids_ref
-                        .iter()
-                        .map(|g| g[base + j] as u64)
-                        .sum::<u64>()
-                        .min(u32::MAX as u64) as u32;
+                    *cell = (*cell as u64
+                        + grids_ref.iter().map(|g| g[base + j] as u64).sum::<u64>())
+                    .min(u32::MAX as u64) as u32;
                 }
             });
         }
@@ -4874,6 +4882,10 @@ pub fn range_indices(
 ///
 /// A non-finite coordinate fails every comparison and so is never inside,
 /// matching both the vectorized predicate and `range_indices`.
+///
+/// `None` means a row id was >= `x.len()`. Reporting it costs nothing over the
+/// indexing this already did — see [`range_scan_rows`] for why the check must
+/// not be left to Rust's own panicking one.
 pub fn polygon_select(
     x: &[f64],
     y: &[f64],
@@ -4881,13 +4893,13 @@ pub fn polygon_select(
     poly_x: &[f64],
     poly_y: &[f64],
     out: &mut [u32],
-) -> usize {
+) -> Option<usize> {
     assert_eq!(x.len(), y.len());
     assert_eq!(poly_x.len(), poly_y.len());
     assert!(out.len() >= rows.len());
     let n = poly_x.len();
     if n < 3 {
-        return 0;
+        return Some(0);
     }
     // (x_i, y_i, y_j, x_j - x_i, y_j - y_i) per edge, hoisted so the inner
     // loop is a bounds-check-free walk over a couple of KB.
@@ -4906,7 +4918,10 @@ pub fn polygon_select(
     let index = PolygonSlabs::build(poly_y, &edges);
     let mut write = 0;
     for &r in rows {
-        let (xv, yv) = (x[r as usize], y[r as usize]);
+        let i = r as usize;
+        let (Some(&xv), Some(&yv)) = (x.get(i), y.get(i)) else {
+            return None;
+        };
         let mut inside = false;
         // An edge can only flip parity for a point inside its own y-extent,
         // so the slab index hands back a superset of the edges that can
@@ -4924,7 +4939,7 @@ pub fn polygon_select(
             write += 1;
         }
     }
-    write
+    Some(write)
 }
 
 /// Ceiling on `PolygonSlabs` CSR entries (4 MB of u32 at the worst case), so
@@ -5127,6 +5142,102 @@ fn range_indices_impl(
         write += c;
     }
     write
+}
+
+/// Which of `rows` land inside the rectangular window (§34 selection), the
+/// row-restricted twin of [`range_indices`]. Writes the surviving canonical row
+/// ids to `out` (capacity `rows.len()`, order preserved) and returns how many.
+///
+/// The predicate is the same inclusive comparison chain `range_scan_scalar`
+/// uses, so a subset scan agrees with a full scan row for row — including on
+/// NaN, which fails every comparison and is therefore never selected.
+///
+/// This exists because the zone-map-pruned selection path already knows its
+/// candidate rows before it scans. Without it, that path had to gather
+/// `x[rows]` and `y[rows]` into two fresh f64 columns just to call
+/// `range_indices` — 16 bytes per candidate, which is why selecting *half* a
+/// 10M-row trace cost 134.6 MB where selecting *all* of it cost 38.1 MB.
+#[allow(clippy::too_many_arguments)]
+pub fn range_indices_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> Option<usize> {
+    assert_eq!(x.len(), y.len());
+    assert!(out.len() >= rows.len());
+    let n = rows.len();
+    let threads = par_threads(n);
+    if threads <= 1 || n < threads {
+        return range_scan_rows(x, y, rows, lo_x, hi_x, lo_y, hi_y, out);
+    }
+    let chunk = n.div_ceil(threads);
+    let counts: Vec<Option<usize>> = std::thread::scope(|s| {
+        let handles: Vec<_> = rows
+            .chunks(chunk)
+            .zip(out[..n].chunks_mut(chunk))
+            .map(|(rseg, oseg)| {
+                s.spawn(move || range_scan_rows(x, y, rseg, lo_x, hi_x, lo_y, hi_y, oseg))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("range_indices_rows worker panicked"))
+            .collect()
+    });
+    // An out-of-range id in any segment fails the whole call, before the
+    // gather-down reads a count that was never produced.
+    let counts: Option<Vec<usize>> = counts.into_iter().collect();
+    let counts = counts?;
+    // Same gather-down as `range_indices_impl`: each worker packed its hits at
+    // the front of its own out-segment, so slide the later segments back.
+    let mut write = counts[0];
+    for (t, &c) in counts.iter().enumerate().skip(1) {
+        let start = t * chunk;
+        out.copy_within(start..start + c, write);
+        write += c;
+    }
+    Some(write)
+}
+
+/// One segment of the row-restricted scan; `None` if a row id was >= `x.len()`.
+///
+/// The check is `get` rather than `x[i]` deliberately. Indexing bounds-checks
+/// too, but reports by panicking, and `ffi_guard` only converts a panic into
+/// the C ABI's error sentinel where panics unwind — the PyEmscripten wheel is
+/// built `-C panic=abort` (`.github/workflows/release.yml`) precisely so they
+/// cannot, and there an out-of-range id aborts the Pyodide instance instead of
+/// returning. `xy.kernels` is public API, so row ids are caller data. Same two
+/// bounds checks either way, so answering instead of aborting is free: a
+/// separate validating pass over `rows` was not — one serial sweep of 5M u32
+/// cost more than this entire parallel scan (1.0 ms -> 2.4 ms).
+#[allow(clippy::too_many_arguments)]
+fn range_scan_rows(
+    x: &[f64],
+    y: &[f64],
+    rows: &[u32],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> Option<usize> {
+    let mut n = 0usize;
+    for &row in rows {
+        let i = row as usize;
+        let (Some(&xv), Some(&yv)) = (x.get(i), y.get(i)) else {
+            return None;
+        };
+        if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
+            out[n] = row;
+            n += 1;
+        }
+    }
+    Some(n)
 }
 
 /// Per-point log-normalized local density for a subset. This fuses the
@@ -5377,7 +5488,7 @@ mod tests {
     fn polygon_case(poly_x: &[f64], poly_y: &[f64], x: &[f64], y: &[f64]) {
         let rows: Vec<u32> = (0..x.len() as u32).collect();
         let mut out = vec![0u32; rows.len()];
-        let n = polygon_select(x, y, &rows, poly_x, poly_y, &mut out);
+        let n = polygon_select(x, y, &rows, poly_x, poly_y, &mut out).expect("rows in bounds");
         assert_eq!(
             &out[..n],
             &polygon_reference(x, y, &rows, poly_x, poly_y)[..],
@@ -5446,12 +5557,44 @@ mod tests {
         let mut out = vec![0u32; rows.len()];
         assert_eq!(
             polygon_select(&x, &y, &rows, &[0.0, 9.0], &[0.0, 9.0], &mut out),
-            0
+            Some(0)
         );
         assert_eq!(
             polygon_select(&x, &y, &[], &[0.0, 9.0, 5.0], &[0.0, 9.0, 5.0], &mut out),
-            0
+            Some(0)
         );
+
+        // An id past the end of the column is reported, not indexed. The
+        // kernels answer this themselves so it holds where panics abort
+        // rather than unwind (the PyEmscripten wheel's `-C panic=abort`).
+        assert_eq!(
+            polygon_select(
+                &x,
+                &y,
+                &[x.len() as u32],
+                &[0.0, 9.0, 5.0],
+                &[0.0, 9.0, 5.0],
+                &mut out
+            ),
+            None
+        );
+        assert_eq!(
+            range_indices_rows(&x, &y, &[x.len() as u32], 0.0, 9.0, 0.0, 9.0, &mut out),
+            None
+        );
+        // The ceiling is `< len`, not `<= len`: the last id is in range, so it
+        // is answered rather than refused — here as "not selected", because
+        // that row's y is infinite. Row 0 of the lattice is genuinely inside.
+        let last = [x.len() as u32 - 1];
+        assert_eq!(
+            range_indices_rows(&x, &y, &last, -1e9, 1e9, -1e9, 1e9, &mut out),
+            Some(0)
+        );
+        assert_eq!(
+            range_indices_rows(&x, &y, &[0], -1e9, 1e9, -1e9, 1e9, &mut out),
+            Some(1)
+        );
+        assert_eq!(out[0], 0);
     }
 
     /// `polygon_select` is a public export with no polygon-size ceiling of its

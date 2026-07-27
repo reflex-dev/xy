@@ -25,9 +25,9 @@ built — one renderer never silently ignores what another draws.
 | `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
 | `fill` | svg | `area`, `bar`, `box`, `column`, `error_band`, `hist`, `histogram`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
 | `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `heatmap`, `hexbin`, `hist`, `histogram`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `stroke` | svg | `area`, `bar`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-opacity` | svg | `area`, `bar`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-width` | svg | `area`, `bar`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |

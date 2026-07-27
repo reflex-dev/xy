@@ -3,12 +3,14 @@ for every chart kind, `scale=`/dimension handling, indexed-vs-truecolor
 selection, the screen-bounded size guarantee, colormap fidelity, and parity of
 the shared layout with the SVG exporter."""
 
+# ruff: noqa: RUF001 — the glyph-coverage tests are ABOUT confusable non-ASCII.
 from __future__ import annotations
 
 import struct
 import zlib
 
 import numpy as np
+import pytest
 
 import xy
 from xy import _png, _raster
@@ -1167,3 +1169,109 @@ def test_raster_uniform_anchor_legends_keep_their_whole_frame_clip_decision(
 
     assert plot_clips([[0.0, 1.0], [0.0, 1.0]]) == 0
     assert plot_clips([None, None]) == 1
+
+
+def test_the_raster_exporter_draws_annotation_labels_and_marker_glyphs() -> None:
+    """The PNG path had the same gap as SVG: rule/band/arrow/marker labels were
+    never emitted, and `xy.marker()` drew nothing at all."""
+    import xy._raster as raster
+
+    chart = xy.line_chart(
+        xy.line([1, 2, 3, 4], [1, 3, 2, 3.4], name="signal"),
+        xy.hline(y=2, text="target"),
+        xy.x_band(x0=2.6, x1=3.2, text="window"),
+        xy.marker(x=2, y=3, text="peak"),
+        width=680,
+        height=400,
+    )
+    spec, blob = chart.figure().build_payload()
+    calls: list[tuple] = []
+    original_text = raster._Cmd.text
+    original_point = raster._Cmd.point
+
+    def record_text(self, *args, **kwargs):
+        calls.append(("text", args[-1] if args else None))
+        return original_text(self, *args, **kwargs)
+
+    def record_point(self, *args, **kwargs):
+        calls.append(("point", None))
+        return original_point(self, *args, **kwargs)
+
+    raster._Cmd.text, raster._Cmd.point = record_text, record_point
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text, raster._Cmd.point = original_text, original_point
+
+    drawn = {value for kind, value in calls if kind == "text"}
+    assert {"target", "window", "peak"} <= drawn
+    assert any(kind == "point" for kind, _ in calls), "marker glyph never drawn"
+
+
+def test_the_raster_exporter_expands_categorical_legend_rows() -> None:
+    import xy._raster as raster
+
+    species = ["setosa"] * 4 + ["versicolor"] * 4 + ["virginica"] * 4
+    chart = xy.scatter_chart(
+        xy.scatter(list(range(12)), list(range(12)), color=species, name="iris"),
+        xy.legend(),
+        width=560,
+        height=380,
+    )
+    drawn: list[str] = []
+    original_text = raster._Cmd.text
+
+    def record_text(self, *args, **kwargs):
+        drawn.append(args[-1] if args else "")
+        return original_text(self, *args, **kwargs)
+
+    raster._Cmd.text = record_text
+    try:
+        chart.to_png()
+    finally:
+        raster._Cmd.text = original_text
+    assert {"setosa", "versicolor", "virginica"} <= set(drawn)
+
+
+# --- glyph coverage -----------------------------------------------------------
+
+
+def _title_png(title: str) -> bytes:
+    return xy.line_chart(xy.line([1, 2], [1, 2]), title=title, width=420, height=240).to_png()
+
+
+@pytest.mark.parametrize(
+    "char",
+    ["é", "ü", "ł", "Ø", "€", "£", "¥", "₹", "α", "²", "≤"],
+)
+def test_the_raster_atlas_draws_latin_and_currency(char: str) -> None:
+    """A character outside the atlas was dropped whole — no glyph, no advance.
+
+    `Zürich` exported as `Zrich` from `to_png()` while the same figure's SVG
+    rendered it correctly, and `format="€,.0f"` lost its symbol."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} left no marks on the canvas"
+
+
+@pytest.mark.parametrize("char", ["東", "🎉"])
+def test_characters_outside_the_atlas_box_instead_of_vanishing(char: str) -> None:
+    """CJK and emoji stay unbakeable, but the failure must be visible (§28)."""
+    assert _title_png(f"X{char}") != _title_png("X"), f"{char!r} vanished silently"
+    assert _title_png(f"X{char}") == _title_png("X\ufffd"), (
+        "an unbaked character should render as the replacement glyph"
+    )
+
+
+@pytest.mark.parametrize("space", ["\u00a0", "\u202f", "\u2009"])
+def test_unicode_spaces_render_as_spaces_not_boxes(space: str) -> None:
+    """Locale-aware number formatting emits NBSP and narrow NBSP as group
+    separators, so these reach the rasterizer through ordinary tick labels.
+    Whitespace is drawn by its advance, not its shape — a replacement box
+    would be plainly wrong where a space belongs."""
+    assert _title_png(f"X{space}Y") == _title_png("X Y")
+
+
+def test_zero_width_characters_still_draw_nothing() -> None:
+    # Spelled as an escape on purpose: a literal U+200B is invisible in the
+    # source, and an editor or a copy-paste that strips it would silently
+    # reduce this to `_title_png("X") == _title_png("X")`.
+    assert _title_png("X\u200b") == _title_png("X")
