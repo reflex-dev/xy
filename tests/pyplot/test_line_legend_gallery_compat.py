@@ -297,6 +297,7 @@ def test_round_dash_capstyle_mutation_matches_fixed_round_renderers():
     assert line._entry["kwargs"]["dash_capstyle"] == "round"
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
     assert spec["traces"][0]["kind"] == "line"
+    assert "dash_capstyle" not in spec["traces"][0]["style"]
 
 
 def test_round_dash_capstyle_mutation_is_filtered_for_step_lines():
@@ -311,6 +312,7 @@ def test_round_dash_capstyle_mutation_is_filtered_for_step_lines():
     assert line._entry["factory"] == "step"
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
     assert spec["traces"][0]["kind"] == "line"
+    assert "dash_capstyle" not in spec["traces"][0]["style"]
 
 
 def test_legend_frame_is_wide_enough_for_its_measured_labels():
