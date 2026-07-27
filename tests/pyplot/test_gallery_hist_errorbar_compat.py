@@ -83,13 +83,69 @@ def test_hist_step_fill_and_linewidth_override_histtype_defaults() -> None:
     ax.hist([0, 1, 2], bins=2, histtype="step", fill=True, facecolor="green", linewidth=4)
     ax.hist([0, 1, 2], bins=2, histtype="stepfilled", fill=False, linewidth=5)
 
-    filled, unfilled = ax._entries
+    filled, connectors, unfilled = ax._entries
     assert filled["factory"] == "area"
     assert filled["kwargs"]["color"] == "green"
     assert filled["kwargs"]["line_color"] == "#1f77b4"
+    assert connectors["factory"] == "segments"
+    assert connectors["kwargs"].get("name") is None
     assert unfilled["factory"] == "stairs"
     assert unfilled["kwargs"]["color"] == "black"
     assert unfilled["kwargs"]["width"] == 5.0
+
+
+def test_hist_step_outline_connects_to_baseline_in_both_orientations() -> None:
+    _fig, (vertical_ax, horizontal_ax) = plt.subplots(1, 2)
+    data = [0.2, 0.4, 1.2, 1.4, 1.6]
+    bins = [0.0, 1.0, 2.0]
+
+    vertical_counts, vertical_edges, _ = vertical_ax.hist(data, bins=bins, histtype="step")
+    horizontal_counts, horizontal_edges, _ = horizontal_ax.hist(
+        data,
+        bins=bins,
+        histtype="step",
+        orientation="horizontal",
+    )
+
+    connectors, stairs = vertical_ax._entries
+    assert connectors["factory"] == "segments"
+    assert stairs["factory"] == "stairs"
+    x0, y0, x1, y1 = connectors["args"]
+    np.testing.assert_allclose(x0, [vertical_edges[0], vertical_edges[-1]])
+    np.testing.assert_allclose(x1, [vertical_edges[0], vertical_edges[-1]])
+    np.testing.assert_allclose(y0, [0.0, vertical_counts[-1]])
+    np.testing.assert_allclose(y1, [vertical_counts[0], 0.0])
+
+    (outline,) = horizontal_ax._entries
+    assert outline["factory"] == "segments"
+    x0, y0, x1, y1 = outline["args"]
+    assert (x0[0], y0[0]) == pytest.approx((0.0, horizontal_edges[0]))
+    assert (x1[0], y1[0]) == pytest.approx((horizontal_counts[0], horizontal_edges[0]))
+    assert (x0[-1], y0[-1]) == pytest.approx((horizontal_counts[-1], horizontal_edges[-1]))
+    assert (x1[-1], y1[-1]) == pytest.approx((0.0, horizontal_edges[-1]))
+
+
+def test_stacked_hist_step_outline_connects_to_previous_stack() -> None:
+    _fig, ax = plt.subplots()
+    datasets = [[0.2, 0.4, 1.2], [0.3, 1.3, 1.5]]
+
+    counts, edges, _ = ax.hist(
+        datasets,
+        bins=[0.0, 1.0, 2.0],
+        histtype="step",
+        stacked=True,
+    )
+
+    first_connectors, _first_stairs, second_connectors, _second_stairs = ax._entries
+    _x0, first_y0, _x1, first_y1 = first_connectors["args"]
+    np.testing.assert_allclose(first_y0, [0.0, counts[0, -1]])
+    np.testing.assert_allclose(first_y1, [counts[0, 0], 0.0])
+
+    x0, second_y0, x1, second_y1 = second_connectors["args"]
+    np.testing.assert_allclose(x0, [edges[0], edges[-1]])
+    np.testing.assert_allclose(x1, [edges[0], edges[-1]])
+    np.testing.assert_allclose(second_y0, [counts[0, 0], counts[1, -1]])
+    np.testing.assert_allclose(second_y1, [counts[1, 0], counts[0, -1]])
 
 
 def test_hist_dataset_style_lengths_must_match_dataset_count() -> None:

@@ -2246,8 +2246,24 @@ class Axes(PlotTypeMixin):
                 )
             elif orientation == "horizontal" and histtype.startswith("step"):
                 step_values = values + current_base
-                path_x = np.repeat(step_values, 2)
-                path_y = np.repeat(edges, 2)[1:-1]
+                # Matplotlib's unfilled step histogram is the top envelope
+                # plus one connector to the current baseline at each end.  A
+                # stacked series therefore starts/ends at the previous stack,
+                # not at zero.
+                path_x = np.concatenate(
+                    (
+                        current_base[:1],
+                        np.repeat(step_values, 2),
+                        current_base[-1:],
+                    )
+                )
+                path_y = np.concatenate(
+                    (
+                        edges[:1],
+                        np.repeat(edges, 2)[1:-1],
+                        edges[-1:],
+                    )
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -2291,6 +2307,27 @@ class Axes(PlotTypeMixin):
                 )
             elif histtype.startswith("step"):
                 step_values = values + current_base
+                # Keep the compact stairs trace for the O(bins) top envelope,
+                # then add only Matplotlib's two missing baseline connectors.
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (
+                            edges[[0, -1]],
+                            np.asarray((current_base[0], step_values[-1])),
+                            edges[[0, -1]],
+                            np.asarray((step_values[0], current_base[-1])),
+                        ),
+                        "kwargs": {
+                            "color": resolved_edge or series_color,
+                            "width": resolved_width,
+                            "dash": dash,
+                            "name": None,
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
                 entry = self._add(
                     "@mark",
                     {
