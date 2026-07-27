@@ -44,6 +44,28 @@ def _text_element(root: ET.Element, value: str) -> ET.Element:
     )
 
 
+def test_single_line_ticks_stay_direct_svg_text_while_multiline_uses_tspans() -> None:
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(
+            tick_values=(0.0, 1.0),
+            tick_labels=("plain tick", "split\ntick"),
+            tick_label_strategy="preserve",
+        ),
+        width=360,
+        height=240,
+    )
+
+    root = _parse(chart.figure().to_svg())
+    plain = _text_element(root, "plain tick")
+    split = _text_element(root, "splittick")
+
+    assert plain.text == "plain tick"
+    assert not list(plain)
+    assert split.text is None
+    assert [node.text for node in split if node.tag.endswith("tspan")] == ["split", "tick"]
+
+
 def test_every_chart_kind_exports_wellformed_svg() -> None:
     rng = np.random.default_rng(0)
     x = np.linspace(0.0, 10.0, 50)

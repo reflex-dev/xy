@@ -4443,6 +4443,11 @@ class PlotTypeMixin:
             if value not in {"left", "center", "right"}:
                 raise ValueError(f"table {name} must be 'left', 'center', or 'right'")
         _reject_non_default("table", "loc", loc, "bottom")
+        if edges not in {"closed", "open", ""}:
+            raise not_implemented(
+                f"table(edges={edges!r})",
+                alternative="edges='closed' or edges='open'",
+            )
         if cellText is None:
             if cellColours is None:
                 raise ValueError("table requires cellText or cellColours")
