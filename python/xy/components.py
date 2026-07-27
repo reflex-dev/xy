@@ -3995,6 +3995,27 @@ def _fixed_transition_key_values(value: Any) -> np.ndarray | None:
     return None
 
 
+def _transition_key_digests(result: np.ndarray, stop: int) -> np.ndarray:
+    """The first `stop` rows' identity digests, one uint64 per row.
+
+    `result` is Fortran-order — the native encoder's layout, so the payload ships
+    `values[:, 0]` copy-free — which makes `reshape(-1).view(np.uint64)` wrong
+    twice over. For a one-row prefix numpy can satisfy the reshape with a strided
+    *view* rather than a copy, and re-viewing that as a wider dtype raises "the
+    last axis must be contiguous"; for longer prefixes it silently copies. Both
+    columns are contiguous in this order, so combining them is correct whatever
+    the layout and costs the same 8 bytes a row the reshape copy did.
+
+    The two words are packed hi-word-first here rather than in the wire's
+    little-endian order. Only injectivity matters: equal packed values iff equal
+    (lo, hi) pairs, which is what the uniqueness test is asking.
+    """
+    packed = result[:stop, 0].astype(np.uint64)
+    packed <<= np.uint64(32)
+    packed |= result[:stop, 1]
+    return packed
+
+
 def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray:
     fixed = _fixed_transition_key_values(value)
     if fixed is not None:
@@ -4031,12 +4052,10 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
     # of an object array, so the inner loop is exactly the loop it was, while one
     # extra compare per row cost 8% of the success path in a 2M-row walk.
     #
-    # `result` is Fortran-order because the native encoder's is and the payload
-    # ships `values[:, 0]` copy-free, so `reshape(-1)` below cannot be a view and
-    # each test copies the prefix it checks. That is 8 bytes per row against the
-    # dictionaries' hundreds, and the x8 growth keeps the copies to about an
-    # eighth of the final one on top of it; pairing the two u32 words any other
-    # way costs the same 8 bytes, and viewing the 2-D array directly raises.
+    # Each test packs the prefix it checks into one uint64 a row
+    # (`_transition_key_digests`) — 8 bytes per row against the dictionaries'
+    # hundreds, and the x8 growth keeps those temporaries to about an eighth of
+    # the final one on top of it.
     start = 0
     block = _TRANSITION_KEY_CHECK_STRIDE
     while start < expected:
@@ -4055,13 +4074,13 @@ def _encode_transition_keys(value: Any, expected: int, label: str) -> np.ndarray
                 # not depend on what the token raised, and a key type whose
                 # __format__/isoformat/encode raises something else would
                 # otherwise still slip past the earlier duplicate.
-                if np.unique(result[:index].reshape(-1).view(np.uint64)).size != index:
+                if np.unique(_transition_key_digests(result, index)).size != index:
                     _raise_transition_key_conflict(arr[:index], label)
                 raise
             digest = hashlib.blake2s(token, digest_size=8, person=b"xykeyv1").digest()
             result[index, 0] = int.from_bytes(digest[:4], "little")
             result[index, 1] = int.from_bytes(digest[4:], "little")
-        if np.unique(result[:stop].reshape(-1).view(np.uint64)).size != stop:
+        if np.unique(_transition_key_digests(result, stop)).size != stop:
             _raise_transition_key_conflict(arr[:stop], label)
         start = stop
         block *= _TRANSITION_KEY_CHECK_GROWTH

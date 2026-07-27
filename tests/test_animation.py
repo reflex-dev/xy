@@ -827,6 +827,33 @@ def test_transition_key_type_errors_still_report_their_row() -> None:
         _encode_transition_keys(["a", [], "c"], 3, "keys")
 
 
+@pytest.mark.parametrize("n_good", [1, 2, 3, 17])
+def test_a_short_fallback_prefix_is_packable(n_good: int) -> None:
+    """Date keys always take the Python fallback, so this reaches the prefix
+    digest test at tiny lengths — where the Fortran-order buffer bites.
+
+    `result[:1]` is a one-row slice of an F-order (N, 2) array, and numpy can
+    satisfy `reshape(-1)` on it with a strided *view*; re-viewing that as uint64
+    raises "the last axis must be contiguous", replacing the key error with a
+    numpy internal one. The digests are packed from the two columns instead.
+    """
+    from xy.components import _encode_transition_keys
+
+    keys: list = [dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(n_good)]
+    encoded = _encode_transition_keys(keys, n_good, "keys")
+    assert encoded.shape == (n_good, 2)
+    assert encoded[:, 0].flags.c_contiguous and encoded[:, 1].flags.c_contiguous
+
+    # ...and the error path, which packs the completed prefix before re-raising.
+    with pytest.raises(ValueError, match=f"animation key is missing at row {n_good}"):
+        _encode_transition_keys([*keys, None], n_good + 1, "keys")
+    # ...and with a duplicate inside that prefix, which must win instead.
+    if n_good >= 2:
+        dup = [keys[0], *keys[:-1], None]
+        with pytest.raises(ValueError, match=r"keys contains duplicate value at rows 0 and 1"):
+            _encode_transition_keys(dup, len(dup), "keys")
+
+
 @pytest.mark.parametrize(
     ("keys", "rows"),
     [
