@@ -131,6 +131,19 @@ cannot reach crates.io, so required crates must be vendored or the sandbox
 loses local build/test; prefer feature-gated optional deps (e.g. SIMD
 argminmax, tsdownsample-class speed) with the lean build as default.
 
+Release profile (`Cargo.toml`, 2026-07-27): `lto = "fat"`, `codegen-units =
+1`, `strip = true`. Fat LTO measured no runtime change over thin on the §12
+native scatter bench (run-to-run noise ±15% dominates) but cuts the cdylib
+~15% (1.51 → 1.29 MB); strip removes `.symtab`/debuginfo only — `.dynsym`,
+which ctypes binds against, survives. `panic` must stay `unwind`: the C-ABI
+backstop in `lib.rs` converts kernel panics into sentinel returns via
+`catch_unwind`, and `panic = "abort"` would turn them into aborts of the
+embedding CPython process (the wasm target alone builds with
+`-C panic=abort` in `release.yml`, where unwinding is unsupported anyway).
+PGO is a known open lever, not adopted: it needs a per-target training
+workload and profdata plumbing in the release matrix; revisit when a
+benchmark shows a branch-bound kernel on the hot path.
+
 ### 2.1 Native text is a bounded subset, and misses are visible
 
 Declining FreeType bought the single-cdylib property (§3.1) and paid for it in
