@@ -4,22 +4,31 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Built-in scale gallery completion — 2026-07-27
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- `asinh`, `symlog`, and `logit` now install scale-specific default locators,
-  formatters, minor ticks, and Matplotlib-shaped transform metadata instead of
-  sharing one fixed candidate-tick approximation.
-- `asinh` accepts `base`/`subs`, `logit` accepts `one_half`/`use_overline`, and
-  the static shim supports `set_*scale("function", functions=(forward,
-  inverse))`. Explicit ticks expand the current view, retaining the zero tick
-  used by the function-scale gallery example.
-- `set_adjustable` and numeric aspects operate in transformed coordinates, so
-  logarithmic box and datalim aspect adjustment use decade spans rather than
-  raw-data spans. Constrained layout no longer probes an empty log axis with
-  the invalid domain `(0, 1)`.
-- Minor tick labels are not part of XY's wire contract. Consequently,
-  conditionally labeled LogitFormatter minors remain an explicit approximation
-  on narrowly zoomed logit axes; their positions are still drawn.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
+
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 
