@@ -182,13 +182,13 @@ defensively and falls back to safe defaults.
 ### 5.5 What `default_drag_action` controls
 
 `default_drag_action` selects the initial tool for an unmodified primary-button drag inside the
-plot. It does not enable a capability, choose axes, configure the wheel, or perform an
-action immediately.
+plot. It does not enable a capability, choose axes, or perform an action immediately, and
+no tool other than `"none"` touches the wheel or double-click reset.
 
 | `default_drag_action` | Plain-drag behavior | Required capability |
 | --- | --- | --- |
 | `"auto"` | Resolve the first usable tool from the priority below. | None |
-| `"none"` | Do nothing on plain drag. Wheel, click, and toolbar actions may still work. | None |
+| `"none"` | Do nothing on plain drag, release the wheel to the page, and ignore double-click reset. Click and toolbar actions still work. | None |
 | `"pan"` | Translate the ranges in `pan_axes`. | `navigation and pan` |
 | `"zoom"` | Draw a rectangle and box-zoom `zoom_axes` on release. | `navigation and zoom and box_zoom` |
 | `"select"` | Rectangular x/y selection. | `select and brush` plus pickable data |
@@ -196,9 +196,12 @@ action immediately.
 | `"select-y"` | Select a y interval across the full visible x range. | `select and brush` plus pickable data |
 | `"select-lasso"` | Draw a free-form polygon selection. | `select and brush` plus pickable data |
 
-`"zoom"` means **box zoom for drag only**. It does not control wheel zoom or the
-Zoom In/Out toolbar commands. Those remain governed by `wheel_zoom` and
-`zoom_buttons`.
+`"zoom"` means **box zoom for drag only**. It does not control wheel zoom,
+double-click reset, or the Zoom In/Out toolbar commands. Those remain governed
+by `wheel_zoom`, `double_click_reset`, and `zoom_buttons`. `"none"` is the one
+tool that reaches beyond the drag: it releases the wheel to the page and
+disables double-click reset, so the modebar's pan toggle (pan ↔ none) gives an
+embedded chart back to page scroll.
 
 `"auto"` resolves once at mount and whenever configuration invalidates the active
 tool:
@@ -229,11 +232,9 @@ xy.interaction_config(
     box_zoom=True,
 )
 
-# No plain-drag gesture; keep cursor-anchored wheel zoom.
-xy.interaction_config(
-    default_drag_action="none",
-    wheel_zoom=True,
-)
+# Inert plot for a scrolling page: no drag gesture, and the wheel
+# stays with the page. Toolbar navigation keeps working.
+xy.interaction_config(default_drag_action="none")
 ```
 
 ## 6. Shared mutation pipeline

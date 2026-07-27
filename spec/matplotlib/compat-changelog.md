@@ -4,17 +4,31 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Quiver display-space invariants — 2026-07-26
+## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
-- `angles="uv"` now stays screen-relative while `angles="xy"` follows the
-  live data-to-display transform, including unequal spans and inverted axes.
-- `units`, `scale_units`, explicit/automatic scale, and shaft width use the
-  real axes dimensions, view limits, and DPI. Automatic scaling cancels the
-  `scale_units` constant exactly as Matplotlib does, and quiver offsets—not
-  display-sized arrow tips—own autoscaling.
-- Quiver keys now transform axes, figure, data, and inch coordinates through
-  the actual subplot geometry. Their label separation is authored in physical
-  inches and converted through the figure DPI.
+- `xy.pyplot.boxplot` no longer routes its default call through the native
+  opinionated box mark. It now draws Matplotlib's unfilled line geometry and
+  returns one box, median, and flier handle plus two whisker and cap handles per
+  group. Fliers stay centered on their group even when several groups are
+  present, and empty groups of fliers still have the expected handle.
+- `xy.pyplot.violinplot` now uses the same Gaussian-KDE path for its default
+  Scott bandwidth as it does for explicit Scott, Silverman, scalar, and
+  callable bandwidths. It returns one body per group, with triangle joins
+  marked as a single fill so browser, PNG, and SVG output suppress internal
+  seams.
+- The public composition API keeps its independent native `box` and `violin`
+  marks and their opinionated styling; this compatibility correction is
+  contained inside `xy.pyplot`.
+
+## Histogram and spectral numeric semantics — 2026-07-26 (Matplotlib 3.11.1 reference)
+
+- `hist(density=True, stacked=True)` now bins raw per-dataset mass, stacks it,
+  and normalizes the combined top envelope once. Unequal bin widths, weights,
+  and both cumulative directions match Matplotlib 3.11.1 numeric outputs.
+- The native Welch paths behind `psd`, `csd`, `cohere`, and `specgram` no
+  longer subtract each segment mean by default. Their omitted/`None`
+  `detrend` behavior is Matplotlib's `detrend_none`; unsupported explicit
+  detrending modes continue to fail loudly at the pyplot boundary.
 
 ## Vector-field gallery corrections — 2026-07-24
 
@@ -27,13 +41,6 @@ which covers user-visible releases across the whole package.
 - `streamplot` now uses an occupancy-aware adaptive Heun integrator for default
   and explicit seeds. `broken_streamlines=False` and both Matplotlib 3.11
   integration scale controls affect the generated trajectories.
-- Native streamplot output now retains its seed-level trajectory boundaries,
-  places exactly `num_arrows` per trajectory using Matplotlib 3.11's
-  cumulative-distance selection, preserves masked/invalid topology breaks, and
-  ships sampled array linewidths directly for segments and arrow outlines.
-  Cell-sized native fragments that fail Matplotlib's `minlength` are discarded;
-  when none survive, automatic seeding continues through the bounded adaptive
-  integrator so static output retains visible streamline bodies.
 
 ## Matplotlib 3.11 development snapshot — 2026-07-13
 
