@@ -2011,7 +2011,7 @@ fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
         batch.n,
         |i| {
             let (cy, rr) = (f32_at(batch.ys, i), f32_at(batch.rs, i));
-            let ext = rr + batch.sw + 1.0;
+            let ext = symbol_extent(rr, batch.sym) + batch.sw + 1.0;
             Some((cy - ext, cy + ext))
         },
         |sf, indices| paint_points_band(sf, batch, indices.iter().map(|&i| i as usize)),
@@ -3342,7 +3342,9 @@ mod tests {
         rs[8..12].copy_from_slice(&f32le(f32::NAN));
         let batch = PointsBatch {
             n,
-            sym: 0,
+            // Diamonds extend sqrt(2) beyond their nominal radius, so this
+            // also guards row-band bucketing against clipped tips.
+            sym: 2,
             sw: 0.5,
             stroke: [10, 10, 10, 255],
             xs: &xs,

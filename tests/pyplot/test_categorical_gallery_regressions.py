@@ -86,4 +86,5 @@ def test_barh_gallery_width_vector_remains_bar_value_geometry() -> None:
 
     bar_trace = ax._build_chart(640, 480).figure().traces[0]
     np.testing.assert_allclose(bar_trace.x1.values - bar_trace.x0.values, performance)
-    assert ax.get_xlim() == pytest.approx((0.0, 9.45))
+    # Matplotlib includes the x-error geometry in autoscale: max 9.2 plus 5%.
+    assert ax.get_xlim() == pytest.approx((0.0, 9.66))

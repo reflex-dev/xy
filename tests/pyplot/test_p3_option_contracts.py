@@ -327,6 +327,36 @@ def test_barbs_support_increment_flip_size_and_color_controls() -> None:
     assert triangle_entries[0]["kwargs"]["color"] == "#ff0000"
 
 
+def test_fully_masked_barbs_return_an_empty_collection() -> None:
+    _fig, ax = plt.subplots()
+    masked = np.ma.masked_all(3)
+
+    collection = ax.barbs([0, 1, 2], [0, 1, 2], masked, masked)
+
+    assert collection._entry["factory"] == "segments"
+    assert len(collection._entry["args"][0]) == 0
+
+
+def test_stem_dashed_basefmt_builds_a_flat_dash_pattern() -> None:
+    _fig, ax = plt.subplots()
+
+    container = ax.stem([0.0, 1.0], [1.0, 2.0], basefmt="k--")
+    ax._build_chart(640, 480)
+
+    dash = container.baseline._entry["kwargs"]["dash"]
+    assert dash
+    assert all(np.isscalar(value) for value in dash)
+
+
+def test_path_collection_get_sizes_tracks_set_sizes() -> None:
+    _fig, ax = plt.subplots()
+    collection = ax.scatter([0.0, 1.0], [0.0, 1.0], s=[4.0, 9.0])
+
+    collection.set_sizes([16.0, 25.0])
+
+    np.testing.assert_array_equal(collection.get_sizes(), [16.0, 25.0])
+
+
 def test_barb_staff_length_is_screen_stable_across_subplot_grids() -> None:
     def staff_pixels(fig: Any, ax: Any) -> float:
         ax.barbs([0.0, 4.0], [0.0, 3.0], [50.0, 50.0], [0.0, 0.0])

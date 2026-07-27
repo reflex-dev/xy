@@ -264,3 +264,15 @@ def test_contourf_fills_discrete_bands_not_a_smooth_gradient():
     expected_ticks[np.abs(expected_ticks) < 1e-12] = 0.0
     assert colorbar["ticks"] == pytest.approx(expected_ticks)
     assert 0.0 in colorbar["ticks"]
+
+
+def test_contourf_includes_samples_equal_to_the_final_level():
+    values = np.array([[0.0, 1.0], [1.0, 2.0]])
+    _fig, ax = plt.subplots()
+    ax.contourf(values, levels=[0.0, 1.0, 2.0])
+
+    heatmap = next(
+        trace for trace in ax._build_chart(640, 480).figure().traces if trace.kind == "heatmap"
+    )
+
+    assert heatmap.grid.values.reshape(heatmap.grid_shape)[-1, -1] == 1.5

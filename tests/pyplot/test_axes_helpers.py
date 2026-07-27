@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
+from xy.pyplot._artists import Legend
 from xy.pyplot._rc import rcParams
 
 
@@ -36,7 +37,7 @@ def test_ticklabel_minor_label_axis_and_legend_helpers():
     ax.set_title("title")
     ax.ticklabel_format(axis="x", style="sci", scilimits=(-2, 3), useOffset=False)
     ax.minorticks_on()
-    ax.legend()
+    legend = ax.legend()
 
     assert ax.get_xlabel() == "x label"
     assert ax.get_ylabel() == "y label"
@@ -45,7 +46,8 @@ def test_ticklabel_minor_label_axis_and_legend_helpers():
     assert ax.get_yaxis() is ax.yaxis
     assert ax._axis_props("x")["tick_label_format"]["style"] == "sci"
     assert ax._axis_props("x")["minor_ticks"] is True
-    assert ax.get_legend() is ax
+    assert isinstance(legend, Legend)
+    assert ax.get_legend() is legend
     handles, labels = ax.get_legend_handles_labels()
     assert len(handles) == 1
     assert labels == ["series"]

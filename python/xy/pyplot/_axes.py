@@ -3321,16 +3321,7 @@ class Axes(PlotTypeMixin):
                 kwargs = entry.get("kwargs", {})
                 orientation = kwargs.get("orientation", "vertical")
                 centers = np.asarray(entry.get("x", ())).reshape(-1)
-                try:
-                    centers = np.asarray(unit_converted_values(centers), dtype=np.float64).reshape(
-                        -1
-                    )
-                except (TypeError, ValueError):
-                    # The core provisions one categorical bar trace in this
-                    # same first-seen order, so its extent is the ordinal
-                    # range directly. Keep this hot path free of a duplicate
-                    # Python label-map pass.
-                    centers = np.arange(centers.size, dtype=np.float64)
+                centers = numeric_or_categorical(centers)
                 values = np.asarray(entry.get("y", ()), dtype=np.float64).reshape(-1)
                 bases = np.asarray(kwargs.get("base", 0.0), dtype=np.float64)
                 bases = np.broadcast_to(bases, values.shape).reshape(-1)
@@ -3352,6 +3343,10 @@ class Axes(PlotTypeMixin):
                 except (TypeError, ValueError):
                     continue
                 yield array, True
+            if entry.get("kind") == "area" and axis == "y":
+                base = entry.get("kwargs", {}).get("base")
+                if base is not None:
+                    yield np.asarray(base, dtype=np.float64).reshape(-1), True
             mpl_extent = entry.get("_mpl_extent", {}).get(axis)
             if mpl_extent is not None:
                 yield np.asarray(mpl_extent, dtype=np.float64).reshape(-1), True
@@ -3375,6 +3370,21 @@ class Axes(PlotTypeMixin):
                         yield np.asarray(base, dtype=np.float64).reshape(-1), True
                 if factory == "stem" and axis == "y":
                     yield np.asarray(entry.get("kwargs", {}).get("base", 0.0)).reshape(-1), True
+                if factory == "errorbar":
+                    center = np.asarray(
+                        entry["args"][0 if axis == "x" else 1], dtype=np.float64
+                    ).reshape(-1)
+                    yield center, True
+                    error = entry.get("kwargs", {}).get("xerr" if axis == "x" else "yerr")
+                    if error is not None:
+                        raw = np.asarray(error, dtype=np.float64)
+                        if raw.ndim >= 2 and raw.shape[0] == 2:
+                            lower = np.broadcast_to(raw[0], center.shape)
+                            upper = np.broadcast_to(raw[1], center.shape)
+                        else:
+                            lower = upper = np.broadcast_to(raw, center.shape)
+                        yield center - lower, True
+                        yield center + upper, True
                 if factory == "contour":
                     z = np.asarray(entry["args"][0])
                     coordinates = entry.get("kwargs", {}).get(key)
@@ -3536,6 +3546,25 @@ class Axes(PlotTypeMixin):
             return np.array([], dtype=np.float64)
         combined = np.concatenate(edges)
         return combined[np.isfinite(combined)]
+
+    def _has_nonzero_bar_baseline(self, axis: str) -> bool:
+        """Whether the core's zero-only bar anchor cannot represent a base."""
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
+            if entry.get("kind") != "bar":
+                continue
+            orientation = entry.get("kwargs", {}).get("orientation", "vertical")
+            value_axis = "y" if orientation == "vertical" else "x"
+            if axis != value_axis:
+                continue
+            base = np.asarray(entry.get("kwargs", {}).get("base", 0.0), dtype=np.float64)
+            finite = base[np.isfinite(base)]
+            if finite.size and np.any(np.abs(finite) > np.finfo(np.float64).eps):
+                return True
+        return False
 
     def _has_fully_sticky_candidate(self, axis: str) -> bool:
         """Whether an entry can pin both ends of *axis*.
@@ -4076,9 +4105,9 @@ class Axes(PlotTypeMixin):
             )
 
     def get_legend(self) -> Any:
-        """A truthy legend handle when a legend is shown, else None."""
+        """Return the current legend artist, or ``None`` when hidden."""
         host = self._y2_of or self
-        return (host._legend_handle or self) if host._legend else None
+        return host._legend_handle if host._legend else None
 
     def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
         """Handles and labels of the entries that would appear in the legend.
@@ -5193,12 +5222,10 @@ class Axes(PlotTypeMixin):
         raise loudly. ``loc="best"`` picks the least occupied corner.
         """
         host = self._y2_of or self
-        returned: Any = self
         if len(args) >= 2:
             handles = list(args[0])
             labels = [_plain_text(label) for label in args[1]]
             legend_artist = Legend(host, handles, labels, **kwargs)
-            returned = legend_artist
             host._legend_handle = legend_artist
             # An explicit handles/labels call defines the primary legend even
             # when the handles are proxy artists rather than plotted entries.
@@ -5223,17 +5250,19 @@ class Axes(PlotTypeMixin):
             for entry, label in zip(eligible, labels, strict=False):
                 entry.setdefault("kwargs", {})["name"] = _plain_text(label)
             host._legend_artist = None
-            host._legend_options = self._compose_legend_options(kwargs)
             host._legend_items = None
-            host._legend_handle = None
+            handles, labels = host.get_legend_handles_labels()
+            host._legend_handle = Legend(host, handles, labels, **kwargs)
+            host._legend_options = dict(host._legend_handle._options)
         else:
             host._legend_artist = None
-            host._legend_options = self._compose_legend_options(kwargs)
             host._legend_items = None
-            host._legend_handle = None
+            handles, labels = host.get_legend_handles_labels()
+            host._legend_handle = Legend(host, handles, labels, **kwargs)
+            host._legend_options = dict(host._legend_handle._options)
         host._legend = True
         host._invalidate()
-        return returned
+        return host._legend_handle
 
     def _compose_legend_options(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Translate legend() keyword styling into the engine's option dict.
@@ -6412,7 +6441,11 @@ class Axes(PlotTypeMixin):
             if pinned is not None:
                 props["domain"] = pinned
             else:
-                props["margin"] = self._effective_margin(axis)
+                margin = self._effective_margin(axis)
+                if margin < 0.0 or self._has_nonzero_bar_baseline(axis):
+                    props["domain"] = self._auto_domain(axis)
+                else:
+                    props["margin"] = margin
         if "x" in empty_view:
             x_props["domain"] = (0.0, 1.0)
         if "y" in empty_view:
@@ -6440,7 +6473,11 @@ class Axes(PlotTypeMixin):
                 if self._twin._axis_is_dataless("y"):
                     y2_props["domain"] = (0.0, 1.0)
                 else:
-                    y2_props["margin"] = self._twin._effective_margin("y")
+                    margin = self._twin._effective_margin("y")
+                    if margin < 0.0 or self._twin._has_nonzero_bar_baseline("y"):
+                        y2_props["domain"] = self._twin._auto_domain("y")
+                    else:
+                        y2_props["margin"] = margin
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(xy.y_axis(id="y2", side="right", **y2_props))
         legend_needs_best = False

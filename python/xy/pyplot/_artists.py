@@ -486,6 +486,7 @@ class PathCollection(Artist):
         del dpi  # compat-noop: xy sizes use the owning figure DPI
         from ._translate import marker_size_to_scatter_size
 
+        self._entry["source_sizes"] = np.asarray(sizes, dtype=np.float64).reshape(-1)
         self._entry["kwargs"]["size"] = marker_size_to_scatter_size(
             sizes,
             default=6.0 * self._axes._point_scale(),
@@ -1388,7 +1389,7 @@ class Legend:
     """
 
     def __init__(
-        self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any
+        self, parent: Any, handles: Any, labels: Any, loc: Any = None, **kwargs: Any
     ) -> None:
         handles, labels = list(handles), list(labels)
         if len(handles) != len(labels):
@@ -1413,7 +1414,8 @@ class Legend:
                 continue
             self._pairs.append((entry, label))
         self._kwargs = dict(kwargs)
-        self._kwargs.setdefault("loc", loc)
+        if loc is not None:
+            self._kwargs.setdefault("loc", loc)
         self._attach(parent)
 
     def _attach(self, parent: Any) -> None:

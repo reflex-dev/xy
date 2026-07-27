@@ -18,7 +18,9 @@ import warnings
 # and the spec may carry a chart `palette`. A v6 client indexes its built-in
 # table with the stop array, misses, and paints viridis without erroring — the
 # same silent-misrender case v6 itself was cut for.
-PROTOCOL_VERSION = 7
+# v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
+# add wire values an older v7 client would accept but silently misrender.
+PROTOCOL_VERSION = 8
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the
