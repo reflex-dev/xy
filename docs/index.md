@@ -65,9 +65,9 @@ JSON, and the WebGL2 client bounds browser work by what the screen can show,
 while exact source data stays in Python for hover and selection.
 
 The numbers back this up. In the recorded 10-million-point launch benchmark, XY
-produced a static PNG in 0.023 s, while Matplotlib took 2.8 s and Plotly
-9.6 s. XY reached first interactive render 16–20× sooner, peaking at a
-third of Matplotlib's memory and a twentieth of Plotly's.
+produced a static PNG in 0.018 s, while Matplotlib took 2.7 s and Plotly
+9.6 s. XY reached first interactive render 16–18× sooner, peaking at a
+third of Matplotlib's memory and under 6% of Plotly's.
 
 ~~~python demo-only exec
 from xy_docs.demos.benchmark_charts import launch_snapshot_demo

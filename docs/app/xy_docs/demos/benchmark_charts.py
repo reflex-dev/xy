@@ -95,9 +95,9 @@ _SNAPSHOT_CATEGORIES = [
     "Interactive · CPU fallback",
 ]
 _SNAPSHOT_VALUES = [
-    [0.0232, 0.1797, 0.9920],
-    [2.7842, 3.0029, 3.6735],
-    [9.5834, 3.6434, 8.2152],
+    [0.0184, 0.1875, 1.0352],
+    [2.7432, 2.9842, 3.6121],
+    [9.6433, 3.3729, 8.0888],
 ]
 
 _SNAPSHOT_CHART = xy.bar_chart(
@@ -164,9 +164,9 @@ def launch_snapshot_demo() -> rx.Component:
 
 
 _SIZE_LABELS = ["10k", "100k", "1M", "10M", "1B"]
-_XY_SCALING_VALUES = [0.0085, 0.0108, 0.0114, 0.0232, 1.1452]
-_MATPLOTLIB_SCALING_VALUES = [0.0234, 0.0475, 0.2946, 2.7842]
-_PLOTLY_SCALING_VALUES = [1.8830, 1.9496, 2.6490, 9.5834]
+_XY_SCALING_VALUES = [0.0036, 0.0060, 0.0058, 0.0184, 1.1288]
+_MATPLOTLIB_SCALING_VALUES = [0.0224, 0.0456, 0.2858, 2.7432]
+_PLOTLY_SCALING_VALUES = [2.0231, 2.1100, 2.8086, 9.6433]
 
 _SCALING_CHART = xy.line_chart(
     xy.line(
@@ -204,7 +204,7 @@ _SCALING_CHART = xy.line_chart(
         for size, value, label in zip(
             _SIZE_LABELS,
             _XY_SCALING_VALUES,
-            ["8.5 ms", "10.8 ms", "11.4 ms", "23.2 ms", "1.145 s"],
+            ["3.6 ms", "6.0 ms", "5.8 ms", "18.4 ms", "1.129 s"],
             strict=True,
         )
     ),
@@ -222,7 +222,7 @@ _SCALING_CHART = xy.line_chart(
         for size, value, label in zip(
             _SIZE_LABELS[:4],
             _MATPLOTLIB_SCALING_VALUES,
-            ["23.4 ms", "47.5 ms", "0.295 s", "2.784 s"],
+            ["22.4 ms", "45.6 ms", "0.286 s", "2.743 s"],
             strict=True,
         )
     ),
@@ -240,7 +240,7 @@ _SCALING_CHART = xy.line_chart(
         for size, value, label in zip(
             _SIZE_LABELS[:4],
             _PLOTLY_SCALING_VALUES,
-            ["1.883 s", "1.950 s", "2.649 s", "9.583 s"],
+            ["2.023 s", "2.110 s", "2.809 s", "9.643 s"],
             strict=True,
         )
     ),
@@ -288,7 +288,7 @@ _SCALING_CHART = xy.line_chart(
 )
 
 _MEMORY_CATEGORIES = ["XY", "Matplotlib", "Plotly / Kaleido"]
-_MEMORY_VALUES = [0.283, 0.834, 5.671]
+_MEMORY_VALUES = [0.286, 0.831, 5.298]
 _MEMORY_CHART = xy.bar_chart(
     *(
         xy.bar(
@@ -307,12 +307,12 @@ _MEMORY_CHART = xy.bar_chart(
             strict=True,
         )
     ),
-    xy.text(0.42, "XY", "0.283", color="var(--benchmark-text, #60646c)"),
-    xy.text(0.98, "Matplotlib", "0.834", color="var(--benchmark-text, #60646c)"),
+    xy.text(0.42, "XY", "0.286", color="var(--benchmark-text, #60646c)"),
+    xy.text(0.98, "Matplotlib", "0.831", color="var(--benchmark-text, #60646c)"),
     xy.text(
-        5.48,
+        5.11,
         "Plotly / Kaleido",
-        "5.671",
+        "5.298",
         anchor="end",
         color="var(--benchmark-text, #60646c)",
     ),

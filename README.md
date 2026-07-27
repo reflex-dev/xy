@@ -159,9 +159,9 @@ chart = xy.line_chart(
   <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-In the recorded 10-million-point baseline, XY produced a static PNG in 0.023 s
-versus 2.8 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
-render 16–20× sooner.
+In the recorded 10-million-point baseline, XY produced a static PNG in 0.018 s
+versus 2.7 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
+render 16–18× sooner.
 
 That baseline is one proof point, not the finish line. XY is being built to
 outperform every competing charting library across small-data startup,
@@ -172,7 +172,7 @@ the project measures and proves that goal.
 
 The committed launch baseline uses identical seeded data, a 900×420 output,
 and three isolated cold runs. See the
-[launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md),
+[launch report](benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md),
 [benchmark runbook](benchmarks/README.md), and
 [competitive benchmark specification](spec/benchmarks/results.md) for the
 environment, methodology, raw results, and full evidence program.
