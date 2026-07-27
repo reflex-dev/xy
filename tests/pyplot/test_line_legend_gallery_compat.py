@@ -207,6 +207,49 @@ def test_hidden_axis_keeps_explicit_matplotlib_spines_in_static_exports():
         assert float(sample.min()) < dark_threshold
 
 
+def test_axis_off_hides_barcode_chrome_in_static_exports():
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.eventplot([[0.2, 0.5, 0.8]], orientation="horizontal")
+    ax.set_xlabel("hidden x label")
+    ax.set_ylabel("hidden y label")
+    ax.grid(True)
+    ax.set_axis_off()
+
+    spec, _ = ax._build_chart(300, 200).figure().build_payload()
+    assert spec["frame_sides"] == []
+    assert spec["x_axis"]["tick_label_strategy"] == "none"
+    assert spec["y_axis"]["tick_label_strategy"] == "none"
+
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    root = ElementTree.fromstring(output.getvalue())
+    texts = {"".join(element.itertext()) for element in root.iter() if element.tag.endswith("text")}
+    assert "hidden x label" not in texts
+    assert "hidden y label" not in texts
+    # The barcode event lines remain even though all axis chrome is gone.
+    assert sum(element.tag.endswith("line") for element in root.iter()) == 3
+
+
+def test_axis_off_hides_disabled_subplot_frame_in_static_exports():
+    fig, axs = plt.subplots(1, 2, figsize=(6, 2))
+    axs[0].plot([0, 1], [0, 1])
+    axs[1].axis("off")
+
+    hidden_spec, _ = axs[1]._build_chart(300, 200).figure().build_payload()
+    assert hidden_spec["frame_sides"] == []
+    assert hidden_spec["x_axis"]["tick_label_strategy"] == "none"
+    assert hidden_spec["y_axis"]["tick_label_strategy"] == "none"
+
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    root = ElementTree.fromstring(output.getvalue())
+    nested = [element for element in root.iter() if element.tag.endswith("svg")]
+    assert len(nested) == 3
+    disabled_panel = nested[-1]
+    assert not any(element.tag.endswith("line") for element in disabled_panel.iter())
+    assert not any(element.tag.endswith("text") for element in disabled_panel.iter())
+
+
 def test_bar_numpy_rgba_row_is_one_color_for_trace_and_legend():
     _, ax = plt.subplots()
     rgba = np.array([0.9, 0.2, 0.1, 1.0])

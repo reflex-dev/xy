@@ -144,10 +144,25 @@ def test_axis_boolean_case_insensitive_and_keyword_forms() -> None:
     _fig, ax = plt.subplots()
     ax.plot([0.0, 2.0], [0.0, 1.0])
 
+    ax.xaxis.set_visible(False)
     ax.axis(False)
+    assert ax.axison is False
+    # Matplotlib's axison flag overrides individual component visibility only
+    # while it is off; it does not overwrite that state.
     assert ax._axis_props("x")["tick_label_strategy"] == "none"
+    assert ax._axis_props("y").get("tick_label_strategy") is None
+    off_spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert off_spec["frame_sides"] == []
+    assert off_spec["x_axis"]["tick_label_strategy"] == "none"
+    assert off_spec["y_axis"]["tick_label_strategy"] == "none"
     ax.axis("ON")
-    assert ax._axis_props("x")["tick_label_strategy"] is None
+    assert ax.axison is True
+    assert ax._axis_props("x")["tick_label_strategy"] == "none"
+    assert ax._axis_props("y").get("tick_label_strategy") is None
+    on_spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert on_spec["frame_sides"] == ["left", "bottom", "top", "right"]
+    assert on_spec["x_axis"]["tick_label_strategy"] == "none"
+    assert on_spec["y_axis"].get("tick_label_strategy") is None
     assert ax.axis(xmin=-3.0, ymax=4.0) == pytest.approx((-3.0, 2.1, -0.05, 4.0))
 
     with pytest.raises(TypeError, match="unexpected keyword"):

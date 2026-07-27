@@ -14,11 +14,11 @@ from typing import Any, Literal, Optional, overload
 
 import numpy as np
 
-from ._artists import Text
+from ._artists import Text, _PatchFacade
 from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
-from ._colors import resolve_color
+from ._colors import resolve_color, resolve_rgba
 from ._rc import rc_figsize_px, rcParams
-from ._transforms import CoordinateTransform
+from ._transforms import Bbox, CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
 
@@ -56,6 +56,49 @@ def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
 
     spec, _buffers = ax._build_chart(width, height).figure().build_payload_split()
     return float(_svg.layout(spec)[3]["x"])
+
+
+def _contour_colorbar_lines(contour: Any, host: Axes) -> list[dict[str, Any]]:
+    """Serialize a ContourSet's visible isoline styles for colorbar chrome."""
+    from ._artists import _contour_legend_colors
+
+    levels = np.asarray(contour.levels, dtype=np.float64).reshape(-1)
+    widths = np.asarray(contour.get_linewidth(), dtype=np.float64).reshape(-1)
+    colors = _contour_legend_colors(contour._entry, len(levels))
+    return [
+        {
+            "value": float(level),
+            "color": colors[index],
+            "width": float(widths[index % len(widths)]) * host._point_scale(),
+            "dash": (
+                "dashed" if contour._entry["kwargs"].get("dash_negative") and level < 0 else None
+            ),
+        }
+        for index, level in enumerate(levels)
+    ]
+
+
+def _colorbar_tick_labels(formatter: Any, ticks: list[float]) -> list[str]:
+    """Evaluate one colorbar formatter against the exact serialized ticks."""
+
+    labels: list[str] = []
+    for position, value in enumerate(ticks):
+        if isinstance(formatter, str):
+            if "{" in formatter:
+                rendered = formatter.format(x=value, pos=position)
+            elif "%" in formatter:
+                rendered = formatter % value
+            else:
+                rendered = format(value, formatter)
+        elif callable(formatter):
+            try:
+                rendered = formatter(value, position)
+            except TypeError:
+                rendered = formatter(value)
+        else:
+            raise TypeError("colorbar() format must be a format string or callable formatter")
+        labels.append(_plain_text(str(rendered)))
+    return labels
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
@@ -104,6 +147,7 @@ class Figure:
         # short-circuits) assumes a string.
         self._facecolor = (resolve_color(facecolor) if facecolor is not None else None) or "white"
         self._edgecolor = "white"
+        self.patch = _PatchFacade(self)
         self._suptitle: Optional[str] = None
         self._suptitle_style: dict[str, Any] = {}
         self._supxlabel: Optional[str] = None
@@ -146,11 +190,14 @@ class Figure:
         return _FigureCanvas(self)
 
     def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        if not args:
+            args = (111,)
         if len(args) == 1 and isinstance(args[0], _SubplotSpec):
             spec = args[0]
+            subplot_key = ("grid", spec.nrows, spec.ncols, spec.index)
             if spec.is_single and not spec.gridspec.has_custom_geometry:
                 self._ensure_grid(spec.nrows, spec.ncols)
-                ax = self._axes_at(spec.index)
+                ax = self._claim_or_create_subplot(subplot_key, spec.index)
             else:
                 # Spans and custom spacing become explicit figure rectangles.
                 # The spec is kept so subplots_adjust() can re-resolve them.
@@ -160,37 +207,88 @@ class Figure:
                 # retain that geometry for tight_layout/subplots_adjust.
                 self._nrows, self._ncols = spec.nrows, spec.ncols
                 ax._subplot_spec = spec
-        elif args and args != (1, 1, 1) and args != (111,):
+                ax._subplot_key = (
+                    "gridspec",
+                    id(spec.gridspec),
+                    spec.rows,
+                    spec.cols,
+                )
+                ax._subplot_claimed = True
+        else:
             nrows, ncols, index = _parse_subplot_args(args)
+            subplot_key = ("grid", nrows, ncols, index - 1)
             if any(a._figure_rect is not None for a in self._axes):
                 # matplotlib mixes numbered subplots into figures that already
                 # hold free-form axes; keep the figure free-form via the cell
-                # rectangle (and return the existing axes for a repeat spec).
+                # rectangle. Figure.add_subplot() deliberately does not reuse
+                # an existing match; pyplot.subplot() owns activation/reuse.
                 row, col = divmod(index - 1, ncols)
                 grid = _GridSpec(self, nrows, ncols)
                 rect = grid.cell_rect((row, row + 1), (col, col + 1))
-                existing = next((a for a in self._axes if a._figure_rect == rect), None)
-                if existing is not None:
-                    ax = existing
-                else:
-                    ax = self.add_axes(rect)
-                    ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax = self.add_axes(rect)
+                ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
+                ax._subplot_key = subplot_key
+                ax._subplot_claimed = True
             else:
                 self._ensure_grid(nrows, ncols)
-                ax = self._axes_at(index - 1)
-        else:
-            self._ensure_grid(1, 1)
-            ax = self._axes_at(0)
+                ax = self._claim_or_create_subplot(subplot_key, index - 1)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(ax, sharex=sharex, sharey=sharey)
+        if kwargs:
+            ax.set(**kwargs)
+        return ax
+
+    @staticmethod
+    def _share_subplot_axes(ax: Axes, *, sharex: Any = None, sharey: Any = None) -> None:
+        """Wire construction-only subplot sharing without routing it through ``Axes.set``."""
         if sharex is not None:
             ax._axis["x"] = sharex._axis_props("x")  # static share, as in twiny()
         if sharey is not None:
             ax._axis["y"] = sharey._axis_props("y")
-        if kwargs:
-            ax.set(**kwargs)
+        if sharex is not None or sharey is not None:
+            ax._invalidate()
+
+    def _claim_or_create_subplot(self, key: tuple[Any, ...], index: int) -> Axes:
+        """Claim a grid placeholder or append a same-spec overlay axes."""
+        for candidate in self._axes:
+            if candidate._subplot_key == key and not candidate._subplot_claimed:
+                candidate._subplot_claimed = True
+                return candidate
+        ax = Axes(self)
+        ax._subplot_index = index
+        ax._subplot_key = key
+        ax._subplot_claimed = True
+        self._axes.append(ax)
         return ax
+
+    def activate_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        """Activate a matching subplot, creating it only when absent."""
+        if not args:
+            args = (111,)
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            if spec.is_single and not spec.gridspec.has_custom_geometry:
+                key: tuple[Any, ...] = ("grid", spec.nrows, spec.ncols, spec.index)
+            else:
+                key = ("gridspec", id(spec.gridspec), spec.rows, spec.cols)
+        else:
+            nrows, ncols, index = _parse_subplot_args(args)
+            key = ("grid", nrows, ncols, index - 1)
+        existing = next(
+            (ax for ax in self._axes if ax._subplot_claimed and ax._subplot_key == key),
+            None,
+        )
+        if existing is None:
+            return self.add_subplot(*args, **kwargs)
+        self._current_ax = existing
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        self._share_subplot_axes(existing, sharex=sharex, sharey=sharey)
+        if kwargs:
+            existing.set(**kwargs)
+        return existing
 
     def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
         parsed = tuple(float(value) for value in rect)
@@ -310,16 +408,23 @@ class Figure:
             for index, ax in enumerate(self._axes):
                 if ax._figure_rect is None:
                     ax._subplot_index = index
-        while len(self._axes) < nrows * ncols:
+                    ax._subplot_key = ("grid", nrows, ncols, index)
+        for index in range(nrows * ncols):
+            key = ("grid", nrows, ncols, index)
+            if any(ax._subplot_key == key for ax in self._axes):
+                continue
             ax = Axes(self)
-            ax._subplot_index = len(self._axes)
+            ax._subplot_index = index
+            ax._subplot_key = key
             self._axes.append(ax)
 
     def _axes_at(self, index: int) -> Axes:
         self._ensure_grid(self._nrows, self._ncols)
-        if not self._axes:
-            self._axes.append(Axes(self))
-        return self._axes[index]
+        key = ("grid", self._nrows, self._ncols, index)
+        for ax in self._axes:
+            if ax._subplot_key == key:
+                return ax
+        raise IndexError(index)
 
     @property
     def axes(self) -> list[Axes]:
@@ -641,12 +746,13 @@ class Figure:
         return self._edgecolor
 
     def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
-        if cax is not None:
-            raise not_implemented("colorbar(cax=...)", "the automatic colorbar placement")
         if mappable is None:
             mappable = self._gci
         axes_arg = ax
-        axes = getattr(mappable, "_axes", None) or self.gca()
+        source_axes = getattr(mappable, "_axes", None) or self.gca()
+        axes = cax if cax is not None else source_axes
+        if cax is not None and cax not in self._axes:
+            raise ValueError("colorbar cax must belong to this figure")
         entry = getattr(mappable, "_entry", {})
         props = entry.get("kwargs", {})
         mapped_values = entry.get("source_z", props.get("color", entry.get("z")))
@@ -662,7 +768,8 @@ class Figure:
             finite = finite[np.isfinite(finite)]
         except (TypeError, ValueError):
             finite = np.asarray([], dtype=np.float64)
-        explicit_domain = entry.get("domain", props.get("domain"))
+        explicit_domain = entry.get("_mpl_domain", entry.get("domain", props.get("domain")))
+        norm_scale = str(entry.get("_mpl_norm_scale", props.get("_mpl_norm_scale", "linear")))
         orientation_arg = kwargs.pop("orientation", None)
         location = kwargs.pop("location", None)
         if location is not None:
@@ -679,6 +786,10 @@ class Figure:
         orientation = str(orientation_arg or "vertical")
         if orientation not in {"vertical", "horizontal"}:
             raise ValueError("colorbar() orientation must be 'vertical' or 'horizontal'")
+        spacing = str(kwargs.pop("spacing", "uniform")).lower()
+        if spacing not in {"uniform", "proportional"}:
+            raise ValueError("colorbar() spacing must be 'uniform' or 'proportional'")
+        formatter = kwargs.pop("format", None)
         shrink = float(kwargs.pop("shrink", 1.0))
         if not np.isfinite(shrink) or not 0.0 < shrink <= 1.0:
             raise ValueError("colorbar() shrink must be finite and in (0, 1]")
@@ -696,6 +807,24 @@ class Figure:
             "label": _plain_text(kwargs.pop("label", "")),
             "orientation": orientation,
         }
+        if spacing != "uniform":
+            options["spacing"] = spacing
+        line_contour = entry.get("factory") == "contour" and not props.get("filled", False)
+        if line_contour:
+            # Matplotlib's line-contour colorbar is an empty bar crossed by the
+            # ContourSet's own styled isolines; it is not a filled scalar ramp.
+            options["line_only"] = True
+            options["lines"] = _contour_colorbar_lines(mappable, source_axes)
+        if norm_scale != "linear":
+            options["scale"] = norm_scale
+        pad = kwargs.pop("pad", None)
+        if pad is not None:
+            pad_value = float(pad)
+            if not np.isfinite(pad_value) or pad_value < 0.0:
+                raise ValueError("colorbar() pad must be a finite nonnegative number")
+            options["pad"] = pad_value
+        if cax is not None:
+            options["placement"] = "axes"
         if shrink != 1.0:
             options["shrink"] = shrink
         if not np.array_equal(anchor_values, [0.5, 0.5]):
@@ -715,6 +844,17 @@ class Figure:
         ticks = kwargs.pop("ticks", None)
         if ticks is not None:
             options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        elif line_contour:
+            locations = np.asarray(mappable.levels, dtype=np.float64).reshape(-1)
+            step = max(1, int(np.ceil(len(locations) / 10)))
+            candidates = [locations[offset::step] for offset in range(step)]
+            selected = min(candidates, key=lambda values: np.min(np.abs(values)))
+            zero_tolerance = (
+                np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(locations)))) * 8
+            )
+            options["ticks"] = [
+                0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
+            ]
         elif levels is not None and entry.get("discrete_boundaries") is not None:
             # Matplotlib uses a FixedLocator capped at roughly ten bins for a
             # contour colorbar. Match its offset selection so zero (or the
@@ -729,14 +869,98 @@ class Figure:
             options["ticks"] = [
                 0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
             ]
+        if formatter is not None:
+            if "ticks" not in options:
+                raise not_implemented(
+                    "colorbar(format=...) without fixed ticks",
+                    "format= together with ticks= or a discrete mappable",
+                )
+            options["tick_labels"] = _colorbar_tick_labels(formatter, options["ticks"])
         extend = kwargs.pop("extend", None)
+        if extend is None:
+            # A contour set owns its extend state. Matplotlib colorbars inherit
+            # it unless the caller explicitly overrides ``extend=``; losing it
+            # drops the triangular end caps and misstates the mapped domain.
+            extend = props.get("extend", entry.get("extend", "neither"))
         if extend is not None:
             if extend not in ("neither", "min", "max", "both"):
                 raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
             if extend != "neither":
                 options["extend"] = str(extend)
+
+        def rgb255(value: Any) -> list[int]:
+            rgba = np.asarray(resolve_rgba(value), dtype=np.float64)
+            return [int(round(255.0 * channel)) for channel in rgba[:3]]
+
+        # Listed contour fills already carry their exact per-band RGBA table.
+        # Keep that table on the colorbar instead of replacing it with samples
+        # from the nominal fallback colormap. Extended rows own the cap colors.
+        color_table = props.get("color")
+        discrete_colors = entry.get("discrete_colors")
+        if levels is not None and discrete_colors is not None:
+            band_rows = np.asarray(discrete_colors, dtype=np.uint8)
+            if band_rows.shape == (int(levels), 3):
+                options["band_colors"] = band_rows.tolist()
+        if levels is not None and color_table is not None and not isinstance(color_table, str):
+            table = np.asarray(color_table, dtype=np.float64)
+            if table.ndim == 2 and table.shape[1] in (3, 4) and len(table):
+                rgb_table = np.rint(np.clip(table[:, :3], 0.0, 1.0) * 255.0).astype(int)
+                extend_min = extend in ("min", "both")
+                extend_max = extend in ("max", "both")
+                band_count = int(levels)
+                start = int(extend_min and len(rgb_table) >= band_count + 1 + int(extend_max))
+                band_rows = rgb_table[start : start + band_count]
+                if len(band_rows) == band_count:
+                    options["band_colors"] = band_rows.tolist()
+                if extend_min:
+                    options["under_color"] = rgb_table[0].tolist()
+                if extend_max:
+                    options["over_color"] = rgb_table[-1].tolist()
+        if extend in ("min", "both") and entry.get("cmap_under") is not None:
+            options["under_color"] = rgb255(entry["cmap_under"])
+        if extend in ("max", "both") and entry.get("cmap_over") is not None:
+            options["over_color"] = rgb255(entry["cmap_over"])
+
         check_unsupported(kwargs, "colorbar()")
-        if isinstance(axes_arg, (list, tuple, np.ndarray)):
+        if (
+            cax is None
+            and not isinstance(axes_arg, (list, tuple, np.ndarray))
+            and source_axes._colorbar is not None
+        ):
+            # The wire format intentionally keeps one colorbar per chart. A
+            # second Matplotlib colorbar therefore becomes an ordinary
+            # explicit colorbar axes, a path every renderer already supports.
+            # This preserves both bars without widening the core chart schema.
+            left, bottom, parent_width, parent_height = source_axes.get_position().bounds
+            canvas_width, canvas_height = rc_figsize_px(self._figsize, self._dpi)
+            anchor_x, anchor_y = map(float, anchor_values)
+            if orientation == "horizontal":
+                bar_width = parent_width * shrink
+                bar_left = left + (parent_width - bar_width) * anchor_x
+                bar_height = max(18.0 / canvas_height, 0.025)
+                bar_bottom = max(0.01, bottom - bar_height)
+                rect = (bar_left, bar_bottom, bar_width, bar_height)
+            else:
+                bar_height = parent_height * shrink
+                bar_bottom = bottom + (parent_height - bar_height) * anchor_y
+                bar_width = max(18.0 / canvas_width, 0.025)
+                rect = (
+                    min(0.99 - bar_width, left + parent_width + 24.0 / canvas_width),
+                    bar_bottom,
+                    bar_width,
+                    bar_height,
+                )
+            cax = self.add_axes(rect)
+            self._current_ax = source_axes
+            axes = cax
+            options["placement"] = "axes"
+        if cax is not None:
+            axes.set_axis_off()
+            axes.spines[:].set_visible(False)
+            axes._colorbar = options
+            axes._colorbar_source = entry if entry else None
+            axes._invalidate()
+        elif isinstance(axes_arg, (list, tuple, np.ndarray)):
             self._shared_colorbar = options
             self._invalidate()
         else:
@@ -744,18 +968,97 @@ class Figure:
             axes._colorbar_source = entry if entry else None
             axes._invalidate()
 
-        class _Colorbar:
-            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
-                self.ax = ax
+        class _ColorbarAxes:
+            """Minimal colorbar-axes facade backed by the chrome options.
+
+            A colorbar is renderer chrome in xy rather than a data-bearing
+            Axes. Exposing the host axes here made ``cbar.ax.set_ylabel`` rename
+            the plot's y axis and could invalidate away the reserved colorbar
+            strip during constrained-layout export.
+            """
+
+            def __init__(self, host: Any, colorbar_options: dict[str, Any]) -> None:
+                self._host = host
                 self._options = colorbar_options
 
-            def add_lines(self, *args: Any, **kwargs: Any) -> None:
-                del args, kwargs
+            def set_ylabel(self, label: str, **kwargs: Any) -> None:
+                del kwargs
+                self._options["label"] = _plain_text(label)
+                self._host._invalidate()
+
+            def set_xlabel(self, label: str, **kwargs: Any) -> None:
+                self.set_ylabel(label, **kwargs)
+
+            def get_position(self, original: bool = False) -> Bbox:
+                # compat-noop: virtual colorbar chrome has no independently
+                # aspect-adjusted axes box, so its active and original boxes
+                # are identical by construction.
+                del original  # compat-noop: active/original virtual chrome boxes are identical
+                left, bottom, width, height = self._host.get_position().bounds
+                shrink_value = float(self._options.get("shrink", 1.0))
+                anchor_value = self._options.get("anchor") or [0.5, 0.5]
+                if self._options.get("orientation") == "horizontal":
+                    bar_width = width * shrink_value
+                    bar_left = left + (width - bar_width) * float(anchor_value[0])
+                    return Bbox.from_bounds(bar_left, bottom - 0.08, bar_width, 0.04)
+                bar_height = height * shrink_value
+                bar_bottom = bottom + (height - bar_height) * float(anchor_value[1])
+                return Bbox.from_bounds(left + width + 0.02, bar_bottom, 0.03, bar_height)
+
+            def set_position(self, position: Any) -> None:
+                values = np.asarray(
+                    getattr(position, "bounds", position), dtype=np.float64
+                ).reshape(-1)
+                if len(values) != 4 or not np.isfinite(values).all():
+                    raise ValueError(
+                        "colorbar position must be a finite (left, bottom, width, height)"
+                    )
+                parent_left, parent_bottom, parent_width, parent_height = (
+                    self._host.get_position().bounds
+                )
+                left, bottom, width, height = map(float, values)
+                if self._options.get("orientation") == "horizontal":
+                    shrink_value = float(np.clip(width / max(parent_width, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_width - width, 1e-12)
+                    anchor = float(np.clip((left - parent_left) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [anchor, 0.5]
+                else:
+                    shrink_value = float(np.clip(height / max(parent_height, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_height - height, 1e-12)
+                    anchor = float(np.clip((bottom - parent_bottom) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [0.5, anchor]
+                self._options["shrink"] = shrink_value
+                self._host._invalidate()
+
+        class _Colorbar:
+            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
+                self._options = colorbar_options
+                self._host = ax
+                self.ax = (
+                    ax
+                    if colorbar_options.get("placement") == "axes"
+                    else _ColorbarAxes(ax, colorbar_options)
+                )
+
+            def add_lines(self, contour: Any, *, erase: bool = True) -> None:
+                from ._artists import ContourSet
+
+                if not isinstance(contour, ContourSet):
+                    raise not_implemented(
+                        "Colorbar.add_lines(levels, colors, linewidths)",
+                        "Colorbar.add_lines(ContourSet)",
+                    )
+                lines = _contour_colorbar_lines(contour, self._host)
+                if erase:
+                    self._options["lines"] = lines
+                else:
+                    self._options.setdefault("lines", []).extend(lines)
+                self._host._invalidate()
 
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
                 self._options["label"] = _plain_text(label)
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
                 if labels is not None:
@@ -764,15 +1067,15 @@ class Figure:
                     )
                 check_unsupported(kwargs, "Colorbar.set_ticks()")
                 self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def minorticks_on(self) -> None:
                 self._options["minor_ticks"] = True
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def minorticks_off(self) -> None:
                 self._options["minor_ticks"] = False
-                self.ax._invalidate()
+                self._host._invalidate()
 
         return _Colorbar(axes, options)
 
@@ -820,7 +1123,10 @@ class Figure:
                 if label != "." and label not in labels:
                     labels.append(label)
         self._ensure_grid(max(1, len(rows)), max(1, max(map(len, rows))))
-        return {label: self._axes_at(index) for index, label in enumerate(labels)}
+        result = {label: self._axes_at(index) for index, label in enumerate(labels)}
+        for ax in result.values():
+            ax._subplot_claimed = True
+        return result
 
     # -- panel sizing -----------------------------------------------------------
 
@@ -906,34 +1212,145 @@ class Figure:
         heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
         return widths, heights
 
+    def _tight_layout_colorbar_reservations(
+        self,
+        rects: list[tuple[float, float, float, float]],
+        canvas_size: tuple[int, int],
+    ) -> set[int]:
+        """Return automatic colorbars whose chrome already fits the layout.
+
+        A tight/constrained solve may run either before or after ``colorbar()``.
+        The engine name therefore cannot tell `_charts()` whether the solved
+        rectangles include the colorbar.  Instead, test the resulting geometry:
+        a vertical bar is reserved when the panel's full right chrome fits
+        before the canvas edge or the next panel's left chrome; a horizontal
+        bar uses the analogous clearance below the panel.
+        """
+        if self._layout_options.get("engine") != "tight":
+            return set()
+
+        canvas_w, canvas_h = canvas_size
+        chromes = [
+            _panel_chrome(ax, max(1, round(canvas_w * rect[2])))
+            for ax, rect in zip(self._axes, rects, strict=True)
+        ]
+        reserved: set[int] = set()
+        tolerance = 0.5
+        for index, (ax, rect, chrome) in enumerate(zip(self._axes, rects, chromes, strict=True)):
+            options = ax._colorbar
+            if options is None or options.get("placement") == "axes":
+                continue
+
+            left, bottom, width, height = rect
+            right = left + width
+            top = bottom + height
+            if options.get("orientation") == "horizontal":
+                boundary = 0.0
+                for other_index, other_rect in enumerate(rects):
+                    if other_index == index:
+                        continue
+                    other_left, other_bottom, other_width, other_height = other_rect
+                    other_right = other_left + other_width
+                    other_top = other_bottom + other_height
+                    columns_overlap = max(left, other_left) < min(right, other_right)
+                    if columns_overlap and other_top <= bottom + tolerance / canvas_h:
+                        boundary = max(
+                            boundary,
+                            other_top + chromes[other_index][1] / canvas_h,
+                        )
+                panel_bottom = bottom - chrome[3] / canvas_h
+                if panel_bottom >= boundary - tolerance / canvas_h:
+                    reserved.add(index)
+                continue
+
+            boundary = 1.0
+            for other_index, other_rect in enumerate(rects):
+                if other_index == index:
+                    continue
+                other_left, other_bottom, _other_width, other_height = other_rect
+                other_top = other_bottom + other_height
+                rows_overlap = max(bottom, other_bottom) < min(top, other_top)
+                if rows_overlap and other_left >= right - tolerance / canvas_w:
+                    boundary = min(
+                        boundary,
+                        other_left - chromes[other_index][0] / canvas_w,
+                    )
+            panel_right = right + chrome[2] / canvas_w
+            if panel_right <= boundary + tolerance / canvas_w:
+                reserved.add(index)
+        return reserved
+
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
         rects = self._effective_rects()
         if rects is not None:
             charts = []
-            for ax, rect in zip(self._axes, rects, strict=True):
-                plot_w = max(1, round(total_w * rect[2]))
-                plot_h = max(1, round(total_h * rect[3]))
+            reserved_colorbars = self._tight_layout_colorbar_reservations(rects, (total_w, total_h))
+            for index, (ax, rect) in enumerate(zip(self._axes, rects, strict=True)):
+                allocated_plot_w = max(1, round(total_w * rect[2]))
+                allocated_plot_h = max(1, round(total_h * rect[3]))
+                compact = allocated_plot_w + 54 < 520
+                colorbar_right, colorbar_bottom = ax._colorbar_outside_room(compact)
+                automatic_colorbar = (
+                    ax._colorbar is not None
+                    and ax._colorbar.get("placement") != "axes"
+                    and index not in reserved_colorbars
+                )
+                # Matplotlib steals an automatic colorbar from the source
+                # subplot's allocation. Shrink here unless the actual
+                # tight/constrained geometry already contains the complete
+                # colorbar-bearing panel.
+                plot_w = max(
+                    40,
+                    round(allocated_plot_w - colorbar_right)
+                    if automatic_colorbar
+                    else allocated_plot_w,
+                )
+                plot_h = max(
+                    40,
+                    round(allocated_plot_h - colorbar_bottom)
+                    if automatic_colorbar
+                    else allocated_plot_h,
+                )
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
                 # figure buffer, matching Matplotlib add_axes semantics —
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
                 left, top, right, bottom = _panel_chrome(ax, plot_w)
-                ax._absolute_plot_ratio = plot_w / plot_h
+                plot_ratio = plot_w / plot_h
+                plot_box = (left, top, plot_w, plot_h)
                 # Pin the plot rect inside the panel: the exporters place the
                 # panel assuming its plot box sits at exactly this inset, so
                 # the renderers must not pick their own label-aware margins.
-                ax._plot_box_px = (left, top, plot_w, plot_h)
+                #
+                # A chart may already be cached from when this was the figure's
+                # only axes. Adding an overlapping axes switches the figure to
+                # absolute composition, where the same Matplotlib axes rectangle
+                # needs a smaller chrome-inclusive panel. Reusing the old chart
+                # offsets its ticks and labels even though the plot boxes overlap.
+                if ax._plot_box_px != plot_box or ax._absolute_plot_ratio != plot_ratio:
+                    ax._plot_box_px = plot_box
+                    ax._absolute_plot_ratio = plot_ratio
+                    ax._chart = None
                 charts.append(
                     ax._build_chart(round(plot_w + left + right), round(plot_h + top + bottom))
                 )
         else:
             widths, heights = self._grid_cell_sizes()
-            charts = [
-                ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-                for index, ax in enumerate(self._axes)
-            ]
+            charts = []
+            for index, ax in enumerate(self._axes):
+                # Removing an overlay can return a one-axes figure to ordinary
+                # (non-absolute) composition. Drop the absolute geometry and
+                # its cached chart together so the remaining axes expands back
+                # to the figure canvas.
+                if ax._plot_box_px is not None or ax._absolute_plot_ratio is not None:
+                    ax._plot_box_px = None
+                    ax._absolute_plot_ratio = None
+                    ax._chart = None
+                charts.append(
+                    ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
+                )
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
@@ -1451,11 +1868,13 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
         # Avoid allocating and populating an object ndarray for the dominant
         # plt.subplots() case whose public return value is a bare Axes.
         fig._current_ax = fig._axes[0]
+        fig._axes[0]._subplot_claimed = True
         return fig._axes[0]
     axes = np.empty((nrows, ncols), dtype=object)
     for r in range(nrows):
         for c in range(ncols):
             axes[r, c] = fig._axes_at(r * ncols + c)
+            axes[r, c]._subplot_claimed = True
     # Matplotlib's subplots() constructs axes in row-major order and leaves
     # the final one active for subsequent stateful ``plt.*`` calls.
     fig._current_ax = axes[-1, -1]

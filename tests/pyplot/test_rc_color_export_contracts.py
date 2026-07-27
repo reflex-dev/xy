@@ -45,6 +45,26 @@ def test_style_use_supports_bounded_dicts_and_ordered_lists() -> None:
     plt.rcdefaults()
 
 
+def test_dark_background_gallery_uses_prop_cycle_length() -> None:
+    # Exact source idiom from Matplotlib 3.11's
+    # galleries/examples/style_sheets/dark_background.py.
+    with plt.style.context("dark_background"):
+        length = 6
+        x = np.linspace(0, length)
+        ncolors = len(plt.rcParams["axes.prop_cycle"])
+        shift = np.linspace(0, length, ncolors, endpoint=False)
+
+        _fig, ax = plt.subplots()
+        for offset in shift:
+            ax.plot(x, np.sin(x + offset), "o-")
+
+        assert ncolors == 10
+        assert ncolors == len(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+        assert len(ax.get_lines()) == ncolors
+        assert ax._theme_tokens["plot_background"] == "black"
+        assert ax._theme_tokens["axis_color"] == "white"
+
+
 def test_figure_facecolor_rcparam_affects_new_figures() -> None:
     with plt.rc_context({"figure.facecolor": "#123456"}):
         assert plt.figure().get_facecolor() == "#123456"
