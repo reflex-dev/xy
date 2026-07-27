@@ -329,6 +329,98 @@ def test_axes_fraction_multiline_top_bbox_stays_inside_axes_in_raster_stream() -
     assert min(y for _, y in points) > plot["y"]
 
 
+@pytest.mark.parametrize("verticalalignment", (None, "baseline"))
+def test_axes_fraction_multiline_baseline_bbox_grows_upward_in_svg(
+    verticalalignment: str | None,
+) -> None:
+    """Default/explicit baseline pins the last line, as in anscombe.py."""
+    fig, ax = plt.subplots(figsize=(3, 3))
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    kwargs: dict[str, Any] = {}
+    if verticalalignment is not None:
+        kwargs["verticalalignment"] = verticalalignment
+    ax.text(
+        0.95,
+        0.07,
+        "mean = 7.50\nstd = 1.94\nr = 0.82",
+        transform=ax.transAxes,
+        horizontalalignment="right",
+        fontsize=9,
+        bbox=dict(boxstyle="round", facecolor="blanchedalmond", edgecolor="orange"),
+        **kwargs,
+    )
+
+    root = _svg_root(fig, ax)
+    clip = _clip_rect(root)
+    (bbox,) = _annotation_rects(fig, ax)
+    label = next(
+        element
+        for element in root.iter()
+        if element.tag.endswith("text") and "mean = 7.50" in "".join(element.itertext())
+    )
+    baselines = [
+        float(element.attrib["y"])
+        for element in label
+        if element.tag.endswith("tspan") and "y" in element.attrib
+    ]
+    axes_top = float(clip["y"])
+    axes_height = float(clip["height"])
+    axes_bottom = axes_top + axes_height
+    anchor_y = axes_top + 0.93 * axes_height
+    font_size = 9.0 * fig.dpi / 72.0
+    pad = 0.3 * font_size
+    bbox_bottom = float(bbox["y"]) + float(bbox["height"])
+
+    assert baselines[-1] == pytest.approx(anchor_y, abs=0.02)
+    assert bbox_bottom == pytest.approx(anchor_y + 0.2 * font_size + pad, abs=0.02)
+    assert bbox_bottom < axes_bottom
+
+
+@pytest.mark.parametrize("vertical_align", (None, "baseline"))
+def test_axes_fraction_multiline_baseline_bbox_grows_upward_in_raster_stream(
+    vertical_align: str | None,
+) -> None:
+    """The native display list shares Matplotlib's last-line baseline anchor."""
+    plot = {"x": 37.5, "y": 36.0, "w": 232.5, "h": 231.0}
+    font_size = 9.0 * 100.0 / 72.0
+    pad = 0.3 * font_size
+    style: dict[str, Any] = {
+        "coordinate_space": "axes_fraction",
+        "font_size": font_size,
+        "background": "blanchedalmond",
+        "border": "1px solid orange",
+        "padding": f"{pad}px",
+    }
+    if vertical_align is not None:
+        style["vertical_align"] = vertical_align
+    annotation = {
+        "kind": "text",
+        "x": 0.95,
+        "y": 0.07,
+        "text": "mean = 7.50\nstd = 1.94\nr = 0.82",
+        "anchor": "end",
+        "style": style,
+    }
+    cmd = _raster._Cmd(1.0)
+    _raster._emit_annotations(
+        cmd,
+        [annotation],
+        lambda value: value,
+        lambda value: value,
+        plot,
+        300.0,
+        300.0,
+        phase="text",
+    )
+
+    _count, points, _rgba = _first_fill(cmd)
+    anchor_y = plot["y"] + 0.93 * plot["h"]
+    expected_bottom = anchor_y + 0.2 * font_size + pad
+
+    assert max(y for _, y in points) == pytest.approx(expected_bottom, abs=0.02)
+    assert max(y for _, y in points) < plot["y"] + plot["h"]
+
+
 def test_round_boxstyle_exports_a_non_zero_corner_radius_in_svg() -> None:
     """``rx`` must be present and non-zero, as CSS border-radius already was."""
     fig, ax = plt.subplots()

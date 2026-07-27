@@ -1245,6 +1245,14 @@ does, so an oversized radius degrades to a stadium rather than an inverted
 polygon. The exporters size the box from a dependency-free, glyph-shaped
 sans-serif width estimate, so a box tracks its text approximately, not exactly.
 
+Vertical alignment is measured from the text block, not the padded patch.
+Unspecified alignment and `vertical_align="baseline"` follow Matplotlib's
+default: the supplied coordinate is the **final line's baseline**, so a
+multiline label grows upward and the box padding extends around it. This is the
+placement used by low, axes-relative statistics boxes such as Anscombe's
+quartet. The browser compensates for computed padding and border widths; SVG
+and native PNG derive their box from the same final-line baseline.
+
 **Label color** resolves as `label_color` → `color` → the renderer's own
 default, and the three defaults are *not* the same value: the browser uses
 `--chart-annotation-text` (falling back to `--chart-text`), the SVG exporter
