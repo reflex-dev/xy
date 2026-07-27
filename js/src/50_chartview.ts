@@ -776,8 +776,10 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    const scale = this._axis(axisId).scale;
-    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+    const axis = this._axis(axisId);
+    const scale = axis.scale;
+    return scale === "log" ? (axis.nonpositive === "mask" ? 3 : 1)
+      : scale === "symlog" ? 2 : 0;
   }
 
   _axisConstant(axisId) {
@@ -875,7 +877,10 @@ export class ChartView {
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
-    if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "log") {
+      if (v > 0) return Math.log10(v);
+      return axis.nonpositive === "mask" ? NaN : -300;
+    }
     if (axis && axis.scale === "symlog") {
       const c = Number(axis.constant) || 1;
       return Math.sign(v) * Math.log1p(Math.abs(v) / c);
@@ -5137,8 +5142,48 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const minorTicks = (axis, axisId) => {
+      if (!Array.isArray(axis.minor_tick_values)) return [];
+      const [lo, hi] = this._axisRange(axisId);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      return axis.minor_tick_values.map(Number)
+        .filter((v) => Number.isFinite(v) && v >= a && v <= b);
+    };
+    const xmt = minorTicks(xAxis, "x");
+    const ymt = minorTicks(yAxis, "y");
+    const minorAxis = (axis) => ({ ...axis, style: axis.minor_style || {} });
+    const xmAxis = minorAxis(xAxis);
+    const ymAxis = minorAxis(yAxis);
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+
+    ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xmAxis));
+    ctx.beginPath();
+    for (const v of (hideX ? [] : xmt)) {
+      const px = this._dataPx("x", v);
+      if (!Number.isFinite(px)) continue;
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(ymAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(ymAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(ymAxis));
+    ctx.beginPath();
+    for (const v of (hideY ? [] : ymt)) {
+      const py = this._dataPx("y", v);
+      if (!Number.isFinite(py)) continue;
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
+    }
+    ctx.stroke();
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
@@ -5226,6 +5271,19 @@ export class ChartView {
       }
 
       if (!hideX) {
+        const minorTick = tickParts(xmAxis);
+        const minorSide = xAxis.side || "bottom";
+        const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
+        for (const value of xmt) {
+          const x = this._dataPx("x", value);
+          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+          const top = minorSide === "top"
+            ? minorEdge - minorTick.outward : minorEdge - minorTick.inward;
+          rule(
+            xmAxis, x - minorTick.width / 2, top, minorTick.width,
+            minorTick.inward + minorTick.outward, "tick_color",
+          );
+        }
         const tick = tickParts(xAxis);
         for (const side of this._axisTickSides(xAxis)) {
           const edge = side === "top" ? p.y : p.y + p.h;
@@ -5245,6 +5303,19 @@ export class ChartView {
         }
       }
       if (!hideY) {
+        const minorTick = tickParts(ymAxis);
+        const minorSide = yAxis.side || "left";
+        const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
+        for (const value of ymt) {
+          const y = this._dataPx("y", value);
+          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+          const left = minorSide === "right"
+            ? minorEdge - minorTick.inward : minorEdge - minorTick.outward;
+          rule(
+            ymAxis, left, y - minorTick.width / 2,
+            minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+          );
+        }
         const tick = tickParts(yAxis);
         for (const side of this._axisTickSides(yAxis)) {
           const edge = side === "right" ? p.x + p.w : p.x;

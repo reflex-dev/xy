@@ -25,8 +25,9 @@ def test_grid_selects_axis_and_records_supported_style():
     assert ax._axis_props("y")["style"]["grid_color"] == "transparent"
     with pytest.raises(ValueError):
         ax.grid(True, axis="z")
-    with pytest.raises(ValueError):
-        ax.grid(True, which="minor")
+    ax.grid(True, which="minor", color="0.9")
+    assert ax._axis_props("x")["minor_style"]["grid_color"] == "rgb(230,230,230)"
+    assert ax._axis_props("y")["minor_style"]["grid_color"] == "rgb(230,230,230)"
     with pytest.raises(TypeError):
         ax.grid(True, unsupported=True)
 

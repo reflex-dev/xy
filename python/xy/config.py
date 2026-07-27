@@ -19,10 +19,9 @@ import warnings
 # table with the stop array, misses, and paints viridis without erroring — the
 # same silent-misrender case v6 itself was cut for.
 # v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
-# add wire values an older v7 client would accept but silently misrender.
-# v9: an axis may carry `tick_sides` and `tick_label_sides` independently
-# from `side`. Without this bump, a cached v8 client would ignore both fields
-# and silently draw tick marks and labels only on `side`; v9 rejects it first.
+# v9: explicit minor axis ticks/styles, log nonpositive behavior, and
+# independent `tick_sides`/`tick_label_sides` add fields a cached v8 client
+# would accept but silently misrender.
 PROTOCOL_VERSION = 9
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical

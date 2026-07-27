@@ -84,6 +84,7 @@ float xyDecode(float encoded, vec2 meta) {
 float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 3) return value > 0.0 ? log(value) / log(10.0) : uintBitsToFloat(0x7fc00000u);
   if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
@@ -92,11 +93,12 @@ float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
 }
 float xyViewCoord(float value, int mode, float constant) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  if (mode == 3) return value > 0.0 ? log(value) / log(10.0) : uintBitsToFloat(0x7fc00000u);
   if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
 float xyViewValue(float coord, int mode, float constant) {
-  if (mode == 1) return pow(10.0, coord);
+  if (mode == 1 || mode == 3) return pow(10.0, coord);
   if (mode == 2) return sign(coord) * constant * (exp(abs(coord)) - 1.0);
   return coord;
 }

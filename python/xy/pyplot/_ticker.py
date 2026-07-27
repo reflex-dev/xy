@@ -241,7 +241,7 @@ class LogLocator(Locator):
         self._base = float(base)
         if self._base <= 1.0:
             raise ValueError("LogLocator base must be greater than 1")
-        self._subs = (1.0,) if subs is None else tuple(float(sub) for sub in subs)
+        self._subs = None if subs is None else tuple(float(sub) for sub in subs)
 
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
         vmin, vmax = sorted((float(vmin), float(vmax)))
@@ -251,7 +251,17 @@ class LogLocator(Locator):
         first = np.floor(np.log(vmin) / np.log(self._base)) - 1
         last = np.ceil(np.log(vmax) / np.log(self._base)) + 1
         decades = self._base ** np.arange(first, last + 1)
-        ticks = np.sort(np.concatenate([decades * sub for sub in self._subs]))
+        # Matplotlib's ``subs=None`` means automatic minor ticks: all integral
+        # subdivisions between adjacent powers.  ``(1,)`` remains the major
+        # decade locator.
+        subs = (
+            tuple(float(sub) for sub in np.arange(2.0, self._base))
+            if self._subs is None
+            else self._subs
+        )
+        if not subs:
+            return np.asarray([], dtype=float)
+        ticks = np.sort(np.concatenate([decades * sub for sub in subs]))
         return ticks[(ticks >= vmin) & (ticks <= vmax)]
 
 

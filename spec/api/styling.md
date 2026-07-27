@@ -207,6 +207,13 @@ axis component is created, before the chart or an export is rendered. Keys may
 use Python snake_case or CSS kebab-case; pixel geometry accepts a finite number
 or a CSS `px` value such as `"3px"`.
 
+`minor_style={...}` accepts the same vocabulary for the independent minor-tick
+and minor-grid tier. `minor_tick_values=[...]` supplies its positions without
+labels; major `tick_values`/`tick_labels` remain unchanged. On log axes,
+`nonpositive="clip"` maps non-positive mark coordinates below the visible
+range, while `"mask"` makes those endpoints non-renderable in the browser,
+SVG, and native raster paths.
+
 | Axis style key | Value |
 | --- | --- |
 | `grid_color`, `axis_color`, `tick_color`, `tick_label_color`, `label_color` | CSS color |
@@ -274,6 +281,8 @@ leaves the other axis untouched. Enabling one axis's grid never turns the
 opposite axis's grid off; x and y are independent switches, and the matplotlib
 shim's `Axes.grid(axis="x")`/`Axes.grid(axis="y")` and `Axis.grid()` resolve
 onto the same rule.
+Major and minor grids apply this rule independently through `style` and
+`minor_style`; a transparent minor grid does not hide minor tick marks.
 
 #### Axis visibility switches
 

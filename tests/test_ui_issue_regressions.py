@@ -52,6 +52,56 @@ _POSTLUDE = """
 """
 
 
+def test_browser_log_minor_grid_and_nonpositive_mode_reach_live_renderer(
+    tmp_path: Path,
+) -> None:
+    chart = xy.line_chart(
+        xy.line(x=[1.0, 10.0], y=[1.0, 2.0]),
+        xy.x_axis(
+            type_="log",
+            domain=(1.0, 10.0),
+            tick_values=[1.0, 10.0],
+            minor_tick_values=[2.0, 3.0, 4.0, 5.0],
+            nonpositive="mask",
+            style={"grid_color": "red", "grid_width": 2},
+            minor_style={"grid_color": "#e6e6e6", "grid_width": 1},
+        ),
+        width=480,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const ctx = view.chrome.getContext("2d");
+    const colors = [];
+    const realStroke = ctx.stroke.bind(ctx);
+    ctx.stroke = (...args) => {
+      colors.push(String(ctx.strokeStyle));
+      return realStroke(...args);
+    };
+    view._drawChrome();
+    const maskMode = view._axisMode("x");
+    view.axes.x.nonpositive = "clip";
+    const clipMode = view._axisMode("x");
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      maskMode,
+      clipMode,
+      hasMinorGrid: colors.includes("#e6e6e6") || colors.includes("rgb(230, 230, 230)"),
+      hasMajorGrid: colors.includes("red") || colors.includes("#ff0000"),
+    }));
+"""
+        + _POSTLUDE
+    )
+
+    result = _probe(chart, script, tmp_path, "log minor grid and nonpositive mode")
+    assert result == {
+        "maskMode": 3,
+        "clipMode": 1,
+        "hasMinorGrid": True,
+        "hasMajorGrid": True,
+    }
+
+
 def test_tooltip_labels_and_semantic_slots_are_independently_styleable(tmp_path: Path) -> None:
     data = {
         "quarter": [1, 2, 3, 4],
