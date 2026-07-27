@@ -3279,12 +3279,17 @@ class Axes(PlotTypeMixin):
         ``original=False`` applies adjustable-box aspect geometry, while
         ``original=True`` returns the allocated subplot rectangle.
         """
-        if self._figure_rect is not None:
-            rect = self._figure_rect
-        elif self.figure is not None:
+        if self.figure is not None:
+            # A factory-authored tight/constrained layout first records an
+            # empty-axes rectangle, then becomes dirty as artists and
+            # colorbars arrive. Always enter the Figure resolver before
+            # trusting that cached rectangle so get_position() observes the
+            # same final-content solve as every exporter.
             rect = self.figure._axes_rect(self)
             if rect is None:
-                rect = _DEFAULT_AXES_RECT
+                rect = self._figure_rect or _DEFAULT_AXES_RECT
+        elif self._figure_rect is not None:
+            rect = self._figure_rect
         else:
             rect = _DEFAULT_AXES_RECT
         if original or not (
