@@ -1397,6 +1397,15 @@ class PlotTypeMixin:
             # bar label on (or fractionally beyond) the top spine. Reserve a
             # small label-aware default while preserving explicit margins().
             self._reserve_annotation_margin(value_axis, 0.075)
+        error_lower = error_upper = None
+        if label_type == "edge" and container.errorbar is not None:
+            error_entry = container.errorbar._artist._entry
+            error_key = "yerr" if container.orientation == "vertical" else "xerr"
+            error = error_entry.get("kwargs", {}).get(error_key)
+            if error is not None:
+                error_lower, error_upper = _error_sides(error, len(values))
+        value_axis = "y" if container.orientation == "vertical" else "x"
+        value_axis_inverted = bool(self._axis_props(value_axis).get("reverse"))
         result: list[Text] = []
         for index, value in enumerate(values):
             if raw_labels[index] is not None:
@@ -1410,6 +1419,8 @@ class PlotTypeMixin:
             coordinate = (
                 (bottoms[index] + tops[index]) * 0.5 if label_type == "center" else tops[index]
             )
+            if label_type == "edge" and error_lower is not None and error_upper is not None:
+                coordinate += error_upper[index] if value >= 0 else -error_lower[index]
             x, y = (
                 (centers[index], coordinate)
                 if container.orientation == "vertical"
@@ -1417,22 +1428,27 @@ class PlotTypeMixin:
             )
             pixel_padding = float(padding) * self._point_scale()
             positive = value >= 0
+            display_direction = -1.0 if value_axis_inverted else 1.0
             if container.orientation == "vertical":
                 anchor = "middle"
                 dx = 0.0
-                dy = pixel_padding * (1.0 if positive else -1.0)
+                dy = pixel_padding * display_direction * (1.0 if positive else -1.0)
                 # SVG/browser y grows downward, so matplotlib's positive
                 # point offset is an upward (negative) screen-space offset.
                 dy *= -1.0
                 vertical_align = (
-                    "center" if label_type == "center" else ("bottom" if positive else "top")
+                    "center"
+                    if label_type == "center"
+                    else ("bottom" if positive != value_axis_inverted else "top")
                 )
             elif label_type == "center":
-                anchor, dx, dy = "middle", pixel_padding * (1.0 if positive else -1.0), 0.0
+                anchor = "middle"
+                dx = pixel_padding * display_direction * (1.0 if positive else -1.0)
+                dy = 0.0
                 vertical_align = "center"
             else:
-                anchor = "start" if positive else "end"
-                dx = pixel_padding * (1.0 if positive else -1.0)
+                anchor = "start" if positive != value_axis_inverted else "end"
+                dx = pixel_padding * display_direction * (1.0 if positive else -1.0)
                 dy = 0.0
                 vertical_align = "center"
             text_kwargs: dict[str, Any] = {

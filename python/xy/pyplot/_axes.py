@@ -30,6 +30,7 @@ from ._artists import (
     Artist,
     AxesImage,
     BarContainer,
+    ErrorbarContainer,
     Legend,
     Line2D,
     PathCollection,
@@ -1949,7 +1950,14 @@ class Axes(PlotTypeMixin):
                 "color": error_kw.pop("color", "#000000"),
                 "cap_size": capsize,
             }
-            self._add("@mark", {"factory": "errorbar", "args": (ex, ey), "kwargs": err_kwargs})
+            error_entry = self._add(
+                "@mark", {"factory": "errorbar", "args": (ex, ey), "kwargs": err_kwargs}
+            )
+            # Matplotlib exposes the bar's error geometry through
+            # ``BarContainer.errorbar``.  Keep the same relationship so
+            # ``bar_label`` can anchor edge labels at the outer error endpoint
+            # instead of at the rectangle edge.
+            container.errorbar = ErrorbarContainer(Artist(self, error_entry))
         return container
 
     def hist(
