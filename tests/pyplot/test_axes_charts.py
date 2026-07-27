@@ -551,7 +551,9 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
     quiver = ax.quiver([0, 1], [0, 1], [1, 1], [1, 0], [0.2, 0.8], cmap="plasma")
     key = ax.quiverkey(quiver, 0.9, 0.9, 1.0, r"$1 \frac{m}{s}$", coordinates="figure")
     assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
-    assert len(contour_labels) > 2
+    # Matplotlib places one label on each of these two connected open
+    # contours; sampling the raw marching-square segments produced duplicates.
+    assert len(contour_labels) == 2
     assert len(table.get_celld()) == 9
     assert key is not None
     assert ax._entries[-1]["args"][2] == "1 m/s"

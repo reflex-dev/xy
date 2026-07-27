@@ -2435,6 +2435,20 @@ def _emit_colorbar(
         else:
             pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
         cmd.fill(pts, color)
+    for line in options.get("lines") or []:
+        value = float(line.get("value", np.nan))
+        if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
+            continue
+        fraction = (value - lo) / span
+        color = _parse_color(str(line.get("color") or text_color))
+        line_width = max(0.5, float(line.get("width", 1.0)))
+        dash = [3.7 * line_width, 1.6 * line_width] if line.get("dash") == "dashed" else None
+        if orientation == "horizontal":
+            position = x + width * fraction
+            cmd.stroke([(position, y), (position, y + height)], line_width, color, dash=dash)
+        else:
+            position = y + height * (1.0 - fraction)
+            cmd.stroke([(x, position), (x + width, position)], line_width, color, dash=dash)
     if orientation == "horizontal":
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]

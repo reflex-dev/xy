@@ -2487,6 +2487,20 @@ export class ChartView {
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
+    for (const line of Array.isArray(cb.lines) ? cb.lines : []) {
+      const value = Number(line && line.value);
+      if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+      const fraction = (value - lo) / span;
+      const marker = document.createElement("i");
+      marker.dataset.xyColorbarLine = "true";
+      const color = safeCssPaint(this.root, line.color || "currentColor");
+      const width = Math.max(0.5, Number(line.width) || 1);
+      const lineStyle = line.dash === "dashed" ? "dashed" : "solid";
+      marker.style.cssText = horizontal
+        ? `position:absolute;left:${100 * fraction}%;inset-block:0;border-left:${width}px ${lineStyle} ${color};`
+        : `position:absolute;top:${100 * (1 - fraction)}%;inset-inline:0;border-top:${width}px ${lineStyle} ${color};`;
+      bar.appendChild(marker);
+    }
     const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
     const barLength = (horizontal ? this.plot.w : this.plot.h) * shrink;
     const tickTarget = Math.max(2, Math.min(8, Math.floor(Math.max(0, barLength) / 48) + 1));

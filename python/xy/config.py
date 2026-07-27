@@ -20,7 +20,7 @@ import warnings
 # same silent-misrender case v6 itself was cut for.
 # v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
 # add wire values an older v7 client would accept but silently misrender.
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

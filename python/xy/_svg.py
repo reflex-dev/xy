@@ -4007,11 +4007,39 @@ def _colorbar(
             f"{_num(x - 9)},{_num(y + height / 2)}"
         )
         extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+    line_nodes = ""
+    for line in options.get("lines") or []:
+        value = float(line.get("value", np.nan))
+        if not np.isfinite(value) or value < min(lo, hi) or value > max(lo, hi):
+            continue
+        fraction = (value - lo) / span
+        color = escape(_css(line.get("color"), text_color))
+        line_width = _num(max(0.5, float(line.get("width", 1.0))))
+        dash = (
+            f' stroke-dasharray="{_num(3.7 * float(line_width))} '
+            f'{_num(1.6 * float(line_width))}"'
+            if line.get("dash") == "dashed"
+            else ""
+        )
+        if orientation == "horizontal":
+            position = x + width * fraction
+            line_nodes += (
+                f'<line data-xy-colorbar-line="true" x1="{_num(position)}" '
+                f'x2="{_num(position)}" y1="{_num(y)}" y2="{_num(y + height)}" '
+                f'stroke="{color}" stroke-width="{line_width}"{dash}/>'
+            )
+        else:
+            position = y + height * (1.0 - fraction)
+            line_nodes += (
+                f'<line data-xy-colorbar-line="true" x1="{_num(x)}" '
+                f'x2="{_num(x + width)}" y1="{_num(position)}" y2="{_num(position)}" '
+                f'stroke="{color}" stroke-width="{line_width}"{dash}/>'
+            )
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
         f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
-        f"{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
+        f"{line_nodes}{extend_nodes}{minor_nodes}{tick_nodes}{label_node}"
     )
 
 

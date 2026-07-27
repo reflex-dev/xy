@@ -18,7 +18,7 @@ from ._artists import Text
 from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
-from ._transforms import CoordinateTransform
+from ._transforms import Bbox, CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
 
@@ -41,6 +41,23 @@ def _panel_chrome(ax: Axes, plot_w: int) -> tuple[float, float, float, float]:
     right, bottom = (8.0, 36.0) if compact else (14.0, 42.0)
     extra_top, extra_right, extra_bottom = ax._outside_padding(compact)
     return left, top + extra_top, right + extra_right, bottom + extra_bottom
+
+
+def _colorbar_plot_reservation(ax: Axes) -> tuple[float, float]:
+    """Plot width/height a colorbar steals inside a fixed figure canvas.
+
+    A free-form axes rectangle normally describes the plot box, with titles
+    and tick-label chrome allowed to extend outside it.  A colorbar is the one
+    important exception: Matplotlib shrinks the parent axes to reserve a strip
+    *inside* the figure.  Without the same reservation here, constrained/tight
+    layout builds a panel wider than the fixed canvas and clips the colorbar.
+    """
+    colorbar = ax._colorbar
+    if colorbar is None:
+        return 0.0, 0.0
+    if colorbar.get("orientation") == "horizontal":
+        return 0.0, 38.0 + (16.0 if colorbar.get("label") else 0.0)
+    return 86.0 + (18.0 if colorbar.get("label") else 0.0), 0.0
 
 
 def _measured_left_gutter(ax: Axes, width: int, height: int) -> float:
@@ -709,6 +726,11 @@ class Figure:
                 0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
             ]
         extend = kwargs.pop("extend", None)
+        if extend is None:
+            # A contour set owns its extend state. Matplotlib colorbars inherit
+            # it unless the caller explicitly overrides ``extend=``; losing it
+            # drops the triangular end caps and misstates the mapped domain.
+            extend = props.get("extend", entry.get("extend", "neither"))
         if extend is not None:
             if extend not in ("neither", "min", "max", "both"):
                 raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
@@ -723,18 +745,105 @@ class Figure:
             axes._colorbar_source = entry if entry else None
             axes._invalidate()
 
-        class _Colorbar:
-            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
-                self.ax = ax
+        class _ColorbarAxes:
+            """Minimal colorbar-axes facade backed by the chrome options.
+
+            A colorbar is renderer chrome in xy rather than a data-bearing
+            Axes. Exposing the host axes here made ``cbar.ax.set_ylabel`` rename
+            the plot's y axis and could invalidate away the reserved colorbar
+            strip during constrained-layout export.
+            """
+
+            def __init__(self, host: Any, colorbar_options: dict[str, Any]) -> None:
+                self._host = host
                 self._options = colorbar_options
 
-            def add_lines(self, *args: Any, **kwargs: Any) -> None:
-                del args, kwargs
+            def set_ylabel(self, label: str, **kwargs: Any) -> None:
+                del kwargs
+                self._options["label"] = _plain_text(label)
+                self._host._invalidate()
+
+            def set_xlabel(self, label: str, **kwargs: Any) -> None:
+                self.set_ylabel(label, **kwargs)
+
+            def get_position(self, original: bool = False) -> Bbox:
+                del original
+                left, bottom, width, height = self._host.get_position().bounds
+                shrink_value = float(self._options.get("shrink", 1.0))
+                anchor_value = self._options.get("anchor") or [0.5, 0.5]
+                if self._options.get("orientation") == "horizontal":
+                    bar_width = width * shrink_value
+                    bar_left = left + (width - bar_width) * float(anchor_value[0])
+                    return Bbox.from_bounds(bar_left, bottom - 0.08, bar_width, 0.04)
+                bar_height = height * shrink_value
+                bar_bottom = bottom + (height - bar_height) * float(anchor_value[1])
+                return Bbox.from_bounds(left + width + 0.02, bar_bottom, 0.03, bar_height)
+
+            def set_position(self, position: Any) -> None:
+                values = np.asarray(
+                    getattr(position, "bounds", position), dtype=np.float64
+                ).reshape(-1)
+                if len(values) != 4 or not np.isfinite(values).all():
+                    raise ValueError(
+                        "colorbar position must be a finite (left, bottom, width, height)"
+                    )
+                parent_left, parent_bottom, parent_width, parent_height = (
+                    self._host.get_position().bounds
+                )
+                left, bottom, width, height = map(float, values)
+                if self._options.get("orientation") == "horizontal":
+                    shrink_value = float(np.clip(width / max(parent_width, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_width - width, 1e-12)
+                    anchor = float(np.clip((left - parent_left) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [anchor, 0.5]
+                else:
+                    shrink_value = float(np.clip(height / max(parent_height, 1e-12), 0.01, 1.0))
+                    remainder = max(parent_height - height, 1e-12)
+                    anchor = float(np.clip((bottom - parent_bottom) / remainder, 0.0, 1.0))
+                    self._options["anchor"] = [0.5, anchor]
+                self._options["shrink"] = shrink_value
+                self._host._invalidate()
+
+        class _Colorbar:
+            def __init__(self, ax: Any, colorbar_options: dict[str, Any]) -> None:
+                self._options = colorbar_options
+                self._host = ax
+                self.ax = _ColorbarAxes(ax, colorbar_options)
+
+            def add_lines(self, contour: Any, *, erase: bool = True) -> None:
+                from ._artists import ContourSet, _contour_legend_colors
+
+                if not isinstance(contour, ContourSet):
+                    raise not_implemented(
+                        "Colorbar.add_lines(levels, colors, linewidths)",
+                        "Colorbar.add_lines(ContourSet)",
+                    )
+                levels = np.asarray(contour.levels, dtype=np.float64).reshape(-1)
+                widths = np.asarray(contour.get_linewidth(), dtype=np.float64).reshape(-1)
+                colors = _contour_legend_colors(contour._entry, len(levels))
+                lines = [
+                    {
+                        "value": float(level),
+                        "color": colors[index],
+                        "width": float(widths[index % len(widths)]) * self._host._point_scale(),
+                        "dash": (
+                            "dashed"
+                            if contour._entry["kwargs"].get("dash_negative") and level < 0
+                            else None
+                        ),
+                    }
+                    for index, level in enumerate(levels)
+                ]
+                if erase:
+                    self._options["lines"] = lines
+                else:
+                    self._options.setdefault("lines", []).extend(lines)
+                self._host._invalidate()
 
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
                 self._options["label"] = _plain_text(label)
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
                 if labels is not None:
@@ -743,15 +852,15 @@ class Figure:
                     )
                 check_unsupported(kwargs, "Colorbar.set_ticks()")
                 self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def minorticks_on(self) -> None:
                 self._options["minor_ticks"] = True
-                self.ax._invalidate()
+                self._host._invalidate()
 
             def minorticks_off(self) -> None:
                 self._options["minor_ticks"] = False
-                self.ax._invalidate()
+                self._host._invalidate()
 
         return _Colorbar(axes, options)
 
@@ -899,6 +1008,13 @@ class Figure:
                 # including the axes title, which matplotlib draws above the
                 # axes without moving its position.
                 left, top, right, bottom = _panel_chrome(ax, plot_w)
+                colorbar_w, colorbar_h = _colorbar_plot_reservation(ax)
+                # `tight_layout()` fixes the figure canvas before artists such
+                # as colorbars are commonly added.  Keep its panel footprint
+                # fixed by taking the colorbar strip from the plot, rather than
+                # appending that strip beyond the right/bottom canvas edge.
+                plot_w = max(40, round(plot_w - colorbar_w))
+                plot_h = max(40, round(plot_h - colorbar_h))
                 ax._absolute_plot_ratio = plot_w / plot_h
                 # Pin the plot rect inside the panel: the exporters place the
                 # panel assuming its plot box sits at exactly this inset, so

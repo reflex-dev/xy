@@ -13,6 +13,7 @@ from __future__ import annotations
 # plotting methods must resolve these annotation names (all stdlib or xy-local).
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -34,6 +35,7 @@ from ._artists import (
     Table,
     Text,
     Wedge,
+    _contour_legend_colors,
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color, resolve_rgba
 from ._fmt import parse_fmt
@@ -437,6 +439,301 @@ def _nice_contour_levels(lo: float, hi: float, count: int) -> np.ndarray:
     stop = np.ceil((hi - step * 1e-9) / step) * step
     levels = np.arange(start, stop + step * 0.5, step)
     return levels if len(levels) >= 2 else np.asarray([lo, hi], dtype=np.float64)
+
+
+def _joined_contour_paths(
+    x0: np.ndarray,
+    x1: np.ndarray,
+    y0: np.ndarray,
+    y1: np.ndarray,
+) -> list[np.ndarray]:
+    """Join a marching-squares segment soup into deterministic polylines.
+
+    The native contour kernel deliberately returns independent segments: that
+    is ideal for the renderers, but Matplotlib's label placement operates on
+    connected contour paths.  Quantized endpoint keys absorb only the
+    round-off introduced by interpolation; the tolerance is many orders of
+    magnitude below a visible data-space displacement.
+    """
+    segments = np.column_stack((x0, y0, x1, y1)).astype(np.float64, copy=False)
+    segments = segments[np.isfinite(segments).all(axis=1)]
+    if not len(segments):
+        return []
+    span = max(float(np.ptp(segments[:, (0, 2)])), float(np.ptp(segments[:, (1, 3)])), 1.0)
+    tolerance = span * 1e-10
+
+    def key(x: float, y: float) -> tuple[int, int]:
+        return round(x / tolerance), round(y / tolerance)
+
+    endpoints: list[tuple[tuple[int, int], tuple[int, int]]] = []
+    positions: dict[tuple[int, int], tuple[float, float]] = {}
+    adjacency: dict[tuple[int, int], list[int]] = {}
+    for xa, ya, xb, yb in segments:
+        ka, kb = key(float(xa), float(ya)), key(float(xb), float(yb))
+        if ka == kb:
+            continue
+        edge_index = len(endpoints)
+        endpoints.append((ka, kb))
+        positions.setdefault(ka, (float(xa), float(ya)))
+        positions.setdefault(kb, (float(xb), float(yb)))
+        adjacency.setdefault(ka, []).append(edge_index)
+        adjacency.setdefault(kb, []).append(edge_index)
+    if not endpoints:
+        return []
+
+    unused = set(range(len(endpoints)))
+    paths: list[np.ndarray] = []
+    while unused:
+        seed = min(unused)
+        # Discover the whole unused connected component so an open contour
+        # starts at its true boundary even when the native segment selected as
+        # ``seed`` happens to lie in the middle.
+        component = {seed}
+        frontier = [seed]
+        while frontier:
+            edge = frontier.pop()
+            for node in endpoints[edge]:
+                for neighbor in adjacency.get(node, ()):
+                    if neighbor in unused and neighbor not in component:
+                        component.add(neighbor)
+                        frontier.append(neighbor)
+        component_degree: dict[tuple[int, int], int] = {}
+        for edge in component:
+            for node in endpoints[edge]:
+                component_degree[node] = component_degree.get(node, 0) + 1
+        a, b = endpoints[seed]
+        # Open contours start at an endpoint. Closed contours have degree two
+        # everywhere and may start at the first native segment.
+        endpoints_of_component = sorted(
+            node for node, degree in component_degree.items() if degree != 2
+        )
+        current = endpoints_of_component[0] if endpoints_of_component else a
+        points = [positions[current]]
+        previous: tuple[int, int] | None = None
+        while True:
+            candidates = [edge for edge in adjacency.get(current, ()) if edge in unused]
+            if not candidates:
+                break
+            if len(candidates) == 1 or previous is None:
+                edge = min(candidates)
+            else:
+                # At the rare grid vertex shared by more than two segments,
+                # continue as straight as possible instead of arbitrarily
+                # switching contour branches.
+                px, py = positions[previous]
+                cx, cy = positions[current]
+                incoming = np.asarray((cx - px, cy - py), dtype=np.float64)
+                incoming_norm = float(np.hypot(*incoming))
+
+                def continuation_score(
+                    candidate: int,
+                    *,
+                    _current: tuple[int, int] = current,
+                    _cx: float = cx,
+                    _cy: float = cy,
+                    _incoming: np.ndarray = incoming,
+                    _incoming_norm: float = incoming_norm,
+                ) -> float:
+                    ca, cb = endpoints[candidate]
+                    other = cb if ca == _current else ca
+                    ox, oy = positions[other]
+                    outgoing = np.asarray((ox - _cx, oy - _cy), dtype=np.float64)
+                    norm = _incoming_norm * float(np.hypot(*outgoing))
+                    return float(np.dot(_incoming, outgoing) / norm) if norm else -2.0
+
+                edge = max(
+                    candidates,
+                    key=lambda candidate: (continuation_score(candidate), -candidate),
+                )
+            unused.remove(edge)
+            ea, eb = endpoints[edge]
+            next_key = eb if ea == current else ea
+            previous, current = current, next_key
+            points.append(positions[current])
+        if len(points) >= 2:
+            paths.append(np.asarray(points, dtype=np.float64))
+    return paths
+
+
+def _path_cumulative(screen_path: np.ndarray) -> np.ndarray:
+    return np.concatenate(
+        ([0.0], np.cumsum(np.hypot(*np.diff(screen_path, axis=0).T), dtype=np.float64))
+    )
+
+
+def _path_interpolate(path: np.ndarray, cumulative: np.ndarray, distance: float) -> np.ndarray:
+    """Interpolate one point at a screen-space curvilinear distance."""
+    distance = float(np.clip(distance, 0.0, cumulative[-1]))
+    index = min(int(np.searchsorted(cumulative, distance, side="right") - 1), len(path) - 2)
+    index = max(0, index)
+    length = cumulative[index + 1] - cumulative[index]
+    fraction = 0.0 if length <= 0 else (distance - cumulative[index]) / length
+    return path[index] + (path[index + 1] - path[index]) * fraction
+
+
+def _contour_label_location(
+    path: np.ndarray,
+    screen_path: np.ndarray,
+    label_width: float,
+    font_height: float,
+    occupied: list[tuple[float, float, float]],
+    *,
+    rightside_up: bool,
+) -> dict[str, Any] | None:
+    """Pick the straightest collision-free label site along one contour."""
+    cumulative = _path_cumulative(screen_path)
+    total = float(cumulative[-1])
+    if total <= 0.0:
+        return None
+    extent = np.ptp(screen_path, axis=0)
+    if total < 1.5 * label_width or not np.any(extent > 1.2 * label_width):
+        return None
+    half = min(label_width * 0.5, total * 0.45)
+    count = max(24, min(64, 2 * int(np.ceil(total / max(label_width, 1.0)))))
+    distances = np.linspace(half, total - half, count)
+    candidates: list[tuple[float, float, np.ndarray, float]] = []
+    for distance in distances:
+        before = _path_interpolate(screen_path, cumulative, distance - half)
+        after = _path_interpolate(screen_path, cumulative, distance + half)
+        direction = after - before
+        norm = float(np.hypot(*direction))
+        if norm <= np.finfo(float).eps:
+            continue
+        inside = (cumulative >= distance - half) & (cumulative <= distance + half)
+        window = np.vstack((before, screen_path[inside], after))
+        deviation = np.abs(
+            direction[0] * (before[1] - window[:, 1]) - direction[1] * (before[0] - window[:, 0])
+        )
+        straightness = float(np.mean(deviation) / norm)
+        point = _path_interpolate(screen_path, cumulative, distance)
+        angle = float(np.rad2deg(np.arctan2(direction[1], direction[0])))
+        if rightside_up:
+            angle = (angle + 90.0) % 180.0 - 90.0
+        candidates.append((straightness, float(distance), point, angle))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
+    collision_width = max(label_width, 2.4 * font_height)
+    clear = [
+        candidate
+        for candidate in candidates
+        if all(
+            float(np.hypot(*(candidate[2] - np.asarray(prior[:2]))))
+            >= 0.75 * (collision_width + prior[2])
+            for prior in occupied
+        )
+    ]
+    if clear:
+        selected = clear[0]
+    elif occupied:
+        # A small nested contour may have no fully clear point. Prefer the
+        # candidate with the most display-space breathing room rather than
+        # falling back to the straightest point directly under another label.
+        selected = max(
+            candidates,
+            key=lambda candidate: min(
+                float(np.hypot(*(candidate[2] - np.asarray(prior[:2]))))
+                / max(1.0, 0.5 * (collision_width + prior[2]))
+                for prior in occupied
+            ),
+        )
+    else:
+        selected = candidates[0]
+    _, distance, screen_point, angle = selected
+    occupied.append((float(screen_point[0]), float(screen_point[1]), collision_width))
+    return {
+        "position": _path_interpolate(path, cumulative, distance),
+        "screen_position": screen_point,
+        "angle": angle,
+        "distance": distance,
+        "cumulative": cumulative,
+    }
+
+
+def _nearest_contour_location(
+    query: tuple[float, float],
+    paths: list[tuple[int, np.ndarray, np.ndarray]],
+    *,
+    rightside_up: bool,
+) -> dict[str, Any] | None:
+    """Project a manual data-space request onto the nearest contour path."""
+    query_point = np.asarray(query, dtype=np.float64)
+    best: tuple[float, int, np.ndarray, np.ndarray, float, np.ndarray] | None = None
+    for level_index, path, screen_path in paths:
+        cumulative = _path_cumulative(screen_path)
+        for index, (start, end) in enumerate(pairwise(screen_path)):
+            delta = end - start
+            norm2 = float(np.dot(delta, delta))
+            fraction = (
+                0.0
+                if norm2 <= np.finfo(float).eps
+                else float(np.clip(np.dot(query_point - start, delta) / norm2, 0.0, 1.0))
+            )
+            projected = start + fraction * delta
+            distance2 = float(np.dot(projected - query_point, projected - query_point))
+            along = float(
+                cumulative[index] + fraction * (cumulative[index + 1] - cumulative[index])
+            )
+            candidate = (distance2, level_index, path, screen_path, along, delta)
+            if best is None or candidate[0] < best[0]:
+                best = candidate
+    if best is None:
+        return None
+    _, level_index, path, screen_path, distance, direction = best
+    cumulative = _path_cumulative(screen_path)
+    angle = float(np.rad2deg(np.arctan2(direction[1], direction[0])))
+    if rightside_up:
+        angle = (angle + 90.0) % 180.0 - 90.0
+    return {
+        "level_index": level_index,
+        "path": path,
+        "screen_path": screen_path,
+        "position": _path_interpolate(path, cumulative, distance),
+        "screen_position": _path_interpolate(screen_path, cumulative, distance),
+        "angle": angle,
+        "distance": distance,
+        "cumulative": cumulative,
+    }
+
+
+def _contour_visible_segments(
+    path: np.ndarray,
+    cumulative: np.ndarray,
+    excluded: list[tuple[float, float]],
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return path pieces outside the merged screen-space exclusion windows."""
+    intervals: list[tuple[float, float]] = []
+    for start, stop in sorted(excluded):
+        start = max(0.0, float(start))
+        stop = min(float(cumulative[-1]), float(stop))
+        if start >= stop:
+            continue
+        if intervals and start <= intervals[-1][1]:
+            intervals[-1] = intervals[-1][0], max(intervals[-1][1], stop)
+        else:
+            intervals.append((start, stop))
+    result: list[tuple[np.ndarray, np.ndarray]] = []
+    for start, stop in pairwise(cumulative):
+        pieces = [(float(start), float(stop))]
+        for excluded_start, excluded_stop in intervals:
+            next_pieces: list[tuple[float, float]] = []
+            for piece_start, piece_stop in pieces:
+                if excluded_stop <= piece_start or excluded_start >= piece_stop:
+                    next_pieces.append((piece_start, piece_stop))
+                    continue
+                if piece_start < excluded_start:
+                    next_pieces.append((piece_start, excluded_start))
+                if excluded_stop < piece_stop:
+                    next_pieces.append((excluded_stop, piece_stop))
+            pieces = next_pieces
+            if not pieces:
+                break
+        for piece_start, piece_stop in pieces:
+            a = _path_interpolate(path, cumulative, piece_start)
+            b = _path_interpolate(path, cumulative, piece_stop)
+            if not np.allclose(a, b):
+                result.append((a, b))
+    return result
 
 
 def _segment_values(value: Any) -> np.ndarray:
@@ -3135,91 +3432,269 @@ class PlotTypeMixin:
         rightside_up: bool = True,
         zorder: float | None = None,
     ) -> list[Text]:
-        """Label contour levels without exposing contour semantics to core."""
-        del (
-            fontsize,
-            inline,
-            inline_spacing,
-            use_clabeltext,
-            rightside_up,
-            zorder,
-        )  # compat-noop: deterministic shim contour-label placement and styling
-        chosen = np.asarray(CS.levels if levels is None else levels, dtype=np.float64).reshape(-1)
-        if isinstance(manual, (list, tuple, np.ndarray)) and len(manual):
-            label_specs = [
-                (index, level, tuple(manual[index % len(manual)]))
-                for index, level in enumerate(chosen)
-            ]
-        else:
-            source = CS._entry
-            grid = np.asarray(source["args"][0], dtype=np.float64)
-            x_values = source["kwargs"].get("x")
-            y_values = source["kwargs"].get("y")
-            x_values = (
-                np.arange(grid.shape[1], dtype=np.float64)
-                if x_values is None
-                else np.asarray(x_values, dtype=np.float64)
-            )
-            y_values = (
-                np.arange(grid.shape[0], dtype=np.float64)
-                if y_values is None
-                else np.asarray(y_values, dtype=np.float64)
-            )
-            try:
-                from xy import kernels
+        """Label connected contour paths using Matplotlib-like screen geometry.
 
-                x0, x1, y0, y1, segment_levels = kernels.marching_squares(
-                    grid, x_values, y_values, chosen
-                )
-                label_specs = []
-                x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
-                y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
-                for index, level in enumerate(chosen):
-                    candidates = np.flatnonzero(np.isclose(segment_levels, level))
-                    if len(candidates):
-                        target = min(6, max(3, int(np.ceil(len(candidates) / 18))))
-                        probes = np.linspace(0, len(candidates) - 1, target, dtype=int)
-                        accepted: list[tuple[float, float]] = []
-                        for probe in probes:
-                            selected = candidates[(probe + index * 7) % len(candidates)]
-                            location = (
-                                float((x0[selected] + x1[selected]) * 0.5),
-                                float((y0[selected] + y1[selected]) * 0.5),
-                            )
-                            if all(
-                                np.hypot(
-                                    (location[0] - prior[0]) / x_span,
-                                    (location[1] - prior[1]) / y_span,
-                                )
-                                >= 0.12
-                                for prior in accepted
-                            ):
-                                accepted.append(location)
-                        label_specs.extend((index, level, location) for location in accepted)
-            except (ValueError, RuntimeError):
-                label_specs = [(index, level, (0.5, 0.5)) for index, level in enumerate(chosen)]
-        color_values = [colors] * len(chosen) if isinstance(colors, str) else colors
-        if color_values is None:
-            color_values = [None] * len(chosen)
-        elif not isinstance(color_values, list):
-            color_values = list(color_values)
-        result: list[Text] = []
-        for index, level, location in label_specs:
-            if callable(fmt):
-                label = str(fmt(level))
+        Marching squares remains native, while path joining and text placement
+        stay in the compatibility shim.  Automatic labels prefer flat path
+        windows, avoid prior labels in display space, rotate to the local
+        tangent, and place at most one label on each eligible connected
+        component.  Iterable ``manual`` positions are snapped to the nearest
+        requested contour instead of being assigned to levels round-robin.
+        """
+        del use_clabeltext, zorder  # text rotation is already live in all xy renderers
+        if not isinstance(CS, ContourSet) or CS._axes is not self:
+            raise ValueError("clabel() requires a ContourSet from this Axes")
+        inline_spacing = float(inline_spacing)
+        if not np.isfinite(inline_spacing) or inline_spacing < 0:
+            raise ValueError("inline_spacing must be a non-negative finite value")
+        if isinstance(manual, (bool, np.bool_)) and bool(manual):
+            raise not_implemented(
+                "clabel(manual=True)",
+                "an iterable of manual data-coordinate positions",
+            )
+
+        source = CS._entry
+        public_levels = np.asarray(CS.levels, dtype=np.float64).reshape(-1)
+        requested = (
+            public_levels if levels is None else np.asarray(levels, dtype=np.float64).reshape(-1)
+        )
+        chosen_indices: list[int] = []
+        for index, level in enumerate(public_levels):
+            tolerance = np.finfo(float).eps * max(1.0, abs(float(level))) * 8.0
+            if np.any(np.isclose(requested, level, rtol=0.0, atol=tolerance)):
+                chosen_indices.append(index)
+        matched = public_levels[chosen_indices]
+        if len(matched) < len(requested):
+            raise ValueError(
+                f"Specified levels {requested.tolist()} don't match available levels "
+                f"{public_levels.tolist()}"
+            )
+
+        grid = np.asarray(source["args"][0], dtype=np.float64)
+        x_values = source["kwargs"].get("x")
+        y_values = source["kwargs"].get("y")
+        x_values = (
+            np.arange(grid.shape[1], dtype=np.float64)
+            if x_values is None
+            else np.asarray(x_values, dtype=np.float64)
+        )
+        y_values = (
+            np.arange(grid.shape[0], dtype=np.float64)
+            if y_values is None
+            else np.asarray(y_values, dtype=np.float64)
+        )
+        rendered_levels = np.asarray(
+            source["kwargs"].get("levels", public_levels), dtype=np.float64
+        ).reshape(-1)
+
+        from xy import kernels
+
+        x0, x1, y0, y1, segment_levels = kernels.marching_squares(
+            grid, x_values, y_values, rendered_levels
+        )
+        canvas_width, canvas_height = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        _left, _bottom, axes_width, axes_height = self.get_position().bounds
+        plot_width = max(40.0, float(canvas_width) * axes_width)
+        plot_height = max(40.0, float(canvas_height) * axes_height)
+        x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
+        y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
+        scale = np.asarray((plot_width / x_span, plot_height / y_span), dtype=np.float64)
+
+        all_connected: list[tuple[int, np.ndarray, np.ndarray]] = []
+        for public_index, rendered_level in enumerate(rendered_levels):
+            tolerance = np.finfo(float).eps * max(1.0, abs(float(rendered_level))) * 16.0
+            selected = np.isclose(segment_levels, rendered_level, rtol=0.0, atol=tolerance)
+            for path in _joined_contour_paths(
+                x0[selected], x1[selected], y0[selected], y1[selected]
+            ):
+                all_connected.append((public_index, path, path * scale))
+        connected = [item for item in all_connected if int(item[0]) in set(chosen_indices)]
+
+        font_points = _text_font_size_points(
+            rcParams["font.size"] if fontsize is None else fontsize
+        )
+        font_pixels = font_points * self._point_scale()
+
+        def label_text(level: float) -> str:
+            if callable(getattr(fmt, "format_ticks", None)):
+                value = fmt.format_ticks([*matched, level])[-1]
+            elif callable(fmt):
+                value = fmt(level)
             elif isinstance(fmt, dict):
-                label = str(fmt.get(level, level))
+                value = fmt.get(level, "%1.3f")
             elif isinstance(fmt, str):
-                label = fmt % level
+                value = fmt % level
             else:
-                label = f"{level:g}"
-            label = _plain_label(label)
-            color = color_values[index % len(color_values)]
+                value = f"{level:g}"
+            return _plain_label(value)
+
+        default_colors = _contour_legend_colors(source, len(public_levels))
+        color_array = (
+            np.asarray(colors) if colors is not None and not isinstance(colors, str) else None
+        )
+        scalar_explicit_color = isinstance(colors, str) or (
+            color_array is not None
+            and color_array.ndim == 1
+            and len(color_array) in (3, 4)
+            and all(
+                np.isscalar(value) and not isinstance(value, (str, bytes)) for value in color_array
+            )
+        )
+        if colors is None:
+            explicit_colors: list[Any] | None = None
+        elif scalar_explicit_color:
+            explicit_colors = [colors]
+        else:
+            explicit_colors = list(colors)
+            if not explicit_colors:
+                raise ValueError("colors must contain at least one color")
+
+        label_specs: list[dict[str, Any]] = []
+        occupied: list[tuple[float, float, float]] = []
+        if not (manual is None or (isinstance(manual, (bool, np.bool_)) and not bool(manual))):
+            try:
+                manual_locations = list(manual)
+            except TypeError as exc:
+                raise TypeError("manual must be False, True, or an iterable of (x, y)") from exc
+            for raw_location in manual_locations:
+                values = np.asarray(raw_location, dtype=np.float64).reshape(-1)
+                if len(values) != 2 or not np.isfinite(values).all():
+                    raise ValueError("manual contour-label positions must be finite (x, y) pairs")
+                snapped = _nearest_contour_location(
+                    (float(values[0]) * scale[0], float(values[1]) * scale[1]),
+                    connected,
+                    rightside_up=rightside_up,
+                )
+                if snapped is None:
+                    continue
+                public_index = int(snapped["level_index"])
+                text = label_text(float(public_levels[public_index]))
+                snapped.update(
+                    {
+                        "level": float(public_levels[public_index]),
+                        "text": text,
+                        "label_width": max(font_pixels * 0.7, len(text) * font_pixels * 0.62),
+                    }
+                )
+                label_specs.append(snapped)
+        else:
+            for public_index, path, screen_path in connected:
+                text = label_text(float(public_levels[public_index]))
+                label_width = max(font_pixels * 0.7, len(text) * font_pixels * 0.62)
+                placed = _contour_label_location(
+                    path,
+                    screen_path,
+                    label_width,
+                    font_pixels,
+                    occupied,
+                    rightside_up=rightside_up,
+                )
+                if placed is None:
+                    continue
+                placed.update(
+                    {
+                        "level_index": public_index,
+                        "level": float(public_levels[public_index]),
+                        "path": path,
+                        "screen_path": screen_path,
+                        "text": text,
+                        "label_width": label_width,
+                    }
+                )
+                label_specs.append(placed)
+
+        if inline and label_specs and not source["kwargs"].get("filled", False):
+            exclusions: dict[int, list[tuple[float, float]]] = {}
+            for spec in label_specs:
+                half_width = float(spec["label_width"]) * 0.5 + inline_spacing
+                exclusions.setdefault(id(spec["path"]), []).append(
+                    (
+                        float(spec["distance"]) - half_width,
+                        float(spec["distance"]) + half_width,
+                    )
+                )
+            contour_colors = _contour_legend_colors(source, len(public_levels))
+            contour_widths = np.asarray(source["kwargs"].get("width", 1.1), dtype=float).reshape(-1)
+            opacity = float(source["kwargs"].get("opacity", 1.0))
+            generated: list[dict[str, Any]] = []
+            for public_index in range(len(public_levels)):
+                visible: list[tuple[np.ndarray, np.ndarray]] = []
+                for level_index, path, screen_path in all_connected:
+                    if level_index != public_index:
+                        continue
+                    visible.extend(
+                        _contour_visible_segments(
+                            path,
+                            _path_cumulative(screen_path),
+                            exclusions.get(id(path), []),
+                        )
+                    )
+                if not visible:
+                    continue
+                dash = (
+                    [3.7, 1.6]
+                    if source["kwargs"].get("dash_negative") and public_levels[public_index] < 0
+                    else None
+                )
+                generated.append(
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": (
+                                [float(segment[0][0]) for segment in visible],
+                                [float(segment[0][1]) for segment in visible],
+                                [float(segment[1][0]) for segment in visible],
+                                [float(segment[1][1]) for segment in visible],
+                            ),
+                            "kwargs": {
+                                "color": contour_colors[public_index],
+                                "width": float(contour_widths[public_index % len(contour_widths)]),
+                                "opacity": opacity,
+                                "dash": dash,
+                            },
+                        },
+                    )
+                )
+            if generated:
+                # The mappable remains live for colorbar()/clim(), but its
+                # unsplit native trace is hidden behind exact generic segment
+                # replacements. Keep those replacements adjacent to the
+                # original artist so later marks retain their creation order.
+                source["kwargs"]["opacity"] = 0.0
+                source_index = self._entries.index(source)
+                for entry in generated:
+                    self._entries.remove(entry)
+                self._entries[source_index + 1 : source_index + 1] = generated
+                self._invalidate()
+
+        result: list[Text] = []
+        for spec in label_specs:
+            public_index = int(spec["level_index"])
+            if explicit_colors is None:
+                color = default_colors[public_index]
+            else:
+                color = resolve_color(
+                    explicit_colors[chosen_indices.index(public_index) % len(explicit_colors)]
+                )
+            style = {
+                "font_size": font_points,
+                "rotation": float(spec["angle"]),
+                "vertical_align": "center",
+            }
             entry = self._add(
                 "@text",
                 {
-                    "args": (float(location[0]), float(location[1]), label),
-                    "kwargs": {"color": resolve_color(color)} if color is not None else {},
+                    "args": (
+                        float(spec["position"][0]),
+                        float(spec["position"][1]),
+                        str(spec["text"]),
+                    ),
+                    "kwargs": {
+                        "anchor": "middle",
+                        "color": color,
+                        "style": style,
+                    },
                 },
             )
             result.append(Text(self, entry))
