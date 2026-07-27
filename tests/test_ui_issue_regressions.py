@@ -716,7 +716,7 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
         + """
     // Python normalizes an omitted extra-y side to "right". Remove it here to
     // exercise the client/update-spec state that previously disagreed: chrome
-    // still defaults this axis to right via `side !== "left"`.
+    // must still resolve and record the rendered tick-label side as right.
     view.axes.y2.side = undefined;
     view._drawNow();
     view._raf = null;
@@ -746,5 +746,5 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     assert all(row["inside"] for row in result["rows"]), result
     extra = [row for row in result["rows"] if row["axis"] == "y2"]
     assert extra, result
-    assert all(row["side"] == "" for row in extra), result
+    assert all(row["side"] == "right" for row in extra), result
     assert all(row["pinnedRight"] for row in extra), result

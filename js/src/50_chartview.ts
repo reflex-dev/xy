@@ -4843,11 +4843,17 @@ export class ChartView {
       ? value : "auto";
   }
 
+  _axisDefaultSide(axis) {
+    const id = String(axis && axis.id || "x");
+    if (id.startsWith("x")) return "bottom";
+    return id === "y" ? "left" : "right";
+  }
+
   _axisTickSides(axis) {
     const isX = String(axis && axis.id || "x").startsWith("x");
     const allowed = isX ? ["bottom", "top"] : ["left", "right"];
     if (!Array.isArray(axis && axis.tick_sides)) {
-      return [axis && axis.side || allowed[0]];
+      return [axis && axis.side || this._axisDefaultSide(axis)];
     }
     return allowed.filter((side) => axis.tick_sides.includes(side));
   }
@@ -4856,7 +4862,7 @@ export class ChartView {
     const isX = String(axis && axis.id || "x").startsWith("x");
     const allowed = isX ? ["bottom", "top"] : ["left", "right"];
     if (!Array.isArray(axis && axis.tick_label_sides)) {
-      return [axis && axis.side || allowed[0]];
+      return [axis && axis.side || this._axisDefaultSide(axis)];
     }
     return allowed.filter((side) => axis.tick_label_sides.includes(side));
   }
