@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import numpy as np
 import pytest
 
@@ -87,6 +89,36 @@ def test_transformed_axline_uses_the_final_shared_axes_view() -> None:
 
     np.testing.assert_allclose(trace.x.values, final_x)
     np.testing.assert_allclose(trace.y.values, final_y)
+
+
+def test_transformed_axline_gallery_corner_tangencies_survive_png_then_svg() -> None:
+    fig, ax = plt.subplots()
+    for pos in np.linspace(-2, 1, 10):
+        ax.axline((pos, 0), slope=0.5, color="black", transform=ax.transAxes)
+    ax.set(xlim=(0, 1), ylim=(0, 1))
+
+    traces = ax._build_chart(640, 480).figure().traces
+    assert len(traces) == 10
+    np.testing.assert_allclose(traces[0].x.values, [0, 0])
+    np.testing.assert_allclose(traces[0].y.values, [1, 1])
+    np.testing.assert_allclose(traces[-1].x.values, [1, 1])
+    np.testing.assert_allclose(traces[-1].y.values, [0, 0])
+
+    fig.savefig(BytesIO(), format="png", dpi=100)
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    assert output.getvalue().startswith(b"<svg")
+
+
+def test_transformed_axline_outside_view_emits_no_empty_trace() -> None:
+    fig, ax = plt.subplots()
+    ax.axline((-3, 0), slope=0.5, transform=ax.transAxes)
+    ax.set(xlim=(0, 1), ylim=(0, 1))
+
+    assert not ax._build_chart(640, 480).figure().traces
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    assert output.getvalue().startswith(b"<svg")
 
 
 def test_axline_slope_rejects_nonlinear_scales_like_matplotlib() -> None:

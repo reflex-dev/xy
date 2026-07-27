@@ -326,8 +326,14 @@ def _clip_infinite_line(
     for candidate in candidates:
         if not unique or not np.allclose(candidate[1:], unique[-1][1:], rtol=0.0, atol=1e-11):
             unique.append(candidate)
-    if len(unique) < 2:
+    if not unique:
         return np.empty(0, dtype=np.float64), np.empty(0, dtype=np.float64)
+    if len(unique) == 1:
+        # A line tangent to one view corner has two coincident middle
+        # intersections in Matplotlib's draw-time solve. Preserve that
+        # degenerate two-vertex segment rather than turning it into an invalid
+        # empty line trace.
+        unique.append(unique[0])
     start, stop = unique[0], unique[-1]
     return (
         np.asarray([start[1], stop[1]], dtype=np.float64),
@@ -5715,6 +5721,12 @@ class Axes(PlotTypeMixin):
                 )
                 gapcolor = kw.pop("_gapcolor", None)
                 x, y = self._axline_data(e)
+                if not len(x):
+                    # A transformed infinite line can miss the current view
+                    # entirely. Matplotlib clips it to no visible geometry;
+                    # do not emit an empty line component that static SVG
+                    # would later try to convert into a path.
+                    continue
                 if gapcolor is not None and kw.get("dash"):
                     children.append(
                         xy.line(
