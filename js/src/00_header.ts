@@ -28,8 +28,9 @@
 // spec may carry a chart `palette`. A v6 client indexes COLORMAP_STOPS with the
 // stop array, misses, and paints viridis without erroring.
 // v8: legend/colorbar geometry, extra colormap names, and match-fill strokes
+// v9: explicit minor axis ticks/styles and log nonpositive behavior
 // add wire values an older v7 client would accept but silently misrender.
-export const PROTOCOL = 8;
+export const PROTOCOL = 9;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

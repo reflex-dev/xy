@@ -231,6 +231,9 @@ class Axis(Component):
     style: dict[str, StyleValue] = field(default_factory=dict)
     # New fields append after the v0.0.3 positional surface.
     margin: Optional[float] = None
+    minor_tick_values: Optional[list[float]] = None
+    minor_style: dict[str, StyleValue] = field(default_factory=dict)
+    nonpositive: Optional[Literal["clip", "mask"]] = None
 
 
 @dataclass
@@ -2384,6 +2387,7 @@ def x_axis(
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
@@ -2396,6 +2400,8 @@ def x_axis(
     grid: Optional[bool] = None,
     text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure an x axis.
 
@@ -2416,6 +2422,7 @@ def x_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2439,9 +2446,15 @@ def x_axis(
             ``tick_labels``, which supplies the label *strings*.)
         style: Axis style overrides. An explicit property here always wins
             over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("x_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("x_axis tick_labels must match tick_values")
@@ -2461,6 +2474,7 @@ def x_axis(
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "x_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2472,6 +2486,8 @@ def x_axis(
         ),
         side=_axis_side(side, "x"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "x_axis"),
+        minor_style=styles.compile_axis_style(minor_style, "x_axis minor style"),
+        nonpositive=nonpositive,
     )
 
 
@@ -2491,6 +2507,7 @@ def y_axis(
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
     tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    minor_tick_values: Union[Sequence[float], np.ndarray, None] = None,
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
@@ -2503,6 +2520,8 @@ def y_axis(
     grid: Optional[bool] = None,
     text: Optional[bool] = None,
     style: Optional[dict[str, StyleValue]] = None,
+    minor_style: Optional[dict[str, StyleValue]] = None,
+    nonpositive: Optional[Literal["clip", "mask"]] = None,
 ) -> Axis:
     """Configure a y axis.
 
@@ -2523,6 +2542,7 @@ def y_axis(
         format: Tick-label format string.
         tick_count: Requested number of ticks.
         tick_values: Explicit tick positions.
+        minor_tick_values: Explicit unlabeled minor tick positions.
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
@@ -2546,9 +2566,15 @@ def y_axis(
             ``tick_labels``, which supplies the label *strings*.)
         style: Axis style overrides. An explicit property here always wins
             over the switches above.
+        minor_style: Independent minor tick/grid style overrides.
+        nonpositive: Log-axis handling for non-positive mark coordinates:
+            ``"clip"`` or ``"mask"``.
     """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
+    minor_values = None if minor_tick_values is None else [float(v) for v in minor_tick_values]
+    if nonpositive is not None and (type_ != "log" or nonpositive not in {"clip", "mask"}):
+        raise ValueError("y_axis nonpositive must be 'clip' or 'mask' on a log axis")
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
     if labels is not None and (values is None or len(labels) != len(values)):
         raise ValueError("y_axis tick_labels must match tick_values")
@@ -2568,6 +2594,7 @@ def y_axis(
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
         tick_values=values,
+        minor_tick_values=minor_values,
         tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "y_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
@@ -2579,6 +2606,8 @@ def y_axis(
         ),
         side=_axis_side(side, "y"),
         style=_axis_visibility_style(show, line, ticks, grid, text, style, "y_axis"),
+        minor_style=styles.compile_axis_style(minor_style, "y_axis minor style"),
+        nonpositive=nonpositive,
     )
 
 
@@ -3289,6 +3318,7 @@ class Chart(Component):
                 format=axis.format,
                 tick_count=axis.tick_count,
                 tick_values=axis.tick_values,
+                minor_tick_values=axis.minor_tick_values,
                 tick_labels=axis.tick_labels,
                 tick_label_angle=axis.tick_label_angle,
                 tick_label_strategy=axis.tick_label_strategy,
@@ -3296,6 +3326,8 @@ class Chart(Component):
                 tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
                 style=axis.style,
+                minor_style=axis.minor_style,
+                nonpositive=axis.nonpositive,
             )
         # Facet builds pre-seed the union category order (set as a private
         # attribute by FacetChart) so shared categorical domains align the

@@ -328,6 +328,13 @@ mantissa-1 ticks are labelled, and only every `labelEvery` decade where
 `labelEvery = ceil((decades + 1) / target)` — so minor ticks draw unlabelled.
 If thinning produces nothing, every tick is labelled.
 
+An authored `tick_values` array is the labelled major tier. An optional
+`minor_tick_values` array is drawn separately with `minor_style`; it never
+participates in label formatting or collision handling. Pyplot uses this
+second tier for the automatic log subdivisions from `LogLocator`, so minor
+grid/tick density and paint are identical in the live canvas, SVG, and native
+raster renderers.
+
 **Category.** Positions are integer category indices. `categoryTicks` clamps
 the visible index range to `[0, categories.length − 1]`, then strides it by
 `max(1, ceil(visible / target))`, so labels thin out as more categories come

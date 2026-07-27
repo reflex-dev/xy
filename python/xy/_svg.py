@@ -749,6 +749,7 @@ class _Scale:
         # public axis option is serialized separately as ``scale``. Accept the
         # historical kind form too for old payloads.
         self.log = axis.get("scale") == "log" or self.kind == "log"
+        self.nonpositive = axis.get("nonpositive", "clip")
         self.symlog = axis.get("scale") == "symlog"
         self.constant = float(axis.get("constant", 1.0))
         if self.log:
@@ -760,7 +761,11 @@ class _Scale:
 
     def coord(self, v: Any) -> Any:
         if self.log:
-            return np.log10(np.maximum(v, 1e-300))
+            values = np.asarray(v)
+            if self.nonpositive == "mask":
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    return np.where(values > 0, np.log10(values), np.nan)
+            return np.log10(np.maximum(values, 1e-300))
         return self._symlog(v) if self.symlog else v
 
     def _symlog(self, v: Any) -> Any:
@@ -1414,6 +1419,12 @@ _SYMBOL_BUILDERS = {
         f'<path d="M {_num(cx - 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx + 0.707 * r)} {_num(cy + 0.707 * r)} '
         f'M {_num(cx + 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx - 0.707 * r)} {_num(cy + 0.707 * r)}" fill="none"'
     ),
+    "horizontal_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} H {_num(cx + r)}" fill="none"'
+    ),
+    "vertical_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} V {_num(cy + r)}" fill="none"'
+    ),
     "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
     "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
     "star": lambda cx, cy, r: _star_path(cx, cy, r, 5, 0.45, -90.0),
@@ -1805,6 +1816,19 @@ def axis_ticks(
     return t, t, step
 
 
+def minor_axis_ticks(axis: dict[str, Any]) -> list[float]:
+    values = axis.get("minor_tick_values")
+    if values is None:
+        return []
+    lo, hi = axis["range"]
+    low, high = min(lo, hi), max(lo, hi)
+    return [
+        float(value)
+        for value in values
+        if np.isfinite(float(value)) and low <= float(value) <= high
+    ]
+
+
 def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
     value = str(axis.get("tick_label_strategy") or "auto").replace("-", "_")
     return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
@@ -2073,8 +2097,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
+    xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     dom_style = (spec.get("dom") or {}).get("style") or {}
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    xmstyle, ymstyle = xa.get("minor_style") or {}, ya.get("minor_style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
@@ -2085,6 +2111,28 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # label text and keeps grid, baselines and the axis title (mpl shared axes).
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    for v in xmt:
+        if hide_x:
+            break
+        px = float(sx(v))
+        grid.append(
+            f'<line data-xy-grid="minor" x1="{_num(px)}" y1="{_num(plot["y"])}" '
+            f'x2="{_num(px)}" y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(xmstyle.get("grid_color"), "transparent"))}" '
+            f'stroke-width="{_num(float(xmstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(xmstyle)}/>"
+        )
+    for v in ymt:
+        if hide_y:
+            break
+        py = float(sy(v))
+        grid.append(
+            f'<line data-xy-grid="minor" x1="{_num(plot["x"])}" y1="{_num(py)}" '
+            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(py)}" '
+            f'stroke="{escape(_css(ymstyle.get("grid_color"), "transparent"))}" '
+            f'stroke-width="{_num(float(ymstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(ymstyle)}/>"
+        )
     for v in xt:
         if hide_x:
             break
@@ -2381,7 +2429,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
         )
 
-    annotation_marks, annotation_labels = _annotation_svg(
+    annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
         spec.get("annotations") or [], sx, sy, plot, width, height
     )
     marks.extend(annotation_marks)
@@ -2444,6 +2492,22 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         return 0.0, length, float(style.get("tick_width", 1))
 
     if not hide_x:
+        inward, outward, tick_width = tick_span(xmstyle)
+        side = xa.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in xmt:
+            x = float(sx(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line data-xy-tick="minor" x1="{_num(x)}" y1="{_num(y1)}" '
+                f'x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(xmstyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
         inward, outward, tick_width = tick_span(xstyle)
         side = xa.get("side", "bottom")
         edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
@@ -2460,6 +2524,22 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'stroke-width="{_num(tick_width)}"/>'
             )
     if not hide_y:
+        inward, outward, tick_width = tick_span(ymstyle)
+        side = ya.get("side", "left")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in ymt:
+            y = float(sy(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line data-xy-tick="minor" x1="{_num(x1)}" y1="{_num(y)}" '
+                f'x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(ymstyle.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
         inward, outward, tick_width = tick_span(ystyle)
         side = ya.get("side", "left")
         edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
@@ -2553,6 +2633,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<g clip-path="url(#{clip_id})">',
             *marks,
             "</g>",
+            *unclipped_annotation_marks,
             baselines,
             f'<g fill="{escape(default_text)}">',
             *labels,
@@ -2619,6 +2700,37 @@ def annotation_label_placement(
     return float(sx(x)), float(sy(y)), anchor, vertical_align
 
 
+def _annotation_connector_unclipped(
+    ann: dict[str, Any],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+) -> bool:
+    """Whether an arrow may leave the axes because its target is in bounds.
+
+    Matplotlib's default ``annotation_clip=None`` clips based on the annotated
+    point, not the text/connector path.  A label may therefore sit outside the
+    axes while its connector remains visible back to an in-bounds target.
+    """
+    kind = ann.get("kind")
+    if kind == "arrow":
+        target = ann.get("x1"), ann.get("y1")
+    elif kind == "callout":
+        target = ann.get("x"), ann.get("y")
+    else:
+        return False
+    try:
+        px, py = float(sx(float(target[0]))), float(sy(float(target[1])))
+    except (TypeError, ValueError):
+        return False
+    return (
+        np.isfinite(px)
+        and np.isfinite(py)
+        and plot["x"] <= px <= plot["x"] + plot["w"]
+        and plot["y"] <= py <= plot["y"] + plot["h"]
+    )
+
+
 def _annotation_svg(
     annotations: Sequence[dict[str, Any]],
     sx: Callable[[float], float],
@@ -2626,8 +2738,9 @@ def _annotation_svg(
     plot: dict[str, float],
     width: float,
     height: float,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
+    unclipped_marks: list[str] = []
     labels: list[str] = []
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
@@ -2663,6 +2776,9 @@ def _annotation_svg(
                 f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
             )
         elif kind in ("arrow", "callout"):
+            connector_marks = (
+                unclipped_marks if _annotation_connector_unclipped(ann, sx, sy, plot) else marks
+            )
             if kind == "arrow":
                 x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
                 x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
@@ -2674,12 +2790,12 @@ def _annotation_svg(
                 stroke_width = _num(max(0.5, float(style.get("width", 1.5))))
                 if shapes["taper"] is not None:
                     taper = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["taper"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polygon points="{taper}" fill="{color}" fill-opacity="{_num(opacity)}"/>'
                     )
                 else:
                     shaft = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["shaft"])
-                    marks.append(
+                    connector_marks.append(
                         f'<polyline points="{shaft}" fill="none" '
                         f'stroke="{color}" stroke-width="{stroke_width}" '
                         f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
@@ -2689,12 +2805,12 @@ def _annotation_svg(
                         continue
                     points = " ".join(f"{_num(px)},{_num(py)}" for px, py in decoration["points"])
                     if decoration["kind"] == "fill":
-                        marks.append(
+                        connector_marks.append(
                             f'<polygon points="{points}" fill="{color}" '
                             f'fill-opacity="{_num(opacity)}"/>'
                         )
                     else:
-                        marks.append(
+                        connector_marks.append(
                             f'<polyline points="{points}" fill="none" stroke="{color}" '
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
@@ -2808,7 +2924,7 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return marks, labels
+    return marks, unclipped_marks, labels
 
 
 def _svg_font_attrs(style: dict[str, Any]) -> str:
@@ -3109,7 +3225,16 @@ def _scatter_marks(
         symbol = symbols[i]
         builder = _SYMBOL_BUILDERS.get(symbol)
         authored_line = bool(marker_path) and not bool(marker_path.get("filled", True))
-        line_symbol = symbol in {"plus_line", "x_line"} or authored_line
+        line_symbol = (
+            symbol
+            in {
+                "plus_line",
+                "x_line",
+                "horizontal_line",
+                "vertical_line",
+            }
+            or authored_line
+        )
         stroke_w = float(stroke_widths[i])
         if line_symbol and stroke_w <= 0:
             stroke_w = 1.0
@@ -3181,6 +3306,8 @@ _SYMBOL_NAMES = (
     "thin_diamond",
     "plus_line",
     "x_line",
+    "horizontal_line",
+    "vertical_line",
 )
 
 
@@ -4116,9 +4243,12 @@ def _legend_marker_svg(style: dict[str, Any], x: float, y: float, default_color:
     radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
     color = _css(style.get("color"), default_color)
     stroke_w = float(style.get("stroke_width", 0.0))
-    line_symbol = symbol in {"plus_line", "x_line"} or (
-        bool(marker_path) and not bool(marker_path.get("filled", True))
-    )
+    line_symbol = symbol in {
+        "plus_line",
+        "x_line",
+        "horizontal_line",
+        "vertical_line",
+    } or (bool(marker_path) and not bool(marker_path.get("filled", True)))
     if line_symbol and stroke_w <= 0:
         stroke_w = 1.0
     stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None

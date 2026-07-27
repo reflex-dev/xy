@@ -623,8 +623,10 @@ export class ChartView {
   }
 
   _axisMode(axisId) {
-    const scale = this._axis(axisId).scale;
-    return scale === "log" ? 1 : scale === "symlog" ? 2 : 0;
+    const axis = this._axis(axisId);
+    const scale = axis.scale;
+    return scale === "log" ? (axis.nonpositive === "mask" ? 3 : 1)
+      : scale === "symlog" ? 2 : 0;
   }
 
   _axisConstant(axisId) {
@@ -722,7 +724,10 @@ export class ChartView {
   _axisCoord(axis, value) {
     const v = Number(value);
     if (!Number.isFinite(v)) return NaN;
-    if (axis && axis.scale === "log") return v > 0 ? Math.log10(v) : NaN;
+    if (axis && axis.scale === "log") {
+      if (v > 0) return Math.log10(v);
+      return axis.nonpositive === "mask" ? NaN : -300;
+    }
     if (axis && axis.scale === "symlog") {
       const c = Number(axis.constant) || 1;
       return Math.sign(v) * Math.log1p(Math.abs(v) / c);
@@ -2100,6 +2105,7 @@ export class ChartView {
       triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
       triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
       plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+      horizontal_line: "M4 7h10", vertical_line: "M9 2v10",
       cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
       x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
       pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
@@ -3027,7 +3033,7 @@ export class ChartView {
   _pointMarkStyle(g, t) {
     const s = t.style || {};
     g.authoredMarker = s.marker_path || s.marker_glyph || null;
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16, horizontal_line: 17, vertical_line: 18 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
@@ -5079,8 +5085,48 @@ export class ChartView {
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
     );
     const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
+    const minorTicks = (axis, axisId) => {
+      if (!Array.isArray(axis.minor_tick_values)) return [];
+      const [lo, hi] = this._axisRange(axisId);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      return axis.minor_tick_values.map(Number)
+        .filter((v) => Number.isFinite(v) && v >= a && v <= b);
+    };
+    const xmt = minorTicks(xAxis, "x");
+    const ymt = minorTicks(yAxis, "y");
+    const minorAxis = (axis) => ({ ...axis, style: axis.minor_style || {} });
+    const xmAxis = minorAxis(xAxis);
+    const ymAxis = minorAxis(yAxis);
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
+
+    ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xmAxis));
+    ctx.beginPath();
+    for (const v of (hideX ? [] : xmt)) {
+      const px = this._dataPx("x", v);
+      if (!Number.isFinite(px)) continue;
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(ymAxis, "grid_color", "transparent");
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(ymAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(ymAxis));
+    ctx.beginPath();
+    for (const v of (hideY ? [] : ymt)) {
+      const py = this._dataPx("y", v);
+      if (!Number.isFinite(py)) continue;
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
+    }
+    ctx.stroke();
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
@@ -5168,6 +5214,19 @@ export class ChartView {
       }
 
       if (!hideX) {
+        const minorTick = tickParts(xmAxis);
+        const minorSide = xAxis.side || "bottom";
+        const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
+        for (const value of xmt) {
+          const x = this._dataPx("x", value);
+          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+          const top = minorSide === "top"
+            ? minorEdge - minorTick.outward : minorEdge - minorTick.inward;
+          rule(
+            xmAxis, x - minorTick.width / 2, top, minorTick.width,
+            minorTick.inward + minorTick.outward, "tick_color",
+          );
+        }
         const tick = tickParts(xAxis);
         const side = xAxis.side || "bottom";
         const edge = side === "top" ? p.y : p.y + p.h;
@@ -5179,6 +5238,19 @@ export class ChartView {
         }
       }
       if (!hideY) {
+        const minorTick = tickParts(ymAxis);
+        const minorSide = yAxis.side || "left";
+        const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
+        for (const value of ymt) {
+          const y = this._dataPx("y", value);
+          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+          const left = minorSide === "right"
+            ? minorEdge - minorTick.inward : minorEdge - minorTick.outward;
+          rule(
+            ymAxis, left, y - minorTick.width / 2,
+            minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+          );
+        }
         const tick = tickParts(yAxis);
         const side = yAxis.side || "left";
         const edge = side === "right" ? p.x + p.w : p.x;

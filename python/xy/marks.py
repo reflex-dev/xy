@@ -51,6 +51,8 @@ _SYMBOL_CODES = {
             "thin_diamond",
             "plus_line",
             "x_line",
+            "horizontal_line",
+            "vertical_line",
         )
     )
 }
@@ -1484,7 +1486,7 @@ def scatter(
     `color` may be a CSS color (constant), a numeric array (continuous →
     colormap), or a categorical array (factorized → palette). `size` may be
     a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
-    one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
+    one of the 19 renderer-backed marker shapes; `stroke` / `stroke_width`
     draw a point border. Large scatters automatically switch to an aggregated
     density surface; pass `density=True/False` to force or disable it.
 

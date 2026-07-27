@@ -183,7 +183,7 @@ disagreeing with the rasterizer at no benefit.
 
 ### Marker shape
 
-`marker-shape` selects one of the 17 renderer-backed scatter symbols and is the
+`marker-shape` selects one of the 19 renderer-backed scatter symbols and is the
 CSS spelling of the existing `symbol=` argument — both resolve to the same
 `symbol` trace-style value, so the two spellings produce identical specs. It is
 an **XY vocabulary name, not a standard CSS property**: CSS has no shape keyword
@@ -206,6 +206,13 @@ cross-renderer axis vocabulary. Unknown keys and invalid values raise when the
 axis component is created, before the chart or an export is rendered. Keys may
 use Python snake_case or CSS kebab-case; pixel geometry accepts a finite number
 or a CSS `px` value such as `"3px"`.
+
+`minor_style={...}` accepts the same vocabulary for the independent minor-tick
+and minor-grid tier. `minor_tick_values=[...]` supplies its positions without
+labels; major `tick_values`/`tick_labels` remain unchanged. On log axes,
+`nonpositive="clip"` maps non-positive mark coordinates below the visible
+range, while `"mask"` makes those endpoints non-renderable in the browser,
+SVG, and native raster paths.
 
 | Axis style key | Value |
 | --- | --- |
@@ -264,6 +271,8 @@ leaves the other axis untouched. Enabling one axis's grid never turns the
 opposite axis's grid off; x and y are independent switches, and the matplotlib
 shim's `Axes.grid(axis="x")`/`Axes.grid(axis="y")` and `Axis.grid()` resolve
 onto the same rule.
+Major and minor grids apply this rule independently through `style` and
+`minor_style`; a transparent minor grid does not hide minor tick marks.
 
 #### Axis visibility switches
 
@@ -1095,7 +1104,7 @@ mutated, so a rejected append cannot leave channel lengths out of sync.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
-`scatter` markers take any of the 17 renderer-backed symbols listed in the
+`scatter` markers take any of the 19 renderer-backed symbols listed in the
 public [Mark styles](../../docs/styling/mark-styles.md#mark-specific-appearance) guide,
 plus a `stroke` color and `stroke_width` (px) for a border, e.g.
 `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an

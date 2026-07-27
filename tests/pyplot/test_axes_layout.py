@@ -213,6 +213,8 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
     assert x_axis.tick_label_strategy == "off"  # labels hidden, ticks/baselines kept
     assert x_axis.style == {
         "axis_width": pytest.approx(0.8 * 100.0 / 72.0),
+        "grid_width": pytest.approx(0.8 * 100.0 / 72.0),
+        "grid_opacity": 1.0,
         "tick_color": "#d62728",
         "tick_label_color": "#d62728",
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
