@@ -370,6 +370,11 @@ method accepts the call.
       `num_arrows`, `arrowsize`, `broken_streamlines`, both integration scale
       controls, and plain `Normalize` are implemented, while `transform`,
       `zorder`, and non-default minlength/arrowstyle options fail loudly.
+      Native backward/forward branches are reconstructed around their shared
+      seed before rendering, preserving masked topology and allowing exactly
+      `num_arrows` per trajectory at cumulative-distance-selected segments.
+      Array linewidths remain direct per-segment values and are sampled onto
+      matching arrow outlines.
 
 ### Scales, units and dates
 

@@ -658,10 +658,10 @@ def test_streamplot_array_linewidth_and_color_are_sampled_per_segment() -> None:
     _fig, ax = plt.subplots()
     ax.streamplot(x, y, -yy, xx, color=xx, linewidth=1.0 + np.abs(yy), norm=Normalize(-2.0, 2.0))
     segments = [entry for entry in ax._entries if entry.get("factory") == "segments"]
-    assert len(segments) > 1  # varying widths split into width bins
-    assert len({entry["kwargs"]["width"] for entry in segments}) > 1
-    assert all(entry["kwargs"]["domain"] == (-2.0, 2.0) for entry in segments)
-    assert any(np.ptp(np.asarray(entry["kwargs"]["color"])) > 0 for entry in segments)
+    assert len(segments) == 1
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["width"])) > 0
+    assert segments[0]["kwargs"]["domain"] == (-2.0, 2.0)
+    assert np.ptp(np.asarray(segments[0]["kwargs"]["color"])) > 0
     with pytest.raises(NotImplementedError, match=r"streamplot\(norm=LogNorm\)"):
         ax.streamplot(x, y, -yy, xx, color=xx, norm=LogNorm())
 

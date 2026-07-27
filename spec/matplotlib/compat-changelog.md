@@ -27,6 +27,10 @@ which covers user-visible releases across the whole package.
 - `streamplot` now uses an occupancy-aware adaptive Heun integrator for default
   and explicit seeds. `broken_streamlines=False` and both Matplotlib 3.11
   integration scale controls affect the generated trajectories.
+- Native streamplot output now retains its seed-level trajectory boundaries,
+  places exactly `num_arrows` per trajectory using Matplotlib 3.11's
+  cumulative-distance selection, preserves masked/invalid topology breaks, and
+  ships sampled array linewidths directly for segments and arrow outlines.
 
 ## Matplotlib 3.11 development snapshot — 2026-07-13
 

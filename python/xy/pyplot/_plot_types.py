@@ -322,6 +322,53 @@ def _integrate_streamlines(
     return lines
 
 
+def _native_streamline_trajectories(
+    x0: np.ndarray,
+    x1: np.ndarray,
+    y0: np.ndarray,
+    y1: np.ndarray,
+) -> list[np.ndarray]:
+    """Recover native trajectory boundaries without guessing arrow counts.
+
+    The native kernel emits contiguous segments in seed/direction order.  A
+    ``both`` integration therefore produces adjacent backward and forward
+    branches whose first point is the same seed.  Retaining that ordering here
+    reconstructs each full trajectory before pyplot flattens it for the
+    segments mark.
+    """
+    branches: list[np.ndarray] = []
+    points: list[tuple[float, float]] = []
+    for sx, ex, sy, ey in zip(x0, x1, y0, y1, strict=True):
+        start = (float(sx), float(sy))
+        end = (float(ex), float(ey))
+        if not np.isfinite((*start, *end)).all():
+            if len(points) >= 2:
+                branches.append(np.asarray(points, dtype=np.float64))
+            points = []
+            continue
+        if not points or points[-1] != start:
+            if len(points) >= 2:
+                branches.append(np.asarray(points, dtype=np.float64))
+            points = [start, end]
+        else:
+            points.append(end)
+    if len(points) >= 2:
+        branches.append(np.asarray(points, dtype=np.float64))
+
+    trajectories: list[np.ndarray] = []
+    index = 0
+    while index < len(branches):
+        backward = branches[index]
+        if index + 1 < len(branches) and np.array_equal(backward[0], branches[index + 1][0]):
+            forward = branches[index + 1]
+            trajectories.append(np.concatenate((backward[::-1], forward[1:])))
+            index += 2
+        else:
+            trajectories.append(backward)
+            index += 1
+    return trajectories
+
+
 # On/off spans within one dash cycle; segments marks have no screen-space dash
 # primitive, so dash geometry is emitted as data-space sub-segments.
 _DASH_SEGMENT_PATTERNS: dict[str, tuple[tuple[float, float], ...]] = {
@@ -5928,10 +5975,7 @@ class PlotTypeMixin:
                 density=float(density_xy[0]),
                 max_steps=max_steps,
             )
-            source_segments = [
-                np.asarray(((sx, sy), (ex, ey)), dtype=np.float64)
-                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
-            ]
+            source_segments = _native_streamline_trajectories(kx0, kx1, ky0, ky1)
         else:
             source_segments = _integrate_streamlines(
                 x_values,
@@ -5994,85 +6038,46 @@ class PlotTypeMixin:
             elif original_color.size and float(original_color.min()) != float(original_color.max()):
                 color_domain = (float(original_color.min()), float(original_color.max()))
 
-        entries: list[dict[str, Any]] = []
-        if isinstance(width_value, np.ndarray) and len(width_value) == len(x0):
-            width_array = np.asarray(width_value, dtype=np.float64)
-            finite_width = width_array[np.isfinite(width_array)]
-            if finite_width.size:
-                edges = np.unique(np.quantile(finite_width, np.linspace(0.0, 1.0, 7)))
-                bins = np.clip(np.digitize(width_array, edges[1:-1]), 0, max(0, len(edges) - 2))
-                for bin_index in np.unique(bins):
-                    keep = bins == bin_index
-                    kwargs_for_bin: dict[str, Any] = {
-                        "color": (
-                            np.asarray(chosen_color)[keep]
-                            if not isinstance(chosen_color, str)
-                            else chosen_color
-                        ),
-                        "colormap": colormap,
-                        "width": float(np.nanmean(width_array[keep])),
-                    }
-                    if color_domain is not None and not isinstance(chosen_color, str):
-                        kwargs_for_bin["domain"] = color_domain
-                    entries.append(
-                        self._add(
-                            "@mark",
-                            {
-                                "factory": "segments",
-                                "args": (x0[keep], y0[keep], x1[keep], y1[keep]),
-                                "kwargs": kwargs_for_bin,
-                            },
-                        )
-                    )
-        if not entries:
-            if isinstance(width_value, np.ndarray):
-                width_scalar = float(np.nanmean(width_value)) if width_value.size else 1.2
-            else:
-                width_scalar = float(width_value)
-            entry_kwargs: dict[str, Any] = {
-                "color": chosen_color,
-                "colormap": colormap,
-                "width": width_scalar,
-            }
-            if color_domain is not None and not isinstance(chosen_color, str):
-                entry_kwargs["domain"] = color_domain
-            entries.append(
-                self._add(
-                    "@mark",
-                    {
-                        "factory": "segments",
-                        "args": (x0, y0, x1, y1),
-                        "kwargs": entry_kwargs,
-                    },
-                )
+        entry_kwargs: dict[str, Any] = {
+            "color": chosen_color,
+            "colormap": colormap,
+            # Segments supports a direct per-instance width channel, so keep
+            # every sampled streamline width rather than quantizing it.
+            "width": width_value,
+        }
+        if color_domain is not None and not isinstance(chosen_color, str):
+            entry_kwargs["domain"] = color_domain
+        entries = [
+            self._add(
+                "@mark",
+                {
+                    "factory": "segments",
+                    "args": (x0, y0, x1, y1),
+                    "kwargs": entry_kwargs,
+                },
             )
+        ]
         collection = PolyCollection(self, entries[0])
         arrow_collection = collection
         if num_arrows > 0 and len(x0):
-            if native_fast_path:
-                arrow_count = max(
-                    1,
-                    min(len(x0), num_arrows * int(30 * float(density_xy[0]))),
+            arrow_indices_list: list[int] = []
+            segment_offset = 0
+            for streamline in source_segments:
+                lengths = np.hypot(
+                    np.diff(streamline[:, 0]),
+                    np.diff(streamline[:, 1]),
                 )
-                arrow_indices = np.unique(np.linspace(0, len(x0) - 1, arrow_count, dtype=np.int64))
-            else:
-                arrow_indices_list: list[int] = []
-                segment_offset = 0
-                for streamline in source_segments:
-                    deltas = np.diff(streamline, axis=0)
-                    lengths = np.hypot(
-                        deltas[:, 0] / max(float(np.ptp(x_values)), np.finfo(float).eps),
-                        deltas[:, 1] / max(float(np.ptp(y_values)), np.finfo(float).eps),
+                cumulative = np.cumsum(lengths)
+                if cumulative.size and np.isfinite(cumulative[-1]) and cumulative[-1] > 0.0:
+                    targets = cumulative[-1] * (
+                        np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
                     )
-                    cumulative = np.cumsum(lengths)
-                    if cumulative.size and cumulative[-1] > 0.0:
-                        targets = cumulative[-1] * (
-                            np.arange(1, num_arrows + 1, dtype=np.float64) / (num_arrows + 1)
-                        )
-                        local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
-                        arrow_indices_list.extend((segment_offset + local).tolist())
-                    segment_offset += len(lengths)
-                arrow_indices = np.unique(np.asarray(arrow_indices_list, dtype=np.int64))
+                    local = np.clip(np.searchsorted(cumulative, targets), 0, len(lengths) - 1)
+                    # Do not deduplicate: Matplotlib also emits exactly
+                    # num_arrows when multiple targets select one coarse segment.
+                    arrow_indices_list.extend((segment_offset + local).tolist())
+                segment_offset += len(lengths)
+            arrow_indices = np.asarray(arrow_indices_list, dtype=np.int64)
             dx = x1[arrow_indices] - x0[arrow_indices]
             dy = y1[arrow_indices] - y0[arrow_indices]
             lengths = np.hypot(dx, dy)
@@ -6084,7 +6089,10 @@ class PlotTypeMixin:
                 scale = (
                     0.022 * min(float(np.ptp(x_values)), float(np.ptp(y_values))) * float(arrowsize)
                 )
-                tip_x, tip_y = x1[arrow_indices], y1[arrow_indices]
+                # Matplotlib places the head at the midpoint of the selected
+                # cumulative-distance segment.
+                tip_x = (x0[arrow_indices] + x1[arrow_indices]) * 0.5
+                tip_y = (y0[arrow_indices] + y1[arrow_indices]) * 0.5
                 base_x, base_y = tip_x - ux * scale, tip_y - uy * scale
                 wing = scale * 0.42
                 left_x, left_y = base_x - uy * wing, base_y + ux * wing
@@ -6096,6 +6104,11 @@ class PlotTypeMixin:
                     "color": arrow_color,
                     "colormap": colormap,
                     "opacity": 1.0,
+                    "stroke_width": (
+                        np.asarray(width_value, dtype=np.float64)[arrow_indices]
+                        if isinstance(width_value, np.ndarray)
+                        else float(width_value)
+                    ),
                 }
                 if color_domain is not None and not isinstance(arrow_color, str):
                     arrow_kwargs["domain"] = color_domain

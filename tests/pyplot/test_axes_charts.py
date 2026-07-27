@@ -429,6 +429,84 @@ def test_default_streamplot_uses_the_native_integrator(monkeypatch) -> None:
     assert called
 
 
+def test_native_streamplot_keeps_trajectories_for_arrows_and_widths(monkeypatch) -> None:
+    from xy import kernels
+
+    def native_segments(*_args, **_kwargs):
+        # Native output is ordered by seed, then backward/forward integration.
+        # The first two branch pairs share their seed; the last trajectory only
+        # has one branch.
+        return (
+            np.array([0.0, -1.0, 0.0, 1.0, 0.0, 0.0, -2.0]),
+            np.array([-1.0, -2.0, 1.0, 2.0, -1.0, 1.0, -1.0]),
+            np.array([0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.5]),
+            np.array([0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.5]),
+        )
+
+    monkeypatch.setattr(kernels, "streamlines", native_segments)
+    x = np.linspace(-2.0, 2.0, 5)
+    y = np.array([0.0, 1.0])
+    width = np.broadcast_to(np.arange(1.0, 6.0), (2, 5))
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        x,
+        y,
+        np.ones((2, 5)),
+        np.zeros((2, 5)),
+        linewidth=width,
+        num_arrows=2,
+    )
+
+    line_entry, arrow_entry = ax._entries
+    assert line_entry["factory"] == "segments"
+    np.testing.assert_allclose(
+        line_entry["args"][0],
+        [-2.0, -1.0, 0.0, 1.0, -1.0, 0.0, -2.0],
+    )
+    np.testing.assert_allclose(
+        line_entry["kwargs"]["width"],
+        [1.5, 2.5, 3.5, 4.5, 2.5, 3.5, 1.5],
+    )
+
+    assert arrow_entry["factory"] == "triangle_mesh"
+    # Exactly two arrows per native trajectory, including the one-segment
+    # trajectory where both cumulative-distance targets select one segment.
+    assert len(arrow_entry["args"][0]) == 6
+    np.testing.assert_allclose(
+        arrow_entry["args"][0],
+        [-0.5, 0.5, -0.5, 0.5, -1.5, -1.5],
+    )
+    np.testing.assert_allclose(
+        arrow_entry["kwargs"]["stroke_width"],
+        [2.5, 3.5, 2.5, 3.5, 1.5, 1.5],
+    )
+
+
+def test_native_streamplot_preserves_mask_as_nan_topology(monkeypatch) -> None:
+    from xy import kernels
+
+    seen_u = None
+
+    def native_segments(_x, _y, u, _v, **_kwargs):
+        nonlocal seen_u
+        seen_u = u.copy()
+        return tuple(np.array([], dtype=np.float64) for _ in range(4))
+
+    monkeypatch.setattr(kernels, "streamlines", native_segments)
+    u = np.ma.array(np.ones((3, 3)), mask=False)
+    u.mask[1, 1] = True
+    _fig, ax = plt.subplots()
+    ax.streamplot(
+        np.arange(3.0),
+        np.arange(3.0),
+        u,
+        np.zeros((3, 3)),
+    )
+
+    assert seen_u is not None
+    assert np.isnan(seen_u[1, 1])
+
+
 def test_artist_set_ydata_rebuilds() -> None:
     _fig, ax = plt.subplots()
     (line,) = ax.plot([0, 1, 2], [1, 2, 3])
