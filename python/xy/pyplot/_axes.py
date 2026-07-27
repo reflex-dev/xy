@@ -6098,6 +6098,12 @@ class Axes(PlotTypeMixin):
                 children.append(xy.line(x=x, y=y, **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
+                if "_mpl_line_marker_path_points" in e:
+                    stroke_points = float(e["_mpl_line_marker_stroke_points"])
+                    kw["stroke_width"] = stroke_points * self._point_scale()
+                    kw["size"] = (
+                        float(e["_mpl_line_marker_path_points"]) + stroke_points
+                    ) * self._point_scale()
                 if "_artist_alpha" in kw:
                     # pyplot alpha overrides intrinsic RGBA. Core opacity is
                     # an independent multiplier, so do not apply it twice.

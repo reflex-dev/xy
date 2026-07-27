@@ -1419,6 +1419,12 @@ _SYMBOL_BUILDERS = {
         f'<path d="M {_num(cx - 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx + 0.707 * r)} {_num(cy + 0.707 * r)} '
         f'M {_num(cx + 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx - 0.707 * r)} {_num(cy + 0.707 * r)}" fill="none"'
     ),
+    "horizontal_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} H {_num(cx + r)}" fill="none"'
+    ),
+    "vertical_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} V {_num(cy + r)}" fill="none"'
+    ),
     "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
     "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
     "star": lambda cx, cy, r: _star_path(cx, cy, r, 5, 0.45, -90.0),
@@ -3164,7 +3170,12 @@ def _scatter_marks(
         )
         symbol = symbols[i]
         builder = _SYMBOL_BUILDERS.get(symbol)
-        line_symbol = symbol in {"plus_line", "x_line"}
+        line_symbol = symbol in {
+            "plus_line",
+            "x_line",
+            "horizontal_line",
+            "vertical_line",
+        }
         stroke_w = float(stroke_widths[i])
         if line_symbol and stroke_w <= 0:
             stroke_w = 1.0
@@ -3223,6 +3234,8 @@ _SYMBOL_NAMES = (
     "thin_diamond",
     "plus_line",
     "x_line",
+    "horizontal_line",
+    "vertical_line",
 )
 
 
@@ -4090,7 +4103,12 @@ def _legend(
             builder = _SYMBOL_BUILDERS.get(symbol)
             radius = max(0.5, float(style.get("size", 8.0)) / 2.0)
             stroke_w = float(style.get("stroke_width", 0.0))
-            line_symbol = symbol in {"plus_line", "x_line"}
+            line_symbol = symbol in {
+                "plus_line",
+                "x_line",
+                "horizontal_line",
+                "vertical_line",
+            }
             if line_symbol and stroke_w <= 0:
                 stroke_w = 1.0
             stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None

@@ -1952,6 +1952,7 @@ export class ChartView {
           triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
           triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
           plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+          horizontal_line: "M4 7h10", vertical_line: "M9 2v10",
           cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
           x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
           pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
@@ -2913,7 +2914,7 @@ export class ChartView {
   // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16, horizontal_line: 17, vertical_line: 18 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke

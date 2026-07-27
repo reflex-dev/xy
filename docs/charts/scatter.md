@@ -146,7 +146,7 @@ or measures without changing the x/y relationship.
 uses `colormap` and optional `color_domain`; categorical color creates a stable
 palette. `size_range` maps numeric size values into pixel diameters.
 
-Markers support 17 renderer-backed symbols, from `circle`, `square`, and
+Markers support 19 renderer-backed symbols, from `circle`, `square`, and
 directional triangles through `star`, `hexagon`, pixel/point, and line-only
 glyphs, plus `stroke` and `stroke_width` for crisp borders. The complete list
 is in [Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients).

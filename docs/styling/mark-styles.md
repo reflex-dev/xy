@@ -114,12 +114,13 @@ Joins are always round and are not selectable.
 
 ## Marker shape
 
-`marker-shape` picks one of the 17 renderer-backed scatter symbols — `circle`,
+`marker-shape` picks one of the 19 renderer-backed scatter symbols — `circle`,
 `square`, `diamond`, `triangle`, `cross`, `hexagon`, `pentagon`, `star`,
 `triangle_down`, `triangle_left`, `triangle_right`, `x`, `point`, `pixel`,
-`thin_diamond`, `plus_line`, `x_line` — and is the CSS spelling of the existing
-`symbol=` argument. It is an XY vocabulary name rather than a standard CSS
-property: CSS has no shape keyword for a non-DOM point mark.
+`thin_diamond`, `plus_line`, `x_line`, `horizontal_line`, `vertical_line` — and
+is the CSS spelling of the existing `symbol=` argument. It is an XY vocabulary
+name rather than a standard CSS property: CSS has no shape keyword for a non-DOM
+point mark.
 
 ~~~python
 xy.scatter(x, y, size=12, style={"marker-shape": "diamond", "fill": "#22c55e"})
@@ -210,11 +211,12 @@ declarations:
   Use `{"gradient": "...", "space": "plot"}` for one plot-space gradient.
 - `corner_radius=(tip, base)` rounds value and baseline ends independently for
   bars, columns, and histograms.
-- Scatter `symbol` accepts all 17 renderer-backed shapes: `circle`, `square`,
+- Scatter `symbol` accepts all 19 renderer-backed shapes: `circle`, `square`,
   `diamond`, `triangle`, `triangle_down`, `triangle_left`, `triangle_right`,
   `cross`, `x`, `hexagon`, `pentagon`, `star`, `point`, `pixel`,
-  `thin_diamond`, `plus_line`, and `x_line`. Every shape combines with
-  `stroke` / `stroke_width`; the last two are intentionally line-only glyphs.
+  `thin_diamond`, `plus_line`, `x_line`, `horizontal_line`, and `vertical_line`.
+  Every shape combines with `stroke` / `stroke_width`; the last four are
+  intentionally line-only glyphs.
 - Box plots expose `whisker_style`, `median_style`, and `outlier_style` for
   their compound parts; the main `style` mapping controls the box body.
 

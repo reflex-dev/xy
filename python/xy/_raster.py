@@ -119,6 +119,8 @@ _SYMBOLS = {
     "thin_diamond": 14,
     "plus_line": 15,
     "x_line": 16,
+    "horizontal_line": 17,
+    "vertical_line": 18,
 }
 
 
@@ -2397,7 +2399,16 @@ def _emit_legend(
             symbol = style.get("symbol", "circle")
             sym = _SYMBOLS.get(symbol, 0)
             sw = float(style.get("stroke_width", 0.0))
-            if symbol in {"plus_line", "x_line"} and sw <= 0:
+            if (
+                symbol
+                in {
+                    "plus_line",
+                    "x_line",
+                    "horizontal_line",
+                    "vertical_line",
+                }
+                and sw <= 0
+            ):
                 sw = 1.0
             stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
             cmd.point(
