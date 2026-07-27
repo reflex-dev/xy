@@ -60,6 +60,48 @@ def test_aspect_loglog_uses_transformed_spans_and_exposes_adjustable() -> None:
     assert axes["y"]["domain"][0] > 0
 
 
+def test_shared_aspect_options_fail_before_mutating_axes() -> None:
+    _, shared = plt.subplots(1, 2, sharex=True)
+    left, right = shared
+    initial = [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ]
+
+    with pytest.raises(NotImplementedError, match=r"set_adjustable\(share=True\)"):
+        left.set_adjustable("datalim", share=True)
+    assert [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ] == initial
+
+    with pytest.raises(NotImplementedError, match=r"set_aspect\(share=True\)"):
+        left.set_aspect("equal", adjustable="datalim", anchor="SW", share=True)
+    assert [
+        (
+            ax._aspect_equal,
+            ax._aspect_value,
+            ax._aspect_adjustable,
+            getattr(ax, "_anchor", None),
+        )
+        for ax in shared
+    ] == initial
+
+    left.set_adjustable("datalim")
+    assert left.get_adjustable() == "datalim"
+    assert right.get_adjustable() == "box"
+
+
 def test_log_demo_constrained_probe_keeps_an_empty_log_domain_positive() -> None:
     _, empty = plt.subplots(layout="constrained")
     empty.set_yscale("log")

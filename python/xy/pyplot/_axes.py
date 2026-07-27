@@ -4039,7 +4039,11 @@ class Axes(PlotTypeMixin):
 
     def set_adjustable(self, adjustable: str, share: bool = False) -> None:
         """Select ``"box"`` or ``"datalim"`` aspect adjustment."""
-        del share  # shared-axis aspect constraints are resolved by the compositor
+        if share:
+            raise not_implemented(
+                "Axes.set_adjustable(share=True)",
+                "calling set_adjustable() on each shared Axes with share=False",
+            )
         if adjustable not in {"box", "datalim"}:
             raise ValueError("adjustable must be 'box' or 'datalim'")
         self._aspect_adjustable = adjustable
@@ -4057,10 +4061,14 @@ class Axes(PlotTypeMixin):
 
         ``adjustable`` is ``"box"`` (resize the axes rectangle) or
         ``"datalim"`` (expand a data limit at draw time); ``anchor`` controls
-        where a box adjustment lands and ``share`` is accepted as a compat
-        hint. Anything else raises loudly.
+        where a box adjustment lands. ``share=True`` is not yet supported and
+        fails loudly before mutating any axes. Anything else raises loudly.
         """
-        del share  # compat-noop: aspect sharing is resolved by shared axis state
+        if share:
+            raise not_implemented(
+                "Axes.set_aspect(share=True)",
+                "calling set_aspect() on each shared Axes with share=False",
+            )
         if kwargs:
             raise TypeError(
                 f"set_aspect() got an unexpected keyword argument {next(iter(kwargs))!r}"
