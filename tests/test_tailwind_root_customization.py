@@ -45,6 +45,7 @@ _SLOT_TAILWIND_LAYERS = """
     background: rgb(124, 58, 237);
     border: 3px solid rgb(253, 224, 71);
     padding: 13px;
+    box-shadow: 0 6px 0 rgb(34, 197, 94);
   }
   .xy-tailwind-axis-title {
     color: rgb(220, 38, 38);
@@ -167,14 +168,10 @@ def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> No
     # signature, so ordinary data-only publishes retain the updatePayload path.
     assert "legend_traces: (spec?.traces || []).map(legendTraceSpec)" in jsx
     assert "const axisLayoutSpec = (spec) =>" in jsx
-    assert (
-        "range:"
-        not in jsx[
-            jsx.index("const axisLayoutSpec = (spec) =>") : jsx.index(
-                "const mountedChromeSpec = (spec) =>"
-            )
-        ]
-    )
+    layout_at = jsx.index("const axisLayoutSpec = (spec) =>")
+    chrome_at = jsx.index("const mountedChromeSpec = (spec) =>")
+    assert layout_at < chrome_at, "axisLayoutSpec must precede mountedChromeSpec"
+    assert "range:" not in jsx[layout_at:chrome_at]
     assert "const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));" in jsx
     assert "if (!chromeChanged && view?.updatePayload?.(spec, nextBuffers)) {" in jsx
     assert jsx.index("const chromeChanged = Boolean(") < jsx.index(
@@ -195,7 +192,8 @@ def test_live_wrapper_silently_hydrates_durable_selection_and_all_axis_ranges() 
     assert 'source: "republish",' in jsx
     assert "dispatch: false," in jsx
     assert "broadcast: false," in jsx
-    assert "restoreSelectionMask(selectionMaskRequest);" in jsx
+    assert jsx.count("hydrateSelectionForRepublish(selectionToRestore);") == 2
+    assert jsx.count("restoreSelectionMask(selectionMaskRequest);") == 2
     assert "if (isRestore) clientMessage = { ...message, suppress_event: true };" in jsx
     assert "cb(clientMessage, data.buffers || [])" in jsx
     # Geometry is hydrated before the one direct mask re-request.
@@ -420,15 +418,22 @@ def test_custom_tooltip_state_does_not_override_utilities_or_explicit_styles(
     const child = document.createElement("div");
     child.textContent = "Custom tooltip";
     view.setCustomTooltip(child);
+    view.tooltip.classList.remove("xy-tailwind-tooltip");
+    const classless = {
+      boxShadow: getComputedStyle(view.tooltip).boxShadow,
+    };
+    view.tooltip.classList.add("xy-tailwind-tooltip");
     const utilityStyle = getComputedStyle(view.tooltip);
     const utility = {
       background: utilityStyle.backgroundColor,
       border: utilityStyle.border,
       padding: utilityStyle.padding,
+      boxShadow: utilityStyle.boxShadow,
       state: view.tooltip.hasAttribute("data-xy-custom-tooltip"),
       inlineBackground: view.tooltip.style.background,
       inlineBorder: view.tooltip.style.border,
       inlinePadding: view.tooltip.style.padding,
+      inlineBoxShadow: view.tooltip.style.boxShadow,
     };
 
     view.destroy();
@@ -443,6 +448,7 @@ def test_custom_tooltip_state_does_not_override_utilities_or_explicit_styles(
             background: "#0f766e",
             border: "4px dotted #fbbf24",
             padding: 7,
+            box_shadow: "0 7px 0 #f43f5e",
           },
         },
       },
@@ -453,11 +459,13 @@ def test_custom_tooltip_state_does_not_override_utilities_or_explicit_styles(
     view.setCustomTooltip(explicitChild);
     const explicitStyle = getComputedStyle(view.tooltip);
     document.body.setAttribute("data-xy-tooltip-cascade-probe", JSON.stringify({
+      classless,
       utility,
       explicit: {
         background: explicitStyle.backgroundColor,
         border: explicitStyle.border,
         padding: explicitStyle.padding,
+        boxShadow: explicitStyle.boxShadow,
         state: view.tooltip.hasAttribute("data-xy-custom-tooltip"),
       },
     }));
@@ -479,19 +487,23 @@ def test_custom_tooltip_state_does_not_override_utilities_or_explicit_styles(
         label="Tailwind custom tooltip cascade probe",
     )
 
+    assert result["classless"] == {"boxShadow": "none"}
     assert result["utility"] == {
         "background": "rgb(124, 58, 237)",
         "border": "3px solid rgb(253, 224, 71)",
         "padding": "13px",
+        "boxShadow": "rgb(34, 197, 94) 0px 6px 0px 0px",
         "state": True,
         "inlineBackground": "",
         "inlineBorder": "",
         "inlinePadding": "",
+        "inlineBoxShadow": "",
     }
     assert result["explicit"] == {
         "background": "rgb(15, 118, 110)",
         "border": "4px dotted rgb(251, 191, 36)",
         "padding": "7px",
+        "boxShadow": "rgb(244, 63, 94) 0px 7px 0px 0px",
         "state": True,
     }
 

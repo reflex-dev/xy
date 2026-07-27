@@ -637,7 +637,17 @@ def test_tailwind_selection_slot_styles_lasso_without_changing_box_behavior(
         "data-xy-tailwind-lasso-slot-probe",
         label="Tailwind lasso selection-slot probe",
     )
-    assert result == {key: True for key in result}
+    assert result == {
+        "boxPaintStayedDefault": True,
+        "boxContractStayedIntact": True,
+        "slotReachedEveryNode": True,
+        "classPaintedFill": True,
+        "explicitStylePaintedStroke": True,
+        "pointerContractStayedIntact": True,
+        "hitTargetsHandle": True,
+        "handleDragStillWorks": True,
+        "lassoReplacedBox": True,
+    }
 
 
 # Box / x-range / y-range brushes persist like the lasso (view-state.md §2): the
@@ -820,6 +830,56 @@ _REPUBLISH_STATE_PROBE = """
   const host = document.getElementById("chart");
   let view = xy.renderStandalone(host, spec, buf);
   try {
+    const hydrateSelectionForRepublish = (target, selection) => {
+      const applied = target._applyStatePatch(
+        { v: 1, selection },
+        {
+          source: "republish",
+          history: false,
+          dispatch: false,
+          broadcast: false,
+        },
+      );
+      const localMaskApplied = applied === true
+        && target._restoreSelectionLocalMask(selection, { localMask: true });
+      return applied === true && localMaskApplied === true;
+    };
+    const selectableTrace = (target) => target.gpuTraces.find(
+      (trace) => trace.trace.kind === "scatter"
+        && trace.tier !== "density"
+        && !trace._legendHidden
+        && trace._cpu
+        && trace.n > 0,
+    );
+    const backendIneligibleTraces = (target) => target.gpuTraces.filter(
+      (trace) => trace.trace.kind !== "scatter"
+        || trace.tier === "density"
+        || trace._legendHidden,
+    );
+    const selectionMask = (target, trace = selectableTrace(target)) => {
+      if (!trace?.selBuf) return [];
+      const mask = new Float32Array(trace.n);
+      target.gl.bindBuffer(target.gl.ARRAY_BUFFER, trace.selBuf);
+      target.gl.getBufferSubData(target.gl.ARRAY_BUFFER, 0, mask);
+      return [...mask];
+    };
+    const hasImmediateSelectionMask = (target) => {
+      const trace = selectableTrace(target);
+      const mask = selectionMask(target, trace);
+      const backendIneligible = backendIneligibleTraces(target);
+      return Boolean(
+        trace
+        && trace.selActive === true
+        && trace.selBuf
+        && target._selectionCount > 0
+        && mask.some((selected) => selected === 1)
+        // Lines and aggregate density are absent from backend geometric
+        // selection replies, so provisional hydration must never mask them.
+        && backendIneligible.length === 2
+        && backendIneligible.every((candidate) => !candidate.selActive && !candidate.selBuf),
+      );
+    };
+
     view._drawNow();
     // Navigate only the secondary axis. The primary x/y aliases remain at
     // home, which is the case the old four-field wrapper check missed.
@@ -834,6 +894,47 @@ _REPUBLISH_STATE_PROBE = """
     );
     const rangeState = view.root.xy.state();
 
+    // Exercise the wrapper's unchanged-chrome updatePayload path: rebuilding
+    // the traces drops their mask buffers, so silent hydration must restore a
+    // provisional GPU mask immediately, before the backend can reply.
+    let semanticEvents = 0;
+    let broadcasts = 0;
+    let commSends = 0;
+    view.comm = { send: () => { commSends += 1; } };
+    view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
+    view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
+    view._broadcastLinkedSelection = () => { broadcasts += 1; };
+    const updatedInPlace = view.updatePayload(spec, view._payload);
+    view._transitionView = null;
+    view._setView(
+      { ranges: rangeState.ranges },
+      { animate: false, source: "republish", phase: "end", history: false },
+    );
+    const inPlaceApplied = hydrateSelectionForRepublish(view, rangeState.selection);
+    view._drawNow();
+    const inPlaceMaskBeforeGlLoss = selectionMask(view);
+    const priorGlLoss = view._glLost;
+    view._glLost = true;
+    const glLossHydrationGuarded =
+      view._restoreSelectionLocalMask(
+        rangeState.selection,
+        { localMask: true },
+      ) === false;
+    view._glLost = priorGlLoss;
+    const inPlaceRangeAndGlLossGuarded =
+      updatedInPlace
+      && inPlaceApplied
+      && view.root.xy.state().selection?.range?.mode === "x"
+      && view._boxSelection?.mode === "x"
+      && hasImmediateSelectionMask(view)
+      && glLossHydrationGuarded
+      && JSON.stringify(selectionMask(view)) === JSON.stringify(inPlaceMaskBeforeGlLoss);
+    const inPlaceRestoreStayedSilent =
+      semanticEvents === 0
+      && broadcasts === 0
+      && commSends === 0
+      && view._historyPast.length === 0;
+
     view.destroy();
     host.replaceChildren();
     const rangeSpec = {
@@ -845,9 +946,9 @@ _REPUBLISH_STATE_PROBE = """
       },
     };
     view = xy.renderStandalone(host, rangeSpec, buf);
-    let semanticEvents = 0;
-    let broadcasts = 0;
-    let commSends = 0;
+    semanticEvents = 0;
+    broadcasts = 0;
+    commSends = 0;
     view.comm = { send: () => { commSends += 1; } };
     view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
     view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
@@ -856,22 +957,15 @@ _REPUBLISH_STATE_PROBE = """
       { ranges: rangeState.ranges },
       { animate: false, source: "republish", phase: "end", history: false },
     );
-    const rangeApplied = view._applyStatePatch(
-      { v: 1, selection: rangeState.selection },
-      {
-        source: "republish",
-        history: false,
-        dispatch: false,
-        broadcast: false,
-      },
-    );
+    const rangeApplied = hydrateSelectionForRepublish(view, rangeState.selection);
     view._drawNow();
     const rangeHydrated =
       rangeApplied
       && view.root.xy.state().selection?.range?.mode === "x"
       && view._boxSelection?.mode === "x"
       && view.selRect.style.display === "block"
-      && view.selRect.dataset.xyBand === "select-x";
+      && view.selRect.dataset.xyBand === "select-x"
+      && hasImmediateSelectionMask(view);
     const secondaryAxisHydrated =
       JSON.stringify(view.root.xy.state().ranges.y2)
       === JSON.stringify(rangeState.ranges.y2);
@@ -911,15 +1005,7 @@ _REPUBLISH_STATE_PROBE = """
     view.root.addEventListener("xy:brush", () => { semanticEvents += 1; });
     view.root.addEventListener("xy:select", () => { semanticEvents += 1; });
     view._broadcastLinkedSelection = () => { broadcasts += 1; };
-    const polygonApplied = view._applyStatePatch(
-      { v: 1, selection: polygonState.selection },
-      {
-        source: "republish",
-        history: false,
-        dispatch: false,
-        broadcast: false,
-      },
-    );
+    const polygonApplied = hydrateSelectionForRepublish(view, polygonState.selection);
     view._drawNow();
     const polygonHydrated =
       polygonApplied
@@ -927,34 +1013,59 @@ _REPUBLISH_STATE_PROBE = """
       && view._lassoPolygon?.length === 4
       && view.selLasso.style.display === "block"
       && !!view.selLassoPath.getAttribute("d")
-      && view.selRect.style.display === "none";
+      && view.selRect.style.display === "none"
+      && hasImmediateSelectionMask(view);
     const polygonChromeChanged =
       view.root.classList.contains("republished-tailwind-polygon")
       && view.root.querySelector('[data-xy-slot="title"]')?.textContent
         === "Republished polygon";
-    const polygonRestoreStayedSilent =
+    const polygonHydrationStayedSilent =
       semanticEvents === 0
       && broadcasts === 0
       && commSends === 0
       && view._historyPast.length === 0;
+
+    // The tagged authoritative reply replaces, rather than combines with,
+    // the provisional mask and remains silent. An ordinary reply still emits
+    // the public semantic event.
+    const polygonTrace = selectableTrace(view);
+    const provisionalMask = selectionMask(view, polygonTrace);
+    const authoritativeIndices = new Uint32Array([0]);
     view._onKernelMsg(
-      { type: "selection", traces: [], total: 0, suppress_event: true },
-      [],
+      {
+        type: "selection",
+        traces: [{ id: polygonTrace.trace.id, count: 1, buf: 0 }],
+        total: 1,
+        suppress_event: true,
+      },
+      [authoritativeIndices.buffer],
     );
-    const taggedMaskReplyStayedSilent = semanticEvents === 0;
+    const authoritativeMask = selectionMask(view, polygonTrace);
+    const authoritativeReplyOverwroteSilently =
+      semanticEvents === 0
+      && provisionalMask[0] === 0
+      && authoritativeMask[0] === 1
+      && authoritativeMask.slice(1).every((selected) => selected === 0)
+      && JSON.stringify(authoritativeMask) !== JSON.stringify(provisionalMask)
+      && backendIneligibleTraces(view).every(
+        (candidate) => !candidate.selActive && !candidate.selBuf,
+      );
     view._onKernelMsg({ type: "selection", traces: [], total: 0 }, []);
-    const ordinaryMaskReplyStillDispatched = semanticEvents === 1;
+    const polygonRestoreAndRepliesCorrect =
+      polygonHydrationStayedSilent
+      && authoritativeReplyOverwroteSilently
+      && semanticEvents === 1;
 
     document.body.setAttribute("data-xy-republish-state-probe", JSON.stringify({
+      inPlaceRangeAndGlLossGuarded,
+      inPlaceRestoreStayedSilent,
       rangeHydrated,
       secondaryAxisHydrated,
       rangeChromeChanged,
       rangeRestoreStayedSilent,
       polygonHydrated,
       polygonChromeChanged,
-      polygonRestoreStayedSilent,
-      taggedMaskReplyStayedSilent,
-      ordinaryMaskReplyStillDispatched,
+      polygonRestoreAndRepliesCorrect,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -968,6 +1079,7 @@ def test_republish_hydrates_all_axis_ranges_and_selection_without_echo(
 ) -> None:
     chart = xy.scatter_chart(
         xy.scatter([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 4.0, 9.0]),
+        xy.scatter([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 4.0, 9.0], density=True),
         xy.line([0.0, 1.0, 2.0, 3.0], [100.0, 106.0, 114.0, 120.0], y_axis="y2"),
         xy.y_axis(id="y2", side="right"),
         width=480,
@@ -981,7 +1093,17 @@ def test_republish_hydrates_all_axis_ranges_and_selection_without_echo(
         "data-xy-republish-state-probe",
         label="republish durable-state hydration probe",
     )
-    assert result == {key: True for key in result}
+    assert result == {
+        "inPlaceRangeAndGlLossGuarded": True,
+        "inPlaceRestoreStayedSilent": True,
+        "rangeHydrated": True,
+        "secondaryAxisHydrated": True,
+        "rangeChromeChanged": True,
+        "rangeRestoreStayedSilent": True,
+        "polygonHydrated": True,
+        "polygonChromeChanged": True,
+        "polygonRestoreAndRepliesCorrect": True,
+    }
 
 
 _ROWS_PROBE = """

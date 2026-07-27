@@ -437,6 +437,23 @@ export function XYChart(props) {
       emitMessage(restore);
     };
 
+    const hydrateSelectionForRepublish = (selection) => {
+      if (!selection || !view) return false;
+      const applied = view._applyStatePatch?.(
+        { v: 1, selection },
+        {
+          source: "republish",
+          history: false,
+          dispatch: false,
+          broadcast: false,
+        },
+      );
+      if (applied === true) {
+        view._restoreSelectionLocalMask?.(selection, { localMask: true });
+      }
+      return applied === true;
+    };
+
     const dispatchHover = (row) => {
       pendingHover = row;
       if (hoverTimer !== null) return;
@@ -566,6 +583,9 @@ export function XYChart(props) {
           view._transitionView = null;
           view._setView(previousView, { animate: false, source: "republish" });
         }
+        if (selectionMaskRequest) {
+          hydrateSelectionForRepublish(selectionToRestore);
+        }
         restoreSelectionMask(selectionMaskRequest);
         return;
       }
@@ -584,18 +604,9 @@ export function XYChart(props) {
         view._setView(previousView, { animate: false, source: "republish" });
       }
       if (selectionMaskRequest) {
-        // Hydrate the durable geometry before its eventual mask reply. This is
-        // deliberately silent: the outgoing gesture already dispatched, and
-        // a republish must not broadcast or echo semantic callbacks.
-        view._applyStatePatch?.(
-          { v: 1, selection: selectionToRestore },
-          {
-            source: "republish",
-            history: false,
-            dispatch: false,
-            broadcast: false,
-          },
-        );
+        // Hydrate durable geometry plus a provisional local mask before the
+        // eventual authoritative reply, without replaying the user gesture.
+        hydrateSelectionForRepublish(selectionToRestore);
       }
       restoreSelectionMask(selectionMaskRequest);
       // Debug/e2e handle (same spirit as the standalone example's
