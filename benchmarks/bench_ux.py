@@ -930,6 +930,17 @@ def main() -> None:
                 flush=True,
             )
 
+    report = {
+        "generated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "contract": "correct(sentinels+domain) then pixel-stable; fixed-cadence inputs",
+        "screencast": "off" if args.no_record else "on (uniform across arms)",
+        "sizes": sizes,
+        "arms": arms,
+        "environment": collect_environment_metadata(chromium=args.chrome),
+        "results": rows,
+    }
+    args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
     if not args.no_record and not args.no_grid and video_dir.exists():
         # One synced grid per size: every arm replayed against a shared clock,
         # so a moment in the video is the same moment for all of them.
@@ -952,6 +963,8 @@ def main() -> None:
                         str(staged),
                         "--out",
                         str(grid),
+                        "--report",
+                        str(args.out),
                     ],
                     check=True,
                     capture_output=True,
@@ -960,16 +973,6 @@ def main() -> None:
             except subprocess.CalledProcessError as exc:
                 print(f"grid video failed for n={n}: {exc.stderr[-300:]}", flush=True)
 
-    report = {
-        "generated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "contract": "correct(sentinels+domain) then pixel-stable; fixed-cadence inputs",
-        "screencast": "off" if args.no_record else "on (uniform across arms)",
-        "sizes": sizes,
-        "arms": arms,
-        "environment": collect_environment_metadata(chromium=args.chrome),
-        "results": rows,
-    }
-    args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(args.out)
 
 

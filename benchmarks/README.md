@@ -189,8 +189,13 @@ In the grid, video time T is T ms after page load **for every panel
 simultaneously** — each arm's frames carry offsets from its own navigation,
 so replaying them on one clock makes the panels directly comparable. Panels
 show black before their first frame and hold their last frame once done.
-Every panel is labeled with its arm and a live elapsed-time readout, so any
-moment can be checked against the JSON.
+
+**Each panel is a stopwatch.** Its timer runs blue while that chart is
+loading, then **freezes green on the arm's measured `visible_complete_ms`**
+the moment it renders. The frozen figure is read from the run's own JSON
+(`--report`), not inferred from the video, so what the panel displays is the
+number the benchmark recorded — the video and the measurement cannot drift
+apart.
 
 Screencast cost is measured, not assumed: across three recorded and three
 unrecorded runs of all five arms at 100k, the difference in

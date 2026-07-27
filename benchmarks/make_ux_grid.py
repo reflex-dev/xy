@@ -48,6 +48,12 @@ def font(size: int) -> ImageFont.FreeTypeFont:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("video_dir", type=Path)
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="bench_ux JSON; supplies each arm's measured visible_complete_ms "
+        "so its timer freezes on the number the benchmark actually recorded",
+    )
     parser.add_argument("--out", type=Path, default=Path("ux-grid.mp4"))
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--cell-width", type=int, default=640)
@@ -73,6 +79,18 @@ def main() -> None:
     cols = min(args.cols, len(tracks))
     rows = (len(tracks) + cols - 1) // cols
     canvas_size = (cols * cell[0], rows * (cell[1] + label_h))
+
+    # Each panel's timer stops at that arm's render.  Prefer the measured
+    # visible_complete_ms; fall back to its last captured frame, which is the
+    # same moment since recording stops at visible-complete.
+    finish: dict[str, float] = {name: float(frames[-1][0]) for name, frames in tracks.items()}
+    if args.report and args.report.exists():
+        import json
+
+        for row in json.loads(args.report.read_text()).get("results", []):
+            key = f"{row['arm']}-{row['n']}"
+            if key in finish and row.get("visible_complete_ms"):
+                finish[key] = float(row["visible_complete_ms"])
 
     span_ms = max(frames[-1][0] for frames in tracks.values())
     step_ms = 1000.0 / args.fps / args.slowdown
@@ -106,13 +124,21 @@ def main() -> None:
                     cache[key] = Image.open(path).convert("RGB").resize(cell)
                 canvas.paste(cache[key], (x0, y0 + label_h))
             label = name.rsplit("-", 1)[0]
-            draw.rectangle([x0, y0, x0 + cell[0], y0 + label_h], fill=(28, 28, 32))
+            done = now_ms >= finish[name]
+            # Stopwatch semantics: the timer runs while the chart is loading
+            # and freezes green on the render time once it is up.
+            shown_ms = finish[name] if done else now_ms
+            colour = (86, 222, 132) if done else (150, 200, 255)
+            draw.rectangle(
+                [x0, y0, x0 + cell[0], y0 + label_h],
+                fill=(24, 42, 30) if done else (28, 28, 32),
+            )
             draw.text((x0 + 10, y0 + 7), label, font=title_font, fill=(235, 235, 240))
             draw.text(
-                (x0 + cell[0] - 96, y0 + 8),
-                f"{now_ms / 1000:6.2f}s",
+                (x0 + cell[0] - 116, y0 + 8),
+                f"{shown_ms / 1000:6.3f}s",
                 font=time_font,
-                fill=(150, 200, 255),
+                fill=colour,
             )
         canvas.save(staging / f"{index:05d}.png")
 
