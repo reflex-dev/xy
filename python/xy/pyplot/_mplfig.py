@@ -17,7 +17,7 @@ import numpy as np
 
 from .. import _textblock
 from ._artists import Text
-from ._axes import _DEFAULT_AXES_RECT, Axes, _plain_text, _scale_values
+from ._axes import _DEFAULT_AXES_RECT, Axes, _font_size_points, _plain_text, _scale_values
 from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
@@ -522,7 +522,7 @@ class Figure:
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
-        size = kwargs.pop("fontsize", kwargs.pop("size", 16.0))
+        size = kwargs.pop("fontsize", kwargs.pop("size", "large"))
         weight = kwargs.pop("fontweight", kwargs.pop("weight", "normal"))
         family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
         color = kwargs.pop("color", "#262626")
@@ -534,7 +534,7 @@ class Figure:
             raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
         self._suptitle = _plain_text(title)
         self._suptitle_style = {
-            "size": float(size),
+            "size": _font_size_points(size, rcParams["font.size"]),
             "weight": str(weight),
             "family": str(family),
             "color": str(color),
@@ -544,6 +544,12 @@ class Figure:
             "va": str(va),
         }
         self._invalidate()
+
+    def _resolved_suptitle_style(self) -> dict[str, Any]:
+        """Resolve Matplotlib's point-sized title style for this output DPI."""
+        style = dict(self._suptitle_style)
+        style["size"] = float(style.get("size", 12.0)) * self.get_dpi() / 72.0
+        return style
 
     def supxlabel(self, label: str, **kwargs: Any) -> Text:
         self._supxlabel = str(label)
@@ -680,7 +686,7 @@ class Figure:
                         )
 
             if self._suptitle:
-                style = self._suptitle_style or {}
+                style = self._resolved_suptitle_style()
                 block = _textblock.measure(self._suptitle, float(style.get("size", 16.0)))
                 y = float(style.get("y", 0.98))
                 suptitle_bottom = max(0.0, (1.0 - y) * canvas_h) + block.height
@@ -1421,7 +1427,7 @@ class Figure:
                         self._nrows,
                         self._ncols,
                         self._suptitle,
-                        self._suptitle_style,
+                        self._resolved_suptitle_style(),
                         positions=(
                             None
                             if rects is None
@@ -1482,7 +1488,7 @@ class Figure:
             self._ncols,
             self._suptitle,
             self._shared_colorbar,
-            suptitle_style=self._suptitle_style,
+            suptitle_style=self._resolved_suptitle_style(),
             positions=positions,
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
@@ -1507,7 +1513,7 @@ class Figure:
                     self._nrows,
                     self._ncols,
                     self._suptitle,
-                    self._suptitle_style,
+                    self._resolved_suptitle_style(),
                     positions=(
                         None
                         if rects is None
@@ -1603,7 +1609,7 @@ class Figure:
             content_w = sum(widths[:cols_used]) + 4 * (self._ncols - 1) + 8
             content_h = sum(heights[:rows_used]) + 4 * (rows_used - 1) + 8
             if self._suptitle:
-                size = float((self._suptitle_style or {}).get("size", 16))
+                size = float(self._resolved_suptitle_style()["size"])
                 content_h += round(size * 1.4) + 8  # h2 line box + top margin
             return doc, content_w, content_h
         return doc, width, height

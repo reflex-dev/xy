@@ -4,6 +4,13 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Figure-title point sizing — 2026-07-27
+
+- Pyplot suptitle font sizes remain in Matplotlib points in figure state, then
+  resolve against the active output DPI before layout and browser, SVG, or
+  native-PNG serialization. Explicit `fontsize=14` therefore emits 19.44 px at
+  100 dpi and follows temporary `savefig(dpi=...)` overrides.
+
 ## Multiline chrome, tick fidelity, and final layout resolution — 2026-07-26
 
 - Newline-delimited axes titles, axis labels, tick/category labels, and

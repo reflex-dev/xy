@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import xy.pyplot as plt
-from xy import _raster, _svg, _textblock
+from xy import _raster, _svg, _textblock, export
 from xy.pyplot import _mplfig
 from xy.pyplot._grid import _suptitle_baseline
 from xy.pyplot._mplfig import _panel_chrome
@@ -55,6 +55,64 @@ def test_svg_and_native_raster_emit_each_chrome_line_separately(monkeypatch) -> 
     assert png_buffer.getvalue().startswith(b"\x89PNG")
     assert {"Measured title", "second line", "north", "region", "low", "band"} <= set(calls)
     assert not any("\n" in text for text in calls)
+
+
+def test_suptitle_fontsize_points_resolve_at_each_renderer_output_dpi(monkeypatch) -> None:
+    fig, ax = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+    ax.plot([0, 1], [0, 1])
+    fig.suptitle("point-sized figure title", fontsize=14)
+
+    # Figure state keeps Matplotlib's public unit. Renderer state is pixels.
+    assert fig._suptitle_style["size"] == 14
+    assert fig._resolved_suptitle_style()["size"] == pytest.approx(14 * 100 / 72)
+
+    monkeypatch.setattr(export, "_bundled_js", lambda _kind: "")
+    assert "font-size:19.4444px" in fig._to_html()
+
+    svg_buffer = BytesIO()
+    fig.savefig(svg_buffer, format="svg")
+    root = ElementTree.fromstring(svg_buffer.getvalue())
+    title = next(
+        node
+        for node in root.iter()
+        if node.tag.endswith("text") and "".join(node.itertext()) == "point-sized figure title"
+    )
+    assert float(title.attrib["font-size"]) == pytest.approx(14 * 100 / 72, abs=1e-4)
+
+    raster_sizes: list[float] = []
+    original = _raster._Cmd.text
+
+    def record(self, x, y, anchor, size, color, text, **kwargs):
+        if text == "point-sized figure title":
+            raster_sizes.append(float(size))
+        return original(self, x, y, anchor, size, color, text, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record)
+    png_buffer = BytesIO()
+    fig.savefig(png_buffer, format="png")
+    assert png_buffer.getvalue().startswith(b"\x89PNG")
+    assert raster_sizes == pytest.approx([14 * 100 / 72])
+
+    high_dpi_html = BytesIO()
+    fig.savefig(high_dpi_html, format="html", dpi=144)
+    assert b"font-size:28px" in high_dpi_html.getvalue()
+
+    high_dpi_svg = BytesIO()
+    fig.savefig(high_dpi_svg, format="svg", dpi=144)
+    root = ElementTree.fromstring(high_dpi_svg.getvalue())
+    title = next(
+        node
+        for node in root.iter()
+        if node.tag.endswith("text") and "".join(node.itertext()) == "point-sized figure title"
+    )
+    assert float(title.attrib["font-size"]) == pytest.approx(28)
+
+    raster_sizes.clear()
+    high_dpi_png = BytesIO()
+    fig.savefig(high_dpi_png, format="png", dpi=144)
+    assert raster_sizes == pytest.approx([28])
+    assert fig.get_dpi() == 100
+    assert fig._suptitle_style["size"] == 14
 
 
 def test_multiline_gutters_grow_by_measured_line_steps_without_moving_single_lines() -> None:
