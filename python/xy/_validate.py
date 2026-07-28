@@ -35,6 +35,12 @@ _LABEL_POSITIONS = frozenset(
     {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
 )
 _CURVES = frozenset({"linear", "smooth"})
+_COORDS = frozenset({"cartesian", "polar"})
+_THETA_UNITS = frozenset({"radians", "degrees"})
+_THETA_DIRECTIONS = frozenset({"counterclockwise", "clockwise"})
+# Compass letters for theta=0; resolved to radians by THETA_ZERO in _svg.py and
+# its GLSL twin. Kept as letters on the wire so one table serves all renderers.
+_THETA_ZEROS = frozenset({"E", "N", "W", "S"})
 _FILL_SPACES = frozenset({"mark", "plot"})
 # CSS `<side-or-corner>` keywords -> wire direction. In mark space the gradient
 # line runs along each mark's value axis ("bottom" = the base, "top" = the
@@ -384,6 +390,43 @@ def curve(value: Any, label: str) -> str:
     if not isinstance(value, str) or value not in _CURVES:
         raise ValueError(f"{label} must be one of {sorted(_CURVES)}")
     return value
+
+
+def coords(value: Any, label: str) -> str:
+    """The chart's coordinate system: 'cartesian' or 'polar'."""
+    if not isinstance(value, str) or value not in _COORDS:
+        raise ValueError(f"{label} must be one of {sorted(_COORDS)}")
+    return value
+
+
+def theta_unit(value: Any, label: str) -> str:
+    """Angular unit for a polar theta axis: 'radians' or 'degrees'."""
+    if not isinstance(value, str) or value not in _THETA_UNITS:
+        raise ValueError(f"{label} must be one of {sorted(_THETA_UNITS)}")
+    return value
+
+
+def theta_direction(value: Any, label: str) -> str:
+    """Sweep direction of increasing theta."""
+    if not isinstance(value, str) or value not in _THETA_DIRECTIONS:
+        raise ValueError(f"{label} must be one of {sorted(_THETA_DIRECTIONS)}")
+    return value
+
+
+def theta_zero(value: Any, label: str) -> Any:
+    """Where theta=0 points: a compass letter, or an angle in radians.
+
+    The letters are the readable spelling of the four cardinal directions and
+    are kept verbatim on the wire so the client and both exporters resolve them
+    through one shared table rather than three float literals.
+    """
+    if isinstance(value, str):
+        if value not in _THETA_ZEROS:
+            raise ValueError(
+                f"{label} must be one of {sorted(_THETA_ZEROS)} or an angle in radians"
+            )
+        return value
+    return finite_scalar(value, label)
 
 
 _POINT_SYMBOLS = frozenset(

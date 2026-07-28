@@ -420,9 +420,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 10` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 11` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 10` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 11` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before

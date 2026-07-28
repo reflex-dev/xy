@@ -102,7 +102,31 @@ float xyViewValue(float coord, int mode, float constant) {
   if (mode == 2) return sign(coord) * constant * (exp(abs(coord)) - 1.0);
   return coord;
 }
+// Polar placement (spec/design/polar-axes.md §3). Replaces only the final
+// affine step: theta and r arrive already decoded and scale-mapped by
+// xyAxisCoord, exactly as the cartesian path leaves them.
+//
+// pol = (cx, cy, rx, ry) in CLIP space; rx/ry differ because clip space is
+// square while the plot rect is not, and a round circle needs 2R/w
+// horizontally against 2R/h vertically. rr = (r_lo, r_hi) in scaled coord
+// space — radial zoom is a change to this uniform alone, which is why the
+// transform lives here rather than being pre-projected kernel-side.
+// zdir = (zero angle in radians, direction * unit-scale).
+//
+// The y term ADDS: clip space grows upward. The Python twin
+// (_svg._PolarProjection) subtracts, because screen space grows downward.
+vec2 xyPolarPos(float thC, float rC, vec4 pol, vec2 rr, vec2 zdir) {
+  float rn = (rC - rr.x) / max(rr.y - rr.x, 1e-30);
+  float a = zdir.x + zdir.y * thC;
+  return vec2(pol.x + rn * pol.z * cos(a), pol.y + rn * pol.w * sin(a));
+}
 `;
+
+// Uniform block every polar-capable vertex shader declares. u_coordMode is 0
+// for cartesian and 1 for polar; the branch is uniform across every vertex in
+// a draw, so it costs no divergence.
+export const POLAR_GLSL_UNIFORMS = `
+uniform int u_coordMode; uniform vec4 u_polar; uniform vec2 u_rrange; uniform vec2 u_zdir;`;
 
 export const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
@@ -117,10 +141,21 @@ uniform float u_transitionProgress; uniform int u_transitionActive;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+vec2 xyPos(float xe, float ye) {
+  if (u_coordMode == 1) {
+    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
+                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
+                      u_polar, u_rrange, u_zdir);
+  }
+  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
+              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
+}
+
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
+  gl_Position = vec4(xyPos(x, y), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   int symbol = a_style.w >= 0.0 ? int(a_style.w + 0.5) : u_symbol;
   float symbolScale = symbol == 2 || symbol == 14 ? 1.414213562 : 1.0;
@@ -315,10 +350,21 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u
 uniform float u_size; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+vec2 xyPos(float xe, float ye) {
+  if (u_coordMode == 1) {
+    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
+                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
+                      u_polar, u_rrange, u_zdir);
+  }
+  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
+              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
+}
+
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
+  gl_Position = vec4(xyPos(x, y), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 
@@ -353,10 +399,21 @@ uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform 
 uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+vec2 xyPos(float xe, float ye) {
+  if (u_coordMode == 1) {
+    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
+                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
+                      u_polar, u_rrange, u_zdir);
+  }
+  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
+              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
+}
+
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
   float y = u_transitionActive == 1 ? mix(a_prevy, ay, u_transitionProgress) : ay;
-  gl_Position = vec4(xyMap(x, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(y, u_ymap, u_ymeta, u_ymode, u_yconstant), 0.0, 1.0);
+  gl_Position = vec4(xyPos(x, y), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -496,13 +553,27 @@ in float a_len0; in float a_len1;
 out float v_off; out float v_dash; out vec2 v_cap;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+vec2 xyPos(float xe, float ye) {
+  if (u_coordMode == 1) {
+    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
+                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
+                      u_polar, u_rrange, u_zdir);
+  }
+  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
+              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
+}
+
 void main() {
   float px0 = u_transitionActive == 1 ? mix(a_prevx, ax0, u_transitionProgress) : ax0;
   float py0 = u_transitionActive == 1 ? mix(a_prevy, ay0, u_transitionProgress) : ay0;
   float px1 = u_transitionActive == 1 ? mix(a_prevx1, ax1, u_transitionProgress) : ax1;
   float py1 = u_transitionActive == 1 ? mix(a_prevy1, ay1, u_transitionProgress) : ay1;
-  vec2 p0 = vec2(xyMap(px0, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(py0, u_ymap, u_ymeta, u_ymode, u_yconstant));
-  vec2 p1 = vec2(xyMap(px1, u_xmap, u_xmeta, u_xmode, u_xconstant), xyMap(py1, u_ymap, u_ymeta, u_ymode, u_yconstant));
+  // Endpoints project through the coordinate map; the pixel-space expansion
+  // below then joins them with a straight CHORD, which is the polar line
+  // semantics radar/spider edges require (polar-axes.md §5).
+  vec2 p0 = xyPos(px0, py0);
+  vec2 p1 = xyPos(px1, py1);
   float reveal = clamp(u_revealProgress * u_revealSegments - float(gl_InstanceID), 0.0, 1.0);
   p1 = mix(p0, p1, reveal);
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;

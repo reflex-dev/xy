@@ -35,6 +35,7 @@ from .config import (  # noqa: E402, F401
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     DIRECT_SOFT_CEILING,
+    POLAR_MARK_KINDS,
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
     default_palette_color,
@@ -98,6 +99,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         x_label: Optional[str] = None,
         y_label: Optional[str] = None,
         padding: Any = None,
+        coords: str = "cartesian",
     ) -> None:
         # width/height: pixels, or "100%" to fill the parent container — the
         # client measures the container and re-renders on resize
@@ -118,6 +120,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.title_options: list[dict[str, Any]] = []
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
+        # "cartesian" (two separable axes) or "polar" (the x axis carries theta,
+        # the y axis carries r). Polar reinterprets the same two axes rather
+        # than declaring new ids: axis ids are required to start with 'x'/'y' in
+        # four separate places, and the interaction axis policies are built on
+        # that grammar. See spec/design/polar-axes.md.
+        self.coords = _validate.coords(coords, "coords")
         self.axis_options: dict[str, dict[str, Any]] = {
             "x": {"label": self.x_label, "side": "bottom"},
             "y": {"label": self.y_label, "side": "left"},
@@ -263,6 +271,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         style: Optional[dict[str, Any]] = None,
         minor_style: Optional[dict[str, Any]] = None,
         nonpositive: Optional[str] = None,
+        theta_unit: Optional[str] = None,
+        theta_zero: Optional[Any] = None,
+        theta_direction: Optional[str] = None,
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
@@ -287,6 +298,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
             bounds = self._finite_increasing_pair(bounds, f"{axis_id} axis bounds")
             if type_ == "log" and bounds[0] <= 0:
                 raise ValueError(f"{axis_id} log axis bounds must be positive")
+        if theta_unit is not None:
+            theta_unit = _validate.theta_unit(theta_unit, f"{axis_id} axis theta_unit")
+        if theta_direction is not None:
+            theta_direction = _validate.theta_direction(
+                theta_direction, f"{axis_id} axis theta_direction"
+            )
+        if theta_zero is not None:
+            theta_zero = _validate.theta_zero(theta_zero, f"{axis_id} axis theta_zero")
+        if axis_dim == "y" and any(
+            option is not None for option in (theta_unit, theta_direction, theta_zero)
+        ):
+            raise ValueError(
+                f"{axis_id} axis: theta_unit/theta_zero/theta_direction describe the angular "
+                "axis and belong on an x axis (xy.theta_axis); the radial axis is the y axis"
+            )
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
@@ -371,6 +397,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
             "minor_style": styles.compile_axis_style(minor_style, f"{axis_id} minor axis style"),
             "nonpositive": nonpositive,
+            # Polar angular configuration. Meaningless on a cartesian chart and
+            # omitted from the wire there, so existing specs stay byte-identical.
+            "theta_unit": theta_unit,
+            "theta_zero": theta_zero,
+            "theta_direction": theta_direction,
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -752,6 +783,28 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def _interaction_axes(self, name: str) -> list[str]:
         value = self.interaction.get(name)
         return list(self.axis_options) if value is None else self._axis_policy(value, name)
+
+    def _validate_coords(self) -> None:
+        """Refuse mark kinds the polar transform does not yet render correctly.
+
+        A whole-scene check rather than a per-mark one: marks can be appended
+        at any time, so only payload-build time sees the finished figure.
+
+        The refusal is deliberate. Every unsupported kind here *would* draw
+        something — a bar would come out as a chord-edged rectangle rather than
+        an annular sector, an area would fill the wrong region — and a
+        plausible wrong picture is worse than an error. §28 requires the
+        decision to ship rather than be silently approximated.
+        """
+        if self.coords != "polar":
+            return
+        unsupported = sorted({t.kind for t in self.traces} - POLAR_MARK_KINDS)
+        if unsupported:
+            raise ValueError(
+                f"coords='polar' does not support {unsupported} yet; "
+                f"supported kinds are {sorted(POLAR_MARK_KINDS)}. "
+                "See spec/design/polar-axes.md."
+            )
 
     def _validate_interaction(self) -> None:
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
@@ -1178,6 +1231,26 @@ class Figure(AnnotationsMixin, PayloadMixin):
             pad = (hi - lo) * margin
             out_lo = lo - pad
             out_hi = hi + pad
+        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
+            # The angular axis spans a full turn by default. A theta value is
+            # used *directly* as an angle (matplotlib and Plotly both do this),
+            # never rescaled into the axis range, so this range only governs
+            # where the spokes and their labels go. Autoscaling it to the data
+            # would put spokes at arbitrary angles and, for data covering half
+            # the circle, silently imply the other half does not exist.
+            unit = self.axis_options.get(axis_id, {}).get("theta_unit") or "radians"
+            return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
+        if self.coords == "polar" and self._axis_dim(axis_id) == "y":
+            # The radial axis starts at the centre unless asked otherwise
+            # (matplotlib's default rmin=0). A radial axis padded away from
+            # zero is actively misleading: it puts the smallest datum at the
+            # centre, so a 5%-variation series reads as radiating from nothing.
+            # An explicit domain/bounds still wins — it short-circuits above.
+            out_lo = min(0.0, lo)
+            # No outer pad either: the outermost ring should be the data max,
+            # matching how both matplotlib and Plotly frame a polar plot.
+            out_hi = hi
+            return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
         anchor = self._zero_baseline_anchor(axis_id)
         if anchor == "lo" and lo == 0.0 and hi > 0.0:
             out_lo = 0.0
@@ -1356,6 +1429,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["style"] = style
         if kind == "category":
             spec["categories"] = list(self._axis_categories.get(axis_id, []))
+        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
+            # Angular configuration rides the x (theta) axis. Defaults are
+            # spelled out rather than omitted so the client and both exporters
+            # read one resolved value instead of each re-deriving a fallback.
+            spec["theta_unit"] = opts.get("theta_unit") or "radians"
+            spec["theta_zero"] = "E" if opts.get("theta_zero") is None else opts["theta_zero"]
+            spec["theta_direction"] = opts.get("theta_direction") or "counterclockwise"
         return spec
 
     def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:

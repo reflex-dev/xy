@@ -38,11 +38,14 @@ class FigureHost(Protocol):
     show_modebar: bool
     show_tooltip: bool
     palette: Union[list[str], dict[str, str], None]
+    coords: str
 
     @property
     def palette_cycle(self) -> Optional[list[str]]: ...
 
     def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
+
+    def _validate_coords(self) -> None: ...
 
     # -- shared validators (static on `Figure`, aliases of `_validate`) --
     @staticmethod

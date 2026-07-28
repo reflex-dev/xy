@@ -37,7 +37,7 @@ import re
 import uuid
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
@@ -117,6 +117,8 @@ __all__ = [
     "mark",
     "marker",
     "modebar",
+    "polar_chart",
+    "r_axis",
     "scatter",
     "scatter_chart",
     "segments",
@@ -130,6 +132,7 @@ __all__ = [
     "step_chart",
     "text",
     "theme",
+    "theta_axis",
     "threshold",
     "threshold_zone",
     "tooltip",
@@ -236,6 +239,11 @@ class Axis(Component):
     minor_tick_values: Optional[list[float]] = None
     minor_style: dict[str, StyleValue] = field(default_factory=dict)
     nonpositive: Optional[Literal["clip", "mask"]] = None
+    # Polar angular configuration, set by `theta_axis`. Ignored unless the
+    # chart is `coords="polar"`; see spec/design/polar-axes.md.
+    theta_unit: Optional[str] = None
+    theta_zero: Union[str, float, None] = None
+    theta_direction: Optional[str] = None
 
 
 @dataclass
@@ -2631,6 +2639,60 @@ def y_axis(
     )
 
 
+def theta_axis(
+    *,
+    unit: Optional[str] = None,
+    zero: Union[str, float, None] = None,
+    direction: Optional[str] = None,
+    **kwargs: Any,
+) -> Axis:
+    """Configure the angular axis of an `xy.polar_chart`.
+
+    Delegates to `x_axis` — the angular axis *is* the x axis under
+    ``coords="polar"`` — so every `x_axis` keyword (``label``, ``tick_values``,
+    ``style``, …) applies here too and is validated by one shared path.
+
+    Args:
+        unit: Angular unit of the data, ``"radians"`` (default) or ``"degrees"``.
+        zero: Direction that angle 0 points — ``"E"`` (default), ``"N"``,
+            ``"W"``, ``"S"``, or an angle in radians counterclockwise from east.
+        direction: ``"counterclockwise"`` (default) or ``"clockwise"``.
+            Compass work usually wants ``zero="N"`` with ``"clockwise"``, which
+            puts 90° at east and 180° at south.
+        **kwargs: Any `x_axis` keyword.
+
+    Returns:
+        An `Axis` for the angular dimension.
+    """
+    axis = x_axis(**kwargs)
+    return replace(
+        axis,
+        theta_unit=None if unit is None else _validate.theta_unit(unit, "theta_axis unit"),
+        theta_zero=None if zero is None else _validate.theta_zero(zero, "theta_axis zero"),
+        theta_direction=(
+            None
+            if direction is None
+            else _validate.theta_direction(direction, "theta_axis direction")
+        ),
+    )
+
+
+def r_axis(**kwargs: Any) -> Axis:
+    """Configure the radial axis of an `xy.polar_chart`.
+
+    Delegates to `y_axis` — the radial axis *is* the y axis under
+    ``coords="polar"`` — so every `y_axis` keyword applies. Provided so polar
+    compositions read in polar vocabulary rather than mixing x/y with theta/r.
+
+    Args:
+        **kwargs: Any `y_axis` keyword.
+
+    Returns:
+        An `Axis` for the radial dimension.
+    """
+    return y_axis(**kwargs)
+
+
 def legend(
     *children: Any,
     show: bool = True,
@@ -3184,6 +3246,7 @@ class Chart(Component):
         reset_axes: Optional[tuple[str, ...]] = None,
         link_group: Optional[str] = None,
         link_axes: Optional[tuple[str, ...]] = None,
+        coords: str = "cartesian",
     ) -> None:
         """Initialize a chart composition.
 
@@ -3224,6 +3287,10 @@ class Chart(Component):
             reset_axes: Declared axis IDs restored by reset.
             link_group: Identifier used to synchronize charts in the browser.
             link_axes: Axes synchronized within the link group.
+            coords: Coordinate system, ``"cartesian"`` (default) or ``"polar"``.
+                Under ``"polar"`` each mark's first channel is the angle and its
+                second is the radius. Prefer ``xy.polar_chart(...)``, which sets
+                this for you.
         """
         self.kind = kind
         self.children = children
@@ -3263,6 +3330,7 @@ class Chart(Component):
         self.reset_axes = reset_axes
         self.link_group = link_group
         self.link_axes = link_axes
+        self.coords = _validate.coords(coords, "coords")
         self._figure: Optional[Figure] = None
         self._widget: Any = None
         # Facet builds pre-seed a union category order here (per axis dim) so
@@ -3320,6 +3388,7 @@ class Chart(Component):
             title=self.title,
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
+            coords=self.coords,
         )
         for axis in axis_children:
             axis_id = axis.id or axis.which
@@ -3350,6 +3419,9 @@ class Chart(Component):
                 style=axis.style,
                 minor_style=axis.minor_style,
                 nonpositive=axis.nonpositive,
+                theta_unit=axis.theta_unit,
+                theta_zero=axis.theta_zero,
+                theta_direction=axis.theta_direction,
             )
         # Facet builds pre-seed the union category order (set as a private
         # attribute by FacetChart) so shared categorical domains align the
@@ -5931,6 +6003,27 @@ def scatter_chart(*children: Component, **props: Any) -> Chart:
 def line_chart(*children: Component, **props: Any) -> Chart:
     """A line chart composing `line` marks and axis/legend children."""
     return Chart("line_chart", children, **props)
+
+
+def polar_chart(*children: Component, **props: Any) -> Chart:
+    """A polar chart: the same marks, rendered through polar coordinates.
+
+    Each mark's first channel is the angle and its second is the radius, so
+    `xy.line` and `xy.scatter` are reused verbatim rather than replaced by
+    polar-specific marks. Configure the angular axis with `xy.theta_axis` and
+    the radial axis with `xy.r_axis`.
+
+        xy.polar_chart(
+            xy.line(angle, gain, name="measured"),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+            xy.r_axis(label="gain (dBi)"),
+        )
+
+    Supported marks today are `line` and `scatter`; anything else is refused at
+    build time rather than approximated. See spec/design/polar-axes.md.
+    """
+    props.setdefault("coords", "polar")
+    return Chart("polar_chart", children, **props)
 
 
 def area_chart(*children: Component, **props: Any) -> Chart:

@@ -1,7 +1,7 @@
 import { PROTOCOL, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
-import { categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
+import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -979,6 +979,9 @@ export class ChartView {
       const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
       return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
     }
+    // Placed after the authored-tick_values return so explicit ticks still
+    // win, and before every kind branch — mirrored by axis_ticks in _svg.py.
+    if (axis.theta_unit) return angularTicks(lo, hi, axis.theta_unit, target);
     if (axis.kind === "time") return timeTicks(lo, hi, target);
     if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
@@ -4275,6 +4278,100 @@ export class ChartView {
     gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
   }
 
+  // Geometry of the polar disc, in the units the shaders and the CPU-side
+  // hover math both need. Null on a cartesian chart.
+  //
+  // The GL canvas is sized and positioned to exactly the plot rect, so clip
+  // space [-1,1] IS the plot rect: the centre is the rect centre and the
+  // radius converts to clip units per axis (2R/w, 2R/h) — a vec2, because a
+  // round circle in a non-square rect cannot use one scalar.
+  _polarGeometry() {
+    if (this.spec?.coords !== "polar") return null;
+    const p = this.plot;
+    if (!p || !(p.w > 0) || !(p.h > 0)) return null;
+    const axis = this._axis("x") || {};
+    const zeros = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
+    const rawZero = axis.theta_zero ?? "E";
+    const zero = typeof rawZero === "string" ? (zeros[rawZero] ?? 0) : Number(rawZero) || 0;
+    const dir = axis.theta_direction === "clockwise" ? -1 : 1;
+    const unitScale = axis.theta_unit === "degrees" ? Math.PI / 180 : 1;
+    const [rLo, rHi] = this._axisRange("y");
+    const radius = Math.min(p.w, p.h) / 2;
+    return {
+      radius,
+      cx: p.x + p.w / 2,
+      cy: p.y + p.h / 2,
+      clipRx: (2 * radius) / p.w,
+      clipRy: (2 * radius) / p.h,
+      rLo: this._axisCoord(this._axis("y"), rLo),
+      rHi: this._axisCoord(this._axis("y"), rHi),
+      zero,
+      dirUnit: dir * unitScale,
+    };
+  }
+
+  // Every polar-capable program declares these; a cartesian chart uploads
+  // mode 0 and the shaders take the affine path unchanged.
+  // Concentric rings for the radial ticks, spokes for the angular ones.
+  // Canvas 2D has arcs, so rings are exact here; the raster exporter has no arc
+  // opcode and flattens the same rings to polylines instead.
+  _drawPolarGrid(ctx, geom, thetaTicks, rTicks, thetaAxis, rAxis, hideTheta, hideR) {
+    const [rLo, rHi] = this._axisRange("y");
+    const span = rHi - rLo || 1;
+    if (!hideR) {
+      ctx.strokeStyle = this._axisStylePaint(rAxis, "grid_color", this.theme.grid);
+      ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(rAxis, "grid_width", 1));
+      ctx.globalAlpha = this._axisStyleNumber(rAxis, "grid_opacity", 1);
+      ctx.setLineDash(this._axisGridDash(rAxis));
+      ctx.beginPath();
+      for (const v of rTicks) {
+        const radius = ((v - rLo) / span) * geom.radius;
+        if (!(radius > 0)) continue;
+        ctx.moveTo(geom.cx + radius, geom.cy);
+        ctx.arc(geom.cx, geom.cy, radius, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+    }
+    if (hideTheta) return;
+    ctx.strokeStyle = this._axisStylePaint(thetaAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(thetaAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(thetaAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(thetaAxis));
+    ctx.beginPath();
+    for (const v of thetaTicks) {
+      const a = geom.zero + geom.dirUnit * v;
+      ctx.moveTo(geom.cx, geom.cy);
+      // Screen y grows downward, so the sine term subtracts here while the
+      // shader's adds (clip space grows upward).
+      ctx.lineTo(geom.cx + geom.radius * Math.cos(a), geom.cy - geom.radius * Math.sin(a));
+    }
+    ctx.stroke();
+    // The outer ring stands in for the axis spines, which are DIVs and cannot
+    // be circular. Both exporters draw the same ring.
+    ctx.strokeStyle = this._axisStylePaint(thetaAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(thetaAxis, "axis_width", 1));
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(geom.cx, geom.cy, geom.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  _setPolarUniforms(prog) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    const g = this._polarGeometry();
+    if (!g) {
+      gl.uniform1i(u("u_coordMode"), 0);
+      return;
+    }
+    gl.uniform1i(u("u_coordMode"), 1);
+    // Centre is (0,0) in clip space because the canvas is the plot rect.
+    gl.uniform4f(u("u_polar"), 0, 0, g.clipRx, g.clipRy);
+    gl.uniform2f(u("u_rrange"), g.rLo, g.rHi);
+    gl.uniform2f(u("u_zdir"), g.zero, g.dirUnit);
+  }
+
   // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
   // highlight lives in the color pass, so the pick framebuffer's geometry/view
   // snapshot stays valid and the frame must not invalidate it. Coalescing is
@@ -4440,6 +4537,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
@@ -4561,6 +4659,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
@@ -4614,6 +4713,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     // Size-channel points hover at their encoded size, not the scalar default
     // (sample traces keep no CPU copy of the size column; they fall back).
     const sVal = g.sizeMode === 1 && g._cpu?.size ? g._cpu.size[index] : null;
@@ -4758,6 +4858,7 @@ export class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(this.lineProg);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
     gl.uniform1i(u("u_transitionActive"), transitionOn ? 1 : 0);
@@ -5034,6 +5135,7 @@ export class ChartView {
     gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
     this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setPolarUniforms(prog);
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
     gl.uniform1f(u("u_revealProgress"), reveal);
@@ -5554,12 +5656,16 @@ export class ChartView {
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
+    const polarGeom = this._polarGeometry();
+    if (polarGeom) {
+      this._drawPolarGrid(ctx, polarGeom, xt.ticks, yt.ticks, xAxis, yAxis, hideX, hideY);
+    }
     ctx.strokeStyle = this._axisStylePaint(xmAxis, "grid_color", "transparent");
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xmAxis, "grid_width", 1));
     ctx.globalAlpha = this._axisStyleNumber(xmAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(xmAxis));
     ctx.beginPath();
-    for (const v of (hideX ? [] : xmt)) {
+    for (const v of (hideX || polarGeom ? [] : xmt)) {
       const px = this._dataPx("x", v);
       if (!Number.isFinite(px)) continue;
       const x = xEdge(px);
@@ -5573,7 +5679,7 @@ export class ChartView {
     ctx.globalAlpha = this._axisStyleNumber(ymAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(ymAxis));
     ctx.beginPath();
-    for (const v of (hideY ? [] : ymt)) {
+    for (const v of (hideY || polarGeom ? [] : ymt)) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
       const y = yEdge(py);
@@ -5587,7 +5693,7 @@ export class ChartView {
     ctx.globalAlpha = this._axisStyleNumber(xAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(xAxis));
     ctx.beginPath();
-    for (const v of (hideX ? [] : xt.ticks)) {
+    for (const v of (hideX || polarGeom ? [] : xt.ticks)) {
       const px = this._dataPx("x", v);
       if (!Number.isFinite(px)) continue;
       const x = xEdge(px);
@@ -5601,7 +5707,7 @@ export class ChartView {
     ctx.globalAlpha = this._axisStyleNumber(yAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(yAxis));
     ctx.beginPath();
-    for (const v of (hideY ? [] : yt.ticks)) {
+    for (const v of (hideY || polarGeom ? [] : yt.ticks)) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
       const y = yEdge(py);
@@ -5640,10 +5746,15 @@ export class ChartView {
           "pointer-events:none;";
         this.labels.appendChild(d);
       };
-      const frameSides = Array.isArray(s.frame_sides)
-        ? s.frame_sides
-        : [xAxis.side || "bottom", yAxis.side || "left"];
-      const explicitFrameSides = Array.isArray(s.frame_sides);
+      // Under polar the frame is one ring drawn on the chrome canvas below;
+      // "side" has no polar meaning, so frame_sides is not consulted. Axis
+      // spines are background-coloured DIVs and cannot express a circle.
+      const frameSides = polarGeom
+        ? []
+        : (Array.isArray(s.frame_sides)
+          ? s.frame_sides
+          : [xAxis.side || "bottom", yAxis.side || "left"]);
+      const explicitFrameSides = !polarGeom && Array.isArray(s.frame_sides);
       if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
         if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
@@ -5900,6 +6011,11 @@ export class ChartView {
       return pad + fontRoomPx;
     };
     for (const side of this._axisTickLabelSides(xAxis)) {
+      // Polar places its own labels around the rim below; sides are meaningless
+      // on a disc. Guarded here rather than around the loop so all four axis
+      // paths keep calling _axisTickLabelSides (asserted by a source guard in
+      // tests/pyplot/test_tick_side_rendering.py).
+      if (polarGeom) break;
       const sideAxis = { ...xAxis, side };
       for (const item of this._layoutTickLabels(sideAxis, "x", xLabelCandidates)) {
         const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
@@ -5982,7 +6098,46 @@ export class ChartView {
         angle,
       };
     };
+    if (polarGeom) {
+      // Angular labels around the rim, radial labels along the 22.5-degree
+      // spoke. Mirrors _polar_tick_labels in python/xy/_svg.py; the cartesian
+      // label machinery is edge-relative and neither concept survives a disc.
+      const RLABEL = (22.5 * Math.PI) / 180;
+      const GAP = 8;
+      if (!hideX) {
+        for (const v of (xt.labels || xt.ticks)) {
+          const a = polarGeom.zero + polarGeom.dirUnit * v;
+          const cos = Math.cos(a);
+          const sin = Math.sin(a);
+          const lx = polarGeom.cx + (polarGeom.radius + GAP) * cos;
+          const ly = polarGeom.cy - (polarGeom.radius + GAP) * sin;
+          const align = Math.abs(cos) < 0.3 ? "-50%" : (cos > 0 ? "0%" : "-100%");
+          const vshift = Math.abs(sin) < 0.3 ? "-50%" : (sin > 0 ? "-100%" : "0%");
+          label(
+            this._axisTickText(xAxis, v, xt.step),
+            `left:${lx}px;top:${ly}px;transform:translate(${align}, ${vshift});`,
+            xAxis,
+          );
+        }
+      }
+      if (!hideY) {
+        const [rLo, rHi] = this._axisRange("y");
+        const span = rHi - rLo || 1;
+        const angle = polarGeom.zero + Math.sign(polarGeom.dirUnit || 1) * RLABEL;
+        for (const v of (yt.labels || yt.ticks)) {
+          const radius = ((v - rLo) / span) * polarGeom.radius;
+          if (!(radius > 0)) continue;
+          label(
+            this._axisTickText(yAxis, v, yt.step),
+            `left:${polarGeom.cx + radius * Math.cos(angle) + 3}px;` +
+              `top:${polarGeom.cy - radius * Math.sin(angle) - 3}px;transform:translate(0, -100%);`,
+            yAxis,
+          );
+        }
+      }
+    }
     for (const side of this._axisTickLabelSides(yAxis)) {
+      if (polarGeom) break;
       const sideAxis = { ...yAxis, side };
       for (const item of this._layoutTickLabels(sideAxis, "y", yLabelCandidates)) {
         const placement = yLabelPlacement(sideAxis, side === "right", item);
@@ -6151,6 +6306,11 @@ export class ChartView {
       gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
       this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis);
       this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
+      // The pick buffer must use the SAME transform as the colour pass. Left
+      // cartesian under polar it still returns ids, so the picture stays right
+      // while hover silently reports whichever row happens to sit at the
+      // untransformed location.
+      this._setPolarUniforms(prog);
       const zoomStyle = this._pointZoomStyle(pg);
       gl.uniform1f(u("u_size"), pg.size * zoomStyle.sizeFactor);
       gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
@@ -6240,6 +6400,21 @@ export class ChartView {
     const [y0, y1] = this._axisRange(yAxisId);
     const xAxis = this._axis(xAxisId);
     const yAxis = this._axis(yAxisId);
+    const geom = this._polarGeometry();
+    if (geom) {
+      // Screen -> (theta, r), the inverse of xyPolarPos. cssX/cssY are canvas
+      // relative and the canvas IS the plot rect, so the centre is the rect
+      // midpoint in canvas coordinates.
+      const dx = cssX - this.plot.w / 2;
+      const dy = this.plot.h / 2 - cssY; // flip back out of screen space
+      const rn = Math.hypot(dx, dy) / (geom.radius || 1);
+      const theta = (Math.atan2(dy, dx) - geom.zero) / (geom.dirUnit || 1);
+      // Wrap into the angular domain: theta=0 and a full turn are one place,
+      // so an unwrapped value would read as outside the axis range.
+      const turn = xAxis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
+      const wrapped = ((theta % turn) + turn) % turn;
+      return [wrapped, this._axisValue(yAxis, geom.rLo + rn * (geom.rHi - geom.rLo))];
+    }
     const cx0 = this._axisCoord(xAxis, x0);
     const cx1 = this._axisCoord(xAxis, x1);
     const cy0 = this._axisCoord(yAxis, y0);

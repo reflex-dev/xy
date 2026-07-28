@@ -36,7 +36,11 @@
 // v10: `title_options` carries independent left/center/right title artists,
 // including axes-fraction y and pixel padding. A v9 client would silently omit
 // non-center slots and their placement, so v10 rejects it before rendering.
-export const PROTOCOL = 10;
+// v11: the chart-level `coords: "polar"` key and the angular axis descriptors
+// (`theta_unit`, `theta_zero`, `theta_direction`). A v10 client ignores
+// `coords` and draws the (theta, r) columns as cartesian x/y, so it must
+// reject the payload rather than render a plausible wrong picture.
+export const PROTOCOL = 11;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

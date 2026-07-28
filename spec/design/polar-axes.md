@@ -1,0 +1,308 @@
+# Polar axes
+
+How `xy` renders a chart in polar coordinates. This document is **normative**
+for the (θ, r) → pixel transform, the angular conventions, the wire shape, and
+which marks are legal under `coords="polar"`. Where an implementation and this
+document disagree, this document is right and the implementation is a bug.
+
+Roadmap context: item 18 (radar/polar), items 29/32 (wind rose "awaits polar
+support"), item 34 (specialist coordinate systems) in
+[`../api/chart-roadmap.md`](../api/chart-roadmap.md).
+
+## 1. The shape of the problem
+
+Polar is **one coordinate system**, not a family of chart types. Both incumbents
+work this way: matplotlib has a `PolarAxes` projection that ordinary `plot` /
+`scatter` / `bar` / `fill` calls render into, and Plotly has three polar trace
+types (`scatterpolar`, `scatterpolargl`, `barpolar`) from which radar, spider,
+bubble and wind-rose charts are composed. Neither ships a "radar renderer".
+
+So `xy` adds a coordinate system and lets the existing mark registry render
+through it. `MARK_KINDS` (`js/src/55_marks.ts`) gains no entries, and no
+`_emit_<K>` in `python/xy/_payload.py` is rewritten. This follows the standing
+rule in [`../api/chart-kind-contract.md`](../api/chart-kind-contract.md):
+organize by primitive, not by chart name.
+
+## 2. Conventions
+
+| Concept | Value | Notes |
+|---|---|---|
+| θ unit | `"radians"` (default) or `"degrees"` | Affects input data and tick labels together. |
+| θ zero location | `"E"` (default), `"N"`, `"W"`, `"S"`, or a float in radians | Direction that θ = 0 points. `"E"` = math convention. |
+| θ direction | `"counterclockwise"` (default) or `"clockwise"` | Math convention default; compass work sets `"N"` + `"clockwise"`. |
+| r scale | linear (this increment) | log/symlog deferred — §9. |
+| r range | `[r_lo, r_hi]`, default `[0, max(r)]` | `r_lo = 0` matches matplotlib's default `rmin`. |
+
+The compass composition — `zero="N"`, `direction="clockwise"` — makes θ = 90°
+point East, 180° South, 270° West. Wind roses depend on exactly this; §4 pins it
+with fixtures.
+
+## 3. The transform (normative)
+
+Given θ and r in data space, a radial range `[r_lo, r_hi]`, and a plot rect
+`(x, y, w, h)` in CSS pixels:
+
+```
+th  = θ · (π/180)  if unit == "degrees" else θ
+a   = zero + dir · th                        # dir = +1 ccw, −1 cw
+rn  = (r − r_lo) / (r_hi − r_lo)             # normalized radius
+R   = min(w, h) / 2                          # px radius of the unit circle
+cx  = x + w/2 ,  cy = y + h/2                # centre of the plot rect
+
+px  = cx + rn · R · cos(a)
+py  = cy − rn · R · sin(a)                   # screen space: y grows DOWN
+```
+
+Three properties this pins down, each of which has a matching fixture:
+
+- **The circle is round in a non-square rect.** `R` uses `min(w, h)`, and the
+  circle is centred in the rect rather than stretched to fill it.
+- **`R` carries no fill factor.** Room for angular tick labels is reserved by
+  *shrinking the plot rect during layout*, not by scaling the radius. The
+  transform stays pure; layout owns the gutters.
+- **The y term is a subtraction.** This is the single most likely parity bug in
+  the codebase. Screen/SVG/raster space has y growing **down**, so upward angles
+  must *decrease* py. GL clip space has y growing **up**, so the GLSL form is
+  `+` on the y component. An implementation that copies `cy − r·sin(a)` into a
+  shader, or `+` into the exporters, renders vertically mirrored and every
+  fixture in §4 catches it.
+
+### 3.1 Where it sits in the existing pipeline
+
+The Cartesian pipeline is two independent 1-D maps. On the client
+(`AXIS_GLSL`, `js/src/40_gl.ts:80`):
+
+```
+xyDecode(encoded, meta)   →  undo §16 offset encoding, back to data space
+xyAxisCoord(...)          →  apply the scale (log / symlog / linear)
+· map.x + map.y           →  affine to clip space
+```
+
+and in Python, `_Scale.coord()` then `_Scale.__call__()`
+(`python/xy/_svg.py:814`, `:827`) do the same two steps.
+
+**Polar replaces only the last step**, and replaces it with a *joint* map over
+both axes. Decode and scale are untouched, which is why log radial scales are a
+later increment rather than a rewrite. Concretely: after `xyAxisCoord` yields θ
+and r in scaled data space, the joint polar map produces a position directly,
+and the per-axis `u_xmap`/`u_ymap` affine is bypassed.
+
+Because the WebGL canvas is positioned and sized to exactly the plot rect
+(`js/src/50_chartview.ts:1833`), clip space `[-1, 1]²` **is** the plot rect. So
+the GLSL form needs no plot-rect uniforms at all — only the centre, the radius
+in clip units per axis, and the radial range:
+
+```glsl
+vec2 xyPolar(float thC, float rC, vec4 pol, vec2 rr, vec2 zdir) {
+  float rn = (rC - rr.x) / max(rr.y - rr.x, 1e-30);
+  float a  = zdir.x + zdir.y * thC;
+  return vec2(pol.x + rn * pol.z * cos(a),
+              pol.y + rn * pol.w * sin(a));   // '+': clip-space y grows UP
+}
+```
+
+`pol.zw` is a **vec2** radius, not a scalar: clip space is square while the plot
+rect generally is not, so a round circle needs `2R/w` clip units horizontally
+and `2R/h` vertically.
+
+Radial zoom is therefore a change to `rr` alone — a uniform update, exactly like
+Cartesian pan/zoom. This is the reason the transform lives in the shader rather
+than being pre-projected into (x, y) in the kernel: pre-projection would make
+every zoom a full re-transform and re-upload, and would break streaming append.
+
+### 3.2 Inverse (screen → data)
+
+Hover, tooltips and drag gestures need the inverse. With `dx = px − cx` and
+`dy = cy − py` (note the flip again):
+
+```
+rn = hypot(dx, dy) / R
+r  = r_lo + rn · (r_hi − r_lo)
+a  = atan2(dy, dx)
+th = (a − zero) / dir            # then wrapped into the θ domain
+```
+
+θ is wrapped modulo a full turn: **θ = 0 and θ = 2π are the same location**, and
+any angular distance metric must wrap across that seam. A naïve `|θ₁ − θ₂|`
+reports points at 1° and 359° as maximally distant; they are 2° apart.
+
+## 4. Parity fixtures
+
+The transform above is implemented twice — once in GLSL, once in Python (shared
+by both exporters). Prose does not bind them. `tests/fixtures/polar_transform.json`
+does, and it is authored from the definition in §3, not generated from either
+implementation.
+
+Fixture cases are chosen so a human can check them by inspection:
+
+| Config | θ, r | Expected | Pins |
+|---|---|---|---|
+| default | 0, 1 | due right | zero location |
+| default | π/2, 1 | due up (py smaller) | the y flip |
+| default | 0, 0 | dead centre | radial origin |
+| `zero="N"` | 0, 1 | due up | zero rotation |
+| `zero="N"`, cw, degrees | 90, 1 | due right (compass E) | direction sign |
+| `zero="N"`, cw, degrees | 180, 1 | due down (compass S) | compass composition |
+| non-square rect | 0/π/2/π, 1 | round, centred | `min(w,h)` and centring |
+
+Three consumers must agree with that file:
+
+1. **Python** — a unit test over `_polar_project`. Fast, always runs.
+2. **GLSL** — a headless-Chrome probe renders points at the fixture (θ, r) and
+   reads back their pixel positions. This binds the *actual shader*, not a JS
+   mirror of it, which is the only version that can drift silently.
+3. **Exporters** — SVG and raster inherit (1) because they share the Python
+   projection, so their obligation is a rendered-output check, not a second
+   transform test.
+
+This is deliberately stronger than the existing tick-math arrangement, where
+`js/src/30_ticks.ts` and its hand port in `python/xy/_svg.py:477-767` are bound
+by **nothing executable** — a gap that has already allowed a live divergence in
+the tick-count target between client and exporters. Polar does not repeat it.
+
+## 5. Chord versus arc
+
+A straight line in (θ, r) space is a curve on screen. Whether to draw the curve
+or the chord is a **semantic** choice, not a rendering detail, and the two
+incumbents differ: Plotly draws straight chords between polar data points;
+matplotlib arc-interpolates paths.
+
+| Geometry | Rendering | Why |
+|---|---|---|
+| Data lines, fill boundaries | **chord** | Plotly semantics. Radar/spider edges *must* be straight or the polygon is wrong. |
+| Grid rings, outer frame | **true arc** | Axis chrome must be round. |
+| Bar edges (annular sectors) | **true arc** | A wide bar with chorded ends reads as a triangle. |
+| Heatmap / contour cells | **true arc** | Scientific fidelity (later increment). |
+
+Chords need no subdivision, which is why line and scatter are cheap. Arcs are
+flattened to polylines at render time; §6 covers the per-renderer cost.
+
+An opt-in arc-interpolated line mode (matplotlib's behaviour) is a possible
+later flag. It is not in this increment, and the default does not change.
+
+## 6. Renderer seams
+
+Polar must be implemented at every seam below. Missing one does not fail
+loudly — it renders something plausible and wrong.
+
+### Client (`js/src/40_gl.ts`)
+
+There are **eight** vertex shaders, each with its own copy of the data→clip
+math. Three of them draw points:
+
+| Shader | Line | Draws | This increment |
+|---|---|---|---|
+| `POINT_VS` | 107 | scatter (full) | yes |
+| `POINT_SIMPLE_VS` | 311 | scatter (fast path) | yes |
+| `PICK_VS` | 348 | hover id-pick buffer | yes |
+| `LINE_VS` | 486 | line | yes |
+| `SEGMENT_VS` | 588 | error bars, stems, contour | no — §7 |
+| `MESH_VS` | 653 | hexbin, triangle mesh | no — §7 |
+| `AREA_VS` | 738 | area, error bands | no — §7 |
+| `RECT_VS` | 796 | bar, histogram, box, violin | no — §7 |
+
+`POINT_SIMPLE_VS` and `PICK_VS` are the traps. Scatter silently switches to the
+simple program whenever `_canDrawSimplePoints` holds, so transforming only
+`POINT_VS` leaves a fast path that draws Cartesian. And `PICK_VS` feeds the
+GPU hit-test: untransformed, the picture is right while hover reports the wrong
+row.
+
+`GRID_VS` (heatmap/density) is a different shape entirely — it draws one
+fullscreen quad and inverts screen→data **in the fragment stage**, so it cannot
+follow a vertex-stage transform. Polar heatmaps are a later increment for this
+reason, not an oversight.
+
+### Client chrome (`js/src/50_chartview.ts`)
+
+Four stacked surfaces. Grid lines are canvas-2D (`ctx.arc` gives rings and
+`moveTo`/`lineTo` gives spokes — both cheap), but **axis spines and tick marks
+are DOM `<div>`s with a background colour**, which can express a rectangle and
+nothing else. The polar frame circle and its radial ticks therefore move to the
+2D chrome canvas.
+
+### Exporters (`python/xy/_svg.py`, `python/xy/_raster.py`)
+
+The raster exporter imports ~45 symbols from `_svg` — including `_Scale`,
+`_axis_scales`, `layout` and `axis_ticks` — precisely so the two static outputs
+share geometry. So the Python projection is written **once** in `_svg.py` and
+both exporters inherit it. Two consequences:
+
+- SVG can express rings as `<circle>` and sectors as `A` path commands.
+- The raster path has **no arc, wedge, annulus or disc-clip primitive at all**.
+  Its entire vocabulary is polygon fill, capsule strokes, SDF point symbols and
+  image blits. Every curve is a pre-flattened polyline, and the only precedent
+  is `_round_rect_pts` (`python/xy/_raster.py:722`) flattening corner arcs. Polar
+  rings are flattened the same way.
+
+**The affine fast-path trap.** Several emitters bake an affine data→pixel map
+into Rust, gated on `sx.affine and sy.affine`. A polar chart on linear axes
+satisfies that predicate while being emphatically non-affine. Any polar scale
+object must therefore report `affine = False`, or scatter, line smoothing and
+grid blits will silently project through a straight-line map.
+
+## 7. Scope of this increment
+
+**Legal under `coords="polar"`:** `line`, `scatter`.
+
+Everything else is **rejected at figure construction** with an error naming the
+supported set. This is not a limitation to be discovered at render time: a bar
+drawn through a chord-based rect shader is a wrong picture, and §28 of the
+dossier requires that such a decision ship as a recorded refusal rather than a
+silent approximation.
+
+Later increments, in order: area/radar (fill boundaries are chords, so this is
+the cheapest next step), polar bars and wind rose (needs annular-sector
+tessellation in three places), pyplot `projection="polar"`, then polar heatmap
+and contour — the last being the differentiator, since Plotly has no native
+polar heatmap, contour or error-bar trace.
+
+### Tier policy
+
+Polar traces ship `tier: "direct"` and are point-capped by validation. The LOD
+tiers do not transfer unmodified and must not be silently reused:
+
+- **M4 decimation** assumes a monotonic x→screen-x column. A spiral is not
+  monotonic in θ, and multi-turn data revisits the same screen columns.
+- **Density binning** in (θ, r) has an area-distortion problem: equal
+  data-space bins near the origin cover far fewer pixels, so genuinely uniform
+  density renders as centre-concentrated.
+
+Both need their own design work in
+[`lod-architecture.md`](lod-architecture.md). Until then the cap is explicit and
+reported, per §28.
+
+## 8. Interaction
+
+MVP surface, deliberately small:
+
+- **Hover** — screen-space nearest-point test, seam-aware per §3.2, with the
+  readout reporting (θ, r) in the axis's declared unit.
+- **Radial zoom** — wheel adjusts `[r_lo, r_hi]`; serialized through the
+  existing view-state machinery.
+- **Reset** — existing modebar, no change.
+
+Deferred and explicitly disabled rather than half-working: θ pan (rotation),
+sector zoom, and box select. Box select's rectangle has no polar meaning; the
+right answer is an annulus/sector select, and shipping a rectangle over a disc
+in the meantime would be a wrong affordance rather than a partial one. For
+reference, Plotly never solved polar wheel zoom at all — it offers radial-axis
+drag only — so a small, deliberate model is already ahead of the field.
+
+## 9. Deferred
+
+Each row lands as its own change and updates this table when it does.
+
+| Feature | Notes |
+|---|---|
+| Area / radar fill | Cheapest next increment; chords already correct. |
+| Polar bars, wind rose, rose histogram | Annular sectors in client + SVG + raster. |
+| pyplot `projection="polar"` | How matplotlib users arrive; closes roadmap 29/32. |
+| Polar heatmap / contour | Beyond Plotly parity. Needs the fragment-stage inverse (§6). |
+| Partial sector (`thetamin`/`thetamax`) | Layout, clipping and tick trimming. |
+| Hole / r-origin | `rn` gains a floor; touches every hit test. |
+| Categorical θ axis | Finishes radar; band semantics for bars. |
+| Log / symlog radial scale | `xyAxisCoord` already supports it; needs ticks and layout. |
+| Polygonal grid | Chrome-only; Plotly's `gridshape="linear"`. |
+| Polar error bars | `SEGMENT_VS`; matplotlib has it, Plotly does not. |
+| Polar LOD | §7. Exit criterion for `scatterpolargl`-scale claims. |
+| Polar facets / animation | Untouched by this design; no known blocker. |

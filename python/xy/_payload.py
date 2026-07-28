@@ -260,6 +260,7 @@ class PayloadMixin(_Host):
                 ranges[axis_id] = r = self._range(axis_id)
             return r
 
+        self._validate_coords()
         spec_traces = []
         for t in self.traces:
             xr = axis_range(t.x_axis)
@@ -300,6 +301,8 @@ class PayloadMixin(_Host):
                 }
                 for entry in self.title_options
             ]
+        if self.coords != "cartesian":
+            spec["coords"] = self.coords
         if self.palette is not None:
             # Chart-level categorical cycle (`xy.theme(palette=...)`). Every
             # trace already bakes its own color and every categorical channel
@@ -514,6 +517,13 @@ class PayloadMixin(_Host):
         each bucket covers a uniform strip of *screen*, not of raw data (§28);
         monotone transforms keep per-bucket min/max rows identical, so y stays
         raw and the gathered rows ship untransformed."""
+        if self.coords == "polar":
+            # M4 buckets on a monotonic screen-x column. Under polar the x
+            # column is an angle: a spiral revisits the same screen columns and
+            # a multi-turn series is not monotonic at all, so the buckets carry
+            # no screen meaning. Ship direct until polar-aware decimation
+            # exists (spec/design/polar-axes.md §7).
+            return "direct", arrays
         if t.n_points <= DECIMATION_THRESHOLD:
             return "direct", arrays
         eps = float(np.finfo(np.float64).eps)
@@ -583,7 +593,12 @@ class PayloadMixin(_Host):
     def _emit_scatter(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
-        if t.use_density():
+        if t.use_density() and self.coords != "polar":
+            # Polar forces direct: density bins an axis-aligned (x, y) grid,
+            # and equal (theta, r) bins near the origin cover far fewer pixels,
+            # so uniform data would render centre-concentrated. Trace.use_density
+            # has no Figure reference, so the chart-level flag is applied here at
+            # the call site (spec/design/polar-axes.md §7).
             t.shipped_sel = None  # no per-point marks, no pick mapping
             t.drill_mode = False  # full view: density until a zoom drills in
             entry = self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw)

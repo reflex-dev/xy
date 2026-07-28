@@ -26,6 +26,8 @@ from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
     _GRID,
+    _POLAR_RLABEL_DEG,
+    _POLAR_TICK_GAP,
     _STATIC_COLOR_FALLBACK,
     _TEXT,
     COLORBAR_FONT_SIZE,
@@ -50,16 +52,19 @@ from ._svg import (
     _decode_title_geometry,
     _density_column,
     _estimated_text_width,
+    _fmt_angle,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
     _physical_density_alpha,
+    _PolarProjection,
     _px_size,
     _resolve_static_css_vars,
     _Scale,
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
+    _tick_text,
     _title_entries,
     _title_metrics,
     annotation_label_placement,
@@ -771,6 +776,109 @@ def _grad_stops(fill_spec: dict, mark_color: str) -> list:
 
 
 @_textblock.cached_measurements
+def _emit_polar_grid(
+    cmd: _Cmd,
+    polar: _PolarProjection,
+    theta_ticks: list[float],
+    r_ticks: list[float],
+    theta_style: dict[str, Any],
+    r_style: dict[str, Any],
+    default_grid: str,
+    hide_theta: bool,
+    hide_r: bool,
+) -> None:
+    """Concentric rings and radial spokes, in display-list commands.
+
+    The rasterizer has no arc, wedge or circle opcode — its only curves are
+    pre-flattened polylines — so each ring ships as a closed polyline from
+    `_PolarProjection.ring`. The SVG exporter draws the same rings as exact
+    `<circle>` elements; both read the same tick list, so they agree on which
+    rings exist even though the curve is expressed differently.
+    """
+    if not hide_r:
+        for v in r_ticks:
+            radius = float(polar.norm_radius(v)) * polar.radius
+            if radius <= 0.0:
+                continue
+            ring = polar.ring(v)
+            cmd.stroke(
+                [*ring, ring[0]],
+                float(r_style.get("grid_width", 1)),
+                _parse_color(
+                    _css(r_style.get("grid_color"), default_grid),
+                    float(r_style.get("grid_opacity", 1.0)),
+                ),
+                dash=_AXIS_GRID_DASHES.get(str(r_style.get("grid_dash", "solid"))),
+            )
+    if hide_theta:
+        return
+    for v in theta_ticks:
+        angle = float(polar.angle(v))
+        cmd.stroke(
+            [
+                (polar.cx, polar.cy),
+                (
+                    polar.cx + polar.radius * math.cos(angle),
+                    polar.cy - polar.radius * math.sin(angle),
+                ),
+            ],
+            float(theta_style.get("grid_width", 1)),
+            _parse_color(
+                _css(theta_style.get("grid_color"), default_grid),
+                float(theta_style.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(theta_style.get("grid_dash", "solid"))),
+        )
+
+
+def _emit_polar_tick_labels(
+    cmd: _Cmd,
+    polar: _PolarProjection,
+    theta_values: list[float],
+    r_values: list[float],
+    r_step: float,
+    theta_axis: dict[str, Any],
+    r_axis: dict[str, Any],
+    theta_size: float,
+    r_size: float,
+    color: tuple[int, ...],
+    hide_theta: bool,
+    hide_r: bool,
+) -> None:
+    """Angular labels around the rim, radial labels along one spoke.
+
+    Mirrors `_polar_tick_labels` in `_svg.py`; the shared placement constants
+    live there so the two exporters cannot drift. The cartesian label machinery
+    is edge-relative (a side in {top, bottom, left, right} plus a 1-D collision
+    axis) and neither concept survives a disc.
+    """
+    if not hide_theta:
+        unit = theta_axis.get("theta_unit", "radians")
+        for v in theta_values:
+            angle = float(polar.angle(v))
+            x = polar.cx + (polar.radius + _POLAR_TICK_GAP) * math.cos(angle)
+            y = polar.cy - (polar.radius + _POLAR_TICK_GAP) * math.sin(angle)
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            anchor = 1 if abs(cos_a) < 0.3 else (0 if cos_a > 0 else 2)
+            dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * theta_size if sin_a > 0 else 0.8 * theta_size)
+            cmd.text(x, y + dy, anchor, theta_size, color, _fmt_angle(v, unit))
+    if hide_r:
+        return
+    angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
+    for v in r_values:
+        radius = float(polar.norm_radius(v)) * polar.radius
+        if radius <= 0.0:
+            continue
+        cmd.text(
+            polar.cx + radius * math.cos(angle) + 3.0,
+            polar.cy - radius * math.sin(angle) - 3.0,
+            0,
+            r_size,
+            color,
+            _tick_text(r_axis, v, r_step),
+        )
+
+
 def render_raster(
     spec: dict[str, Any],
     blob: bytes,
@@ -785,6 +893,13 @@ def render_raster(
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes = _axis_scales(spec, plot)
+    # Polar reinterprets the same two axes: x carries theta, y carries r. The
+    # projection comes from _svg so the vector and raster exports cannot drift.
+    polar = (
+        _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+        if spec.get("coords") == "polar"
+        else None
+    )
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
@@ -848,7 +963,9 @@ def render_raster(
     hide_y = ya.get("tick_label_strategy") == "none"
 
     cmd.clip(px0, py0, plot["w"], plot["h"])
-    for v in [] if hide_x else xmt:
+    if polar is not None:
+        _emit_polar_grid(cmd, polar, xt, yt, xstyle, ystyle, default_grid, hide_x, hide_y)
+    for v in [] if hide_x or polar is not None else xmt:
         gx = float(sx(v))
         cmd.stroke(
             [(gx, py0), (gx, py1)],
@@ -859,7 +976,7 @@ def render_raster(
             ),
             dash=_AXIS_GRID_DASHES.get(str(xmstyle.get("grid_dash", "solid"))),
         )
-    for v in [] if hide_y else ymt:
+    for v in [] if hide_y or polar is not None else ymt:
         gy = float(sy(v))
         cmd.stroke(
             [(px0, gy), (px1, gy)],
@@ -870,7 +987,7 @@ def render_raster(
             ),
             dash=_AXIS_GRID_DASHES.get(str(ymstyle.get("grid_dash", "solid"))),
         )
-    for v in [] if hide_x else xt:
+    for v in [] if hide_x or polar is not None else xt:
         gx = float(sx(v))
         cmd.stroke(
             [(gx, py0), (gx, py1)],
@@ -881,7 +998,7 @@ def render_raster(
             ),
             dash=_AXIS_GRID_DASHES.get(str(xstyle.get("grid_dash", "solid"))),
         )
-    for v in [] if hide_y else yt:
+    for v in [] if hide_y or polar is not None else yt:
         gy = float(sy(v))
         cmd.stroke(
             [(px0, gy), (px1, gy)],
@@ -903,11 +1020,11 @@ def render_raster(
         if t.get("tier") == "density" and t.get("density"):
             _emit_grid(cmd, "density", t["density"], blob, cols, trace_sx, trace_sy, style)
         elif kind == "line":
-            _emit_line(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+            _emit_line(cmd, t, blob, cols, trace_sx, trace_sy, style, color, polar)
         elif kind in ("area", "error_band"):
             _emit_area(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
         elif kind == "scatter":
-            _emit_scatter(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+            _emit_scatter(cmd, t, blob, cols, trace_sx, trace_sy, style, color, polar)
         elif kind == "hexbin":
             _emit_hexbin(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
@@ -936,6 +1053,18 @@ def render_raster(
     explicit_frame_sides = frame_sides is not None
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
+    if polar is not None:
+        # One outer ring replaces the four straight spines; "side" has no polar
+        # meaning, so frame_sides is deliberately not consulted.
+        frame_sides = []
+        explicit_frame_sides = False
+        if not hide_x:
+            rim = polar.ring(polar.r_hi)
+            cmd.stroke(
+                [*rim, rim[0]],
+                float(xstyle.get("axis_width", 1)),
+                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+            )
     if not hide_y or explicit_frame_sides:
         if "left" in frame_sides:
             cmd.stroke(
@@ -992,7 +1121,7 @@ def render_raster(
             return length / 2, length / 2
         return 0.0, length
 
-    if not hide_x:
+    if not hide_x and polar is None:
         inward, outward = tick_span(xmstyle)
         side = xa.get("side", "bottom")
         edge = py0 if side == "top" else py1
@@ -1023,7 +1152,7 @@ def render_raster(
                     float(xstyle.get("tick_width", 1)),
                     _parse_color(_css(xstyle.get("tick_color"), default_axis)),
                 )
-    if not hide_y:
+    if not hide_y and polar is None:
         inward, outward = tick_span(ymstyle)
         side = ya.get("side", "left")
         edge = px1 if side == "right" else px0
@@ -1177,8 +1306,24 @@ def render_raster(
                     angle=float(item["angle"]),
                 )
 
-    emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
-    emit_tick_labels(ya, ylab, ystep, sy, is_x=False)
+    if polar is not None:
+        _emit_polar_tick_labels(
+            cmd,
+            polar,
+            xlab,
+            ylab,
+            ystep,
+            xa,
+            ya,
+            slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(xa)),
+            slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(ya)),
+            slot_paint("tick_label", default_text),
+            hide_x,
+            hide_y,
+        )
+    else:
+        emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
+        emit_tick_labels(ya, ylab, ystep, sy, is_x=False)
     for axis_id, axis, axis_scale in extra_x_axes:
         _ticks, tick_labels, step = extra_x_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
@@ -1348,6 +1493,7 @@ def _emit_line(
     sy: _Scale,
     style: dict[str, Any],
     color: str,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     if style.get("step"):
@@ -1360,7 +1506,14 @@ def _emit_line(
     # the byte packer.
     cap = str(style.get("linecap", "round"))
     cap = cap if cap in _CAP_CODES else "round"
-    if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
+    if polar is not None:
+        # Chords between projected points (polar-axes.md §5). The smooth branch
+        # is skipped outright: its Bezier control points are only exact under an
+        # affine map, and `smooth_stroke` bakes that map into Rust.
+        px, py = polar(xv, yv)
+        points = list(zip(px.tolist(), py.tolist(), strict=True))
+        cmd.stroke(points, width, c, dash=style.get("dash"), cap=cap)
+    elif style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
         cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap)
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
@@ -1711,10 +1864,11 @@ def _emit_authored_scatter(
     sy: _Scale,
     style: dict[str, Any],
     color: str,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     """Paint bounded pyplot-authored paths/glyphs in display-list space."""
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
-    px, py = sx(xv), sy(yv)
+    px, py = polar(xv, yv) if polar is not None else (sx(xv), sy(yv))
     n = len(xv)
     if not n:
         return
@@ -1812,11 +1966,12 @@ def _emit_scatter(
     sy: _Scale,
     style: dict[str, Any],
     color: str,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
     if style.get("marker_path") or style.get("marker_glyph"):
-        _emit_authored_scatter(cmd, t, blob, cols, sx, sy, style, color)
+        _emit_authored_scatter(cmd, t, blob, cols, sx, sy, style, color, polar)
         return
 
     def read(index: int) -> np.ndarray:
@@ -1874,7 +2029,8 @@ def _emit_scatter(
     # spans and applies the same affine math while painting.  Keep the existing
     # command as the full-fidelity fallback for log axes and channel styling.
     if (
-        sx.affine
+        polar is None
+        and sx.affine
         and sy.affine
         and ch.get("mode") not in {"continuous", "categorical", "direct_rgba"}
         and size_ch.get("mode") != "continuous"
@@ -1889,7 +2045,7 @@ def _emit_scatter(
         return
 
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
-    px, py = sx(xv), sy(yv)
+    px, py = polar(xv, yv) if polar is not None else (sx(xv), sy(yv))
     n = len(xv)
     if n == 0:
         return

@@ -28,7 +28,24 @@ import warnings
 # including axes-fraction y and pixel padding. A v9 client would ignore that
 # field and silently omit non-center slots and their placement, so it must
 # reject the payload.
-PROTOCOL_VERSION = 10
+# v11 adds the chart-level `coords` key ("polar"), plus `theta_unit`,
+# `theta_zero` and `theta_direction` on the angular (x) axis spec. A v10 client
+# would ignore `coords` entirely and draw the (theta, r) columns as cartesian
+# x/y — a plausible, completely wrong picture — so it must reject the payload.
+PROTOCOL_VERSION = 11
+
+# Mark kinds the polar transform renders correctly today. Everything else is
+# refused by Figure._validate_coords rather than approximated: the rect, area,
+# segment and mesh shaders expand geometry in pixel space after the coordinate
+# map, so under polar they would draw chord-edged shapes where arcs belong.
+# spec/design/polar-axes.md §7 tracks the order the rest land in.
+POLAR_MARK_KINDS = frozenset({"line", "scatter"})
+
+# Polar traces ship tier="direct" (§7): M4 decimation buckets on a monotonic
+# screen-x column, which a spiral is not, and density binning in (theta, r)
+# distorts by area near the origin. Cap the direct path explicitly rather than
+# letting an unbounded polar scatter allocate its way to a cliff.
+POLAR_DIRECT_CEILING = 200_000
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

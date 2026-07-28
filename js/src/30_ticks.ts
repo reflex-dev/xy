@@ -112,6 +112,49 @@ function calendarTicks(lo, hi, rough) {
   return { ticks: out, step: stepM * 30 * MS.d };
 }
 
+// Angular tick ladders. niceStep's [1, 2, 2.5, 5, 10] cannot reach 15, 30, 45
+// or 90, so feeding it degrees gives 0/50/100/150 — a grid nobody reads angles
+// on. Fixed ladders instead, like TIME_STEPS.
+// Mirrored by _DEGREE_STEPS/_RADIAN_STEPS in python/xy/_svg.py.
+const DEGREE_STEPS = [1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 180, 360];
+const RADIAN_STEPS = [1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 2].map((f) => Math.PI * f);
+
+export function angularTicks(lo, hi, unit, target = 6) {
+  const a = Math.min(lo, hi);
+  const b = Math.max(lo, hi);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return { ticks: [], step: 1 };
+  if (a === b) return { ticks: [a], step: 1 };
+  const ladder = unit === "degrees" ? DEGREE_STEPS : RADIAN_STEPS;
+  const rough = (b - a) / Math.max(1, target);
+  const step = ladder.find((s) => s >= rough * (1 - 1e-12)) ?? ladder[ladder.length - 1];
+  const out = [];
+  for (let v = Math.ceil(a / step) * step; v <= b + step * 1e-9 && out.length < 200; v += step) {
+    out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  }
+  // A full turn lands a tick on both ends of the seam; they are one spoke, so
+  // the duplicate is dropped rather than overdrawn.
+  const turn = unit === "degrees" ? 360 : 2 * Math.PI;
+  if (out.length > 1 && Math.abs(out[out.length - 1] - out[0] - turn) < step * 1e-9) out.pop();
+  return { ticks: out, step };
+}
+
+// Mirrored by _fmt_angle in python/xy/_svg.py.
+export function fmtAngle(v, unit) {
+  if (unit === "degrees") return `${fmtLinear(v, 1)}\u00b0`;
+  if (Math.abs(v) < 1e-12) return "0";
+  const frac = v / Math.PI;
+  for (const den of [1, 2, 3, 4, 6, 8, 12]) {
+    const scaled = frac * den;
+    const nearest = Math.round(scaled);
+    if (nearest && Math.abs(scaled - nearest) < 1e-9) {
+      const num = Math.abs(nearest) === 1 ? "" : String(Math.abs(nearest));
+      const body = `${nearest < 0 ? "-" : ""}${num}\u03c0`;
+      return den === 1 ? body : `${body}/${den}`;
+    }
+  }
+  return fmtLinear(v, 0.01);
+}
+
 function fmtTime(ms, step) {
   const d = new Date(ms);
   const pad = (n, w = 2) => String(n).padStart(w, "0");
@@ -234,6 +277,7 @@ function collapsedToZero(formatted) {
 }
 
 export function fmtAxis(axis, v, tickStep) {
+  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit);
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
