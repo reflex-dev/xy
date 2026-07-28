@@ -69,6 +69,8 @@ in the README).
   that don't use them are byte-identical.
 
 ### Fixed
+- Improved Matplotlib compatibility for pie and vector-field plots, multiline
+  layout, authored styles, axes helpers/autoscaling, and browser Y-axis titles.
 - A mark-level `animation=xy.animation(...)` no longer resets the chart-level
   policy fields it does not mention. It was a complete spec spread over the
   chart's, so `xy.animation(duration=90)` on a mark silently reset `match`,
