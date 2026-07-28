@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import socket
 import time
-import urllib.request
 
 from _ux_live_host import SENTINELS, make_data
 
@@ -25,12 +23,6 @@ HEIGHT = 420
 # Match xy's direct-draw budget so the raw-points switch happens at a
 # comparable depth to xy's drill-in (§5 / config.SCATTER_DENSITY_THRESHOLD).
 RESAMPLE_WHEN = 200_000
-
-
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def main() -> None:
@@ -88,25 +80,24 @@ def main() -> None:
 
     threading.Thread(target=_kick_loop, daemon=True).start()
 
-    port = free_port()
-    # Bokeh's websocket origin allowlist defaults to localhost:<port>, which
-    # rejects the same page served as 127.0.0.1:<port> with a 403.
+    # Port 0 makes Bokeh bind an ephemeral port atomically and retain the
+    # socket; ``server.port`` is the actual bound port.  Restrict the server to
+    # loopback and allow only that host as the websocket origin (on any
+    # ephemeral port).
     server = pn.serve(
         app,
-        port=port,
+        port=0,
         address="127.0.0.1",
-        websocket_origin=[f"127.0.0.1:{port}", f"localhost:{port}"],
+        websocket_origin=["127.0.0.1:*"],
         show=False,
-        threaded=True,
+        start=False,
+        threaded=False,
+        verbose=False,
     )
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
-                if r.status == 200:
-                    break
-        except OSError:
-            time.sleep(0.1)
+    port = server.port
+    if port is None:
+        raise RuntimeError("Bokeh did not report its bound TCP port")
+    server.start()
     print(
         "META "
         + json.dumps(
@@ -120,7 +111,7 @@ def main() -> None:
         ),
         flush=True,
     )
-    server.join()
+    server.io_loop.start()
 
 
 if __name__ == "__main__":

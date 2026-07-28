@@ -19,23 +19,34 @@ Prints META {"port", "state_port", "n", "sentinels", "build_ms"} then serves.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
-import socket
 import threading
 import time
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from _ux_live_host import SENTINELS, make_data
 
 WIDTH = 900
 HEIGHT = 420
 DPI = 100
+STATE_TIMEOUT_S = 10
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def call_on_ioloop(loop: Any, callback: Callable[[], dict]) -> dict:
+    """Run a figure-state read on WebAgg's owner thread."""
+    result: concurrent.futures.Future[dict] = concurrent.futures.Future()
+
+    def invoke() -> None:
+        try:
+            result.set_result(callback())
+        except BaseException as exc:
+            result.set_exception(exc)
+
+    loop.add_callback(invoke)
+    return result.result(timeout=STATE_TIMEOUT_S)
 
 
 def main() -> None:
@@ -46,18 +57,24 @@ def main() -> None:
     import matplotlib
 
     matplotlib.use("WebAgg")
-    port = free_port()
     matplotlib.rcParams["webagg.address"] = "127.0.0.1"
-    matplotlib.rcParams["webagg.port"] = port
-    matplotlib.rcParams["webagg.port_retries"] = 1
+    # WebAgg binds inside ``initialize`` and retains that socket.  Let its
+    # built-in retry loop choose an available port, then report the port it
+    # actually bound; probing a free port and releasing it first is racy.
+    matplotlib.rcParams["webagg.port_retries"] = 50
     matplotlib.rcParams["webagg.open_in_browser"] = False
     import matplotlib.pyplot as plt
+    import tornado.ioloop
+    from matplotlib.backends.backend_webagg import WebAggApplication
 
     x, y = make_data(args.n)
     t0 = time.perf_counter()
     fig, ax = plt.subplots(figsize=(WIDTH / DPI, HEIGHT / DPI), dpi=DPI)
     ax.scatter(x, y)
     build_ms = (time.perf_counter() - t0) * 1e3
+    WebAggApplication.initialize()
+    port = WebAggApplication.port
+    webagg_loop = tornado.ioloop.IOLoop.instance()
 
     def state() -> dict:
         # transData: data -> display px, origin bottom-left; the canvas is
@@ -90,7 +107,10 @@ def main() -> None:
 
     class StateHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 — http.server contract
-            body = json.dumps(state()).encode()
+            # WebAgg mutates axes state on its Tornado loop.  Marshal the
+            # snapshot there instead of reading the figure concurrently from
+            # this ThreadingHTTPServer worker.
+            body = json.dumps(call_on_ioloop(webagg_loop, state)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")

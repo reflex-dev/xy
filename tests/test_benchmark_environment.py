@@ -57,6 +57,20 @@ def test_collect_environment_metadata_is_machine_readable(tmp_path: Path) -> Non
     assert metadata["git"] == {"commit": "abc123", "branch": "main", "dirty": True}
 
 
+def test_ux_hosts_use_atomic_server_port_binding() -> None:
+    webagg = (ROOT / "benchmarks" / "_ux_webagg_host.py").read_text(encoding="utf-8")
+    datashader = (ROOT / "benchmarks" / "_ux_datashader_host.py").read_text(encoding="utf-8")
+
+    assert "def free_port" not in webagg
+    assert "WebAggApplication.initialize()" in webagg
+    assert "port = WebAggApplication.port" in webagg
+    assert "call_on_ioloop(webagg_loop, state)" in webagg
+
+    assert "def free_port" not in datashader
+    assert "port=0" in datashader
+    assert "port = server.port" in datashader
+
+
 def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
     source = (ROOT / "benchmarks" / "test_codspeed_kernels.py").read_text(encoding="utf-8")
     required_markers = [
