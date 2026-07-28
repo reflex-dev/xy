@@ -22,7 +22,7 @@ same process for the new range, and a selection returns the original rows.
 
 > [!IMPORTANT]
 > **XY is in alpha** and is receiving frequent enhancements.
-> ⭐️ [Star the repo](https://github.com/reflex-dev/xy) to follow the progress.
+> ⭐️ Star the repo to follow the progress.
 
 ## Is XY right for me?
 
