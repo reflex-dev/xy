@@ -20,8 +20,10 @@ Rust core computes only what the screen needs to display, based on its
 resolution. Pan, zoom, hover, and selection can show full details by running the
 same process for the new range, and a selection returns the original rows.
 
-XY is early alpha, and is receiving frequent enhancements. Any contributions are
-appreciated!
+> [!IMPORTANT]
+> **XY is in alpha** and is receiving frequent enhancements.
+> ⭐️ [Star the repo](https://github.com/reflex-dev/xy) to follow the progress —
+> contributions are appreciated!
 
 ## Is XY right for me?
 
