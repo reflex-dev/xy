@@ -117,6 +117,11 @@ float xyViewValue(float coord, int mode, float constant) {
 // (_svg._PolarProjection) subtracts, because screen space grows downward.
 vec2 xyPolarPos(float thC, float rC, vec4 pol, vec2 rr, vec2 zdir) {
   float rn = (rC - rr.x) / max(rr.y - rr.x, 1e-30);
+  // Below the radial minimum there is no honest position: rn < 0 would
+  // reflect the mark through the centre. NaN culls the primitive instead —
+  // the same gap semantics NaN data gets (§3 D7), and the same NaN idiom
+  // xyAxisCoord's mode 3 already uses. Radial zoom-in relies on this.
+  if (rn < 0.0) return vec2(uintBitsToFloat(0x7fc00000u));
   float a = zdir.x + zdir.y * thC;
   return vec2(pol.x + rn * pol.z * cos(a), pol.y + rn * pol.w * sin(a));
 }
@@ -125,6 +130,21 @@ vec2 xyPolarPos(float thC, float rC, vec4 pol, vec2 rr, vec2 zdir) {
 // Uniform block every polar-capable vertex shader declares. u_coordMode is 0
 // for cartesian and 1 for polar; the branch is uniform across every vertex in
 // a draw, so it costs no divergence.
+// The cartesian/polar dispatch, for the shaders whose two coordinate columns
+// are plain x/y (points, pick, line). AREA_VS and BAR_VS deliberately do NOT
+// use it: they interpolate in data space before projecting, which is what keeps
+// a fill's radial edges true radii and a bar's span an arc.
+export const POLAR_XYPOS_GLSL = `
+vec2 xyPos(float xe, float ye) {
+  if (u_coordMode == 1) {
+    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
+                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
+                      u_polar, u_rrange, u_zdir);
+  }
+  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
+              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
+}`;
+
 export const POLAR_GLSL_UNIFORMS = `
 uniform int u_coordMode; uniform vec4 u_polar; uniform vec2 u_rrange; uniform vec2 u_zdir;`;
 
@@ -142,15 +162,7 @@ out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
-vec2 xyPos(float xe, float ye) {
-  if (u_coordMode == 1) {
-    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
-                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
-                      u_polar, u_rrange, u_zdir);
-  }
-  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
-              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
-}
+${POLAR_XYPOS_GLSL}
 
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
@@ -351,15 +363,7 @@ uniform float u_size; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
-vec2 xyPos(float xe, float ye) {
-  if (u_coordMode == 1) {
-    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
-                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
-                      u_polar, u_rrange, u_zdir);
-  }
-  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
-              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
-}
+${POLAR_XYPOS_GLSL}
 
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
@@ -400,15 +404,7 @@ uniform float u_transitionProgress; uniform int u_transitionActive;
 flat out int v_id;
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
-vec2 xyPos(float xe, float ye) {
-  if (u_coordMode == 1) {
-    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
-                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
-                      u_polar, u_rrange, u_zdir);
-  }
-  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
-              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
-}
+${POLAR_XYPOS_GLSL}
 
 void main() {
   float x = u_transitionActive == 1 ? mix(a_prevx, ax, u_transitionProgress) : ax;
@@ -554,15 +550,7 @@ out float v_off; out float v_dash; out vec2 v_cap;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
-vec2 xyPos(float xe, float ye) {
-  if (u_coordMode == 1) {
-    return xyPolarPos(xyAxisCoord(xe, u_xmeta, u_xmode, u_xconstant),
-                      xyAxisCoord(ye, u_ymeta, u_ymode, u_yconstant),
-                      u_polar, u_rrange, u_zdir);
-  }
-  return vec2(xyMap(xe, u_xmap, u_xmeta, u_xmode, u_xconstant),
-              xyMap(ye, u_ymap, u_ymeta, u_ymode, u_yconstant));
-}
+${POLAR_XYPOS_GLSL}
 
 void main() {
   float px0 = u_transitionActive == 1 ? mix(a_prevx, ax0, u_transitionProgress) : ax0;
@@ -941,7 +929,7 @@ out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
-uniform int u_polarSegments;
+uniform int u_polarSegments; uniform float u_polarV0C;
 void main() {
   vec2 c = corners[gl_VertexID];
   float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode, u_pconstant);
@@ -973,11 +961,13 @@ void main() {
     // cartesian path's, and a polar bar needs its angle and radius before the
     // affine map, not after.
     float thC = xyAxisCoord(a_pos, u_pmeta, u_pmode, u_pconstant);
-    // A bar with no explicit baseline starts at the radial axis minimum, which
-    // is exactly the inner edge of the disc.
-    float r0C = u_v0Mode == 0
-      ? u_rrange.x
-      : xyAxisCoord(a_v0, u_v0meta, u_vmode, u_vconstant);
+    // Constant baselines arrive in scaled data space via u_polarV0C — the
+    // cartesian u_v0Const is already clip-space and useless here. Baselines
+    // below the radial minimum clamp to the centre, matching the exporters'
+    // max(0, inner) clamp, instead of reflecting through it.
+    float r0C = max(
+      u_v0Mode == 0 ? u_polarV0C : xyAxisCoord(a_v0, u_v0meta, u_vmode, u_vconstant),
+      u_rrange.x);
     float r1C = mix(r0C, xyAxisCoord(a_v1, u_v1meta, u_vmode, u_vconstant), u_animationProgress);
     float hw = abs(width) * 0.5;
     int pair = gl_VertexID >> 1;

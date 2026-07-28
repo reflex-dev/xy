@@ -35,6 +35,7 @@ from .config import (  # noqa: E402, F401
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
     DIRECT_SOFT_CEILING,
+    POLAR_DIRECT_CEILING,
     POLAR_MARK_KINDS,
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
@@ -805,6 +806,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 f"supported kinds are {sorted(POLAR_MARK_KINDS)}. "
                 "See spec/design/polar-axes.md."
             )
+        for t in self.traces:
+            if t.n_points > POLAR_DIRECT_CEILING:
+                # Polar has no decimation or density tier to fall back to
+                # (polar-axes.md §7), so past the cap the only honest options
+                # are refusing or an unbounded direct draw. Refuse, and say
+                # which trace and why.
+                raise ValueError(
+                    f"polar {t.kind} trace has {t.n_points:,} points, over the "
+                    f"{POLAR_DIRECT_CEILING:,}-point polar ceiling: polar traces "
+                    "always draw every point (no decimation/density tier yet — "
+                    "spec/design/polar-axes.md §7). Reduce the data or bin it "
+                    "before charting."
+                )
 
     def _validate_interaction(self) -> None:
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):

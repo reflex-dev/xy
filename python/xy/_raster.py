@@ -26,8 +26,6 @@ from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
     _GRID,
-    _POLAR_RLABEL_DEG,
-    _POLAR_TICK_GAP,
     _STATIC_COLOR_FALLBACK,
     _TEXT,
     COLORBAR_FONT_SIZE,
@@ -63,9 +61,9 @@ from ._svg import (
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
-    _tick_text,
     _title_entries,
     _title_metrics,
+    affine_fast_path,
     annotation_label_placement,
     apply_export_background,
     axis_ticks,
@@ -74,6 +72,7 @@ from ._svg import (
     legend_items,
     legend_options_with_slot,
     minor_axis_ticks,
+    polar_tick_label_layout,
     polar_wedge_points,
     slot_font_size,
     slot_styles,
@@ -775,7 +774,6 @@ def _grad_stops(fill_spec: dict, mark_color: str) -> list:
     return [(float(o), _parse_color(_css(c, mark_color))) for o, c in fill_spec.get("stops", [])]
 
 
-@_textblock.cached_measurements
 def _emit_polar_grid(
     cmd: _Cmd,
     polar: _PolarProjection,
@@ -859,43 +857,41 @@ def _emit_polar_tick_labels(
     hide_theta: bool,
     hide_r: bool,
 ) -> None:
-    """Angular labels around the rim, radial labels along one spoke.
+    """Emit polar tick labels as display-list text, from the shared placement.
 
-    Mirrors `_polar_tick_labels` in `_svg.py`; the shared placement constants
-    live there so the two exporters cannot drift. The cartesian label machinery
-    is edge-relative (a side in {top, bottom, left, right} plus a 1-D collision
-    axis) and neither concept survives a disc.
+    Placement lives in `_svg.polar_tick_label_layout`; this is only the sink,
+    so the two exporters cannot drift on rim offsets, quadrant anchors or the
+    radial spoke angle.
     """
-    if not hide_theta:
-        for v in theta_values:
-            angle = float(polar.angle(v))
-            x = polar.cx + (polar.radius + _POLAR_TICK_GAP) * math.cos(angle)
-            y = polar.cy - (polar.radius + _POLAR_TICK_GAP) * math.sin(angle)
-            cos_a, sin_a = math.cos(angle), math.sin(angle)
-            anchor = 1 if abs(cos_a) < 0.3 else (0 if cos_a > 0 else 2)
-            dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * theta_size if sin_a > 0 else 0.8 * theta_size)
-            # _tick_text, not _fmt_angle: authored tick_labels (radar category
-            # names) must win over the angle, exactly as in the SVG twin.
+    angular, radial = polar_tick_label_layout(
+        polar,
+        theta_values,
+        r_values,
+        theta_step,
+        r_step,
+        theta_axis,
+        r_axis,
+        theta_size,
+        r_size,
+        hide_theta,
+        hide_r,
+    )
+    for placed, paint in ((angular, theta_color), (radial, r_color)):
+        for item in placed:
             cmd.text(
-                x, y + dy, anchor, theta_size, theta_color, _tick_text(theta_axis, v, theta_step)
+                item.x,
+                item.y,
+                # The layout speaks SVG's anchor vocabulary; the display list
+                # calls the same thing "center".
+                _TEXT_ANCHOR_CODES["center" if item.anchor == "middle" else item.anchor],
+                item.size,
+                paint,
+                item.text,
+                angle=item.spin,
             )
-    if hide_r:
-        return
-    angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
-    for v in r_values:
-        radius = float(polar.norm_radius(v)) * polar.radius
-        if radius <= 0.0:
-            continue
-        cmd.text(
-            polar.cx + radius * math.cos(angle) + 3.0,
-            polar.cy - radius * math.sin(angle) - 3.0,
-            0,
-            r_size,
-            r_color,
-            _tick_text(r_axis, v, r_step),
-        )
 
 
+@_textblock.cached_measurements
 def render_raster(
     spec: dict[str, Any],
     blob: bytes,
@@ -1337,8 +1333,8 @@ def render_raster(
             slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(ya)),
             _polar_label_paint(xa, slot_paint, default_text),
             _polar_label_paint(ya, slot_paint, default_text),
-            hide_x,
-            hide_y,
+            hide_x or xa.get("tick_label_strategy") == "off",
+            hide_y or ya.get("tick_label_strategy") == "off",
         )
     else:
         emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
@@ -1532,7 +1528,7 @@ def _emit_line(
         px, py = polar(xv, yv)
         points = list(zip(px.tolist(), py.tolist(), strict=True))
         cmd.stroke(points, width, c, dash=style.get("dash"), cap=cap)
-    elif style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
+    elif style.get("curve") == "smooth" and len(xv) >= 3 and affine_fast_path(sx, sy, polar):
         cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap)
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
@@ -2027,8 +2023,7 @@ def _emit_scatter(
     color_mode = ch.get("mode")
     size_mode = size_ch.get("mode")
     if (
-        sx.affine
-        and sy.affine
+        affine_fast_path(sx, sy, polar)
         and not t.get("channels")
         and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
@@ -2055,9 +2050,7 @@ def _emit_scatter(
     # spans and applies the same affine math while painting.  Keep the existing
     # command as the full-fidelity fallback for log axes and channel styling.
     if (
-        polar is None
-        and sx.affine
-        and sy.affine
+        affine_fast_path(sx, sy, polar)
         and ch.get("mode") not in {"continuous", "categorical", "direct_rgba"}
         and size_ch.get("mode") != "continuous"
         and not t.get("channels")

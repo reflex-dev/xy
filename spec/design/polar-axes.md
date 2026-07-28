@@ -60,7 +60,7 @@ Three properties this pins down, each of which has a matching fixture:
 - **`R` carries no fill factor.** Room for angular tick labels is reserved by
   *shrinking the plot rect during layout*, not by scaling the radius. The
   transform stays pure; layout owns the gutters. Concretely, after the
-  cartesian gutter passes converge, `_inset_polar_plot` (`_svg.py`, mirrored by
+  cartesian gutter passes converge, `_recut_polar_plot` (`_svg.py`, mirrored by
   `_recutPolarPlot` in the client) gives back the cartesian tick-label gutters
   — polar labels ring the disc instead of hugging two edges — and reserves a
   uniform `_POLAR_LABEL_ROOM` all round. Reservations that still mean something

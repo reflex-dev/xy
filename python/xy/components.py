@@ -6022,8 +6022,9 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
             xy.r_axis(label="gain (dBi)"),
         )
 
-    Supported marks today are `line` and `scatter`; anything else is refused at
-    build time rather than approximated. See spec/design/polar-axes.md.
+    Supported mark kinds are listed in `xy.config.POLAR_MARK_KINDS`; anything
+    else is refused at build time, with the supported set named in the error,
+    rather than approximated. See spec/design/polar-axes.md.
     """
     props.setdefault("coords", "polar")
     return Chart("polar_chart", children, **props)
@@ -6058,8 +6059,9 @@ def radar_chart(
         categories: Spoke labels, one per value.
         *children: `area` (filled) or `line` (outline) marks carrying values,
             plus any axis/legend children.
-        fill: Unused placeholder for symmetry with future options; the mark
-            kind chooses fill today (`area` fills, `line` does not).
+        fill: When False, filled `area` children are rebuilt as `line`
+            outlines, so one call switches a whole chart between filled and
+            outline radar without editing every mark.
         **props: Any `polar_chart` keyword.
 
     Returns:
@@ -6077,11 +6079,24 @@ def radar_chart(
     for child in children:
         if isinstance(child, Mark) and child.kind in {"area", "line"}:
             values = _radar_values(child, count)
-            rebuilt.append(replace(child, x=closed_angles, y=[*values, values[0]]))
+            kind = "line" if (child.kind == "area" and not fill) else child.kind
+            rebuilt.append(replace(child, kind=kind, x=closed_angles, y=[*values, values[0]]))
+        elif isinstance(child, Mark):
+            raise ValueError(f"radar_chart supports area and line marks; got {child.kind!r}")
         else:
             rebuilt.append(child)
-    has_theta = any(isinstance(c, Axis) and c.which == "x" for c in rebuilt)
-    if not has_theta:
+    # An authored theta axis customises the spokes, it does not opt out of
+    # them: category labels merge into it unless it authored its own ticks.
+    # Dropping the injection outright made `xy.theta_axis(label=...)` silently
+    # replace the category spokes with numeric angles.
+    merged = False
+    for index, child in enumerate(rebuilt):
+        if isinstance(child, Axis) and child.which == "x":
+            if child.tick_values is None:
+                rebuilt[index] = replace(child, tick_values=list(angles), tick_labels=list(names))
+            merged = True
+            break
+    if not merged:
         rebuilt.append(theta_axis(tick_values=angles, tick_labels=names))
     props.setdefault("coords", "polar")
     return Chart("radar_chart", tuple(rebuilt), **props)
@@ -6094,6 +6109,12 @@ def _radar_values(mark: "Mark", count: int) -> list[float]:
     argument lands in `x`; `y` is accepted too for callers who spell it out.
     """
     raw = mark.y if mark.y is not None else mark.x
+    if isinstance(raw, str):
+        raise ValueError(
+            f"radar_chart {mark.kind} mark must carry values directly, not the "
+            f"column name {raw!r}: the angles come from the categories, so there is "
+            "no frame to resolve against. Pass data[column] instead."
+        )
     if raw is None:
         raise ValueError(f"radar_chart {mark.kind} mark needs one value per category")
     values = [float(v) for v in np.asarray(raw, dtype=float).reshape(-1)]
@@ -6211,7 +6232,6 @@ def wind_rose(
         lower = upper
 
     props.setdefault("coords", "polar")
-    props.setdefault("title", None)
     children = (
         *marks,
         theta_axis(unit="degrees", zero="N", direction="clockwise"),

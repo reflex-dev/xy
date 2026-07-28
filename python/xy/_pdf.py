@@ -141,7 +141,10 @@ def _local(tag: Any) -> str:
 
 def _check_attrs(el: ET.Element, tag: str, allowed: frozenset[str]) -> None:
     for name in el.attrib:
-        if name not in allowed:
+        if name not in allowed and not name.startswith("data-"):
+            # data-* is inert marker metadata (the polar chrome tags its rings
+            # and spokes for tests); it carries no geometry or paint, so the
+            # strict subset can ignore it rather than refuse the document.
             _unsupported(f"<{tag}> attribute {name!r}")
 
 
@@ -186,6 +189,7 @@ _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "svg-nested": frozenset({"x", "y", "width", "height", "viewBox"}),
     "defs": frozenset(),
     "clipPath": frozenset({"id"}),
+    "clip-circle": frozenset({"cx", "cy", "r"}),
     "clip-rect": frozenset({"x", "y", "width", "height"}),
     "linearGradient": frozenset({"id", "x1", "y1", "x2", "y2", "gradientUnits"}),
     "stop": frozenset({"offset", "stop-color", "stop-opacity"}),
@@ -604,7 +608,7 @@ class _Converter:
     def __init__(self) -> None:
         self.pdf = _Pdf()
         self.ops: list[str] = []
-        self.clips: dict[str, tuple[float, float, float, float]] = {}
+        self.clips: dict[str, tuple] = {}
         self.gradients: dict[str, dict[str, Any]] = {}
         self.fonts: dict[str, tuple[str, int]] = {}  # basefont -> (resname, obj)
         self.gstates: dict[tuple, tuple[str, int]] = {}
@@ -618,6 +622,23 @@ class _Converter:
     @property
     def _cache(self) -> dict[str, Any]:
         return self._cache_stack[-1]
+
+    # Quarter-circle Bezier constant: the control-point distance that makes a
+    # cubic best fit a 90-degree arc.
+    _CIRCLE_KAPPA = 0.5522847498307936
+
+    def _append_circle_path(self, cx: float, cy: float, radius: float) -> None:
+        """A circle as four cubic Beziers, in PDF user space (y already flipped
+        by the caller's coordinate transform, so plain +/- works)."""
+        k = self._CIRCLE_KAPPA * radius
+        x0, x1 = cx - radius, cx + radius
+        y0, y1 = cy - radius, cy + radius
+        self.ops.append(f"{_f(x1)} {_f(cy)} m")
+        self.ops.append(f"{_f(x1)} {_f(cy + k)} {_f(cx + k)} {_f(y1)} {_f(cx)} {_f(y1)} c")
+        self.ops.append(f"{_f(cx - k)} {_f(y1)} {_f(x0)} {_f(cy + k)} {_f(x0)} {_f(cy)} c")
+        self.ops.append(f"{_f(x0)} {_f(cy - k)} {_f(cx - k)} {_f(y0)} {_f(cx)} {_f(y0)} c")
+        self.ops.append(f"{_f(cx + k)} {_f(y0)} {_f(x1)} {_f(cy - k)} {_f(x1)} {_f(cy)} c")
+        self.ops.append("h")
 
     def _push(self) -> None:
         self.ops.append("q")
@@ -815,16 +836,29 @@ class _Converter:
                 _check_attrs(el, tag, _ALLOWED_ATTRS["clipPath"])
                 cid = el.get("id")
                 children = list(el)
-                if cid is None or len(children) != 1 or _local(children[0].tag) != "rect":
-                    _unsupported("<clipPath> without a single <rect>")
-                rect = children[0]
-                _check_attrs(rect, "clipPath rect", _ALLOWED_ATTRS["clip-rect"])
-                self.clips[cid] = (
-                    _float(rect.get("x"), 0.0, "clip x"),
-                    _float(rect.get("y"), 0.0, "clip y"),
-                    _float(rect.get("width"), 0.0, "clip width"),
-                    _float(rect.get("height"), 0.0, "clip height"),
-                )
+                child_tag = _local(children[0].tag) if len(children) == 1 else None
+                if cid is None or child_tag not in ("rect", "circle"):
+                    _unsupported("<clipPath> without a single <rect> or <circle>")
+                shape = children[0]
+                if child_tag == "circle":
+                    # The polar disc clip. PDF has no circle primitive, so the
+                    # emitter draws it as four Bezier quarter-arcs.
+                    _check_attrs(shape, "clipPath circle", _ALLOWED_ATTRS["clip-circle"])
+                    self.clips[cid] = (
+                        "circle",
+                        _float(shape.get("cx"), 0.0, "clip cx"),
+                        _float(shape.get("cy"), 0.0, "clip cy"),
+                        _float(shape.get("r"), 0.0, "clip r"),
+                    )
+                else:
+                    _check_attrs(shape, "clipPath rect", _ALLOWED_ATTRS["clip-rect"])
+                    self.clips[cid] = (
+                        "rect",
+                        _float(shape.get("x"), 0.0, "clip x"),
+                        _float(shape.get("y"), 0.0, "clip y"),
+                        _float(shape.get("width"), 0.0, "clip width"),
+                        _float(shape.get("height"), 0.0, "clip height"),
+                    )
             elif tag == "linearGradient":
                 _check_attrs(el, tag, _ALLOWED_ATTRS["linearGradient"])
                 gid = el.get("id")
@@ -1139,9 +1173,14 @@ class _Converter:
             m = _URL_RE.match(clip_ref.strip())
             if m is None or m.group(1) not in self.clips:
                 _unsupported(f"clip-path {clip_ref!r}")
-            x, y, w, h = self.clips[m.group(1)]
+            clip = self.clips[m.group(1)]
             self._push()
-            self.ops.append(f"{_f(x)} {_f(y)} {_f(w)} {_f(h)} re")
+            if clip[0] == "circle":
+                _, cx, cy, radius = clip
+                self._append_circle_path(cx, cy, radius)
+            else:
+                _, x, y, w, h = clip
+                self.ops.append(f"{_f(x)} {_f(y)} {_f(w)} {_f(h)} re")
             self.ops.append("W n")
             clipped = True
         self._render_children(el, child)

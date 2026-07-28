@@ -510,3 +510,108 @@ def test_show_false_clears_the_outer_frame() -> None:
     frame = re.search(r'<circle data-xy-frame="polar"[^/]*/>', doc)
     assert frame is not None
     assert 'stroke-width="0"' in frame.group(0) or "#00000000" in frame.group(0)
+
+
+# -- audit round 2: chrome leaks, strategy off, angle, ceiling, pdf --------
+
+
+def test_no_cartesian_tick_stubs_leak_into_polar_svg() -> None:
+    """Edge-anchored tick marks have no polar geometry; they used to leak in
+    from the cartesian emission loops (raster never drew them — divergence)."""
+    theta, r = _rose()
+    chart = xy.polar_chart(
+        xy.line(theta, r),
+        xy.theta_axis(style={"tick_length": 8.0, "tick_color": "#ff00ff"}),
+        width=400,
+        height=400,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    stubs = [m for m in re.findall(r"<line [^/]*/>", doc) if "ff00ff" in m]
+    assert stubs == []
+
+
+def test_strategy_off_hides_polar_labels_but_keeps_grid() -> None:
+    theta, r = _rose()
+    chart = xy.polar_chart(
+        xy.line(theta, r), xy.theta_axis(tick_label_strategy="off"), width=400, height=400
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    assert 'data-xy-tick="theta"' not in doc
+    assert doc.count('data-xy-grid="spoke"') >= 3  # grid survives "off"
+    assert 'data-xy-tick="r"' in doc  # the other axis keeps its labels
+
+
+def test_tick_label_angle_rotates_polar_labels() -> None:
+    theta, r = _rose()
+    chart = xy.polar_chart(
+        xy.line(theta, r), xy.theta_axis(tick_label_angle=45.0), width=400, height=400
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    rotated = re.findall(r'<text data-xy-tick="theta"[^>]*transform="rotate\(45 ', doc)
+    assert len(rotated) >= 3
+
+
+def test_theta_axis_title_stays_on_canvas() -> None:
+    """The rect re-cut reclaims the bottom gutter — except when the theta axis
+    has a title, which is drawn there and was pushed below the canvas edge."""
+    theta, r = _rose()
+    chart = xy.polar_chart(xy.line(theta, r), xy.theta_axis(label="bearing"), width=400, height=400)
+    doc = chart.figure().to_image(format="svg").decode()
+    m = re.search(r'<text[^>]*y="(-?[\d.]+)"[^>]*>bearing</text>', doc)
+    assert m is not None and 0 <= float(m.group(1)) <= 400
+
+
+def test_polar_point_ceiling_is_enforced() -> None:
+    from xy.config import POLAR_DIRECT_CEILING
+
+    theta = np.zeros(POLAR_DIRECT_CEILING + 1)
+    with pytest.raises(ValueError, match="polar ceiling"):
+        xy.polar_chart(xy.scatter(theta, theta)).figure().build_payload_split()
+
+
+def test_radar_merges_categories_into_an_authored_theta_axis() -> None:
+    """An authored theta axis customises the spokes; it must not silently
+    replace the category labels with numeric angles."""
+    chart = xy.radar_chart(
+        ["speed", "power", "range"], xy.area([1.0, 2.0, 3.0]), xy.theta_axis(label="custom")
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    for name in ("speed", "power", "range", "custom"):
+        assert name in doc
+
+
+def test_polar_pdf_export_round_trips() -> None:
+    """The PDF converter's clip subset was rect-only, so every polar chart
+    raised. The disc clip now lands as four Bezier quarter-arcs."""
+    theta, r = _rose()
+    pdf = _chart(children=[xy.line(theta, r)]).figure().to_image(format="pdf")
+    assert pdf[:5] == b"%PDF-"
+    assert len(pdf) > 800
+
+
+def test_channel_styled_polar_scatter_stays_inside_the_disc() -> None:
+    """A colormapped/sized polar scatter took a second Rust affine fast path
+    that projected (theta, r) as cartesian (x, y): a diagonal line of points
+    outside the frame ring."""
+    rng = np.random.default_rng(5)
+    theta = rng.uniform(0, 2 * math.pi, 200)
+    r = rng.uniform(0.2, 1.0, 200)
+    chart = xy.polar_chart(
+        xy.scatter(theta, r, color=r, colormap="viridis", size=6.0), width=400, height=400
+    )
+    fig = chart.figure()
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+
+    from test_png_export import _decode_rgba
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    height, width, _ = pixels.shape
+    yy, xx = np.mgrid[0:height, 0:width]
+    outside = np.hypot(xx - project.cx, yy - project.cy) > project.radius + 12
+    # Colormapped marks are saturated colours; chrome text is near-grey. Count
+    # strongly-saturated ink outside the disc.
+    rgb = pixels[:, :, :3].astype(int)
+    saturated = (rgb.max(axis=2) - rgb.min(axis=2)) > 60
+    assert int((saturated & outside).sum()) == 0

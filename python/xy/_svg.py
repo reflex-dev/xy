@@ -25,7 +25,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from itertools import pairwise
 from os import PathLike
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import numpy as np
 
@@ -905,7 +905,8 @@ class _Scale:
 
 
 # Direction that theta=0 points, as an angle in radians measured
-# counterclockwise from due East. Mirrored by THETA_ZERO in js/src/30_ticks.ts.
+# counterclockwise from due East. Mirrored by THETA_ZERO in
+# js/src/50_chartview.ts.
 THETA_ZERO = {"E": 0.0, "N": math.pi / 2.0, "W": math.pi, "S": -math.pi / 2.0}
 
 
@@ -978,14 +979,23 @@ class _PolarProjection:
 
     @property
     def affine(self) -> bool:
-        """Never affine.
-
-        Several emitters bake a straight-line data->pixel map into Rust behind
-        `sx.affine and sy.affine`. A polar chart on linear axes would satisfy
-        that predicate while being emphatically non-affine, so the fast paths
-        must see False or they silently project through the wrong map (§6).
-        """
+        """Never affine — see `affine_fast_path`."""
         return False
+
+
+def affine_fast_path(
+    sx: "_Scale", sy: "_Scale", polar: "Optional[_PolarProjection]" = None
+) -> bool:
+    """May an emitter bake a straight-line data->pixel map into Rust?
+
+    Several emitters hand Rust two affine scales and let it project while
+    painting. A polar chart on linear axes satisfies `sx.affine and sy.affine`
+    while being emphatically non-affine, so every such gate must ask this
+    instead — one predicate rather than a `polar is None` conjunct repeated at
+    each site, which is how one gate got missed and shipped a colormapped polar
+    scatter projected as cartesian (§6).
+    """
+    return polar is None and sx.affine and sy.affine
 
 
 def _colormap_key(colormap: Any) -> str:
@@ -2298,29 +2308,36 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         "bottom_axis_room": bottom_axis_room,
     }
     if spec.get("coords") == "polar":
-        _inset_polar_plot(spec, plot, width, height)
+        _recut_polar_plot(spec, plot, width, height)
     return width, height, compact, plot
 
 
 # Room reserved outside the outer ring for angular tick labels. Cartesian
 # gutters are per-side because labels hug two edges; a polar chart carries them
 # all the way around, so the allowance is uniform.
+# Mirrored by POLAR_LABEL_ROOM in js/src/50_chartview.ts.
 _POLAR_LABEL_ROOM = 30.0
 
 # Angle of the spoke the radial tick labels run along, in degrees off the theta
 # zero direction. Matplotlib's default `rlabel_position`; keeping the labels off
 # the zero spoke stops them colliding with the theta=0 angular label. Shared by
 # both exporters so they cannot drift apart.
+# Mirrored by POLAR_RLABEL_DEG in js/src/50_chartview.ts.
 _POLAR_RLABEL_DEG = 22.5
 
 # Gap in px between the outer ring and the angular tick labels.
+# Mirrored by POLAR_TICK_GAP in js/src/50_chartview.ts.
 _POLAR_TICK_GAP = 8.0
 
 
-def _inset_polar_plot(
+def _recut_polar_plot(
     spec: dict[str, Any], plot: dict[str, float], width: float, height: float
 ) -> None:
     """Re-cut the plot rect for a disc, in place.
+
+    Mirrored by `_recutPolarPlot` in js/src/50_chartview.ts — the two must agree
+    or the same chart renders at a different size and centre in the browser than
+    in an export.
 
     Two things happen here, both after the cartesian gutter passes have
     converged so they cannot perturb that fixed point.
@@ -2359,12 +2376,21 @@ def _inset_polar_plot(
     titled = bool(y_axis.get("label")) and _axis_text_paint_visible(y_axis, "label_color")
     left = max(side, plot["x"]) if titled else side
     right = width - side
-    # Vertically the title side is fixed, so only the bottom can be symmetrised.
-    bottom = height - max(room, min(reserved_bottom, reserved_top))
+    # Vertically the title side is fixed, so only the bottom can be
+    # symmetrised — and only when the theta axis has no title of its own,
+    # because that title is drawn in the bottom gutter and reclaiming the band
+    # pushed it below the canvas edge.
+    x_axis = spec.get("x_axis") or {}
+    x_titled = bool(x_axis.get("label")) and _axis_text_paint_visible(x_axis, "label_color")
+    bottom_reserve = reserved_bottom if x_titled else min(reserved_bottom, reserved_top)
+    bottom = height - max(room, bottom_reserve)
     top = reserved_top + room
 
-    box_w = max(40.0, right - left)
-    box_h = max(40.0, bottom - top)
+    # Measure BEFORE clamping: clamping first made the guard below unreachable,
+    # so a chart too small for the label room silently got a 40px floor rect
+    # instead of keeping its circle. Mirrored by _recutPolarPlot's early return.
+    box_w = right - left
+    box_h = bottom - top
     # A very small chart keeps its circle and drops the label room rather than
     # collapsing to nothing.
     if box_w < 40.0 or box_h < 40.0:
@@ -2847,6 +2873,92 @@ def _polar_grid(
         )
 
 
+class PolarTickLabel(NamedTuple):
+    """One placed polar tick label, in renderer-neutral terms.
+
+    `anchor` is the SVG vocabulary ("start"/"middle"/"end"); the raster
+    exporter maps it to its own enum at the call site. `dy` is already folded
+    into `y`; it is carried separately only so a caller can re-derive the
+    unshifted anchor point if it ever needs one.
+    """
+
+    x: float
+    y: float
+    anchor: str
+    size: float
+    text: str
+    spin: float
+
+
+def polar_tick_label_layout(
+    polar: "_PolarProjection",
+    theta_values: list[float],
+    r_values: list[float],
+    theta_step: float,
+    r_step: float,
+    theta_axis: dict[str, Any],
+    r_axis: dict[str, Any],
+    theta_size: float,
+    r_size: float,
+    hide_theta: bool,
+    hide_r: bool,
+) -> "tuple[list[PolarTickLabel], list[PolarTickLabel]]":
+    """Where every polar tick label goes: (angular, radial).
+
+    The placement — rim offset, quadrant anchor, baseline nudge, the 22.5-degree
+    radial spoke — lives here once so the two exporters cannot drift on it; each
+    keeps only its own sink loop. The cartesian label machinery is
+    edge-relative (a side in {top, bottom, left, right} plus a 1-D collision
+    axis) and neither concept survives a disc, so polar places its own rather
+    than bending that code.
+
+    Mirrored by the polar label loop in js/src/50_chartview.ts, which places DOM
+    nodes with CSS translate percentages instead of anchors.
+    """
+    angular: list[PolarTickLabel] = []
+    radial: list[PolarTickLabel] = []
+    theta_spin = float(theta_axis.get("tick_label_angle") or 0.0)
+    r_spin = float(r_axis.get("tick_label_angle") or 0.0)
+    if not hide_theta:
+        for v in theta_values:
+            angle = float(polar.angle(v))
+            # Just outside the rim, nudged along the outward normal so the
+            # glyph box clears the ring rather than straddling it.
+            x = polar.cx + (polar.radius + _POLAR_TICK_GAP) * math.cos(angle)
+            y = polar.cy - (polar.radius + _POLAR_TICK_GAP) * math.sin(angle)
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            anchor = "middle" if abs(cos_a) < 0.3 else ("start" if cos_a > 0 else "end")
+            # The baseline sits at the glyph bottom, so a label above the circle
+            # needs no shift while one below needs close to a full ascent.
+            dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * theta_size if sin_a > 0 else 0.8 * theta_size)
+            # _tick_text, not _fmt_angle: authored tick_labels (the category
+            # names on a radar chart) must win over the angle.
+            angular.append(
+                PolarTickLabel(
+                    x, y + dy, anchor, theta_size, _tick_text(theta_axis, v, theta_step), theta_spin
+                )
+            )
+    if not hide_r:
+        # Matplotlib's default rlabel_position: off the zero spoke, so the
+        # radial labels do not pile onto the theta=0 angular label.
+        angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
+        for v in r_values:
+            radius = float(polar.norm_radius(v)) * polar.radius
+            if radius <= 0.0:
+                continue
+            radial.append(
+                PolarTickLabel(
+                    polar.cx + radius * math.cos(angle) + 3.0,
+                    polar.cy - radius * math.sin(angle) - 3.0,
+                    "start",
+                    r_size,
+                    _tick_text(r_axis, v, r_step),
+                    r_spin,
+                )
+            )
+    return angular, radial
+
+
 def _polar_tick_labels(
     labels: list[str],
     polar: "_PolarProjection",
@@ -2861,12 +2973,7 @@ def _polar_tick_labels(
     hide_theta: bool,
     hide_r: bool,
 ) -> None:
-    """Angular labels around the rim, radial labels along one spoke.
-
-    The cartesian label machinery is edge-relative — it takes a side in
-    {top, bottom, left, right} and a 1-D collision axis — and neither concept
-    survives a disc, so polar places its own rather than bending that code.
-    """
+    """Emit polar tick labels as SVG text, from the shared placement."""
     slot = slots.get("tick_label") or {}
     attrs = slot_text_attrs(slot)
 
@@ -2882,48 +2989,34 @@ def _polar_tick_labels(
         own = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
         return escape(own or slot_text_color(slot, default_text))
 
-    if not hide_theta:
-        color = tick_color(theta_axis)
-        size = slot_font_size(slot, _axis_tick_font_size(theta_axis))
-        for v in theta_values:
-            angle = float(polar.angle(v))
-            # Just outside the rim, and nudged along the outward normal so the
-            # glyph box clears the ring rather than straddling it.
-            x = polar.cx + (polar.radius + _POLAR_TICK_GAP) * math.cos(angle)
-            y = polar.cy - (polar.radius + _POLAR_TICK_GAP) * math.sin(angle)
-            cos_a, sin_a = math.cos(angle), math.sin(angle)
-            anchor = "middle" if abs(cos_a) < 0.3 else ("start" if cos_a > 0 else "end")
-            # Baseline sits at the glyph bottom, so a label above the circle
-            # needs no shift while one below needs a full ascent.
-            dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * size if sin_a > 0 else 0.8 * size)
-            labels.append(
-                f'<text data-xy-tick="theta" x="{_num(x)}" y="{_num(y + dy)}" fill="{color}" '
-                f'font-size="{_num(size)}" text-anchor="{anchor}"{attrs}>'
-                # _tick_text, not _fmt_angle: authored tick_labels (the
-                # category names on a radar chart) must win over the angle.
-                f"{escape(_tick_text(theta_axis, v, theta_step))}</text>"
+    angular, radial = polar_tick_label_layout(
+        polar,
+        theta_values,
+        r_values,
+        theta_step,
+        r_step,
+        theta_axis,
+        r_axis,
+        slot_font_size(slot, _axis_tick_font_size(theta_axis)),
+        slot_font_size(slot, _axis_tick_font_size(r_axis)),
+        hide_theta,
+        hide_r,
+    )
+    for kind, placed, axis in (("theta", angular, theta_axis), ("r", radial, r_axis)):
+        color = tick_color(axis)
+        for item in placed:
+            spin = (
+                f' transform="rotate({_num(item.spin)} {_num(item.x)} {_num(item.y)})"'
+                if item.spin
+                else ""
             )
-    if hide_r:
-        return
-    color = tick_color(r_axis)
-    size = slot_font_size(slot, _axis_tick_font_size(r_axis))
-    # Matplotlib's default rlabel_position: 22.5 degrees off the zero spoke, so
-    # the radial labels do not pile onto the theta=0 angular label.
-    angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
-    for v in r_values:
-        radius = float(polar.norm_radius(v)) * polar.radius
-        if radius <= 0.0:
-            continue
-        x = polar.cx + radius * math.cos(angle)
-        y = polar.cy - radius * math.sin(angle)
-        labels.append(
-            f'<text data-xy-tick="r" x="{_num(x + 3)}" y="{_num(y - 3)}" fill="{color}" '
-            f'font-size="{_num(size)}" text-anchor="start"{attrs}>'
-            f"{escape(_tick_text(r_axis, v, r_step))}</text>"
-        )
+            labels.append(
+                f'<text data-xy-tick="{kind}" x="{_num(item.x)}" y="{_num(item.y)}" '
+                f'fill="{color}" font-size="{_num(item.size)}" '
+                f'text-anchor="{item.anchor}"{attrs}{spin}>{escape(item.text)}</text>'
+            )
 
 
-@_textblock.cached_measurements
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
     spec = _decode_title_geometry(spec, blob)
     spec = _resolve_static_css_vars(spec)
@@ -3110,8 +3203,21 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 )
 
     if polar is not None:
+        # "off" hides only the label text (cartesian keeps grid and titles);
+        # "none" — folded into hide_x/hide_y — silences the whole axis chrome.
         _polar_tick_labels(
-            labels, polar, xlab, ylab, xstep, ystep, xa, ya, slots, default_text, hide_x, hide_y
+            labels,
+            polar,
+            xlab,
+            ylab,
+            xstep,
+            ystep,
+            xa,
+            ya,
+            slots,
+            default_text,
+            hide_x or xa.get("tick_label_strategy") == "off",
+            hide_y or ya.get("tick_label_strategy") == "off",
         )
     else:
         append_tick_labels(xa, xlab, xstep, sx, is_x=True)
@@ -3422,7 +3528,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             return length / 2, length / 2, float(style.get("tick_width", 1))
         return 0.0, length, float(style.get("tick_width", 1))
 
-    if not hide_x:
+    if not hide_x and polar is None:
         inward, outward, tick_width = tick_span(xmstyle)
         side = xa.get("side", "bottom")
         edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
@@ -3455,7 +3561,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     f'stroke="{escape(_css(xstyle.get("tick_color"), default_axis))}" '
                     f'stroke-width="{_num(tick_width)}"/>'
                 )
-    if not hide_y:
+    if not hide_y and polar is None:
         inward, outward, tick_width = tick_span(ymstyle)
         side = ya.get("side", "left")
         edge = plot["x"] + plot["w"] if side == "right" else plot["x"]

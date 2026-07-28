@@ -26,6 +26,15 @@ const POLAR_BAR_SEGMENTS = 24;
 // Uniform room outside the outer ring for angular tick labels. Mirrored by
 // _POLAR_LABEL_ROOM in python/xy/_svg.py.
 const POLAR_LABEL_ROOM = 30;
+// Radial tick labels run along a spoke this many degrees off theta zero, and
+// angular labels sit this many px outside the rim. Mirrored by
+// _POLAR_RLABEL_DEG / _POLAR_TICK_GAP in python/xy/_svg.py.
+const POLAR_RLABEL_DEG = 22.5;
+const POLAR_TICK_GAP = 8;
+// Direction theta=0 points, in radians ccw from east. Mirrored by THETA_ZERO in
+// python/xy/_svg.py; the wire carries the letters so one table serves all
+// renderers.
+const THETA_ZERO = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
 // character count makes "WWWW" and "iiii" reserve the same (wrong) width.
@@ -638,7 +647,7 @@ export class ChartView {
     this._recutPolarPlot();
   }
 
-  // Re-cut the plot rect for a disc. Mirrors `_inset_polar_plot` in
+  // Re-cut the plot rect for a disc. Mirrors `_recut_polar_plot` in
   // python/xy/_svg.py; the two must agree or the same chart renders at a
   // different size and centre in the browser than in an export.
   //
@@ -662,8 +671,12 @@ export class ChartView {
     const titled = !!yAxis.label;
     const left = titled ? Math.max(side, p.x) : side;
     const right = this.size.w - side;
-    // Only the bottom can be symmetrised: the top also holds the figure title.
-    const bottom = this.size.h - Math.max(room, Math.min(reservedBottom, reservedTop));
+    // Only the bottom can be symmetrised: the top also holds the figure title,
+    // and the bottom keeps its full band when the theta axis has a title of its
+    // own (it is drawn there; reclaiming the band pushed it off the canvas).
+    const xAxis = this._axis("x") || {};
+    const bottomReserve = xAxis.label ? reservedBottom : Math.min(reservedBottom, reservedTop);
+    const bottom = this.size.h - Math.max(room, bottomReserve);
     const top = reservedTop + room;
     const w = right - left;
     const h = bottom - top;
@@ -672,7 +685,7 @@ export class ChartView {
     // The top slice is angular-label room, so it belongs to the axis
     // reservation: `_positionTitles` anchors at `plot.y - _topAxisRoom`, and
     // without this the title rides the rect down and the topmost angular label
-    // lands on top of it. Mirrors the same line in `_inset_polar_plot`.
+    // lands on top of it. Mirrors the same line in `_recut_polar_plot`.
     this._topAxisRoom = (this._topAxisRoom || 0) + room;
   }
 
@@ -928,9 +941,22 @@ export class ChartView {
 
   _axisPolicy(name) {
     const configured = this.interaction?.[name];
-    if (!Array.isArray(configured) || !configured.length) return this._axisIds();
-    const declared = new Set(this._axisIds());
-    return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+    const ids = (!Array.isArray(configured) || !configured.length)
+      ? this._axisIds()
+      : (() => {
+        const declared = new Set(this._axisIds());
+        return [...new Set(configured.filter((axisId) => declared.has(axisId)))];
+      })();
+    // Polar interaction is deliberately small (polar-axes.md §8): wheel zoom
+    // is RADIAL-ONLY (the y axis carries r), and pan is disabled rather than
+    // half-working — a cartesian pan would shift the theta range and rescale
+    // the disc as if the chart were rectilinear, which is exactly what it
+    // looked like: wrong.
+    if (this.spec?.coords === "polar") {
+      if (name === "pan_axes") return [];
+      if (name === "zoom_axes") return ids.filter((axisId) => axisId.startsWith("y"));
+    }
+    return ids;
   }
 
   _resetAxisPolicy() {
@@ -1123,6 +1149,15 @@ export class ChartView {
   }
 
   _interactionFlag(name, fallback = false) {
+    // Rectangle-shaped gestures have no polar geometry yet: a screen-space box
+    // neither matches a (theta, r) region nor reads as one. Off rather than
+    // half-working, per polar-axes.md §8; hover and radial wheel zoom remain.
+    if (
+      this.spec?.coords === "polar" &&
+      (name === "box_zoom" || name === "select" || name === "brush" || name === "crosshair")
+    ) {
+      return false;
+    }
     const value = this.interaction && this.interaction[name];
     return value === undefined ? fallback : value === true;
   }
@@ -3792,6 +3827,11 @@ export class ChartView {
   // `_cpu` columns either way (`_nearestCpuIndex` limits to the source length).
   _smoothArrays(t, x, y, base, n) {
     if (!t.style || t.style.curve !== "smooth") return null;
+    // Polar draws chords, never smoothed curves: the Hermite control points
+    // are only exact under an affine map, and both static exporters already
+    // skip smoothing for the same reason (polar-axes.md §5). Resampling here
+    // made the browser render a rounded shape the exports do not have.
+    if (this.spec?.coords === "polar") return null;
     return xySmoothResample(x, y, base || null, n, 32768);
   }
 
@@ -4336,9 +4376,8 @@ export class ChartView {
     const p = this.plot;
     if (!p || !(p.w > 0) || !(p.h > 0)) return null;
     const axis = this._axis("x") || {};
-    const zeros = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
     const rawZero = axis.theta_zero ?? "E";
-    const zero = typeof rawZero === "string" ? (zeros[rawZero] ?? 0) : Number(rawZero) || 0;
+    const zero = typeof rawZero === "string" ? (THETA_ZERO[rawZero] ?? 0) : Number(rawZero) || 0;
     const dir = axis.theta_direction === "clockwise" ? -1 : 1;
     const unitScale = axis.theta_unit === "degrees" ? Math.PI / 180 : 1;
     const [rLo, rHi] = this._axisRange("y");
@@ -5360,6 +5399,8 @@ export class ChartView {
     const polarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
     if (polarSegments) {
       gl.uniform1i(u("u_polarSegments"), polarSegments);
+      const vAxisId = g.orientation === 1 ? g.xAxis : g.yAxis;
+      gl.uniform1f(u("u_polarV0C"), this._axisCoord(this._axis(vAxisId), g.value0Const ?? 0));
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (polarSegments + 1), g.n);
     } else {
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
@@ -5839,7 +5880,9 @@ export class ChartView {
         rule(axis, x, p.y, w, p.h);
       }
 
-      if (!hideX) {
+      // Edge-anchored tick marks have no polar geometry; the spec records
+      // tick_length/tick_width/tick_direction as ignored under polar.
+      if (!hideX && !polarGeom) {
         const minorTick = tickParts(xmAxis);
         const minorSide = xAxis.side || "bottom";
         const minorEdge = minorSide === "top" ? p.y : p.y + p.h;
@@ -5871,7 +5914,7 @@ export class ChartView {
           }
         }
       }
-      if (!hideY) {
+      if (!hideY && !polarGeom) {
         const minorTick = tickParts(ymAxis);
         const minorSide = yAxis.side || "left";
         const minorEdge = minorSide === "right" ? p.x + p.w : p.x;
@@ -6163,9 +6206,12 @@ export class ChartView {
       // Angular labels around the rim, radial labels along the 22.5-degree
       // spoke. Mirrors _polar_tick_labels in python/xy/_svg.py; the cartesian
       // label machinery is edge-relative and neither concept survives a disc.
-      const RLABEL = (22.5 * Math.PI) / 180;
-      const GAP = 8;
-      if (!hideX) {
+      const RLABEL = (POLAR_RLABEL_DEG * Math.PI) / 180;
+      const GAP = POLAR_TICK_GAP;
+      // "off" hides only the label text; "none" (hideX/hideY) kills the chrome.
+      const offX = this._axisTickLabelStrategy(xAxis) === "off";
+      const offY = this._axisTickLabelStrategy(yAxis) === "off";
+      if (!hideX && !offX) {
         for (const v of (xt.labels || xt.ticks)) {
           const a = polarGeom.zero + polarGeom.dirUnit * v;
           const cos = Math.cos(a);
@@ -6174,24 +6220,28 @@ export class ChartView {
           const ly = polarGeom.cy - (polarGeom.radius + GAP) * sin;
           const align = Math.abs(cos) < 0.3 ? "-50%" : (cos > 0 ? "0%" : "-100%");
           const vshift = Math.abs(sin) < 0.3 ? "-50%" : (sin > 0 ? "-100%" : "0%");
+          const spinX = Number(xAxis.tick_label_angle) || 0;
           label(
             this._axisTickText(xAxis, v, xt.step),
-            `left:${lx}px;top:${ly}px;transform:translate(${align}, ${vshift});`,
+            `left:${lx}px;top:${ly}px;transform:translate(${align}, ${vshift})` +
+              (spinX ? ` rotate(${spinX}deg)` : "") + ";",
             xAxis,
           );
         }
       }
-      if (!hideY) {
+      if (!hideY && !offY) {
         const [rLo, rHi] = this._axisRange("y");
         const span = rHi - rLo || 1;
         const angle = polarGeom.zero + Math.sign(polarGeom.dirUnit || 1) * RLABEL;
         for (const v of (yt.labels || yt.ticks)) {
           const radius = ((v - rLo) / span) * polarGeom.radius;
           if (!(radius > 0)) continue;
+          const spinY = Number(yAxis.tick_label_angle) || 0;
           label(
             this._axisTickText(yAxis, v, yt.step),
             `left:${polarGeom.cx + radius * Math.cos(angle) + 3}px;` +
-              `top:${polarGeom.cy - radius * Math.sin(angle) - 3}px;transform:translate(0, -100%);`,
+              `top:${polarGeom.cy - radius * Math.sin(angle) - 3}px;` +
+              `transform:translate(0, -100%)` + (spinY ? ` rotate(${spinY}deg)` : "") + ";",
             yAxis,
           );
         }

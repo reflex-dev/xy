@@ -409,7 +409,16 @@ Object.assign(ChartView.prototype, {
       const f = Math.pow(1.0015, e.deltaY);
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
-      const fy = 1 - (e.clientY - r.top) / r.height;
+      let fy = 1 - (e.clientY - r.top) / r.height;
+      const polarGeom = this._polarGeometry?.();
+      if (polarGeom) {
+        // Radial zoom anchors at the cursor's RADIUS, not its height: the y
+        // axis carries r, and anchorFrac is a fraction of the axis range, which
+        // on a disc is the normalized radius (polar-axes.md §8).
+        const dx = (e.clientX - r.left) - r.width / 2;
+        const dy = r.height / 2 - (e.clientY - r.top);
+        fy = Math.min(1, Math.hypot(dx, dy) / (polarGeom.radius || 1));
+      }
       this._queueWheelZoom(f, fx, fy);
     }, { passive: false });
 

@@ -39,7 +39,7 @@ _COORDS = frozenset({"cartesian", "polar"})
 _THETA_UNITS = frozenset({"radians", "degrees"})
 _THETA_DIRECTIONS = frozenset({"counterclockwise", "clockwise"})
 # Compass letters for theta=0; resolved to radians by THETA_ZERO in _svg.py and
-# its GLSL twin. Kept as letters on the wire so one table serves all renderers.
+# by the THETA_ZERO table in js/src/50_chartview.ts. Kept as letters on the wire so one table serves all renderers.
 _THETA_ZEROS = frozenset({"E", "N", "W", "S"})
 _FILL_SPACES = frozenset({"mark", "plot"})
 # CSS `<side-or-corner>` keywords -> wire direction. In mark space the gradient
