@@ -46,6 +46,28 @@ DEFAULT_SIZES = [100_000]
 ARMS = ("xy", "xy-exact", "plotly", "matplotlib", "datashader")
 
 
+def read_meta(host: subprocess.Popen[str], timeout_s: float = 120.0) -> str | None:
+    """First META line from a host, or None if it never arrives.
+
+    A bare readline() blocks forever when a host dies before printing or hangs
+    during construction, which would stall the whole sweep on one cell.
+    """
+    import threading
+
+    result: list[str] = []
+
+    def pump() -> None:
+        for line in host.stdout:  # type: ignore[union-attr]
+            if line.startswith("META "):
+                result.append(line.strip())
+                return
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    return result[0] if result else None
+
+
 class TreePeakPoller:
     """Peak process-tree RSS of a child, sampled every 50 ms from spawn.
 
@@ -634,9 +656,9 @@ def run_xy_arm(
     )
     poller = TreePeakPoller(host.pid)
     try:
-        meta_line = host.stdout.readline().strip()
-        if not meta_line.startswith("META "):
-            err = host.stderr.read()[:800] if host.poll() is not None else meta_line
+        meta_line = read_meta(host)
+        if meta_line is None:
+            err = host.stderr.read()[:800] if host.poll() is not None else "no META within timeout"
             return {"status": "host_failed", "detail": err}
         meta = json.loads(meta_line[len("META ") :])
         probe = _ux_probe.engine_js({"sentinels": meta["sentinels"]})
@@ -683,9 +705,9 @@ def run_webagg_arm(
     )
     poller = TreePeakPoller(host.pid)
     try:
-        meta_line = host.stdout.readline().strip()
-        if not meta_line.startswith("META "):
-            err = host.stderr.read()[:800] if host.poll() is not None else meta_line
+        meta_line = read_meta(host)
+        if meta_line is None:
+            err = host.stderr.read()[:800] if host.poll() is not None else "no META within timeout"
             return {"status": "host_failed", "detail": err}
         meta = json.loads(meta_line[len("META ") :])
         # WebAgg draws on demand: give the tornado app a beat to accept.
@@ -738,11 +760,9 @@ def run_datashader_arm(
     )
     poller = TreePeakPoller(host.pid)
     try:
-        meta_line = host.stdout.readline().strip()
-        while meta_line and not meta_line.startswith("META "):
-            meta_line = host.stdout.readline().strip()
-        if not meta_line.startswith("META "):
-            err = host.stderr.read()[:800] if host.poll() is not None else meta_line
+        meta_line = read_meta(host)
+        if meta_line is None:
+            err = host.stderr.read()[:800] if host.poll() is not None else "no META within timeout"
             return {"status": "host_failed", "detail": err}
         meta = json.loads(meta_line[len("META ") :])
         arm_js = DATASHADER_ARM_JS.replace("__SENTINEL0__", json.dumps(meta["sentinels"][0]))
@@ -794,11 +814,20 @@ def run_plotly_arm(
         text=True,
     )
     build_poller = TreePeakPoller(builder.pid)
-    out, err = builder.communicate()
+    try:
+        out, err = builder.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        builder.kill()
+        out, err = builder.communicate()
+        build_poller.stop()
+        return {"status": "build_timeout", "detail": err[-500:]}
     python_peak = build_poller.stop()
     if builder.returncode != 0:
         return {"status": "build_failed", "detail": err[-500:]}
-    build_s = float(out.strip().splitlines()[-1])
+    try:
+        build_s = float(out.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return {"status": "build_failed", "detail": f"unparseable build output: {out[-200:]!r}"}
     probe = _ux_probe.engine_js({"sentinels": [list(s) for s in SENTINELS]})
     row = drive_browser(
         artifact.resolve().as_uri(),
@@ -945,11 +974,17 @@ def main() -> None:
         # One synced grid per size: every arm replayed against a shared clock,
         # so a moment in the video is the same moment for all of them.
         for n in sizes:
-            frames = sorted(video_dir.glob(f"*-{n}"))
+            frames = [d for d in sorted(video_dir.glob(f"*-{n}")) if not d.name.startswith("_")]
             if not frames:
                 continue
-            staged = video_dir / f"_grid-{n}"
-            staged.mkdir(exist_ok=True)
+            # Staging lives outside video_dir: a sibling named `_grid-{n}`
+            # inside it is matched by the same `*-{n}` glob, so on a rerun it
+            # would be picked up as an arm and symlinked into itself.
+            staged = video_dir.parent / f"{video_dir.name}-staging-{n}"
+            if staged.exists():
+                for old in staged.iterdir():
+                    old.unlink()
+            staged.mkdir(parents=True, exist_ok=True)
             for src in frames:
                 link = staged / src.name
                 if not link.exists():

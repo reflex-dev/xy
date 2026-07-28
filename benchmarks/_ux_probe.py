@@ -138,15 +138,25 @@ def engine_js(meta: dict[str, Any]) -> str:
     }
 
     function background(surfaces) {
-      // Reference background: the modal corner pixel across surfaces.
-      const px = [];
+      // Reference background: the *modal* corner pixel across surfaces.  The
+      // top-left corner alone is not safe -- a title, axis label or toolbar
+      // can occupy it, and every sentinel would then be compared against the
+      // wrong reference, silently weakening the correctness gate.
+      const counts = new Map();
       for (const s of surfaces) {
         for (const [fx, fy] of [[2, 2], [s.w - 3, 2], [2, s.h - 3], [s.w - 3, s.h - 3]]) {
           const i = (fy * s.w + fx) * 4;
-          px.push([s.data[i], s.data[i + 1], s.data[i + 2], s.data[i + 3]]);
+          const px = [s.data[i], s.data[i + 1], s.data[i + 2], s.data[i + 3]];
+          const key = px.join(",");
+          const seen = counts.get(key);
+          counts.set(key, seen ? {px: seen.px, n: seen.n + 1} : {px: px, n: 1});
         }
       }
-      return px[0] || [0, 0, 0, 0];
+      let best = null;
+      for (const entry of counts.values()) {
+        if (!best || entry.n > best.n) best = entry;
+      }
+      return best ? best.px : [0, 0, 0, 0];
     }
 
     function sentinelsLit(snap) {

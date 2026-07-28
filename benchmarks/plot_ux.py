@@ -50,7 +50,10 @@ def series(
     for n in sizes:
         row = rows.get((arm, n))
         if row is None or row.get("status") != "ok":
-            return xs, values, (row or {}).get("status")
+            # A size that was never measured is not the same as one that
+            # failed, but both stop the line -- so both must be labelled,
+            # never left to trail off as though the ladder simply ended.
+            return xs, values, (row or {}).get("status") or "not measured"
         if metric == "time":
             value = float(row["visible_complete_ms"]) / 1000.0
         else:

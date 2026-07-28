@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -78,19 +79,44 @@ def main() -> None:
     label_h = 34
     cols = min(args.cols, len(tracks))
     rows = (len(tracks) + cols - 1) // cols
-    canvas_size = (cols * cell[0], rows * (cell[1] + label_h))
+    # libx264 with yuv420p requires even dimensions; whether the natural size
+    # is even depends on the arm count and the screencast aspect ratio, so a
+    # layout that encodes fine with five panels fails with three.  Round up.
+    canvas_size = (
+        (cols * cell[0] + 1) // 2 * 2,
+        (rows * (cell[1] + label_h) + 1) // 2 * 2,
+    )
 
     # Each panel's timer stops at that arm's render.  Prefer the measured
     # visible_complete_ms; fall back to its last captured frame, which is the
     # same moment since recording stops at visible-complete.
     finish: dict[str, float] = {name: float(frames[-1][0]) for name, frames in tracks.items()}
+    # An arm that never rendered has no finish time, and a blank panel with a
+    # running timer reads as "still loading" rather than "failed" — so the
+    # failure is named on the panel instead.
+    failed: dict[str, str] = {}
     if args.report and args.report.exists():
         import json
 
         for row in json.loads(args.report.read_text()).get("results", []):
             key = f"{row['arm']}-{row['n']}"
-            if key in finish and row.get("visible_complete_ms"):
-                finish[key] = float(row["visible_complete_ms"])
+            if key not in finish:
+                continue
+            status = str(row.get("status", "failed"))
+            # A cell can fail *after* rendering (e.g. the zoom never resolved),
+            # which is a different fact from never rendering at all — the
+            # panel must not conflate them.
+            vc = row.get("visible_complete_ms") or (row.get("detail") or {}).get(
+                "visible_complete_ms"
+            )
+            if status == "ok" and vc:
+                finish[key] = float(vc)
+            elif vc:
+                finish[key] = float(vc)
+                failed[key] = status.replace("_", " ")
+            else:
+                finish[key] = float("inf")
+                failed[key] = status.replace("_", " ")
 
     span_ms = max(frames[-1][0] for frames in tracks.values())
     step_ms = 1000.0 / args.fps / args.slowdown
@@ -124,24 +150,52 @@ def main() -> None:
                     cache[key] = Image.open(path).convert("RGB").resize(cell)
                 canvas.paste(cache[key], (x0, y0 + label_h))
             label = name.rsplit("-", 1)[0]
-            done = now_ms >= finish[name]
-            # Stopwatch semantics: the timer runs while the chart is loading
-            # and freezes green on the render time once it is up.
-            shown_ms = finish[name] if done else now_ms
-            colour = (86, 222, 132) if done else (150, 200, 255)
-            draw.rectangle(
-                [x0, y0, x0 + cell[0], y0 + label_h],
-                fill=(24, 42, 30) if done else (28, 28, 32),
-            )
+            is_failed = name in failed
+            done = not is_failed and now_ms >= finish[name]
+            # Stopwatch semantics: the timer runs while the chart is loading,
+            # freezes green on the render time once it is up, and turns red
+            # naming the failure if the chart never rendered at all.
+            if is_failed and finish[name] == float("inf"):
+                header, colour = (46, 24, 26), (255, 120, 120)
+                readout = "NEVER RENDERED"
+            elif is_failed:
+                # It drew, then failed later: keep its render time visible in
+                # amber so the load result is not thrown away with the run.
+                header, colour = (48, 38, 20), (240, 190, 90)
+                readout = f"{finish[name] / 1000:6.3f}s"
+            elif done:
+                header, colour = (24, 42, 30), (86, 222, 132)
+                readout = f"{finish[name] / 1000:6.3f}s"
+            else:
+                header, colour = (28, 28, 32), (150, 200, 255)
+                readout = f"{now_ms / 1000:6.3f}s"
+            draw.rectangle([x0, y0, x0 + cell[0], y0 + label_h], fill=header)
             draw.text((x0 + 10, y0 + 7), label, font=title_font, fill=(235, 235, 240))
-            draw.text(
-                (x0 + cell[0] - 116, y0 + 8),
-                f"{shown_ms / 1000:6.3f}s",
-                font=time_font,
-                fill=colour,
-            )
+            anchor_x = x0 + cell[0] - (176 if readout[0].isalpha() else 116)
+            draw.text((anchor_x, y0 + 8), readout, font=time_font, fill=colour)
+            if is_failed and now_ms >= min(finish[name], span_ms * 0.35):
+                # Say why, centred on the panel it applies to.
+                msg = failed[name]
+                box = draw.textbbox((0, 0), msg, font=title_font)
+                draw.text(
+                    (
+                        x0 + (cell[0] - (box[2] - box[0])) // 2,
+                        y0 + label_h + cell[1] // 2 - 12,
+                    ),
+                    msg,
+                    font=title_font,
+                    fill=(226, 108, 108) if finish[name] == float("inf") else (226, 176, 84),
+                )
         canvas.save(staging / f"{index:05d}.png")
 
+    if shutil.which("ffmpeg") is None:
+        # The frames are already on disk and are the expensive part; say so
+        # rather than surfacing a bare FileNotFoundError from subprocess.
+        print(
+            f"ffmpeg not found: staged frames left in {staging}. "
+            f"Install ffmpeg and rerun to assemble {args.out}."
+        )
+        raise SystemExit(2)
     subprocess.run(
         [
             "ffmpeg",

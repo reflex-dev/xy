@@ -407,8 +407,11 @@ def child_run(arm: str, n: int, artifact: Path | None) -> dict[str, Any]:
         "source_bytes": source_bytes,
         "python_build_ms": elapsed_ms,
         # The child's own high-water mark: exact, and immune to the 50 ms
-        # sampling gap that the parent poller cannot close.
-        "python_maxrss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        # sampling gap that the parent poller cannot close.  ru_maxrss is
+        # bytes on macOS and KiB everywhere else, so normalize at the source
+        # rather than shipping a field whose unit depends on the platform.
+        "python_maxrss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        * (1 if sys.platform == "darwin" else 1024),
         **detail,
     }
 

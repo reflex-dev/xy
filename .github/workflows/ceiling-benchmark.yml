@@ -37,9 +37,13 @@ on:
         type: string
         default: "300"
       memory_gib:
-        description: Per-process-tree RSS guard. Must stay under the runner's 30 GB.
+        description: >-
+          Per-process-tree RSS guard, not a runner-wide cap. The WebAgg arm
+          keeps its server alive while the browser runs, so two trees can be
+          resident at once; keep this under half the runner's 30 GB unless
+          only single-tree arms are selected.
         type: string
-        default: "24"
+        default: "14"
       interactive_budget_ms:
         description: Gesture p95 above this counts as rendering, not interacting.
         type: string
@@ -60,6 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Benchmark steps execute repository and dependency code; leaving the
+          # token in git config would put it within their reach.
+          persist-credentials: false
           # The distribution version is derived from the latest `v*` tag.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -117,17 +124,27 @@ jobs:
         run: df -h /
 
       - name: Run ceiling sweep
+        # Dispatch inputs ride in via env, never interpolated into the shell
+        # source: `${{ }}` expands before the shell parses, so an input
+        # containing shell syntax would execute on the runner.
+        env:
+          INPUT_SIZES: ${{ inputs.sizes }}
+          INPUT_ARMS: ${{ inputs.arms }}
+          INPUT_REPETITIONS: ${{ inputs.repetitions }}
+          INPUT_TIMEOUT: ${{ inputs.timeout }}
+          INPUT_MEMORY_GIB: ${{ inputs.memory_gib }}
+          INPUT_HARDWARE_GL: ${{ inputs.hardware_gl }}
         run: |
           CHROME="$(node -e "console.log(require('playwright').chromium.executablePath())")"
           export CHROME
           SOFTWARE="--software"
-          if [ "${{ inputs.hardware_gl }}" = "true" ]; then SOFTWARE=""; fi
+          if [ "$INPUT_HARDWARE_GL" = "true" ]; then SOFTWARE=""; fi
           uv run python benchmarks/bench_ceiling.py \
-            --sizes "${{ inputs.sizes }}" \
-            --arms "${{ inputs.arms }}" \
-            --repetitions "${{ inputs.repetitions }}" \
-            --timeout "${{ inputs.timeout }}" \
-            --memory-gib "${{ inputs.memory_gib }}" \
+            --sizes "$INPUT_SIZES" \
+            --arms "$INPUT_ARMS" \
+            --repetitions "$INPUT_REPETITIONS" \
+            --timeout "$INPUT_TIMEOUT" \
+            --memory-gib "$INPUT_MEMORY_GIB" \
             $SOFTWARE --chrome "$CHROME" \
             --out ceiling-results.json
 
@@ -135,9 +152,11 @@ jobs:
         # The report only exists if the sweep got far enough to write it; skip
         # rather than fail here so the sweep's own error stays the visible one.
         if: always() && hashFiles('ceiling-results.json') != ''
+        env:
+          INPUT_BUDGET_MS: ${{ inputs.interactive_budget_ms }}
         run: |
           uv run python benchmarks/summarize_ceiling.py ceiling-results.json \
-            --interactive-budget-ms "${{ inputs.interactive_budget_ms }}" \
+            --interactive-budget-ms "$INPUT_BUDGET_MS" \
             | tee ceiling-summary.md
           {
             echo "### Ceiling results"
