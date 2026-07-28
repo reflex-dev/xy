@@ -744,10 +744,18 @@ def test_unequal_slice_widths_render_as_wedges_not_rectangles() -> None:
         xy.bar([45.0], [1.0], base=0.5, width=90.0, color="#7c3aed"),
         xy.bar([200.0], [1.0], base=0.5, width=180.0, color="#0284c7"),
     ]
-    doc = xy.polar_chart(
-        *slices, xy.theta_axis(unit="degrees"), xy.r_axis(domain=(0.0, 1.0)),
-        width=420, height=420,
-    ).figure().to_image(format="svg").decode()
+    doc = (
+        xy.polar_chart(
+            *slices,
+            xy.theta_axis(unit="degrees"),
+            xy.r_axis(domain=(0.0, 1.0)),
+            width=420,
+            height=420,
+        )
+        .figure()
+        .to_image(format="svg")
+        .decode()
+    )
     assert "<rect" not in doc.split("</defs>")[-1], "slices drew as cartesian rects"
     assert len([d for d in re.findall(r'<path d="([^"]+)"', doc) if " A " in d]) >= 2
 
@@ -755,13 +763,19 @@ def test_unequal_slice_widths_render_as_wedges_not_rectangles() -> None:
 def test_point_annotations_project_through_polar() -> None:
     """Centre text is `(any angle, r=0)`. The separable scales would put that
     at the bottom-left corner instead of the middle of the disc."""
-    doc = xy.polar_chart(
-        xy.bar([45.0], [1.0], base=0.5, width=80.0),
-        xy.text(0.0, 0.0, "CENTRE", dx=0, dy=0, anchor="middle"),
-        xy.theta_axis(unit="degrees", show=False),
-        xy.r_axis(domain=(0.0, 1.0), show=False),
-        width=400, height=400,
-    ).figure().to_image(format="svg").decode()
+    doc = (
+        xy.polar_chart(
+            xy.bar([45.0], [1.0], base=0.5, width=80.0),
+            xy.text(0.0, 0.0, "CENTRE", dx=0, dy=0, anchor="middle"),
+            xy.theta_axis(unit="degrees", show=False),
+            xy.r_axis(domain=(0.0, 1.0), show=False),
+            width=400,
+            height=400,
+        )
+        .figure()
+        .to_image(format="svg")
+        .decode()
+    )
     m = re.search(r'<tspan x="([\d.]+)" y="([\d.]+)">CENTRE</tspan>', doc)
     assert m is not None, "the annotation was dropped"
     assert 180.0 <= float(m.group(1)) <= 220.0
