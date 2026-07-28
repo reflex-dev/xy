@@ -615,3 +615,67 @@ def test_channel_styled_polar_scatter_stays_inside_the_disc() -> None:
     rgb = pixels[:, :, :3].astype(int)
     saturated = (rgb.max(axis=2) - rgb.min(axis=2)) > 60
     assert int((saturated & outside).sum()) == 0
+
+
+# -- layout robustness (audit round 2) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(60, 60), (80, 80), (100, 100), (120, 120), (1200, 300), (300, 900), (400, 400)],
+)
+def test_disc_stays_inside_the_canvas_at_every_size(width: int, height: int) -> None:
+    """The cartesian rect has a 40px floor that can exceed a small canvas, and
+    a disc centred in it then leaves the page (80x80 drew out to x=86)."""
+    theta, r = _rose(30)
+    chart = xy.polar_chart(xy.line(theta, r), width=width, height=height)
+    spec, _ = chart.figure().build_payload_split()
+    canvas_w, canvas_h, _compact, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    assert project.cx - project.radius >= -0.5
+    assert project.cx + project.radius <= canvas_w + 0.5
+    assert project.cy - project.radius >= -0.5
+    assert project.cy + project.radius <= canvas_h + 0.5
+    assert project.radius > 0
+
+
+def test_horizontal_colorbar_keeps_its_gutter() -> None:
+    """The rect re-cut extends the plot downward; a horizontal colorbar hangs
+    off the plot's bottom edge and was pushed clean off the canvas."""
+    rng = np.random.default_rng(3)
+    theta = rng.uniform(0, 2 * math.pi, 120)
+    r = rng.uniform(0.1, 1.0, 120)
+    chart = xy.polar_chart(
+        xy.scatter(theta, r, color=r, colormap="viridis"),
+        xy.colorbar(orientation="horizontal"),
+        width=520,
+        height=500,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    tops = [float(y) for y in re.findall(r'<rect[^>]*y="([\d.]+)"', doc)]
+    assert tops and max(tops) < 500
+
+
+def test_long_category_labels_reserve_measured_room() -> None:
+    """A fixed 30px allowance hard-clipped authored radar category names."""
+    cats = ["EAST-NORTH-EAST", "SOUTH-SOUTH-WEST", "NORTH-WEST", "SOUTH-EAST", "WEST"]
+    chart = xy.radar_chart(cats, xy.area([0.9, 0.6, 0.7, 0.5, 0.8]), width=600, height=560)
+    doc = chart.figure().to_image(format="svg").decode()
+    xs = [float(x) for x in re.findall(r'<text data-xy-tick="theta" x="(-?[\d.]+)"', doc)]
+    assert xs and min(xs) >= 0 and max(xs) <= 600
+
+
+def test_radar_fill_false_outlines_instead_of_filling() -> None:
+    chart = xy.radar_chart(["a", "b", "c"], xy.area([1.0, 2.0, 3.0]), fill=False)
+    kinds = [c.kind for c in chart.children if isinstance(c, xy.Mark)]
+    assert kinds == ["line"]
+
+
+def test_radar_rejects_marks_it_cannot_close() -> None:
+    with pytest.raises(ValueError, match="supports area and line marks"):
+        xy.radar_chart(["a", "b", "c"], xy.scatter([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]))
+
+
+def test_radar_rejects_column_names_with_a_readable_error() -> None:
+    with pytest.raises(ValueError, match="must carry values directly"):
+        xy.radar_chart(["a", "b", "c"], xy.area("speed"))

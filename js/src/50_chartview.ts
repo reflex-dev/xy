@@ -29,6 +29,7 @@ const POLAR_LABEL_ROOM = 30;
 // Radial tick labels run along a spoke this many degrees off theta zero, and
 // angular labels sit this many px outside the rim. Mirrored by
 // _POLAR_RLABEL_DEG / _POLAR_TICK_GAP in python/xy/_svg.py.
+const POLAR_LABEL_ROOM_MAX = 90;
 const POLAR_RLABEL_DEG = 22.5;
 const POLAR_TICK_GAP = 8;
 // Direction theta=0 points, in radians ccw from east. Mirrored by THETA_ZERO in
@@ -655,14 +656,32 @@ export class ChartView {
   // A polar chart rings its labels around the rim instead, so those gutters are
   // symmetrised (not simply zeroed — a colorbar that genuinely claimed space
   // keeps it), and a uniform allowance is reserved all the way around.
+  // Room outside the ring for the angular tick labels. Measured rather than
+  // fixed: authored category names are far wider than an angle, and a constant
+  // allowance hard-clipped them. Mirrors `_polar_label_room` in
+  // python/xy/_svg.py — including the ceiling, past which a pathological label
+  // truncates instead of shrinking the disc away.
+  _polarLabelRoom(axis) {
+    const labels = axis && axis.tick_labels;
+    if (!Array.isArray(labels) || !labels.length) return POLAR_LABEL_ROOM;
+    const size = this._axisStyleNumber(axis, "tick_label_size", 11);
+    let widest = 0;
+    for (const text of labels) widest = Math.max(widest, xyTextAdvance(String(text), size));
+    return Math.min(
+      POLAR_LABEL_ROOM_MAX,
+      Math.max(POLAR_LABEL_ROOM, widest + POLAR_TICK_GAP + 4),
+    );
+  }
+
   _recutPolarPlot() {
     if (this.spec?.coords !== "polar") return;
-    if (this._axisTickLabelStrategy(this._axis("x")) === "none") return;
+    const xAxisSpec = this._axis("x") || {};
+    if (this._axisTickLabelStrategy(xAxisSpec) === "none") return;
     const p = this.plot;
     const reservedTop = p.y;
     const reservedRight = this.size.w - p.x - p.w;
     const reservedBottom = this.size.h - p.y - p.h;
-    const room = POLAR_LABEL_ROOM;
+    const room = this._polarLabelRoom(xAxisSpec);
     const side = Math.max(room, reservedRight);
     // A radial-axis title still lives in the left gutter — a disc gives it no
     // natural home — and it is placed outward past the tick-label room, so a
@@ -675,7 +694,10 @@ export class ChartView {
     // and the bottom keeps its full band when the theta axis has a title of its
     // own (it is drawn there; reclaiming the band pushed it off the canvas).
     const xAxis = this._axis("x") || {};
-    const bottomReserve = xAxis.label ? reservedBottom : Math.min(reservedBottom, reservedTop);
+    // A horizontal colorbar hangs off the plot's bottom edge; extending the
+    // rect downward would walk it off the canvas.
+    const keepsBottom = !!xAxis.label || this.spec?.colorbar?.orientation === "horizontal";
+    const bottomReserve = keepsBottom ? reservedBottom : Math.min(reservedBottom, reservedTop);
     const bottom = this.size.h - Math.max(room, bottomReserve);
     const top = reservedTop + room;
     const w = right - left;

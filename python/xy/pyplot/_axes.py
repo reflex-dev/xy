@@ -5749,7 +5749,7 @@ class Axes(PlotTypeMixin):
         self._require_polar("get_theta_direction")
         return -1 if self._polar_options.get("theta_direction") == "clockwise" else 1
 
-    def set_rlim(self, bottom: Any = None, top: Any = None, **kwargs: Any) -> tuple[float, float]:
+    def set_rlim(self, bottom: Any = None, top: Any = None, **kwargs: Any) -> Any:
         """Radial limits — the polar spelling of `set_ylim`."""
         self._require_polar("set_rlim")
         return self.set_ylim(bottom, top, **kwargs)
@@ -8325,6 +8325,11 @@ class Axes(PlotTypeMixin):
             coords=self._projection,
         )
         core_figure = self._chart.figure()
+        if self._projection == "polar" and self._polar_options:
+            # set_theta_zero_location / set_theta_direction / set_theta_offset
+            # collect here; without this the calls would be write-only, which is
+            # exactly the silent-drop this codebase refuses elsewhere.
+            core_figure.set_axis("x", **self._polar_options)
         core_figure.title_options = [
             {
                 **title,

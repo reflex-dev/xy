@@ -2317,6 +2317,9 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
 # all the way around, so the allowance is uniform.
 # Mirrored by POLAR_LABEL_ROOM in js/src/50_chartview.ts.
 _POLAR_LABEL_ROOM = 30.0
+# Ceiling on the measured allowance: past this a long label shrinks the disc
+# more than it helps, so it truncates against the canvas instead.
+_POLAR_LABEL_ROOM_MAX = 90.0
 
 # Angle of the spoke the radial tick labels run along, in degrees off the theta
 # zero direction. Matplotlib's default `rlabel_position`; keeping the labels off
@@ -2328,6 +2331,26 @@ _POLAR_RLABEL_DEG = 22.5
 # Gap in px between the outer ring and the angular tick labels.
 # Mirrored by POLAR_TICK_GAP in js/src/50_chartview.ts.
 _POLAR_TICK_GAP = 8.0
+
+
+def _polar_label_room(theta_axis: dict[str, Any]) -> float:
+    """Room outside the ring for the angular tick labels.
+
+    Measured, not fixed: authored category names ("EAST-NORTH-EAST") are far
+    wider than an angle, and a constant allowance hard-clipped them at the
+    canvas edge. Only the widest AUTHORED label is measured — generated angle
+    text is bounded and already fits the floor — and the result is capped so a
+    pathological label shrinks the disc rather than erasing it.
+
+    Mirrored by `polarLabelRoom` in js/src/50_chartview.ts.
+    """
+    room = _POLAR_LABEL_ROOM
+    labels = theta_axis.get("tick_labels")
+    if not labels:
+        return room
+    size = _axis_tick_font_size(theta_axis)
+    widest = max((_textblock.measure(str(text), size).width for text in labels), default=0.0)
+    return min(_POLAR_LABEL_ROOM_MAX, max(room, widest + _POLAR_TICK_GAP + _AXIS_TEXT_EDGE_PAD))
 
 
 def _recut_polar_plot(
@@ -2356,7 +2379,8 @@ def _recut_polar_plot(
     of the transform — otherwise every renderer would need the same fudge factor
     and they would eventually disagree about it.
     """
-    if (spec.get("x_axis") or {}).get("tick_label_strategy") == "none":
+    theta_axis = spec.get("x_axis") or {}
+    if theta_axis.get("tick_label_strategy") == "none":
         return
     # The top gutter also holds the figure title, which emitters place at
     # `plot.y - top_axis_room - pad`; it is a floor, never given back.
@@ -2364,7 +2388,7 @@ def _recut_polar_plot(
     reserved_right = width - plot["x"] - plot["w"]
     reserved_bottom = height - plot["y"] - plot["h"]
 
-    room = _POLAR_LABEL_ROOM
+    room = _polar_label_room(theta_axis)
     side = max(room, reserved_right)
     # A radial-axis title is still drawn in the left gutter — a disc gives it no
     # natural home — and `_axis_label_geometry` positions it outward from the
@@ -2382,7 +2406,12 @@ def _recut_polar_plot(
     # pushed it below the canvas edge.
     x_axis = spec.get("x_axis") or {}
     x_titled = bool(x_axis.get("label")) and _axis_text_paint_visible(x_axis, "label_color")
-    bottom_reserve = reserved_bottom if x_titled else min(reserved_bottom, reserved_top)
+    # A horizontal colorbar is placed relative to the plot's BOTTOM edge, so
+    # extending the rect downward walks it off the canvas. Its gutter is real
+    # chrome, not a tick-label gutter: keep it whole, like a theta title.
+    colorbar = spec.get("colorbar") or {}
+    keeps_bottom = x_titled or colorbar.get("orientation") == "horizontal"
+    bottom_reserve = reserved_bottom if keeps_bottom else min(reserved_bottom, reserved_top)
     bottom = height - max(room, bottom_reserve)
     top = reserved_top + room
 
@@ -2391,9 +2420,16 @@ def _recut_polar_plot(
     # instead of keeping its circle. Mirrored by _recutPolarPlot's early return.
     box_w = right - left
     box_h = bottom - top
-    # A very small chart keeps its circle and drops the label room rather than
-    # collapsing to nothing.
     if box_w < 40.0 or box_h < 40.0:
+        # Too small for the label room. Do NOT fall back to the cartesian rect:
+        # its own 40px floor can be wider than the canvas, and a disc centred
+        # in it leaves the page (an 80x80 chart drew its circle out to x=86).
+        # Take the largest centred box the canvas itself allows instead.
+        margin = min(4.0, width / 8.0, height / 8.0)
+        plot["x"] = margin
+        plot["y"] = max(margin, min(reserved_top, height / 4.0))
+        plot["w"] = max(8.0, width - 2 * margin)
+        plot["h"] = max(8.0, height - plot["y"] - margin)
         return
     plot["x"] = left
     plot["y"] = top

@@ -301,8 +301,16 @@ MVP surface, deliberately small:
 
 - **Hover** — screen-space nearest-point test, seam-aware per §3.2, with the
   readout reporting (θ, r) in the axis's declared unit.
-- **Radial zoom** — wheel adjusts `[r_lo, r_hi]`; serialized through the
-  existing view-state machinery.
+- **Radial zoom** — wheel adjusts `[r_lo, r_hi]`, anchored at the cursor's
+  normalized radius, serialized through the existing view-state machinery.
+  Marks outside the zoomed radial range are **culled in the shader** (NaN
+  position, the same gap semantics NaN data gets): below `r_lo` a mark would
+  reflect through the centre, and above `r_hi` it would draw past the outer
+  ring into the rect corners — the GL canvas is the plot rect, so the shader
+  cull is the client's equivalent of the SVG exporter's disc `clipPath`. A
+  chord that straddles the ring is dropped whole on the client and clipped at
+  the ring in the static exports; at data resolution the difference is under
+  one segment.
 - **Reset** — existing modebar, no change.
 
 Deferred and explicitly disabled rather than half-working: θ pan (rotation),

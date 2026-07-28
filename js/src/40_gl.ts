@@ -117,11 +117,15 @@ float xyViewValue(float coord, int mode, float constant) {
 // (_svg._PolarProjection) subtracts, because screen space grows downward.
 vec2 xyPolarPos(float thC, float rC, vec4 pol, vec2 rr, vec2 zdir) {
   float rn = (rC - rr.x) / max(rr.y - rr.x, 1e-30);
-  // Below the radial minimum there is no honest position: rn < 0 would
-  // reflect the mark through the centre. NaN culls the primitive instead —
-  // the same gap semantics NaN data gets (§3 D7), and the same NaN idiom
-  // xyAxisCoord's mode 3 already uses. Radial zoom-in relies on this.
-  if (rn < 0.0) return vec2(uintBitsToFloat(0x7fc00000u));
+  // Outside the radial range there is no honest position: rn < 0 would reflect
+  // the mark through the centre, and rn > 1 would draw it past the outer ring
+  // into the rect corners the disc does not cover — the GL canvas is the plot
+  // RECT, so nothing else clips it (the SVG exporter has a disc clipPath; this
+  // is the client's equivalent). NaN culls the primitive instead: the same gap
+  // semantics NaN data gets (§3 D7), and the same NaN idiom xyAxisCoord's mode
+  // 3 already uses. The epsilon keeps the outermost home-view point, which sits
+  // exactly at rn == 1.
+  if (rn < 0.0 || rn > 1.0 + 1e-6) return vec2(uintBitsToFloat(0x7fc00000u));
   float a = zdir.x + zdir.y * thC;
   return vec2(pol.x + rn * pol.z * cos(a), pol.y + rn * pol.w * sin(a));
 }
