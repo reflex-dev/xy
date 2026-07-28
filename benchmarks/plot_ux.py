@@ -114,17 +114,19 @@ def build(
             )
             notes.append(xy.marker(fail_n, values[-1], size=10, symbol="cross", color="#D64545"))
             at_edge = fail_n >= float(sizes[-1])
-            # Beside the cross, in the empty space past it -- a centered label
-            # straddles whatever survivor line climbs through that region.
+            # In the empty space past the cross, or -- when the cross sits at
+            # the chart edge -- centered under the dashed segment, which is
+            # the one region guaranteed free of survivor lines and labels.
+            mid = (labels[-1] * fail_n) ** 0.5
             notes.append(
                 xy.text(
-                    fail_n,
+                    mid if at_edge else fail_n,
                     values[-1],
                     f"fails at {label(int(fail_n))}",
-                    dx=-10 if at_edge else 12,
-                    dy=16 if at_edge else 4,
+                    dx=10 if at_edge else 12,
+                    dy=18 if at_edge else 4,
                     color="#D64545",
-                    anchor="end" if at_edge else "start",
+                    anchor="middle" if at_edge else "start",
                 )
             )
 
