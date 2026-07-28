@@ -228,19 +228,7 @@ Two properties are the point of the API:
   browser at all.
 
 Writes are atomic per file (same-directory temp file, fsync, `os.replace`), so a
-reader never observes a partial image. One documented degradation: on Windows,
-`os.replace` is denied (`PermissionError`, WinError 5) while any other handle
-holds the destination open — most commonly a caller saving to
-`tempfile.NamedTemporaryFile(...).name` inside the `with` block, a pattern that
-works on POSIX because POSIX replaces open files freely. Rather than fail the
-export, every path writer (`_atomic_write_text` / `_atomic_write_bytes`, so
-`to_html`, `write_image`, and batch export alike) falls back to rewriting the
-destination in place through its own name — non-atomic, but the only handle
-that could observe a partial file is the one that requested the write. If the
-in-place rewrite is also denied (e.g. an antivirus scan holding all access),
-the replace is retried briefly (~0.35 s total) before raising a
-`PermissionError` that names the held-open file as the cause. Covered by
-`tests/test_atomic_write_fallback.py`. Failure mid-batch is not transactional:
+reader never observes a partial image. Failure mid-batch is not transactional:
 files already written stay on disk. The return value is the list of written
 byte strings, in input order.
 ## 9. What styling survives which export path

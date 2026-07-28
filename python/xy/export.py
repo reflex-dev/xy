@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import warnings
 from contextlib import suppress
 from enum import StrEnum
@@ -217,75 +216,18 @@ _DECODE_B64_JS = (
 )
 
 
-# `os.replace` retry cadence when the destination is transiently locked
-# (Windows antivirus/indexer scans): total worst-case wait ~0.35 s.
-_REPLACE_RETRY_DELAYS_S = (0.05, 0.1, 0.2)
-
-
-def _publish_tmp(tmp_path: Path, target: Path, rewrite_in_place) -> None:
-    """Move a finished temp file onto `target`, atomically when possible.
-
-    `os.replace` is atomic on every platform, but Windows denies it
-    (PermissionError, WinError 5) while any other handle holds the destination
-    open — most commonly a caller passing `NamedTemporaryFile(...).name` into a
-    save API inside the `with` block, or a transient antivirus scan. POSIX
-    replaces open files freely, so the fallbacks below are Windows-only in
-    practice. First choice after a denial is rewriting the destination in
-    place through its own name (the CRT's default share mode permits it for
-    the temp-file pattern) — not atomic, but the only handle that could see a
-    partial file is the one that asked for the write. Failing that, the
-    replace is retried briefly for scanner-style locks before giving up with
-    an actionable error. Success via `rewrite_in_place` removes the temp file;
-    on a raise the caller cleans it up."""
-    try:
-        os.replace(tmp_path, target)
-        return
-    except PermissionError as exc:
-        denied = exc
-    try:
-        rewrite_in_place(target)
-    except OSError:
-        pass
-    else:
-        with suppress(OSError):
-            tmp_path.unlink()
-        return
-    for delay in _REPLACE_RETRY_DELAYS_S:
-        time.sleep(delay)
-        try:
-            os.replace(tmp_path, target)
-            return
-        except PermissionError as exc:
-            denied = exc
-    raise PermissionError(
-        f"cannot save to {target}: replacing the file was denied and it could "
-        "not be rewritten in place — another process holds it open without "
-        "write sharing (on Windows, close whatever has the file open and retry)"
-    ) from denied
-
-
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
-    """Write bytes through a same-directory temp file, then replace atomically.
-
-    Degrades to an in-place rewrite when the destination is held open on
-    Windows — see `_publish_tmp`."""
+    """Write bytes through a same-directory temp file, then replace atomically."""
     target = Path(path)
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     tmp_path = Path(tmp_name)
-
-    def rewrite_in_place(dest: Path) -> None:
-        with dest.open("wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-
     try:
         with os.fdopen(fd, "wb") as f:
             fd = -1
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        _publish_tmp(tmp_path, target, rewrite_in_place)
+        os.replace(tmp_path, target)
     except Exception:
         if fd != -1:
             with suppress(OSError):
@@ -296,10 +238,7 @@ def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
 
 
 def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
-    """Write text through a same-directory temp file, then replace atomically.
-
-    Degrades to an in-place rewrite when the destination is held open on
-    Windows — see `_publish_tmp`."""
+    """Write text through a same-directory temp file, then replace atomically."""
     target = Path(path)
     parent = target.parent
     fd, tmp_name = tempfile.mkstemp(
@@ -309,20 +248,13 @@ def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
         text=True,
     )
     tmp_path = Path(tmp_name)
-
-    def rewrite_in_place(dest: Path) -> None:
-        with dest.open("w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        _publish_tmp(tmp_path, target, rewrite_in_place)
+        os.replace(tmp_path, target)
     except Exception:
         if fd != -1:
             with suppress(OSError):
