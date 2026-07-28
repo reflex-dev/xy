@@ -23,6 +23,9 @@ const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 // POLAR_BAR_SEGMENTS in python/xy/config.py so the raster exporter flattens the
 // same arc; the SVG exporter draws a true `A` arc and needs no count.
 const POLAR_BAR_SEGMENTS = 24;
+// Uniform room outside the outer ring for angular tick labels. Mirrored by
+// _POLAR_LABEL_ROOM in python/xy/_svg.py.
+const POLAR_LABEL_ROOM = 30;
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
 // character count makes "WWWW" and "iiii" reserve the same (wrong) width.
@@ -632,6 +635,45 @@ export class ChartView {
       w: plotWidth,
       h: Math.max(40, this.size.h - top - marginBottom),
     };
+    this._recutPolarPlot();
+  }
+
+  // Re-cut the plot rect for a disc. Mirrors `_inset_polar_plot` in
+  // python/xy/_svg.py; the two must agree or the same chart renders at a
+  // different size and centre in the browser than in an export.
+  //
+  // Cartesian tick-label gutters hold labels hugging the left and bottom edges.
+  // A polar chart rings its labels around the rim instead, so those gutters are
+  // symmetrised (not simply zeroed — a colorbar that genuinely claimed space
+  // keeps it), and a uniform allowance is reserved all the way around.
+  _recutPolarPlot() {
+    if (this.spec?.coords !== "polar") return;
+    if (this._axisTickLabelStrategy(this._axis("x")) === "none") return;
+    const p = this.plot;
+    const reservedTop = p.y;
+    const reservedRight = this.size.w - p.x - p.w;
+    const reservedBottom = this.size.h - p.y - p.h;
+    const room = POLAR_LABEL_ROOM;
+    const side = Math.max(room, reservedRight);
+    // A radial-axis title still lives in the left gutter — a disc gives it no
+    // natural home — and it is placed outward past the tick-label room, so a
+    // titled radial axis keeps its gutter whole rather than part-reclaimed.
+    const yAxis = this._axis("y") || {};
+    const titled = !!yAxis.label;
+    const left = titled ? Math.max(side, p.x) : side;
+    const right = this.size.w - side;
+    // Only the bottom can be symmetrised: the top also holds the figure title.
+    const bottom = this.size.h - Math.max(room, Math.min(reservedBottom, reservedTop));
+    const top = reservedTop + room;
+    const w = right - left;
+    const h = bottom - top;
+    if (!(w >= 40) || !(h >= 40)) return;
+    this.plot = { ...p, x: left, y: top, w, h };
+    // The top slice is angular-label room, so it belongs to the axis
+    // reservation: `_positionTitles` anchors at `plot.y - _topAxisRoom`, and
+    // without this the title rides the rect down and the topmost angular label
+    // lands on top of it. Mirrors the same line in `_inset_polar_plot`.
+    this._topAxisRoom = (this._topAxisRoom || 0) + room;
   }
 
   _titleEntries() {

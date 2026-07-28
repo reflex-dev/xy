@@ -2298,7 +2298,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         "bottom_axis_room": bottom_axis_room,
     }
     if spec.get("coords") == "polar":
-        _inset_polar_plot(spec, plot)
+        _inset_polar_plot(spec, plot, width, height)
     return width, height, compact, plot
 
 
@@ -2317,29 +2317,65 @@ _POLAR_RLABEL_DEG = 22.5
 _POLAR_TICK_GAP = 8.0
 
 
-def _inset_polar_plot(spec: dict[str, Any], plot: dict[str, float]) -> None:
-    """Shrink the plot rect so the angular tick labels have room.
+def _inset_polar_plot(
+    spec: dict[str, Any], plot: dict[str, float], width: float, height: float
+) -> None:
+    """Re-cut the plot rect for a disc, in place.
 
-    The radius is `min(w, h) / 2` with no fill factor (polar-axes.md §3), so
-    label room has to come out of the rect rather than out of the transform —
-    otherwise the two renderers would each need the same fudge factor and would
-    eventually disagree about it. Mutates `plot` in place, after the cartesian
-    gutter passes have converged, so it cannot perturb their fixed point.
+    Two things happen here, both after the cartesian gutter passes have
+    converged so they cannot perturb that fixed point.
+
+    First, the cartesian tick-label gutters are given back. They exist to hold
+    labels hugging the left and bottom edges; a polar chart carries its labels
+    all the way around the rim instead, so leaving them reserved pushed the disc
+    right and up (a 400x400 chart centred its circle at x=219) and shrank it for
+    no reason. The horizontal and vertical reservations are symmetrised rather
+    than simply zeroed, so a colorbar or right-side axis that genuinely claimed
+    space still keeps it.
+
+    Second, a uniform allowance is reserved all the way around for the angular
+    tick labels. The radius is `min(w, h) / 2` with no fill factor
+    (polar-axes.md §3), so that room has to come out of the rect rather than out
+    of the transform — otherwise every renderer would need the same fudge factor
+    and they would eventually disagree about it.
     """
     if (spec.get("x_axis") or {}).get("tick_label_strategy") == "none":
         return
+    # The top gutter also holds the figure title, which emitters place at
+    # `plot.y - top_axis_room - pad`; it is a floor, never given back.
+    reserved_top = plot["y"]
+    reserved_right = width - plot["x"] - plot["w"]
+    reserved_bottom = height - plot["y"] - plot["h"]
+
     room = _POLAR_LABEL_ROOM
-    # Never inset past a usable disc; a tiny chart keeps its circle and drops
-    # the label room instead of collapsing to nothing.
-    room = min(room, max(0.0, (min(plot["w"], plot["h"]) - 40.0) / 2.0))
-    plot["x"] += room
-    plot["y"] += room
-    plot["w"] = max(40.0, plot["w"] - 2 * room)
-    plot["h"] = max(40.0, plot["h"] - 2 * room)
+    side = max(room, reserved_right)
+    # A radial-axis title is still drawn in the left gutter — a disc gives it no
+    # natural home — and `_axis_label_geometry` positions it outward from the
+    # plot edge past the tick-label room. So when one is set, the original
+    # gutter is kept whole rather than part-reclaimed: shaving it put the title
+    # at x = -10, off the canvas. Charts with no radial title (the common case)
+    # still get the full reclaim.
+    y_axis = spec.get("y_axis") or {}
+    titled = bool(y_axis.get("label")) and _axis_text_paint_visible(y_axis, "label_color")
+    left = max(side, plot["x"]) if titled else side
+    right = width - side
+    # Vertically the title side is fixed, so only the bottom can be symmetrised.
+    bottom = height - max(room, min(reserved_bottom, reserved_top))
+    top = reserved_top + room
+
+    box_w = max(40.0, right - left)
+    box_h = max(40.0, bottom - top)
+    # A very small chart keeps its circle and drops the label room rather than
+    # collapsing to nothing.
+    if box_w < 40.0 or box_h < 40.0:
+        return
+    plot["x"] = left
+    plot["y"] = top
+    plot["w"] = box_w
+    plot["h"] = box_h
     # The top slice is angular-label room, so it belongs to the axis
-    # reservation. Emitters place the figure title at
-    # `plot.y - top_axis_room - pad`; without this the title would ride the
-    # rect down and the topmost angular label would land on top of it.
+    # reservation: without this the title would ride the rect down and the
+    # topmost angular label would land on top of it.
     plot["top_axis_room"] = plot["top_axis_room"] + room
 
 
@@ -2832,9 +2868,22 @@ def _polar_tick_labels(
     survives a disc, so polar places its own rather than bending that code.
     """
     slot = slots.get("tick_label") or {}
-    color = escape(slot_text_color(slot, default_text))
     attrs = slot_text_attrs(slot)
+
+    def tick_color(axis: dict[str, Any]) -> str:
+        """Axis tick_label_color/tick_color first, chart slot second.
+
+        Same precedence the cartesian labels use: the axis's own setting is the
+        narrower selector and wins. Reading only the slot made the `text=False`
+        and `show=False` shorthands — which work by setting tick_label_color to
+        a transparent value — silently do nothing on a polar chart.
+        """
+        axis_style = axis.get("style") or {}
+        own = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
+        return escape(own or slot_text_color(slot, default_text))
+
     if not hide_theta:
+        color = tick_color(theta_axis)
         size = slot_font_size(slot, _axis_tick_font_size(theta_axis))
         for v in theta_values:
             angle = float(polar.angle(v))
@@ -2856,6 +2905,7 @@ def _polar_tick_labels(
             )
     if hide_r:
         return
+    color = tick_color(r_axis)
     size = slot_font_size(slot, _axis_tick_font_size(r_axis))
     # Matplotlib's default rlabel_position: 22.5 degrees off the zero spoke, so
     # the radial labels do not pile onto the theta=0 angular label.

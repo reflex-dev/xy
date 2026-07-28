@@ -831,6 +831,18 @@ def _emit_polar_grid(
         )
 
 
+def _polar_label_paint(axis: dict[str, Any], slot_paint: Any, default_text: str) -> tuple[int, ...]:
+    """Axis tick_label_color/tick_color first, chart slot second.
+
+    Mirrors `tick_color` inside `_svg._polar_tick_labels`. Without the axis
+    lookup the `text=False`/`show=False` shorthands — which work by setting
+    tick_label_color transparent — silently did nothing on a polar chart.
+    """
+    axis_style = axis.get("style") or {}
+    own = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
+    return _parse_color(own) if own else slot_paint("tick_label", default_text)
+
+
 def _emit_polar_tick_labels(
     cmd: _Cmd,
     polar: _PolarProjection,
@@ -842,7 +854,8 @@ def _emit_polar_tick_labels(
     r_axis: dict[str, Any],
     theta_size: float,
     r_size: float,
-    color: tuple[int, ...],
+    theta_color: tuple[int, ...],
+    r_color: tuple[int, ...],
     hide_theta: bool,
     hide_r: bool,
 ) -> None:
@@ -863,7 +876,9 @@ def _emit_polar_tick_labels(
             dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * theta_size if sin_a > 0 else 0.8 * theta_size)
             # _tick_text, not _fmt_angle: authored tick_labels (radar category
             # names) must win over the angle, exactly as in the SVG twin.
-            cmd.text(x, y + dy, anchor, theta_size, color, _tick_text(theta_axis, v, theta_step))
+            cmd.text(
+                x, y + dy, anchor, theta_size, theta_color, _tick_text(theta_axis, v, theta_step)
+            )
     if hide_r:
         return
     angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
@@ -876,7 +891,7 @@ def _emit_polar_tick_labels(
             polar.cy - radius * math.sin(angle) - 3.0,
             0,
             r_size,
-            color,
+            r_color,
             _tick_text(r_axis, v, r_step),
         )
 
@@ -1320,7 +1335,8 @@ def render_raster(
             ya,
             slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(xa)),
             slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(ya)),
-            slot_paint("tick_label", default_text),
+            _polar_label_paint(xa, slot_paint, default_text),
+            _polar_label_paint(ya, slot_paint, default_text),
             hide_x,
             hide_y,
         )

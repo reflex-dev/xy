@@ -413,3 +413,100 @@ def test_polar_bars_reach_the_raster_export() -> None:
     px, py = project(0.0, 0.5)
     window = pixels[max(0, int(py) - 2) : int(py) + 3, max(0, int(px) - 2) : int(px) + 3, 0]
     assert int(window.min()) < 128, "raster drew no wedge at theta=0"
+
+
+# -- styling parity --------------------------------------------------------
+
+
+def _styled(theta_style=None, r_style=None, **axis_kwargs):
+    theta_kw = axis_kwargs.get("theta", {})
+    r_kw = axis_kwargs.get("r", {})
+    if theta_style:
+        theta_kw = {**theta_kw, "style": theta_style}
+    if r_style:
+        r_kw = {**r_kw, "style": r_style}
+    theta, r = _rose()
+    return xy.polar_chart(
+        xy.line(theta, r),
+        xy.theta_axis(**theta_kw),
+        xy.r_axis(**r_kw),
+        width=400,
+        height=400,
+    )
+
+
+def test_grid_colour_separates_rings_from_spokes() -> None:
+    """The radial axis owns the rings, the angular axis owns the spokes.
+
+    Conflating them is the easy mistake here: the cartesian code hides grid
+    lines and labels together through one hideX/hideY pair.
+    """
+    doc = _styled(theta_style={"grid_color": "#00ffff"}, r_style={"grid_color": "#ff00ff"})
+    doc = doc.figure().to_image(format="svg").decode()
+    ring = re.search(r'<circle data-xy-grid="ring"[^/]*?stroke="([^"]+)"', doc)
+    spoke = re.search(r'<line data-xy-grid="spoke"[^/]*?stroke="([^"]+)"', doc)
+    assert ring is not None and spoke is not None
+    assert ring.group(1) == "#ff00ff"
+    assert spoke.group(1) == "#00ffff"
+
+
+@pytest.mark.parametrize(
+    ("which", "theta_fill", "r_fill"),
+    [("theta", "#00000000", None), ("r", None, "#00000000")],
+)
+def test_text_shorthand_hides_only_its_own_axis_labels(
+    which: str, theta_fill: str | None, r_fill: str | None
+) -> None:
+    """`text=False` works by setting tick_label_color transparent.
+
+    The polar label writers originally read only the chart-level slot, so the
+    shorthand — and any explicit tick_label_color — silently did nothing while
+    the browser client honoured both.
+    """
+    chart = _styled(**{which: {"text": False}})
+    doc = chart.figure().to_image(format="svg").decode()
+    theta = re.search(r'<text data-xy-tick="theta"[^>]*fill="([^"]*)"', doc)
+    radial = re.search(r'<text data-xy-tick="r"[^>]*fill="([^"]*)"', doc)
+    assert theta is not None and radial is not None
+    if theta_fill:
+        assert theta.group(1) == theta_fill
+        assert radial.group(1) != theta_fill
+    if r_fill:
+        assert radial.group(1) == r_fill
+        assert theta.group(1) != r_fill
+
+
+def test_explicit_tick_label_colour_beats_the_chart_slot() -> None:
+    doc = _styled(
+        theta_style={"tick_label_color": "#ff0000"},
+        r_style={"tick_label_color": "#00ff00"},
+    )
+    doc = doc.figure().to_image(format="svg").decode()
+    assert re.search(r'<text data-xy-tick="theta"[^>]*fill="#ff0000"', doc)
+    assert re.search(r'<text data-xy-tick="r"[^>]*fill="#00ff00"', doc)
+
+
+def test_raster_honours_axis_styling_too() -> None:
+    """The exporters share geometry but not text placement, so the raster path
+    needs its own assertion — this is where styling has silently diverged."""
+    from test_png_export import _decode_rgba
+
+    chart = _styled(
+        theta_style={"tick_label_color": "#ff0000"},
+        r_style={"grid_color": "#ff00ff"},
+    )
+    pixels = _decode_rgba(chart.figure().to_image(format="png", scale=1))
+
+    def count(rgb: tuple[int, int, int]) -> int:
+        delta = np.abs(pixels[:, :, :3].astype(int) - np.array(rgb)).sum(axis=2)
+        return int((delta < 30).sum())
+
+    assert count((255, 0, 0)) > 0, "angular tick labels ignored tick_label_color"
+    assert count((255, 0, 255)) > 0, "rings ignored the radial grid_color"
+
+
+def test_show_false_clears_the_outer_frame() -> None:
+    doc = _styled(**{"theta": {"show": False}}).figure().to_image(format="svg").decode()
+    frame = re.search(r'<circle data-xy-frame="polar"[^/]*/>', doc)
+    assert frame is not None
+    assert 'stroke-width="0"' in frame.group(0) or "#00000000" in frame.group(0)
