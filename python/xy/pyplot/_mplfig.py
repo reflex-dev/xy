@@ -1667,6 +1667,17 @@ class Figure:
         and the rendered box cannot drift apart.
         """
         self._ensure_layout()
+        if ax._inset_parent is not None and ax._inset_bounds is not None:
+            # Insets use the displayed parent box, after adjustable="box"
+            # aspect correction, rather than its original subplot allocation.
+            parent = ax._inset_parent.get_position().bounds
+            left, bottom, width, height = ax._inset_bounds
+            return (
+                parent[0] + left * parent[2],
+                parent[1] + bottom * parent[3],
+                width * parent[2],
+                height * parent[3],
+            )
         if ax._figure_rect is not None:
             return ax._figure_rect
         if ax not in self._axes:

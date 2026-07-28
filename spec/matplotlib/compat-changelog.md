@@ -4,6 +4,13 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Parent-relative inset axes — 2026-07-28 (Matplotlib 3.11.1 reference)
+
+- `Axes.inset_axes` now creates an independent free-form axes at the parent-relative
+  figure rectangle. Marginal histogram axes outside the central scatter frame no
+  longer have their artists projected into and stacked on the parent data space;
+  `sharex` and `sharey` retain the requested static axis-property sharing.
+
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
 - `xy.pyplot.boxplot` no longer routes its default call through the native
