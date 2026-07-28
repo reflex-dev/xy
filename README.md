@@ -171,6 +171,7 @@ Matplotlib draws at 100M but never resolves the zoom that follows.
 | XY (`density=False`) | 0.085 | 0.074 | 0.087 | 0.098 | 0.111 | 0.144 | 0.206 | 0.424 | 0.645 | 1.343 |
 | Matplotlib (WebAgg) | 0.086 | 0.115 | 0.224 | 0.357 | 0.758 | 1.424 | 2.804 | 6.838 | 13.385 | ✕ |
 | Plotly (scattergl) | 0.341 | 0.373 | 0.477 | 0.614 | 1.033 | 1.785 | 3.367 | 9.794 | ✕ | ✕ |
+| *XY speedup vs next best* | *1×* | *2×* | *3×* | *4×* | *9×* | *16×* | *34×* | *89×* | *177×* | *—* |
 
 Peak Python-side resident memory, in GiB. Browser memory is tracked separately
 and excluded here, since a headless Chrome resides ~1 GiB before drawing

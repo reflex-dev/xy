@@ -82,21 +82,50 @@ def build(
         notes.append(xy.marker(labels[-1], values[-1], size=6, color=style["color"]))
         unit = "s" if metric == "time" else " GiB"
         text = f"{values[-1]:.3f}{unit}" if metric == "time" else f"{values[-1]:.2f}{unit}"
-        if stopped:
-            # An arm that stopped short of the ladder end failed there; say so
-            # on the chart rather than letting the line just trail off.
-            text = f"× {text} — fails at {label(sizes[len(values)])}"  # noqa: RUF001
         notes.append(
             xy.text(
                 labels[-1],
                 values[-1],
                 text,
                 dx=-8,
-                dy=-10,
+                # Failed arms get a red annotation above their endpoint, so
+                # their value label moves below the point to stay clear.
+                dy=18 if stopped else -10,
                 color=style["color"],
                 anchor="end",
             )
         )
+        if stopped:
+            # The death is part of the data: continue the line as a dashed
+            # segment climbing toward the size that killed the arm and end it
+            # in a red x there, so the failure reads as an event on the chart
+            # rather than a footnote at the last surviving point.
+            top_y = 14.6 if metric == "time" else 5.8
+            fail_n = float(sizes[len(values)])
+            fail_y = min(top_y * 0.96, max(top_y * 0.86, values[-1] * 1.05))
+            notes.append(
+                xy.line(
+                    [labels[-1], fail_n],
+                    [values[-1], fail_y],
+                    color=style["color"],
+                    width=1.5,
+                    dash="dashed",
+                    opacity=0.55,
+                )
+            )
+            short = style["name"].split(" ")[0].split("(")[0]
+            notes.append(xy.marker(fail_n, fail_y, size=9, symbol="cross", color="#D64545"))
+            notes.append(
+                xy.text(
+                    fail_n,
+                    fail_y,
+                    f"{short} fails at {label(int(fail_n))}",
+                    dx=-14,
+                    dy=4,
+                    color="#D64545",
+                    anchor="end",
+                )
+            )
 
     # Linear y: the point of these charts is the *size* of the gap, and a log
     # axis compresses a 165x difference into a couple of gridlines.  Fixed
