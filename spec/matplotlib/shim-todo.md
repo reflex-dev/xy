@@ -476,7 +476,9 @@ treated as ordinary shim bugs.
 ### Projection and domain systems
 
 - 3-D plotting and `mplot3d`.
-- Polar, radar, ternary, geographic and custom projection registration.
+- Ternary, geographic and custom projection registration. Polar axes are
+  supported through `projection="polar"`; the remaining polar feature gaps are
+  tracked in `spec/design/polar-axes.md` §9.
 - Cartopy/Basemap integration.
 - Full TeX/MathText/PGF layout parity and Matplotlib font-manager behavior.
 

@@ -283,9 +283,12 @@ whole circle), `xy.polar_bar_chart(...)`, and `xy.wind_rose(directions,
 speeds)` (Python-side binning like `hist`, stacked bars, compass convention
 `zero="N"` + clockwise).
 
-Later increments, in order: pyplot `projection="polar"`, then polar heatmap
-and contour — the latter being the differentiator, since Plotly has no native
-polar heatmap, contour or error-bar trace.
+The pyplot `projection="polar"` increment is landed and corpus-bound: ordinary
+`plot`, `scatter`, `fill`, and `bar` calls route through the polar coordinate
+system from `subplot`, `add_subplot`, `axes`, and
+`subplots(subplot_kw={"projection": "polar"})`. The next increment is polar
+heatmap and contour — the latter being the differentiator, since Plotly has no
+native polar heatmap, contour or error-bar trace.
 
 ### Tier policy
 
@@ -339,7 +342,7 @@ Each row lands as its own change and updates this table when it does.
 |---|---|
 | Sector layout | `sector`/`thetamin`/`thetamax` limits AND the layout that should follow: a gauge drawn as a partial arc still gets a full-circle plot rect, so the unused portion is dead space. The disc should shrink to the sector's bounding box. |
 | Polar `rule` / `band` annotations | Point-anchored annotations (`text`, `label`, `marker`, `arrow`) project through the transform. A rule/band is genuinely different geometry on a disc — a θ rule is a spoke, an r rule is a ring, a band is an annulus or a sector — and still draws as a straight cartesian bar. |
-| pyplot `projection="polar"` | How matplotlib users arrive. Partially landed: the `Axes` projection state and PolarAxes method surface exist; routing of the polar axis options into the built chart is in progress. |
+| pyplot `projection="polar"` | Landed and corpus-bound. `subplot`, `add_subplot`, `axes`, and `subplots(subplot_kw=...)` route ordinary `plot`, `scatter`, `fill`, and `bar` calls into polar coordinates; `set_theta_zero_location`, `set_theta_direction`, `set_theta_offset`, `set_thetagrids`, `set_rlim`, `set_rticks`, and the r-limit accessors reach the built chart. |
 | Polar heatmap / contour | Beyond Plotly parity. Needs the fragment-stage inverse (§6). |
 | Partial sector (`thetamin`/`thetamax`) | Layout, clipping and tick trimming. |
 | Hole / r-origin | `rn` gains a floor; touches every hit test. |

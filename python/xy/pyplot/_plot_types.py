@@ -1653,19 +1653,48 @@ class PlotTypeMixin:
             xv, yv = xv[finite], yv[finite]
             if len(xv) > 2 and np.allclose((xv[0], yv[0]), (xv[-1], yv[-1])):
                 xv, yv = xv[:-1], yv[:-1]
-            topology = kernels.polygon_triangles(xv, yv)
-            x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(xv, yv, topology)
             chosen = facecolor
             if chosen is None and positional_color is not None:
                 chosen = positional_color
+            resolved_color = (
+                resolve_color(chosen) if chosen is not None else self._next_patch_color()
+            )
             mark_kwargs: dict[str, Any] = {
-                "color": (
-                    resolve_color(chosen) if chosen is not None else self._next_patch_color()
-                ),
+                "color": resolved_color,
                 "name": None if label is None else str(label),
                 "opacity": 1.0 if alpha is None else float(alpha),
                 "_joined_fill": True,
             }
+            if getattr(self, "_projection", "cartesian") == "polar":
+                if len(xv) < 3:
+                    raise ValueError("fill() polygons require at least three finite points")
+                entry = self._add(
+                    "area",
+                    {
+                        "x": xv,
+                        "y": yv,
+                        "kwargs": {
+                            "base": 0.0,
+                            "color": resolved_color,
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                            "line_color": (
+                                resolve_color(edgecolor) if edgecolor is not None else None
+                            ),
+                            "line_width": 1.0 if linewidth is None else float(linewidth),
+                            "line_opacity": (
+                                (1.0 if alpha is None else float(alpha))
+                                if edgecolor is not None
+                                else 0.0
+                            ),
+                            "stroke_perimeter": edgecolor is not None,
+                            "name": None if label is None else str(label),
+                        },
+                    },
+                )
+                result.append(PolyCollection(self, entry))
+                continue
+            topology = kernels.polygon_triangles(xv, yv)
+            x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(xv, yv, topology)
             entry = self._add(
                 "@mark",
                 {

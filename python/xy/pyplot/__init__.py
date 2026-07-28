@@ -304,7 +304,9 @@ def subplots(
         Relative column widths / row heights (also accepted inside
         ``gridspec_kw``).
     subplot_kw : dict, optional
-        Properties applied to every created axes via ``Axes.set``.
+        Properties applied to every created axes. ``projection="polar"`` and
+        ``polar=True`` select the polar coordinate system; the remaining
+        properties are applied via ``Axes.set``.
     layout : {"none", "tight", "constrained", "compressed"}, optional
         Layout mode applied after axes are created. ``"tight"``,
         ``"constrained"``, and ``"compressed"`` use the shim's deterministic
@@ -337,10 +339,8 @@ def subplots(
         width_ratios=width_ratios,
         height_ratios=height_ratios,
         gridspec_kw=gridspec_kw,
+        subplot_kw=subplot_kw,
     )
-    if subplot_kw:
-        for ax in np.atleast_1d(np.asarray(axes, dtype=object)).ravel():
-            ax.set(**subplot_kw)
     _apply_factory_layout(fig, layout)
     return fig, axes
 
@@ -383,10 +383,7 @@ def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
     Keywords are applied via ``Axes.set``.
     """
     if arg is None:
-        ax = gcf().add_subplot(111)
-        if kwargs:
-            ax.set(**kwargs)
-        return ax
+        return gcf().add_subplot(111, **kwargs)
     return gcf().add_axes(arg, **kwargs)
 
 

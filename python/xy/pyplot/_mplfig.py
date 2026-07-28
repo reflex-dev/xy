@@ -461,6 +461,11 @@ class Figure:
         self._axes.append(ax)
         ax._figure_rect = parsed
         self._current_ax = ax
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            ax._set_projection(projection)
         if kwargs:
             ax.set(**kwargs)
         return ax
@@ -516,6 +521,7 @@ class Figure:
         This mirrors the axes-returning half of ``matplotlib.figure.Figure.subplots``.
         Figure creation and pyplot registration belong to the state module.
         """
+        subplot_kw = dict(kwargs.pop("subplot_kw", None) or {})
         del kwargs
         grid_options = dict(gridspec_kw or {})
         width_ratios = grid_options.pop("width_ratios", width_ratios)
@@ -537,6 +543,15 @@ class Figure:
                 spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
                 ax._subplot_spec = spec
                 ax._figure_rect = grid.cell_rect(spec.rows, spec.cols)
+        if subplot_kw:
+            projection = subplot_kw.pop("projection", None)
+            if subplot_kw.pop("polar", False):
+                projection = "polar"
+            for ax in np.asarray(axes, dtype=object).reshape(-1):
+                if projection is not None:
+                    ax._set_projection(projection)
+                if subplot_kw:
+                    ax.set(**subplot_kw)
         apply_sharing(self, _share_mode(sharex, "sharex"), _share_mode(sharey, "sharey"))
         self._hide_inner_tick_labels(int(nrows), int(ncols))
         self._invalidate()

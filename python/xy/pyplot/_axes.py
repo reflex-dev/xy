@@ -1093,6 +1093,19 @@ def _cached_modebar(show: bool) -> Any:
 
 def _cached_axis(which: str, props: dict) -> Any:
     if props:
+        if which == "x" and any(
+            key in props for key in ("theta_unit", "theta_zero", "theta_direction")
+        ):
+            angular = dict(props)
+            unit = angular.pop("theta_unit", None)
+            zero = angular.pop("theta_zero", None)
+            direction = angular.pop("theta_direction", None)
+            return xy.theta_axis(
+                unit=unit,
+                zero=zero,
+                direction=direction,
+                **angular,
+            )
         factory = xy.x_axis if which == "x" else xy.y_axis
         return factory(**props)
     key = ("axis", which)
@@ -8203,6 +8216,13 @@ class Axes(PlotTypeMixin):
         self._apply_tickers("x", x_props, auto_tick_counts["x"])
         self._apply_tickers("y", y_props, auto_tick_counts["y"])
         self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
+        if self._projection == "polar":
+            # The angular descriptors are axis properties, so route them
+            # through the authored x-axis component with its ticks, labels and
+            # domain intact. Calling Figure.set_axis() after chart construction
+            # replaces unspecified fields with defaults and used to erase
+            # set_thetagrids()/set_xticks() from polar axes.
+            x_props.update(self._polar_options)
         compact = width < 520
         if chart_padding is None:
             top, right, bottom, left = (
@@ -8325,11 +8345,6 @@ class Axes(PlotTypeMixin):
             coords=self._projection,
         )
         core_figure = self._chart.figure()
-        if self._projection == "polar" and self._polar_options:
-            # set_theta_zero_location / set_theta_direction / set_theta_offset
-            # collect here; without this the calls would be write-only, which is
-            # exactly the silent-drop this codebase refuses elsewhere.
-            core_figure.set_axis("x", **self._polar_options)
         core_figure.title_options = [
             {
                 **title,

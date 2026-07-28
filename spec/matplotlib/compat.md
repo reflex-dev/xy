@@ -77,6 +77,7 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 | `xticks(positions, labels, rotation=)` / `tick_params(labelrotation=)` | Exact positions and strings render in browser, PNG, and SVG |
 | `twinx()`, `secondary_xaxis()`, `secondary_yaxis()` | second data axes and linked tick-only secondary axes with callable forward/inverse conversions. Secondary-axis ticks are evenly spaced conversions of the primary domain (not Matplotlib's secondary-unit locators) and currently reach the interactive HTML client only — PNG/SVG export does not draw them yet |
 | `fig, ax = plt.subplots()`; `plt.subplots(n, m, figsize=, dpi=, squeeze=, sharex=, sharey=)` | Grid renders as CSS-grid HTML and stitched PNG/SVG; shared axes use common domains and live linked pan/zoom. `Figure.subplots_adjust(left=, right=, top=, bottom=, wspace=, hspace=)` moves the SubplotParams frame: the grid resolves to explicit figure rectangles and every exporter (HTML, PNG, SVG) positions panels at those rectangles |
+| `subplot(projection="polar")`; `add_subplot(..., polar=True)`; `axes(projection="polar")`; `subplots(subplot_kw={"projection": "polar"})` | Ordinary `plot`, `scatter`, `fill`, and `bar` calls render through the core polar coordinate system in HTML, PNG, and SVG. The Matplotlib PolarAxes controls `set_theta_zero_location`, `set_theta_direction`, `set_theta_offset`, `set_thetagrids`, `set_rlim`, `set_rticks`, and the r-limit accessors are routed into the same angular/radial axes and corpus-bound. Partial sectors (`set_thetamin`/`set_thetamax`), polar heatmap/contour, log-r, polar error bars, and the stateful `plt.polar`/`plt.thetagrids`/`plt.rgrids` convenience wrappers remain outside this increment and fail or remain absent rather than drawing a Cartesian approximation. |
 | `Axes.get_position(original=False)` and the rendered axes frame | Supported subplot and free-form axes report their live figure rectangle and render on it. `original=True` returns the allocated rectangle before an adjustable-box aspect correction; the default applies the correction and its anchor, matching Matplotlib. Grid cells resolve under the live SubplotParams (`wspace`/`hspace`, width/height ratios), while explicit `add_axes`/`set_position` rectangles take precedence until a later layout adjustment. Titles, top-side x axes (`matshow`), and secondary-y gutters grow the surrounding allocation instead of moving the frame. **Known exception:** an axes carrying a colorbar keeps label-aware margins because xy and Matplotlib currently reserve the colorbar strip through different layout paths |
 | `fig.add_subplot(2, 2, 1)` / `add_subplot(221)` | |
 | `plt.subplot_mosaic([['A','B'],['C','C']])` / `Figure.subplot_mosaic` | Row sequences (a list of equal-length label strings, or nested label lists) resolve to a uniform grid; each distinct label, in first-appearance order, binds to the next cell, returning `(fig, {label: Axes})` with `figsize=`/`dpi=` sizing the figure. Repeated labels do not span and `'.'` does not blank a cell — the grid keeps one axes per cell — and Matplotlib's single-string forms (`'AB;CC'`, newline-separated blocks) are not parsed into rows |
@@ -97,11 +98,11 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 
 ## Outside 2-D chart-method compatibility
 
-Polar/3D projections, `FuncAnimation`, arbitrary third-party Artist graphs,
-non-affine transform graphs, and blitting are not part of this 2-D chart-method
-target. Bounded shim-owned `Axes` Artist views, children, containers, removal,
-affine data transforms, coordinate spaces, and linked secondary axes are
-supported.
+3-D and arbitrary custom projections, `FuncAnimation`, arbitrary third-party
+Artist graphs, non-affine transform graphs, and blitting are not part of this
+2-D chart-method target. Bounded shim-owned `Axes` Artist views, children,
+containers, removal, affine data transforms, coordinate spaces, polar axes,
+and linked secondary axes are supported.
 
 Unknown keyword arguments on supported calls raise `TypeError` naming the
 offending keyword. Known material options that the native marks cannot honor
