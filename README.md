@@ -141,18 +141,45 @@ for examples. For a detailed breakdown of what can be customized, see the
 
 ## Benchmarks
 
+Live interactive charts, 10k to 100M points. Each library gets every row —
+nothing is thinned before it — and is driven through its own input path in a
+real browser. The clock stops only when the canvas is both *correct* (planted
+sentinel points verified lit at their projected positions) and *stable* (the
+drawing buffer byte-identical for 10 consecutive frames), so a library that
+paints progressively is charged until its last chunk lands.
+
 <p align="center">
-  <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  <img src="spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-In the recorded 10-million-point launch baseline, XY wrote a static PNG in
-0.018 s against 2.7 s for Matplotlib and 9.6 s for Plotly, and reached first
-interactive render 16–18× sooner. The baseline uses identical seeded data, a
-900×420 output, and three isolated cold runs.
+XY holds **0.071 s at 10k and 0.081 s at 100M** — flat across four orders of
+magnitude, because above 200k rows it draws a screen-bounded density surface
+instead of one marker per row, and zoom drills back to exact rows. Every
+exact-marker path scales with N instead: Matplotlib crosses a second at ~3M
+and reaches 13.4 s at 50M; Plotly crosses at ~2.5M and reaches 9.8 s at 25M.
 
-For the environment, methodology, and raw results, see the
-[launch report](benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md),
-[benchmark runbook](benchmarks/README.md), and
+<p align="center">
+  <img src="spec/assets/ux-python-memory.png" alt="Peak Python-side resident memory, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+</p>
+
+At 100M points XY peaks at **2.58 GiB** of Python-side RSS. Plotly ran out
+first, failing to construct the figure at all at 50M after 4.70 GiB at 25M;
+Matplotlib reached 50M at 3.85 GiB and then failed to resolve a zoom at 100M.
+
+The pale line in both charts is XY with `density=False` — the same engine
+drawing one marker per row, subject to the same physics as everyone else. It
+renders 100M exact markers in 1.34 s on 5.26 GiB, and the gap between the two
+XY lines is exactly what the density default buys.
+
+| | Renders to | Still interactive (frame p95 ≤ 100 ms) |
+| --- | ---: | ---: |
+| **XY** | **100M** | **100M** |
+| XY (`density=False`) | 100M | 100M |
+| Matplotlib (WebAgg) | 50M | — server round trip per zoom |
+| Plotly (scattergl) | 25M | 5M |
+
+For the environment, methodology, per-size videos, and raw results, see the
+[benchmark runbook](benchmarks/README.md) and
 [competitive benchmark specification](spec/benchmarks/results.md).
 
 ## Embed XY in a Reflex app
