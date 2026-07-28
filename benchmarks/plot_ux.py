@@ -83,7 +83,7 @@ def build(
         # which sizes were run rather than inferring them from line bends.
         marks.append(xy.scatter(x=labels, y=values, color=style["color"], size=6.5))
         unit = "s" if metric == "time" else " GiB"
-        text = f"{values[-1]:.3f}{unit}" if metric == "time" else f"{values[-1]:.2f}{unit}"
+        text = f"{values[-1]:.2f}{unit}"
         notes.append(xy.marker(labels[-1], values[-1], size=6, color=style["color"]))
         notes.append(
             xy.text(
