@@ -179,7 +179,7 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
             "API Reference",
             "/api-reference/",
             "book-text",
-            url.startswith("/api-reference/"),
+            url.startswith("/api-reference/") | url.startswith("/changelog/"),
         ),
         class_name="m-0 flex w-full list-none flex-col items-start gap-2 p-0",
     )

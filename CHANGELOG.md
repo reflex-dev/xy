@@ -81,6 +81,13 @@ in the README).
   longer a second, defaults-clobbering one.
 
 ### Changed
+- The documentation site publishes both package changelogs — this file and
+  `python/reflex-xy/CHANGELOG.md` — as a Changelog section at `/docs/xy/changelog/`
+  and `/docs/xy/changelog/reflex-xy/`, rendered from the maintained files the
+  way the main Reflex documentation surfaces its package changelogs. The
+  hand-summarized `/docs/xy/api-reference/changelog/` page is gone and redirects
+  to the full history, so migration notes no longer drift from the release they
+  belong to.
 - The Rust core's release profile now uses fat LTO and strips symbol tables,
   shrinking the shipped cdylib ~15% (1.51 → 1.29 MB) with no measured runtime
   change on the native scatter bench (`spec/design/rust-engine.md` §2 records

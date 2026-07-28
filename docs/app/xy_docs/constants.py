@@ -1,7 +1,10 @@
 """Public XY documentation constants."""
 
 import os
+from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+REPOSITORY_URL = "https://github.com/reflex-dev/xy"
 PUBLIC_DOCS_URL = "https://reflex.dev/docs/xy"
 PUBLIC_XY_VERSION = os.getenv("XY_DOCS_PUBLIC_VERSION", "0.0.1").strip()
 DOCS_CHANNEL = os.getenv("XY_DOCS_CHANNEL", "preview").strip().lower()
@@ -19,5 +22,7 @@ __all__ = [
     "LLMS_TXT_PATH",
     "PUBLIC_DOCS_URL",
     "PUBLIC_XY_VERSION",
+    "REPOSITORY_URL",
+    "REPO_ROOT",
     "SOCIAL_IMAGE_URL",
 ]

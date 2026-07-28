@@ -11,9 +11,12 @@ from reflex_site_shared.components.docs_shell import (
 from reflex_site_shared.docs import DocsPage
 from reflex_site_shared.views.footer import dark_mode_toggle
 
-from xy_docs.constants import DOCS_CHANNEL, PUBLIC_XY_VERSION
-
-REPOSITORY_URL = "https://github.com/reflex-dev/xy"
+from xy_docs.constants import (
+    DOCS_CHANNEL,
+    PUBLIC_XY_VERSION,
+    REPO_ROOT,
+    REPOSITORY_URL,
+)
 
 
 def _footer_link(text: str, href: str) -> rx.Component:
@@ -67,7 +70,10 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
         f"&title={issue_title}"
         f"&body={issue_body}"
     )
-    edit_href = f"{REPOSITORY_URL}/blob/main/docs/{page.relative_path.as_posix()}"
+    # Pages published from outside the docs tree, such as package changelogs,
+    # are edited where they are maintained rather than at their virtual path.
+    source_path = page.source_path.resolve().relative_to(REPO_ROOT)
+    edit_href = f"{REPOSITORY_URL}/blob/main/{source_path.as_posix()}"
 
     feedback = rx.box(
         rx.text(
@@ -103,7 +109,7 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
         _footer_column(
             "Project",
             _footer_link("GitHub", REPOSITORY_URL),
-            _footer_link("Changelog", "/docs/xy/api-reference/changelog/"),
+            _footer_link("Changelog", "/docs/xy/changelog/"),
             _footer_link("Getting help", "/docs/xy/guides/getting-help/"),
             _footer_link("Security", f"{REPOSITORY_URL}/blob/main/SECURITY.md"),
         ),

@@ -112,5 +112,5 @@ silent NumPy compute fallback when the native core is unavailable.
 
 Review [Installation](/docs/xy/overview/installation/),
 [Serving, CSP, and offline use](/docs/xy/guides/serving-csp-and-offline-use/),
-and the [Changelog](/docs/xy/api-reference/changelog/) before shipping an
+and the [Changelog](/docs/xy/changelog/) before shipping an
 alpha upgrade.

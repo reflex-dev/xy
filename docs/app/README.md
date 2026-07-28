@@ -34,6 +34,12 @@ frontmatter to individual Markdown files. The `spec/` tree is
 internal project documentation and is intentionally excluded from the public
 site.
 
+The package changelogs are published from where they are maintained — the
+repository `CHANGELOG.md` and `python/reflex-xy/CHANGELOG.md` — as external
+documents declared in `xy_docs/changelogs.py`. They render at `/changelog/`
+and `/changelog/reflex-xy/`; edit the repository files, never a copy under
+`docs/`.
+
 Executable fences marked `python demo exec` render in shared Preview/Code
 tabs. Add `# --- chart ---` after a hardcoded data section only when that
 section exceeds 10 nonblank lines; it then renders in a separate Data tab. Use

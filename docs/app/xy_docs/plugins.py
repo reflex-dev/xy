@@ -31,6 +31,7 @@ _SECTION_TITLES = {
     "guides": "Guides",
     "advanced": "Advanced",
     "api-reference": "API Reference",
+    "changelog": "Changelog",
 }
 _SECTION_ORDER = tuple(_SECTION_TITLES.values())
 
@@ -96,13 +97,13 @@ def page_markdown_with_api_reference(
 
     Args:
         page: Discovered documentation page.
-        include_frontmatter: Read the original source, including YAML metadata,
-            instead of using the parsed page body.
+        include_frontmatter: Publish the complete source, including YAML
+            metadata, instead of using the parsed page body.
 
     Returns:
         Agent-readable Markdown matching the rendered page's API content.
     """
-    content = page.source_path.read_text(encoding="utf-8") if include_frontmatter else page.content
+    content = page.source_text if include_frontmatter else page.content
     body = append_component_api_markdown(content, page.metadata).lstrip()
     return f"{_markdown_directive()}\n\n{body}"
 

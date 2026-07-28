@@ -22,8 +22,8 @@ are primarily useful for inspection and annotations.
   type surface and constants.
 - [Limitations and alpha status](/docs/xy/api-reference/limitations-and-alpha-status/)
   separates supported contracts from experimental or incomplete surfaces.
-- [Changelog](/docs/xy/api-reference/changelog/) highlights migration-relevant
-  changes and links to the canonical full history.
+- [Changelog](/docs/xy/changelog/) publishes the XY and reflex-xy release
+  histories, including migration notes.
 - [Contributing](/docs/xy/api-reference/contributing/) provides the development
   quick start and required checks.
 

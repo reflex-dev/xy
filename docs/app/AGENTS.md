@@ -100,6 +100,10 @@ repository root.
 - Public pages are Markdown files discovered through `DocsSiteConfig`. Add
   routes and sidebar order to `DOCS_NAVIGATION`; do not add ordering
   frontmatter to individual files.
+- Markdown maintained outside `docs/`, such as the package changelogs, is
+  published through `DocsSiteConfig.external_docs` (`xy_docs/changelogs.py`).
+  Never copy such a file into the docs tree; add the source instead so the
+  page, its published Markdown, and its edit link follow the maintained file.
 - Leaf pages that own public callable APIs declare them in ordered
   `components:` frontmatter, using exported `xy.*` or `reflex_xy.*` names. The
   docs app appends the same generated API Reference to HTML, per-page Markdown,

@@ -98,7 +98,7 @@ The source documentation can describe work that has not reached the installed
 wheel. Before reporting an unknown argument or missing method:
 
 1. Print `xy.__version__` from the failing environment.
-2. Check the [Changelog](/docs/xy/api-reference/changelog/) and the release or
+2. Check the [Changelog](/docs/xy/changelog/) and the release or
    commit from which the docs were built.
 3. Reproduce against the version you actually intend to deploy.
 4. Include both the docs URL and the installed version in the issue.
@@ -121,7 +121,7 @@ when uncertain, start privately and let the maintainers triage it.
 XY does not promise a public release cadence, feature-delivery date, or general
 support response time. Open issues and pull requests show active work, not a
 commitment that a feature will ship in a particular release. The
-[Changelog](/docs/xy/api-reference/changelog/) is the record of released and
+[Changelog](/docs/xy/changelog/) is the record of released and
 unreleased changes; [Limitations and alpha status](/docs/xy/api-reference/limitations-and-alpha-status/)
 is the current contract boundary.
 

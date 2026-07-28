@@ -4,6 +4,7 @@ from pathlib import Path
 
 from reflex_site_shared.docs import DocsSiteConfig
 
+from xy_docs.changelogs import CHANGELOG_LEAVES, changelog_docs
 from xy_docs.constants import PUBLIC_DOCS_URL
 
 DOCS_ROOT = Path(__file__).resolve().parents[2]
@@ -155,13 +156,19 @@ DOCS_SECTIONS = (
                 "Limitations and Alpha Status",
                 "/api-reference/limitations-and-alpha-status/",
             ),
-            ("Changelog", "/api-reference/changelog/"),
             ("Contributing", "/api-reference/contributing/"),
         ),
+    ),
+    (
+        "Changelog",
+        "/changelog/",
+        "history",
+        CHANGELOG_LEAVES,
     ),
 )
 
 DOCS_REDIRECTS = {
+    "/api-reference/changelog/": "/changelog/",
     "/charts/annotations/": "/components/annotations/",
     "/core-concepts/animations/": "/styling/animations/",
     "/styling/playground/": "/styling/examples/#palette-playground",
@@ -216,6 +223,7 @@ DOCS_CONFIG = DocsSiteConfig(
         "styling/playground.md",
         "styling/recipes.md",
     ),
+    external_docs=changelog_docs(),
     navigation_order=DOCS_NAVIGATION,
     sitemap_base_url=PUBLIC_DOCS_URL,
 )

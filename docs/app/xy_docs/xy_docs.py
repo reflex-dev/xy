@@ -11,6 +11,7 @@ from reflex_site_shared.templates.docs import docs_layout
 from reflex_site_shared.utils.docpage import right_sidebar_item_highlight
 
 from xy_docs.breadcrumb import xy_docs_breadcrumb
+from xy_docs.changelogs import CHANGELOG_DIRECTORY
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
 from xy_docs.constants import LLMS_TXT_PATH, PUBLIC_DOCS_URL, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
@@ -85,12 +86,33 @@ def _without_faq_in_toc(page):
     return dataclasses.replace(page, content=stripped)
 
 
+# Changelog pages repeat "Added", "Fixed", and "Changed" under every release,
+# so their TOC lists releases only. The same page copy is used, leaving the
+# rendered body and its heading links untouched.
+_CHANGELOG_ROUTE_PREFIX = f"/{CHANGELOG_DIRECTORY}/"
+
+
+def _release_headings_only(page):
+    """Return the page with per-release subsections removed from the TOC."""
+    if not page.route.startswith(_CHANGELOG_ROUTE_PREFIX):
+        return page
+    in_fence = False
+    lines: list[str] = []
+    for line in page.content.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("### "):
+            continue
+        lines.append(line)
+    return dataclasses.replace(page, content="\n".join(lines))
+
+
 def xy_docs_layout(page, content, navigation) -> rx.Component:
     """Render the shared docs layout with Reflex's TOC scroll highlighter."""
     return rx.box(
         _llms_txt_directive(),
         docs_layout(
-            page_with_api_reference_toc(_without_faq_in_toc(page)),
+            page_with_api_reference_toc(_release_headings_only(_without_faq_in_toc(page))),
             content,
             navigation,
             config=_LAYOUT_CONFIG,
@@ -132,38 +154,98 @@ for _route in _DOCS_ROUTES:
     )
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _RedirectCopy:
+    """On-page and metadata copy for one legacy route.
+
+    Args:
+        heading: In-page heading shown while the browser follows the redirect.
+        description: In-page explanation of where the content moved.
+        link_label: Label of the manual link to the destination.
+        title: Browser and social title for the legacy route.
+        meta_description: Metadata description for the legacy route.
+    """
+
+    heading: str
+    description: str
+    link_label: str
+    title: str
+    meta_description: str
+
+
+_DEFAULT_REDIRECT_COPY = _RedirectCopy(
+    heading="Page moved",
+    description="This documentation page now lives at a new address.",
+    link_label="Open the new page",
+    title="Page moved · XY",
+    meta_description="This documentation page has moved to a new address.",
+)
+
+_STYLING_REDIRECT_TITLE = "Styling guide moved · XY"
+_STYLING_REDIRECT_DESCRIPTION = "This styling guide now lives in Customize Each Part."
+
+_REDIRECT_COPY = {
+    "/components/annotations/": _RedirectCopy(
+        heading="Annotations moved",
+        description="The chart gallery and component guide are now combined.",
+        link_label="Open the combined Annotations guide",
+        title="Annotations moved · XY",
+        meta_description="Annotations are documented in one combined component guide.",
+    ),
+    "/styling/examples/#responsive-combo-chart": _RedirectCopy(
+        heading="Recipe moved",
+        description="The responsive combo chart now lives on the Examples page.",
+        link_label="Open the responsive combo chart",
+        title="Recipe moved · XY",
+        meta_description="The responsive combo chart is now part of the Examples page.",
+    ),
+    "/styling/customize/#fill,-stroke,-opacity,-and-gradients": _RedirectCopy(
+        heading="Mark styling moved",
+        description="Mark paint is now documented in Customize Each Part.",
+        link_label="Open fill, stroke, opacity, and gradients",
+        title=_STYLING_REDIRECT_TITLE,
+        meta_description=_STYLING_REDIRECT_DESCRIPTION,
+    ),
+    "/styling/customize/#legend": _RedirectCopy(
+        heading="Chrome styling moved",
+        description="Legend and slot styling now live in Customize Each Part.",
+        link_label="Open legend styling",
+        title=_STYLING_REDIRECT_TITLE,
+        meta_description=_STYLING_REDIRECT_DESCRIPTION,
+    ),
+    "/styling/customize/#annotations": _RedirectCopy(
+        heading="Component styling moved",
+        description="Annotation and component styling now live in Customize Each Part.",
+        link_label="Open annotation styling",
+        title=_STYLING_REDIRECT_TITLE,
+        meta_description=_STYLING_REDIRECT_DESCRIPTION,
+    ),
+    "/styling/examples/#palette-playground": _RedirectCopy(
+        heading="Playground moved",
+        description="The palette playground now lives on the Examples page.",
+        link_label="Open Examples",
+        title="Playground moved · XY",
+        meta_description="The palette playground is now part of the combined Examples page.",
+    ),
+    "/changelog/": _RedirectCopy(
+        heading="Changelog moved",
+        description="Release notes now render from the repository changelogs.",
+        link_label="Open the XY changelog",
+        title="Changelog moved · XY",
+        meta_description="The XY changelog is now published from the repository changelog.",
+    ),
+}
+
+
 def _redirect_page(destination: str):
     """Render a useful fallback while the browser follows a legacy route."""
-    if destination == "/components/annotations/":
-        heading = "Annotations moved"
-        description = "The chart gallery and component guide are now combined."
-        link_label = "Open the combined Annotations guide"
-    elif destination == "/styling/examples/#responsive-combo-chart":
-        heading = "Recipe moved"
-        description = "The responsive combo chart now lives on the Examples page."
-        link_label = "Open the responsive combo chart"
-    elif destination == "/styling/customize/#fill,-stroke,-opacity,-and-gradients":
-        heading = "Mark styling moved"
-        description = "Mark paint is now documented in Customize Each Part."
-        link_label = "Open fill, stroke, opacity, and gradients"
-    elif destination == "/styling/customize/#legend":
-        heading = "Chrome styling moved"
-        description = "Legend and slot styling now live in Customize Each Part."
-        link_label = "Open legend styling"
-    elif destination == "/styling/customize/#annotations":
-        heading = "Component styling moved"
-        description = "Annotation and component styling now live in Customize Each Part."
-        link_label = "Open annotation styling"
-    else:
-        heading = "Playground moved"
-        description = "The palette playground now lives on the Examples page."
-        link_label = "Open Examples"
+    copy = _REDIRECT_COPY.get(destination, _DEFAULT_REDIRECT_COPY)
 
     return lambda: rx.center(
         rx.vstack(
-            rx.heading(heading, size="6"),
-            rx.text(description),
-            rx.link(link_label, href=destination),
+            rx.heading(copy.heading, size="6"),
+            rx.text(copy.description),
+            rx.link(copy.link_label, href=destination),
             align="center",
             spacing="4",
         ),
@@ -175,30 +257,12 @@ def _redirect_page(destination: str):
 for _legacy_route, _destination in DOCS_REDIRECTS.items():
     _public_destination = f"/docs/xy{_destination}"
     _canonical_destination = f"{PUBLIC_DOCS_URL}{_destination}"
-    _is_annotations_redirect = _destination == "/components/annotations/"
-    _is_recipe_redirect = _destination == "/styling/examples/#responsive-combo-chart"
-    _is_customize_redirect = _destination.startswith("/styling/customize/")
+    _redirect_copy = _REDIRECT_COPY.get(_destination, _DEFAULT_REDIRECT_COPY)
     app.add_page(
         component=_redirect_page(_destination),
         route=_legacy_route,
-        title=(
-            "Annotations moved · XY"
-            if _is_annotations_redirect
-            else "Recipe moved · XY"
-            if _is_recipe_redirect
-            else "Styling guide moved · XY"
-            if _is_customize_redirect
-            else "Playground moved · XY"
-        ),
-        description=(
-            "Annotations are documented in one combined component guide."
-            if _is_annotations_redirect
-            else "The responsive combo chart is now part of the Examples page."
-            if _is_recipe_redirect
-            else "This styling guide now lives in Customize Each Part."
-            if _is_customize_redirect
-            else "The palette playground is now part of the combined Examples page."
-        ),
+        title=_redirect_copy.title,
+        description=_redirect_copy.meta_description,
         on_load=rx.redirect(_destination, replace=True),
         meta=(
             rx.el.link(rel="canonical", href=_canonical_destination),
