@@ -21,8 +21,11 @@ export interface ChartView {
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 // Subdivisions across one polar bar's angular span. Mirrored by
 // POLAR_BAR_SEGMENTS in python/xy/config.py so the raster exporter flattens the
-// same arc; the SVG exporter draws a true `A` arc and needs no count.
-const POLAR_BAR_SEGMENTS = 24;
+// same arc; the SVG exporter draws a true `A` arc and needs no count. Sized so
+// a full-turn wedge's chord sagitta stays under the XY_POLAR_AA expansion on a
+// ~1400-device-px disc — the fragment SDF then trims the strip to an exactly
+// round arc (see POLAR_WEDGE_GLSL in 40_gl.ts).
+const POLAR_BAR_SEGMENTS = 96;
 // Uniform room outside the outer ring for angular tick labels. Mirrored by
 // _POLAR_LABEL_ROOM in python/xy/_svg.py.
 const POLAR_LABEL_ROOM = 30;

@@ -193,6 +193,16 @@ than chosen silently. SVG needs no count: it draws real `A` arcs
 (`_polar_wedge_path`), and `polar_wedge_points` is the flattened twin the
 raster path consumes.
 
+On the client the flattening never reaches the screen: the GL context runs
+with `antialias: false`, so wedge edges are fragment-shader coverage like
+every other mark. `POLAR_WEDGE_GLSL` expands the strip `XY_POLAR_AA` px
+outward and `RECT_FS` trims it against the true annular-sector SDF — the AA
+fringe gets room to ramp on both sides of each edge, and because the expanded
+chords stay outside the true outer arc (the segment count is sized for that up
+to a ~1400-device-px disc), the trimmed arc is exactly round rather than
+faceted. The raster's coverage-scanline polygon fill antialiases the same
+flattened wedge; SVG antialiases its real arcs natively.
+
 An opt-in arc-interpolated line mode (matplotlib's behaviour) is a possible
 later flag. It is not in this increment, and the default does not change.
 

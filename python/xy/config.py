@@ -52,8 +52,11 @@ POLAR_DIRECT_CEILING = 200_000
 # fixed triangle strip). Mirrored by POLAR_BAR_SEGMENTS in js/src/50_chartview.ts.
 # Fixed rather than px-adaptive: bar counts are small — a dense wind rose is
 # ~80 sectors — so the ceiling is free, and a view-dependent count would have to
-# be recorded per §28 rather than chosen silently.
-POLAR_BAR_SEGMENTS = 24
+# be recorded per §28 rather than chosen silently. Sized so a full-turn wedge's
+# chord sagitta stays inside the client's XY_POLAR_AA expansion up to a
+# ~1400-device-px disc, letting the fragment SDF trim the strip to an exactly
+# round arc; the raster's coverage-scanline fill smooths the same polygon.
+POLAR_BAR_SEGMENTS = 96
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

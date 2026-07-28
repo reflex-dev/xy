@@ -152,6 +152,45 @@ vec2 xyPos(float xe, float ye) {
 export const POLAR_GLSL_UNIFORMS = `
 uniform int u_coordMode; uniform vec4 u_polar; uniform vec2 u_rrange; uniform vec2 u_zdir;`;
 
+// Annular-sector vertex placement for BAR_VS/RECT_VS, with edge antialiasing.
+// The GL context is created with antialias: false, so every smooth edge in the
+// client is fragment-shader coverage — and a wedge disabled the rect SDF
+// (v_half = 1e6), which left all four of its edges hard-aliased. The strip is
+// expanded XY_POLAR_AA px outward here and RECT_FS trims it back against the
+// TRUE radii/angles (v_polarRadii/v_polarAngles, device px / screen radians):
+// the fringe gets room to ramp, and because the expanded chords stay outside
+// the true outer arc, the trimmed arc is exactly round rather than faceted.
+//
+// Positions are xyPolarPos in pixel form — same centre, radius and angle from
+// the same uniforms — computed directly because xyPolarPos's rn > 1 cull
+// would eat the expanded outer vertices.
+export const POLAR_WEDGE_GLSL = `
+const float XY_POLAR_AA = 2.0;
+flat out vec2 v_polarRadii; flat out vec2 v_polarAngles;
+vec4 xyPolarWedge(float th0, float th1, float r0C, float r1C, float t, float side) {
+  float span = max(u_rrange.y - u_rrange.x, 1e-30);
+  float radiusPx = u_polar.z * u_res.x * 0.5;
+  vec2 centrePx = (u_polar.xy * 0.5 + 0.5) * u_res;
+  float rBase = (r0C - u_rrange.x) / span * radiusPx;
+  float rTop = (r1C - u_rrange.x) / span * radiusPx;
+  float a0 = u_zdir.x + u_zdir.y * th0;
+  float a1 = u_zdir.x + u_zdir.y * th1;
+  v_polarRadii = vec2(min(rBase, rTop), max(rBase, rTop));
+  v_polarAngles = vec2(a0, a1);
+  // A span collapsed by the radial clamp, or a zero angular width, draws
+  // nothing — without this cull the AA expansion would leave a ghost sliver.
+  if (rBase == rTop || a0 == a1) return vec4(uintBitsToFloat(0x7fc00000u));
+  float outward = sign(rTop - rBase);
+  float rE = max(side == 0.0 ? rBase - outward * XY_POLAR_AA : rTop + outward * XY_POLAR_AA, 0.0);
+  // No angular expansion at a full turn: the two ends are one seam, and
+  // growing past it double-covers translucent fills.
+  float grow = abs(a1 - a0) >= 6.2831853 ? 0.0 : XY_POLAR_AA / max(v_polarRadii.y, 1.0);
+  float dir = a1 >= a0 ? 1.0 : -1.0;
+  float aE = mix(a0 - dir * grow, a1 + dir * grow, t);
+  vec2 pix = centrePx + rE * vec2(cos(aE), sin(aE));
+  return vec4(pix / u_res * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
 export const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
@@ -900,6 +939,7 @@ out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
+${POLAR_WEDGE_GLSL}
 uniform int u_polarSegments;
 void main() {
   vec2 c = corners[gl_VertexID];
@@ -922,13 +962,13 @@ void main() {
     float r1C = clamp(xyAxisCoord(ay1, u_y1meta, u_ymode, u_yconstant), u_rrange.x, u_rrange.y);
     int pair = gl_VertexID >> 1;
     float t = float(pair) / float(max(u_polarSegments, 1));
-    float th = mix(th0, th1, t);
-    float rr = (gl_VertexID & 1) == 0 ? r0C : r1C;
-    gl_Position = vec4(xyPolarPos(th, rr, u_polar, u_rrange, u_zdir), 0.0, 1.0);
-    v_t = float(gl_VertexID & 1);
+    float side = float(gl_VertexID & 1);
+    gl_Position = xyPolarWedge(th0, th1, r0C, r1C, t, side);
+    v_t = side;
     // Rounded corners and the stroke SDF are a rectangle contract; a sector
     // has no axis-aligned half-extent, so they switch off rather than being
-    // approximated (v_half huge => "deep inside", cover = 1).
+    // approximated (v_half huge => "deep inside", cover = 1). Edge coverage
+    // comes from the annular-sector SDF in RECT_FS instead.
     v_half = vec2(1e6);
     v_local = vec2(0.0);
     v_radius = vec2(-1.0, -1.0);
@@ -969,6 +1009,7 @@ out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 ${POLAR_GLSL_UNIFORMS}
+${POLAR_WEDGE_GLSL}
 uniform int u_polarSegments; uniform float u_polarV0C;
 void main() {
   vec2 c = corners[gl_VertexID];
@@ -1018,13 +1059,13 @@ void main() {
     float hw = abs(width) * 0.5;
     int pair = gl_VertexID >> 1;
     float t = float(pair) / float(max(u_polarSegments, 1));
-    float th = mix(thC - hw, thC + hw, t);
-    float rr = (gl_VertexID & 1) == 0 ? r0C : r1C;
-    gl_Position = vec4(xyPolarPos(th, rr, u_polar, u_rrange, u_zdir), 0.0, 1.0);
-    v_t = float(gl_VertexID & 1);
+    float side = float(gl_VertexID & 1);
+    gl_Position = xyPolarWedge(thC - hw, thC + hw, r0C, r1C, t, side);
+    v_t = side;
     // Rounded corners and the stroke SDF are a rectangle contract; a sector has
     // no axis-aligned half-extent, so they are switched off rather than
     // approximated. v_half huge => the SDF reports "deep inside", cover = 1.
+    // Edge coverage comes from the annular-sector SDF in RECT_FS instead.
     v_half = vec2(1e6);
     v_local = vec2(0.0);
     v_radius = vec2(-1.0, -1.0);
@@ -1065,6 +1106,14 @@ uniform vec2 u_res;
 in float v_lutCoord;
 in vec2 v_local; in vec2 v_half; in float v_t;
 in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke; in vec2 v_radius;
+// Polar wedge coverage. The rect SDF above is inert under polar (v_half is
+// huge), so a wedge's edges were hard-aliased — the context has
+// antialias: false and coverage is the only smoothing there is. The vertex
+// stage expands the strip by XY_POLAR_AA px (POLAR_WEDGE_GLSL) and this SDF
+// trims it back to the true annular sector, which also makes the outer arc
+// exactly round rather than chord-faceted.
+${POLAR_GLSL_UNIFORMS}
+flat in vec2 v_polarRadii; flat in vec2 v_polarAngles;
 out vec4 outColor;
 ${GRAD_GLSL}
 void main() {
@@ -1100,6 +1149,26 @@ void main() {
       premult = mix(stroke, premult, inner);
     }
     premult *= 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (u_coordMode == 1) {
+    vec2 rel = gl_FragCoord.xy - (u_polar.xy * 0.5 + 0.5) * u_res;
+    float dist = length(rel);
+    // Signed px distance to the wedge boundary, positive inside. A fan from
+    // the centre has no inner edge, so r_lo = 0 contributes none — without
+    // the guard the apex pixel of a full disc dims for no reason.
+    float cover = min(
+      v_polarRadii.x > 0.0 ? dist - v_polarRadii.x : 1e6,
+      v_polarRadii.y - dist);
+    float sweep = abs(v_polarAngles.y - v_polarAngles.x);
+    if (sweep < 6.2831853 - 1e-4) {
+      // Angular distance via the offset from the sector's mid angle, wrapped
+      // to (-pi, pi]: symmetric at both edges and seam-safe. Scaled by the
+      // fragment's own radius to convert radians to px of arc.
+      float mid = (v_polarAngles.x + v_polarAngles.y) * 0.5;
+      float off = mod(atan(rel.y, rel.x) - mid + 3.14159265359, 6.28318530718) - 3.14159265359;
+      cover = min(cover, (sweep * 0.5 - abs(off)) * dist);
+    }
+    premult *= smoothstep(-0.75, 0.75, cover);
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
