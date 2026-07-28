@@ -84,46 +84,45 @@ def build(
         marks.append(xy.scatter(x=labels, y=values, color=style["color"], size=6.5))
         unit = "s" if metric == "time" else " GiB"
         text = f"{values[-1]:.3f}{unit}" if metric == "time" else f"{values[-1]:.2f}{unit}"
+        notes.append(xy.marker(labels[-1], values[-1], size=6, color=style["color"]))
+        notes.append(
+            xy.text(
+                labels[-1],
+                values[-1],
+                text,
+                dx=-8,
+                dy=-10,
+                color=style["color"],
+                anchor="end",
+            )
+        )
         if stopped:
-            # The line dies where it died: a red cross sits on the endpoint
-            # itself with the failure named right there, instead of dashed
-            # lead-outs and floating labels crossing other lines.
+            # The failure lives at the size that caused it: a dashed
+            # horizontal run from the last measurement out to the failing x,
+            # ending in a red cross AT that size, so "fails at 50M" sits on
+            # 50M rather than on the survivor next to it.
+            fail_n = float(sizes[len(values)])
             notes.append(
-                xy.marker(labels[-1], values[-1], size=10, symbol="cross", color="#D64545")
-            )
-            notes.append(
-                xy.text(
-                    labels[-1],
-                    values[-1],
-                    f"fails at {label(sizes[len(values)])}",
-                    dx=-10,
-                    dy=-10,
+                xy.line(
+                    [labels[-1], fail_n],
+                    [values[-1], values[-1]],
                     color="#D64545",
-                    anchor="end",
+                    width=1.5,
+                    dash="dashed",
+                    opacity=0.6,
                 )
             )
+            notes.append(xy.marker(fail_n, values[-1], size=10, symbol="cross", color="#D64545"))
+            at_edge = fail_n >= float(sizes[-1])
             notes.append(
                 xy.text(
-                    labels[-1],
+                    fail_n,
                     values[-1],
-                    text,
-                    dx=-10,
-                    dy=8,
-                    color=style["color"],
-                    anchor="end",
-                )
-            )
-        else:
-            notes.append(xy.marker(labels[-1], values[-1], size=6, color=style["color"]))
-            notes.append(
-                xy.text(
-                    labels[-1],
-                    values[-1],
-                    text,
-                    dx=-8,
-                    dy=-10,
-                    color=style["color"],
-                    anchor="end",
+                    f"fails at {label(int(fail_n))}",
+                    dx=8 if at_edge else 0,
+                    dy=-14,
+                    color="#D64545",
+                    anchor="end" if at_edge else "middle",
                 )
             )
 
