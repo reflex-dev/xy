@@ -332,9 +332,9 @@ def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> 
         workflow.replace(
             '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
-            '          uv pip install -p .venv/bin/python -e ".[dev,codspeed]"\n',
+            "          uv pip install -p .venv/bin/python -e . --group dev --group codspeed\n",
             "        run: |\n          uv venv .venv\n"
-            '          uv pip install -p .venv/bin/python -e ".[dev]"\n',
+            "          uv pip install -p .venv/bin/python -e . --group dev\n",
         ),
         encoding="utf-8",
     )

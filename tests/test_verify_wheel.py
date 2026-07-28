@@ -257,7 +257,16 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.8",
-            "no Reflex runtime dependency",
+            "only xy runtime dependencies",
+        ),
+        (
+            DEFAULT_METADATA
+            + "\nRequires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench",
+            "only xy runtime dependencies",
+        ),
+        (
+            DEFAULT_METADATA + "\nProvides-Extra: dev",
+            "no published extras",
         ),
     ],
 )

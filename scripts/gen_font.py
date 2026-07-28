@@ -7,9 +7,9 @@ here — once, reproducibly — from a bundled TrueType face and emit it as a pl
 `const` table into `src/font.rs`. Runtime text is then a coverage blit + bilinear
 scale, no font library.
 
-Usage: `uv run python scripts/gen_font.py` (needs Pillow + matplotlib's bundled
-DejaVuSans.ttf, both in the `bench`/dev extra). Commit the regenerated
-`src/font.rs`.
+Usage: `uv run --group dev --with matplotlib python scripts/gen_font.py`
+(needs Pillow from the dev dependency group plus matplotlib's bundled
+DejaVuSans.ttf). Commit the regenerated `src/font.rs`.
 """
 
 # ruff: noqa: RUF001 — the EXTRA glyph list is deliberately unicode.

@@ -52,7 +52,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e ".[dev,codspeed]"
+          uv pip install -p .venv/bin/python -e . --group dev --group codspeed
 
       - name: Verify native benchmark backend
         run: |
@@ -72,5 +72,5 @@ jobs:
           # CodSpeed simulation mode.
           # The explicit native path is kept for scripts/verify_ci_workflow.py.
           # Required invocation: benchmarks/test_codspeed_kernels.py --codspeed
-          # The codspeed extra installs pytest-codspeed for this pytest run.
+          # The codspeed dependency group installs pytest-codspeed for this run.
           run: .venv/bin/python -m pytest benchmarks/test_codspeed_*.py --codspeed

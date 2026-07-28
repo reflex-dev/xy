@@ -28,6 +28,29 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     )
 
 
+def test_core_publishes_no_optional_dependencies() -> None:
+    data = tomllib.loads(ROOT.joinpath("pyproject.toml").read_text(encoding="utf-8"))
+    project = data.get("project") or {}
+    groups = data.get("dependency-groups") or {}
+
+    assert "optional-dependencies" not in project, (
+        "contributor tools and benchmark baselines must not be published as xy extras; "
+        "put local-only tools in dependency-groups and external baselines in the pinned "
+        "benchmark environment"
+    )
+    assert {"dev", "codspeed"} <= groups.keys()
+    group_names = {
+        _dependency_name(requirement)
+        for requirements in groups.values()
+        for requirement in requirements
+        if isinstance(requirement, str)
+    }
+    assert "plotly" not in group_names, (
+        "Plotly is an external comparison baseline installed by benchmark workflows, "
+        "not an xy development or runtime dependency"
+    )
+
+
 def test_core_package_does_not_import_reflex() -> None:
     forbidden = ("reflex", "reflex_core", "reflex_base")
     violations: list[str] = []

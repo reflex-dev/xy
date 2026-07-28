@@ -177,7 +177,7 @@ def test_codspeed_dependency_is_declared_and_used_by_ci() -> None:
 
     assert "codspeed = [" in pyproject
     assert '"pytest-codspeed>=5,<6"' in pyproject
-    assert '-e ".[dev,codspeed]"' in workflow
+    assert "-e . --group dev --group codspeed" in workflow
 
 
 def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:

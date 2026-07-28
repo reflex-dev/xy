@@ -20,7 +20,7 @@ Issues = "https://github.com/reflex-dev/xy/issues"
 Changelog = "https://github.com/reflex-dev/xy/blob/main/CHANGELOG.md"
 Security = "https://github.com/reflex-dev/xy/blob/main/SECURITY.md"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8",
     "ruff==0.15.8",
@@ -37,12 +37,6 @@ dev = [
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
     "starlette>=0.36",
-]
-# Plotly comparison charts. Matplotlib is deliberately not a project extra:
-# benchmark jobs that compare against it install it explicitly as an external
-# baseline, while every xy install remains independent of Matplotlib.
-bench = [
-    "plotly>=5",
 ]
 # CodSpeed's pytest plugin is intentionally separate from the normal dev
 # environment: it is useful for performance runs, but is not needed for unit

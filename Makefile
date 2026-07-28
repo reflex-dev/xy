@@ -13,7 +13,7 @@ help:
 	@printf '%s\n' \
 		'xy developer shortcuts' \
 		'' \
-		'  make setup            create .venv, install .[dev], and build the native core' \
+		'  make setup            create .venv, install the dev group, and build the native core' \
 		'  make setup-browser    install the pinned Playwright browser-test driver' \
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
@@ -28,7 +28,7 @@ help:
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
-		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires .[bench])' \
+		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires matplotlib)' \
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
 		'  make check-artifacts  verify prebuilt artifacts (set SDIST=... WHEEL=...)' \
@@ -44,7 +44,7 @@ help:
 
 setup:
 	uv venv
-	uv pip install -e ".[dev]"
+	uv pip install -e . --group dev
 	cargo build --release
 
 setup-browser:

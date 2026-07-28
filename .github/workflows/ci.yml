@@ -39,7 +39,7 @@ jobs:
       - name: Install xy and released reference wheel
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e ".[dev]"
+          uv pip install -p .venv/bin/python -e . --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.0"
       - name: Verify released reference and reviewed snapshot
         run: |
@@ -129,7 +129,7 @@ jobs:
       - name: Install package + dev deps
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e ".[dev]"
+          uv pip install -p .venv/bin/python -e . --group dev
 
       - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
         run: |

@@ -280,7 +280,7 @@ def test_missing_common_python_modules_name_specific_setup_commands(
         reasons = verify_local.missing_reasons(check)
 
         assert any("make setup" in reason for reason in reasons)
-        assert any('uv pip install -e ".[dev]"' in reason for reason in reasons)
+        assert any("uv pip install -e . --group dev" in reason for reason in reasons)
 
     check = verify_local.Check(
         "needs_numpy",
@@ -467,7 +467,7 @@ def test_contributor_setup_builds_native_core() -> None:
     setup_recipe = makefile.split("setup:\n", 1)[1].split("\n\n", 1)[0]
 
     assert "uv venv" in setup_recipe
-    assert 'uv pip install -e ".[dev]"' in setup_recipe
+    assert "uv pip install -e . --group dev" in setup_recipe
     assert "cargo build --release" in setup_recipe
 
 

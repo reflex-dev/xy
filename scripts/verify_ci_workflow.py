@@ -666,7 +666,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         "astral-sh/setup-uv@",
         "cargo build --release",
         "XY_REQUIRE_CARGO",
-        ".[dev,codspeed]",
+        "--group dev --group codspeed",
         "Verify native benchmark backend",
         'k.BACKEND == "native"',
         "CodSpeed requires native backend",

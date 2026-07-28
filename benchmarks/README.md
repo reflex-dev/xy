@@ -11,7 +11,7 @@ Use Python 3.12, the repository Rust toolchain, Node 22, and Playwright 1.48:
 cargo build --release
 uv venv .venv --python 3.12
 uv pip install -p .venv/bin/python \
-  --constraint benchmarks/requirements-ci.lock -e ".[dev,codspeed]"
+  --constraint benchmarks/requirements-ci.lock -e . --group dev --group codspeed
 uv pip install -p .venv/bin/python \
   --constraint benchmarks/requirements-ci.lock \
   matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
@@ -340,7 +340,7 @@ test module automatically adds its benchmarks to the CI run:
 
 ```bash
 cargo build --release
-uv run --extra dev --extra codspeed python -m pytest \
+uv run --group dev --group codspeed python -m pytest \
   benchmarks/test_codspeed_*.py --codspeed
 ```
 

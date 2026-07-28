@@ -261,15 +261,6 @@ wheels = [
 ]
 
 [[package]]
-name = "narwhals"
-version = "2.23.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e8/ac/66ed1fc6e38a0c0f330627ec5c5d597990d6159b6712b82af0ad2c65f06c/narwhals-2.23.0.tar.gz", hash = "sha256:13e7ff5b4bb4a2f77b907c2e4d8a76e273dfc1323a3c997440a2f9fd26aed408", size = 656209, upload-time = "2026-07-01T11:21:53.278Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/4e/afc8c31605cb8be1d3bb4438c4d979daa104dab6306cd2b87abe9c3a7299/narwhals-2.23.0-py3-none-any.whl", hash = "sha256:769e7b9ab102c93d8fa019f6b4cd1a657909b04a20bf6210e5a35aae06814ae9", size = 458938, upload-time = "2026-07-01T11:21:51.677Z" },
-]
-
-[[package]]
 name = "numpy"
 version = "2.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -518,19 +509,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bf/20/22fe9384b7949e25fb1293bcfc84fb82590ff4ea6b37c95b24d26d793d86/pillow-12.3.0-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fbd139c8447d25dd750ab79ee274cc5e1fe80fc56340ab10b18a195e1b6eca3e", size = 5237776, upload-time = "2026-07-01T11:56:30.263Z" },
     { url = "https://files.pythonhosted.org/packages/08/14/f6ba68107680ffa74b39985f3f30884e41318fbc4250caa423c79b4788bb/pillow-12.3.0-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e7e480451b9fa137494bccd3a7d69adbe8ac65a87d97be61e11f1b1050a5bac3", size = 5860358, upload-time = "2026-07-01T11:56:32.68Z" },
     { url = "https://files.pythonhosted.org/packages/36/54/0169bc772ec491108b62f644f8ecf1fe5d8ae5ebafde2ee2142210166903/pillow-12.3.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:04f01d28a6aaff387bf842a13be313df23ba0597a44f1a976c9feb3c6ff4711a", size = 7231786, upload-time = "2026-07-01T11:56:35.046Z" },
-]
-
-[[package]]
-name = "plotly"
-version = "6.9.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "narwhals" },
-    { name = "packaging" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/96/07/795c79dbce40c39bece88e69d049babbd23ffa95b5d117f248db8ea03abb/plotly-6.9.0.tar.gz", hash = "sha256:967ad33e8c704fed051800d11d985eb206a9c795c14206b30a6f463ed9c67d0d", size = 6919903, upload-time = "2026-07-09T14:55:59.982Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/18/d8544811ab076f876c4892b3714f5b0dad335e1dc33aef826df431b8325d/plotly-6.9.0-py3-none-any.whl", hash = "sha256:36bebe2f1bb13884774fe61689c329071446f6ce4a8927fb1f0d6fb24f581236", size = 9909646, upload-time = "2026-07-09T14:55:55.421Z" },
 ]
 
 [[package]]
@@ -882,10 +860,7 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
-[package.optional-dependencies]
-bench = [
-    { name = "plotly" },
-]
+[package.dev-dependencies]
 codspeed = [
     { name = "pytest-codspeed" },
 ]
@@ -902,15 +877,17 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "numpy", specifier = ">=1.24" },
-    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10" },
-    { name = "plotly", marker = "extra == 'bench'", specifier = ">=5" },
-    { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=15" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-codspeed", marker = "extra == 'codspeed'", specifier = ">=5,<6" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.8" },
-    { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.36" },
-    { name = "ty", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev", "bench", "codspeed"]
+
+[package.metadata.requires-dev]
+codspeed = [{ name = "pytest-codspeed", specifier = ">=5,<6" }]
+dev = [
+    { name = "hypothesis", specifier = ">=6" },
+    { name = "pillow", specifier = ">=10" },
+    { name = "pyarrow", specifier = ">=15" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = "==0.15.8" },
+    { name = "starlette", specifier = ">=0.36" },
+    { name = "ty" },
+]

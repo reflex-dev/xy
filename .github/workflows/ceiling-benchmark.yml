@@ -100,7 +100,7 @@ jobs:
         # matplotlib arm fails at backend switch rather than at a real ceiling.
         run: |
           uv venv
-          uv pip install --constraint benchmarks/requirements-ci.lock -e ".[dev]"
+          uv pip install --constraint benchmarks/requirements-ci.lock -e . --group dev
           uv pip install --constraint benchmarks/requirements-ci.lock \
             matplotlib plotly kaleido datashader plotly-resampler \
             psutil websocket-client pillow pandas tornado

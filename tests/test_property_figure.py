@@ -18,8 +18,9 @@ checks the invariants the wire contract promises rather than specific values:
   P7  determinism: building twice yields byte-identical blob + equal spec
       (the anti-shimmer guarantee starts kernel-side).
 
-Requires the `hypothesis` dev extra; skipped cleanly where it is absent
-(e.g. the no-PyPI sandbox) — CI installs `.[dev]` and runs the full suite.
+Requires Hypothesis from the dev dependency group; skipped cleanly where it is
+absent (e.g. the no-PyPI sandbox) — CI installs that group and runs the full
+suite.
 """
 
 from __future__ import annotations

@@ -245,7 +245,16 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.8\n",
-            "no Reflex runtime dependency",
+            "only xy runtime dependencies",
+        ),
+        (
+            DEFAULT_PKG_INFO
+            + "Requires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench\n",
+            "only xy runtime dependencies",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
+            "no published extras",
         ),
     ],
 )

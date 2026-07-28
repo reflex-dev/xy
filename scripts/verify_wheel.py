@@ -155,11 +155,6 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
-def _is_reflex_dependency(requirement: str) -> bool:
-    name = _dependency_name(requirement)
-    return name == "reflex" or name.startswith("reflex-")
-
-
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
@@ -177,11 +172,16 @@ def _require_metadata(names: set[str], data: bytes, expected_version: str) -> No
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
-    reflex_requirements = [
-        requirement for requirement in requirements if _is_reflex_dependency(requirement)
+    unexpected_requirements = [
+        requirement
+        for requirement in requirements
+        if _dependency_name(requirement) not in {"anywidget", "numpy"}
     ]
-    if reflex_requirements:
-        missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
+    if unexpected_requirements:
+        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
+    provided_extras = metadata.get_all("Provides-Extra") or []
+    if provided_extras:
+        missing.append(f"no published extras ({provided_extras})")
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")

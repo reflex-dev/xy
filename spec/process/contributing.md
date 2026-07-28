@@ -128,7 +128,8 @@ make check-pyplot
 
 When you change shim rendering performance, run `make check-pyplot-speed`, which
 enforces the per-family 10x static-PNG target via
-`benchmarks/bench_pyplot_vs_matplotlib.py` and requires the `.[bench]` extra.
+`benchmarks/bench_pyplot_vs_matplotlib.py` and requires Matplotlib from the
+pinned benchmark environment.
 
 When you touch standalone HTML export, path writes, user-facing text surfaces,
 tooltips, legends, or the browser client DOM code, run:

@@ -203,11 +203,6 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
-def _is_reflex_dependency(requirement: str) -> bool:
-    name = _dependency_name(requirement)
-    return name == "reflex" or name.startswith("reflex-")
-
-
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -234,11 +229,16 @@ def _require_pkg_info(path: str, root: str) -> None:
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
-    reflex_requirements = [
-        requirement for requirement in requirements if _is_reflex_dependency(requirement)
+    unexpected_requirements = [
+        requirement
+        for requirement in requirements
+        if _dependency_name(requirement) not in {"anywidget", "numpy"}
     ]
-    if reflex_requirements:
-        missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
+    if unexpected_requirements:
+        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
+    provided_extras = metadata.get_all("Provides-Extra") or []
+    if provided_extras:
+        missing.append(f"no published extras ({provided_extras})")
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 

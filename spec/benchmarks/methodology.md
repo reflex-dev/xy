@@ -341,8 +341,9 @@ in the focused-gate table of `spec/process/production-readiness.md`.
   re-measurement of the margin.
 - **`make check-pyplot-speed`** → `benchmarks/bench_pyplot_vs_matplotlib.py
   --profile standard --reps 21 --warmups 3 --target-speedup 10 --require-target`
-  (needs the `.[bench]` extra). The *absolute* side: figure construction through
-  a completed, compressed PNG at a shared 1800x840 target against
+  (needs Matplotlib from the pinned benchmark environment). The *absolute*
+  side: figure construction through a completed, compressed PNG at a shared
+  1800x840 target against
   matplotlib/Agg, reported per family — line, scatter, histogram, bar,
   pcolormesh, contour. `--require-target` exits nonzero unless every family
   reaches the 10x total-time target. The run alternates library order to reduce

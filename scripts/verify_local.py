@@ -352,11 +352,11 @@ def _module_missing(module: str) -> bool:
 def _module_hint(module: str) -> str:
     package_hint = {
         "numpy": "Run `uv pip install -e . numpy anywidget`, or `make setup` for the dev environment.",
-        "pytest": 'Run `make setup` or `uv pip install -e ".[dev]"` before local tests.',
-        "ruff": 'Run `make setup` or `uv pip install -e ".[dev]"` before lint checks.',
-        "ty": 'Run `make setup` or `uv pip install -e ".[dev]"` before type checks.',
+        "pytest": "Run `make setup` or `uv pip install -e . --group dev` before local tests.",
+        "ruff": "Run `make setup` or `uv pip install -e . --group dev` before lint checks.",
+        "ty": "Run `make setup` or `uv pip install -e . --group dev` before type checks.",
     }.get(module)
-    return package_hint or 'Run `make setup` or `uv pip install -e ".[dev]"` first.'
+    return package_hint or "Run `make setup` or `uv pip install -e . --group dev` first."
 
 
 def _chromium_hint() -> str:
