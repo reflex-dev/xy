@@ -660,7 +660,12 @@ class Figure:
         size = kwargs.pop("fontsize", kwargs.pop("size", "large"))
         weight = kwargs.pop("fontweight", kwargs.pop("weight", "normal"))
         family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
-        color = kwargs.pop("color", "#262626")
+        # Figure titles are Text artists in Matplotlib: snapshot the active
+        # text default when authored, rather than hard-coding the light-theme
+        # paint or consulting rcParams later during export.
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = rcParams["text.color"]
         x = kwargs.pop("x", 0.5)
         y = kwargs.pop("y", 0.98)
         ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", "center"))

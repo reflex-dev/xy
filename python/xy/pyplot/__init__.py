@@ -2972,6 +2972,7 @@ _NAMED_STYLES: dict[str, dict[str, Any]] = {
         "axes.facecolor": "black",
         "axes.edgecolor": "white",
         "axes.labelcolor": "white",
+        "text.color": "white",
         "grid.color": "white",
         "xtick.color": "white",
         "ytick.color": "white",

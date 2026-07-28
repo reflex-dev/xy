@@ -2,17 +2,71 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
 import xy
 from conftest import run_browser_probe
+from xy import _svg
 from xy.export import find_chromium
 
 # Browser renderer rule: rotated y titles clear the tick-label union by this
 # multiple of the title's font size.
 _Y_TITLE_TICK_GAP_EM = 0.4
+
+
+def _svg_y_title_geometry(chart: xy.Chart, labels: set[str]) -> dict[str, dict[str, float]]:
+    """Return the static renderer's resolved title anchors for named labels."""
+    geometry: dict[str, dict[str, float]] = {}
+    for element in ElementTree.fromstring(chart.to_svg()).iter():
+        if not element.tag.endswith("text"):
+            continue
+        text = "".join(element.itertext())
+        if text not in labels:
+            continue
+        transform = element.attrib.get("transform", "")
+        rotation = re.match(r"rotate\((-?[\d.]+)", transform)
+        geometry[text] = {
+            "x": float(element.attrib["x"]),
+            "y": float(element.attrib["y"]),
+            "angle": float(rotation.group(1)) if rotation else 0.0,
+        }
+    assert geometry.keys() == labels
+    return geometry
+
+
+def test_svg_y_axis_title_locations_center_primary_and_named_axes() -> None:
+    labels = {"primary default", "right start", "left center", "right end"}
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.line([0, 1], [2, 3], y_axis="y3"),
+        xy.line([0, 1], [3, 4], y_axis="y4"),
+        xy.x_axis(),
+        xy.y_axis(label="primary default", side="left"),
+        xy.y_axis(id="y2", label="right start", side="right", label_position="start"),
+        xy.y_axis(id="y3", label="left center", side="left", label_position="center"),
+        xy.y_axis(id="y4", label="right end", side="right", label_position="end"),
+        width=720,
+        height=440,
+        padding=(48, 120, 48, 120),
+    )
+    spec, _blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    geometry = _svg_y_title_geometry(chart, labels)
+
+    assert geometry["primary default"]["y"] == pytest.approx(plot["y"] + plot["h"] / 2)
+    assert geometry["primary default"]["angle"] == -90
+    assert geometry["right start"]["y"] == pytest.approx(plot["y"] + plot["h"])
+    assert geometry["right start"]["angle"] == 90
+    assert geometry["left center"]["y"] == pytest.approx(plot["y"] + plot["h"] / 2)
+    assert geometry["left center"]["angle"] == -90
+    assert geometry["right end"]["y"] == pytest.approx(plot["y"])
+    assert geometry["right end"]["angle"] == 90
 
 
 def _probe(chart: xy.Chart, script: str, tmp_path: Path, name: str) -> dict:
@@ -597,6 +651,209 @@ def test_y_axis_title_stays_attached_when_left_padding_is_wide(tmp_path: Path) -
     assert result["titleInside"] is True, result
     assert result["tickInside"] is True, result
     assert result["titleLayoutReads"] == 1, result
+
+
+def test_y_axis_titles_center_and_match_svg_longitudinally_for_named_axes(
+    tmp_path: Path,
+) -> None:
+    labels = {
+        "primary default",
+        "right start",
+        "left center",
+        "right end",
+    }
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.line([0, 1], [2, 3], y_axis="y3"),
+        xy.line([0, 1], [3, 4], y_axis="y4"),
+        xy.x_axis(),
+        xy.y_axis(label="primary default", side="left"),
+        xy.y_axis(id="y2", label="right start", side="right", label_position="start"),
+        xy.y_axis(id="y3", label="left center", side="left", label_position="center"),
+        xy.y_axis(id="y4", label="right end", side="right", label_position="end"),
+        width=720,
+        height=440,
+        padding=(48, 120, 48, 120),
+    )
+    svg_geometry = _svg_y_title_geometry(chart, labels)
+    script = (
+        _PRELUDE
+        + f"""
+    const expected = {json.dumps(svg_geometry)};
+    const root = view.root.getBoundingClientRect();
+    const titles = Object.fromEntries(
+      [...view.root.querySelectorAll('[data-xy-label-kind="label"][data-xy-axis^="y"]')]
+        .map((title) => {{
+          const box = title.getBoundingClientRect();
+          return [title.textContent, {{
+            axis: title.dataset.xyAxis,
+            side: title.dataset.xyAxisSide,
+            centerX: (box.left + box.right) / 2 - root.left,
+            centerY: (box.top + box.bottom) / 2 - root.top,
+            top: parseFloat(title.style.top),
+            transform: title.style.transform,
+            origin: title.style.transformOrigin,
+            svgY: expected[title.textContent].y,
+          }}];
+        }})
+    );
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({{
+      plot: view.plot,
+      titles,
+    }}));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "centered primary and named y titles")
+
+    plot = result["plot"]
+    titles = result["titles"]
+    assert titles.keys() == labels
+    assert titles["primary default"]["centerY"] == pytest.approx(
+        plot["y"] + plot["h"] / 2,
+        abs=0.75,
+    )
+    assert titles["right start"]["centerY"] == pytest.approx(plot["y"] + plot["h"], abs=0.75)
+    assert titles["left center"]["centerY"] == pytest.approx(
+        plot["y"] + plot["h"] / 2,
+        abs=0.75,
+    )
+    assert titles["right end"]["centerY"] == pytest.approx(plot["y"], abs=0.75)
+    for title in titles.values():
+        assert title["centerY"] == pytest.approx(title["svgY"], abs=0.75)
+        assert title["origin"].replace(" ", "") in {"center", "centercenter"}
+        assert title["transform"].replace(" ", "").startswith("translate(-50%,-50%)rotate(")
+    assert titles["primary default"]["centerX"] < plot["x"]
+    assert titles["left center"]["centerX"] < plot["x"]
+    assert titles["right start"]["centerX"] > plot["x"] + plot["w"]
+    assert titles["right end"]["centerX"] > plot["x"] + plot["w"]
+
+
+def test_y_axis_title_offset_unions_inward_tick_labels_with_the_spine(
+    tmp_path: Path,
+) -> None:
+    label_size = 15
+    inside_tick_style = {
+        "label_size": label_size,
+        "tick_length": 4,
+        "tick_direction": "in",
+        "tick_padding": -12,
+    }
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.x_axis(),
+        xy.y_axis(
+            label="left spine union",
+            side="left",
+            tick_values=[0, 0.5, 1],
+            tick_label_anchor="start",
+            style=inside_tick_style,
+        ),
+        xy.y_axis(
+            id="y2",
+            label="right spine union",
+            side="right",
+            tick_values=[1, 1.5, 2],
+            tick_label_anchor="end",
+            style=inside_tick_style,
+        ),
+        width=640,
+        height=400,
+        padding=(48, 110, 48, 110),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const leftSpine = root.left + view.plot.x;
+    const rightSpine = leftSpine + view.plot.w;
+    const titleBox = (axis) => view.root.querySelector(
+      `[data-xy-label-kind="label"][data-xy-axis="${axis}"]`
+    ).getBoundingClientRect();
+    const tickBoxes = (axis) => [...view.root.querySelectorAll(
+      `[data-xy-label-kind="tick"][data-xy-axis="${axis}"]`
+    )].map((tick) => tick.getBoundingClientRect());
+    const leftTitle = titleBox("y");
+    const rightTitle = titleBox("y2");
+    const leftTicks = tickBoxes("y");
+    const rightTicks = tickBoxes("y2");
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      leftTicksInside: leftTicks.every((box) => box.left > leftSpine),
+      rightTicksInside: rightTicks.every((box) => box.right < rightSpine),
+      leftGap: leftSpine - leftTitle.right,
+      rightGap: rightTitle.left - rightSpine,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "y title spine and inward tick union")
+
+    assert result["leftTicksInside"] is True
+    assert result["rightTicksInside"] is True
+    assert result["leftGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * label_size, abs=0.75)
+    assert result["rightGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * label_size, abs=0.75)
+
+
+def test_y_axis_title_rotation_labelpad_and_tickless_spine_fallback(
+    tmp_path: Path,
+) -> None:
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1]),
+        xy.line([0, 1], [1, 2], y_axis="y2"),
+        xy.x_axis(),
+        xy.y_axis(
+            label="angled primary",
+            side="left",
+            label_angle=-45,
+            label_offset=18,
+            tick_values=[0, 0.5, 1],
+        ),
+        xy.y_axis(
+            id="y2",
+            label="tickless secondary",
+            side="right",
+            tick_values=[],
+            style={"label_size": 15},
+        ),
+        width=640,
+        height=400,
+        padding=(48, 110, 48, 110),
+    )
+    script = (
+        _PRELUDE
+        + """
+    const root = view.root.getBoundingClientRect();
+    const primary = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y"]'
+    );
+    const secondary = view.root.querySelector(
+      '[data-xy-label-kind="label"][data-xy-axis="y2"]'
+    );
+    const primaryBox = primary.getBoundingClientRect();
+    const secondaryBox = secondary.getBoundingClientRect();
+    const primaryTicks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y"][data-xy-axis-side="left"]'
+    )].map((tick) => tick.getBoundingClientRect());
+    const secondaryTicks = [...view.root.querySelectorAll(
+      '[data-xy-label-kind="tick"][data-xy-axis="y2"]'
+    )];
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      primaryGap: Math.min(...primaryTicks.map((box) => box.left)) - primaryBox.right,
+      primaryTransform: primary.style.transform,
+      secondaryTicks: secondaryTicks.length,
+      secondaryGap: secondaryBox.left - (root.left + view.plot.x + view.plot.w),
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "y title angle labelpad and spine fallback")
+
+    assert result["primaryGap"] == pytest.approx(18, abs=0.75)
+    assert "rotate(-45deg)" in result["primaryTransform"].replace(" ", "")
+    assert result["secondaryTicks"] == 0
+    assert result["secondaryGap"] == pytest.approx(_Y_TITLE_TICK_GAP_EM * 15, abs=0.75)
 
 
 def test_structured_y_axis_title_position_remains_authoritative(tmp_path: Path) -> None:

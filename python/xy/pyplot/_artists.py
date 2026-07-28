@@ -991,10 +991,17 @@ class ErrorbarContainer:
         return iter(self.lines)
 
     def get_label(self) -> Any:
-        return self._artist._entry["kwargs"].get("name")
+        return self._artist._entry.get(
+            "_mpl_container_label",
+            self._artist._entry["kwargs"].get("name"),
+        )
 
     def set_label(self, value: Any) -> None:
-        self._artist._entry["kwargs"]["name"] = str(value)
+        label = None if value is None else str(value)
+        self._artist._entry["_mpl_container_label"] = label
+        self._artist._entry["kwargs"]["name"] = (
+            None if label is None or label.startswith("_") else label
+        )
         self._artist._touch()
 
     def remove(self) -> None:

@@ -218,6 +218,7 @@ def test_text_accepts_matplotlib_style_alias_and_bbox_properties() -> None:
     )
 
     assert label._entry["kwargs"] == {
+        "color": "black",
         "bbox": {"facecolor": "red", "alpha": 0.5, "pad": 10},
         "style": {"font_style": "italic"},
     }
