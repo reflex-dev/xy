@@ -836,6 +836,21 @@ def test_client_multiline_text_keeps_matplotlib_baseline_box_anchor() -> None:
     assert 'vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB' in annotations
 
 
+def test_annotation_shape_loop_restores_canvas_before_early_continue() -> None:
+    """Every early annotation exit must balance the per-shape canvas save."""
+    annotations = _read(ROOT / "js/src/51_annotations.ts")
+    draw_start = annotations.index("_drawAnnotationShapes(ctx) {")
+    draw_body = annotations[
+        draw_start : annotations.index("\n  _drawAnnotationLabels(updateLabels)", draw_start)
+    ]
+    lines = draw_body.splitlines()
+    continue_lines = [index for index, line in enumerate(lines) if line.strip() == "continue;"]
+
+    assert continue_lines
+    for index in continue_lines:
+        assert lines[index - 1].strip() == "ctx.restore();"
+
+
 def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"

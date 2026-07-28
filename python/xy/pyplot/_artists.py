@@ -1480,12 +1480,13 @@ class Table:
         for artist in self._artists:
             artist.remove()
         if hasattr(self, "_axes"):
-            self._axes._table_bottom_points = max(
+            host = self._axes._y2_of or self._axes
+            host._table_bottom_points = max(
                 (
                     (float(entry["table_geometry"]["row_from_top"]) + 1.0)
                     * float(entry["table_geometry"]["row_height_points"])
                     + 1.0
-                    for entry in self._axes._entries
+                    for entry in host._entries
                     if entry.get("kind") == "@table_cell"
                     and entry.get("table_geometry", {}).get("row_height_points") is not None
                 ),

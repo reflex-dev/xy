@@ -725,7 +725,7 @@ class Figure:
             y,
             label,
             ha=kwargs.pop("ha", kwargs.pop("horizontalalignment", "left")),
-            va=kwargs.pop("va", kwargs.pop("verticalalignment", "bottom")),
+            va=kwargs.pop("va", kwargs.pop("verticalalignment", "center")),
             rotation=kwargs.pop("rotation", 90.0),
             kwargs=kwargs,
         )

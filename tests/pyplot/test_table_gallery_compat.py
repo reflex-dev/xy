@@ -87,6 +87,28 @@ def test_table_default_cells_are_readable_and_bbox_stays_inside_axes() -> None:
     assert ax._table_bottom_points == 0.0
 
 
+def test_table_remove_recomputes_host_padding_for_twin_axes() -> None:
+    _fig, ax = plt.subplots()
+    twin = ax.twinx()
+    twin_table = twin.table(cellText=[["twin"]])
+    host_table = ax.table(cellText=[["host"]])
+
+    host_table.remove()
+    assert ax._table_bottom_points > 0.0
+
+    twin_table.remove()
+    assert ax._table_bottom_points == 0.0
+
+
+def test_table_bbox_does_not_mutate_col_widths_array() -> None:
+    _fig, ax = plt.subplots()
+    col_widths = np.array([1.0, 3.0], dtype=np.float64)
+
+    ax.table(cellText=[["a", "b"]], colWidths=col_widths, bbox=(0.0, 0.0, 1.0, 1.0))
+
+    np.testing.assert_array_equal(col_widths, [1.0, 3.0])
+
+
 @pytest.mark.parametrize("keyword", ["cellLoc", "rowLoc", "colLoc"])
 def test_table_alignment_rejects_unknown_values(keyword: str) -> None:
     _fig, ax = plt.subplots()

@@ -5755,7 +5755,7 @@ class PlotTypeMixin:
         if colWidths is None:
             widths = np.full(cols, width / cols, dtype=np.float64)
         else:
-            widths = np.asarray(colWidths, dtype=np.float64)
+            widths = np.array(colWidths, dtype=np.float64)
             if widths.shape != (cols,):
                 raise ValueError("table colWidths must match the column count")
             if not np.all(np.isfinite(widths)) or np.any(widths <= 0):

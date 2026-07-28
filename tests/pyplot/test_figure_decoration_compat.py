@@ -66,6 +66,19 @@ def test_figure_super_labels_are_compositor_owned_and_mutable() -> None:
     assert fig._effective_rects() is not None
 
 
+def test_figure_supylabel_defaults_to_center_and_honors_alignment_aliases() -> None:
+    fig = Figure(1)
+
+    fig.supylabel("default")
+    assert fig._resolved_figure_labels()[0]["vertical_align"] == "center"
+
+    fig.supylabel("long form", verticalalignment="top")
+    assert fig._resolved_figure_labels()[0]["vertical_align"] == "top"
+
+    fig.supylabel("short form", va="bottom")
+    assert fig._resolved_figure_labels()[0]["vertical_align"] == "bottom"
+
+
 def test_figure_label_baseline_and_html_honor_vertical_alignment() -> None:
     block = _textblock.measure("shared label", 12)
     label = {"text": "shared label", "y": 0.25, "vertical_align": "baseline"}

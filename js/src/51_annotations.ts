@@ -589,10 +589,16 @@ Object.assign(ChartView.prototype, {
         const vertical = ann.axis === "x";
         const a = vertical ? this._dataPxX(Number(ann.start)) : this._dataPxY(Number(ann.start));
         const b = vertical ? this._dataPxX(Number(ann.end)) : this._dataPxY(Number(ann.end));
-        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        if (!Number.isFinite(a) || !Number.isFinite(b)) {
+          ctx.restore();
+          continue;
+        }
         const lo = Math.max(vertical ? p.x : p.y, Math.min(a, b));
         const hi = Math.min(vertical ? p.x + p.w : p.y + p.h, Math.max(a, b));
-        if (hi <= lo) continue;
+        if (hi <= lo) {
+          ctx.restore();
+          continue;
+        }
         ctx.save();
         ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
         ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
@@ -605,9 +611,18 @@ Object.assign(ChartView.prototype, {
       } else if (ann.kind === "rule") {
         const vertical = ann.axis === "x";
         const pos = vertical ? this._dataPxX(Number(ann.value)) : this._dataPxY(Number(ann.value));
-        if (!Number.isFinite(pos)) continue;
-        if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) continue;
-        if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) continue;
+        if (!Number.isFinite(pos)) {
+          ctx.restore();
+          continue;
+        }
+        if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) {
+          ctx.restore();
+          continue;
+        }
+        if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) {
+          ctx.restore();
+          continue;
+        }
         const crisp = Math.round(pos) + 0.5;
         ctx.save();
         ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
