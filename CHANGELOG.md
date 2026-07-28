@@ -8,6 +8,8 @@ in the README).
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-27
+
 ### Added
 - Notebook display-host resolution (`spec/design/reflex-shaped-api.md` §3.3):
   `show(display=...)` on charts, facet charts, and the internal figure objects

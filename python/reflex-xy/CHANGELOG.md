@@ -6,6 +6,8 @@ documented here. The format follows
 
 ## [Unreleased]
 
+## [0.0.2] — 2026-07-27
+
 ### Added
 - `reflex_xy.chart(..., tailwind_classes=...)` exposes complete utility names
   for live token/Var charts to Reflex's Tailwind build without leaking a scan
