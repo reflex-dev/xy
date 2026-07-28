@@ -285,20 +285,13 @@ function xyTaperPolygon(points, w0, w1) {
 }
 
 Object.assign(ChartView.prototype, {
-  _authoredScatterRgba(g, index, continuousLut = null) {
+  _authoredScatterRgba(g, index, continuousLut = null, paletteRgba = null) {
     if (g.colorMode === 3 && g._cpu.rgba) {
       const offset = index * 4;
       return Array.from(g._cpu.rgba.slice(offset, offset + 4), (value: number) => value / 255);
     }
-    if (g.colorMode === 2 && g._cpu.color) {
-      const palette = g.trace.color?.palette || [];
-      if (palette.length) {
-        return parseColor(
-          this.root,
-          palette[Math.round(g._cpu.color[index]) % palette.length],
-          g.color,
-        );
-      }
+    if (g.colorMode === 2 && g._cpu.color && paletteRgba && paletteRgba.length) {
+      return paletteRgba[Math.round(g._cpu.color[index]) % paletteRgba.length];
     }
     if (g.colorMode === 1 && g._cpu.color) {
       // The caller prepares this once per trace/redraw. Falling back to a
@@ -335,6 +328,10 @@ Object.assign(ChartView.prototype, {
         g._authoredLut = buildLutData(colormap);
       }
       const continuousLut = g.colorMode === 1 ? g._authoredLut : null;
+      const palette = g.trace.color?.palette || [];
+      const paletteRgba = g.colorMode === 2 && palette.length
+        ? palette.map((c) => parseColor(this.root, c, g.color))
+        : null;
       for (let index = 0; index < g.n; index++) {
         const sourceIndex = g._visMap ? g._visMap[index] : index;
         const x = this._decodeValue(g._cpu.x, g.xMeta, sourceIndex);
@@ -349,7 +346,7 @@ Object.assign(ChartView.prototype, {
               : g._cpu.size[sourceIndex])
           : g.size;
         const size = Math.max(0, Number(sizeValue) * zoomStyle.sizeFactor);
-        const rgba = this._authoredScatterRgba(g, sourceIndex, continuousLut);
+        const rgba = this._authoredScatterRgba(g, sourceIndex, continuousLut, paletteRgba);
         const styleOffset = sourceIndex * 4;
         const itemStyle = g._cpuStyle && g._cpuStyle.length >= styleOffset + 4
           ? g._cpuStyle.subarray(styleOffset, styleOffset + 4)
