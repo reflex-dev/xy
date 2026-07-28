@@ -132,13 +132,13 @@ def build(
     # stay visually comparable.  x stays log — the ladder spans four decades
     # and a linear x would pile everything below 10M against the left edge.
     if metric == "time":
-        axis = "Time until every point is on screen (seconds)"
+        axis = "Time to render (s)"
         ticks = [0, 2, 4, 6, 8, 10, 12, 14]
         labels_y = [f"{t:g}" for t in ticks]
         labels_y[-1] = f"{ticks[-1]:g} s"
         domain = (0.0, 14.6)
     else:
-        axis = "Peak Python-side RSS (GiB)"
+        axis = "Peak memory (GiB)"
         ticks = [0, 1, 2, 3, 4, 5]
         labels_y = [f"{t:g}" for t in ticks]
         labels_y[-1] = f"{ticks[-1]:g} GiB"
