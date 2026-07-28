@@ -11,6 +11,7 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+import math
 import warnings
 
 # Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
@@ -1146,6 +1147,12 @@ class Axes(PlotTypeMixin):
         # chart *is* the figure and the rectangle comes from get_position().
         self._plot_box_px: Optional[tuple[float, float, float, float]] = None
         self._padding: Optional[list[float]] = None
+        # "cartesian" or "polar" — matplotlib's `projection=` argument. Polar
+        # reinterprets the same two axes (x carries theta, y carries r), which
+        # is exactly how PolarAxes works: ordinary plot/scatter/bar/fill calls
+        # render into the projection rather than into polar-specific artists.
+        self._projection: str = "cartesian"
+        self._polar_options: dict[str, Any] = {}
         # Natural ``table(loc="bottom")`` height in Matplotlib points. It is
         # converted at render time so savefig DPI changes preserve cell size.
         self._table_bottom_points = 0.0
@@ -5666,6 +5673,139 @@ class Axes(PlotTypeMixin):
             interpolation="nearest",
         )
 
+    # -- polar projection (matplotlib PolarAxes surface) --------------------
+
+    def _set_projection(self, projection: Any) -> None:
+        """Back `subplot(projection=...)`; only 'polar' changes anything."""
+        name = "cartesian" if projection in (None, "rectilinear") else str(projection)
+        if name not in ("cartesian", "polar"):
+            raise ValueError(
+                f"projection {projection!r} is not supported; use 'polar' or 'rectilinear'"
+            )
+        self._projection = name
+        if name == "polar":
+            # Matplotlib's PolarAxes defaults: theta=0 due east, increasing
+            # counterclockwise, angles in radians.
+            self._polar_options.setdefault("theta_unit", "radians")
+            self._polar_options.setdefault("theta_zero", "E")
+            self._polar_options.setdefault("theta_direction", "counterclockwise")
+
+    def _require_polar(self, method: str) -> None:
+        if self._projection != "polar":
+            raise AttributeError(
+                f"{method} is only available on a polar axes; "
+                "create one with subplot(projection='polar')"
+            )
+
+    def set_theta_zero_location(self, loc: str, offset: float = 0.0) -> None:
+        """Direction that theta=0 points: 'N', 'NW', 'W', 'SW', 'S', 'SE', 'E'
+        or 'NE', plus an optional offset in degrees."""
+        self._require_polar("set_theta_zero_location")
+        compass = {
+            "E": 0.0,
+            "NE": 45.0,
+            "N": 90.0,
+            "NW": 135.0,
+            "W": 180.0,
+            "SW": 225.0,
+            "S": 270.0,
+            "SE": 315.0,
+        }
+        key = str(loc).upper()
+        if key not in compass:
+            raise ValueError(f"theta zero location must be one of {sorted(compass)}")
+        degrees = compass[key] + float(offset)
+        # The four cardinals keep their letter so the wire stays readable and
+        # one shared table resolves them; anything else ships as radians.
+        letters = {0.0: "E", 90.0: "N", 180.0: "W", 270.0: "S"}
+        normalized = degrees % 360.0
+        self._polar_options["theta_zero"] = letters.get(normalized, math.radians(degrees))
+
+    def set_theta_direction(self, direction: Any) -> None:
+        """1/'counterclockwise'/'anticlockwise' or -1/'clockwise'."""
+        self._require_polar("set_theta_direction")
+        clockwise = {-1, "clockwise", "cw"}
+        counter = {1, "counterclockwise", "anticlockwise", "ccw"}
+        key = direction if isinstance(direction, int) else str(direction).lower()
+        if key in clockwise:
+            self._polar_options["theta_direction"] = "clockwise"
+        elif key in counter:
+            self._polar_options["theta_direction"] = "counterclockwise"
+        else:
+            raise ValueError("theta direction must be 1/-1 or 'clockwise'/'counterclockwise'")
+
+    def set_theta_offset(self, offset: float) -> None:
+        """Rotation of the theta=0 direction, in radians."""
+        self._require_polar("set_theta_offset")
+        self._polar_options["theta_zero"] = float(offset)
+
+    def get_theta_offset(self) -> float:
+        self._require_polar("get_theta_offset")
+        zero = self._polar_options.get("theta_zero", "E")
+        table = {"E": 0.0, "N": math.pi / 2, "W": math.pi, "S": -math.pi / 2}
+        return table[zero] if isinstance(zero, str) else float(zero)
+
+    def get_theta_direction(self) -> int:
+        self._require_polar("get_theta_direction")
+        return -1 if self._polar_options.get("theta_direction") == "clockwise" else 1
+
+    def set_rlim(self, bottom: Any = None, top: Any = None, **kwargs: Any) -> tuple[float, float]:
+        """Radial limits — the polar spelling of `set_ylim`."""
+        self._require_polar("set_rlim")
+        return self.set_ylim(bottom, top, **kwargs)
+
+    def set_rmin(self, rmin: float) -> None:
+        self._require_polar("set_rmin")
+        self.set_ylim(float(rmin), self.get_ylim()[1])
+
+    def set_rmax(self, rmax: float) -> None:
+        self._require_polar("set_rmax")
+        self.set_ylim(self.get_ylim()[0], float(rmax))
+
+    def get_rmin(self) -> float:
+        self._require_polar("get_rmin")
+        return float(self.get_ylim()[0])
+
+    def get_rmax(self) -> float:
+        self._require_polar("get_rmax")
+        return float(self.get_ylim()[1])
+
+    def set_rticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> Any:
+        self._require_polar("set_rticks")
+        return self.set_yticks(ticks, labels, **kwargs)
+
+    def set_rgrids(self, radii: Any, labels: Any = None, **kwargs: Any) -> Any:
+        """Radial gridline positions — matplotlib's `set_rgrids`."""
+        self._require_polar("set_rgrids")
+        return self.set_yticks(list(radii), labels, **kwargs)
+
+    def set_thetagrids(self, angles: Any, labels: Any = None, **kwargs: Any) -> Any:
+        """Angular gridline positions, in DEGREES.
+
+        Matplotlib takes degrees here regardless of the data's unit, which is
+        the one place its polar API is not unit-consistent; matching it matters
+        more than being tidy.
+        """
+        values = [float(a) for a in angles]
+        self._require_polar("set_thetagrids")
+        if self._polar_options.get("theta_unit", "radians") == "radians":
+            values = [math.radians(a) for a in values]
+        return self.set_xticks(values, labels, **kwargs)
+
+    def set_thetamin(self, thetamin: float) -> None:
+        self._require_polar("set_thetamin")
+        raise NotImplementedError(
+            "partial sectors (set_thetamin/set_thetamax) are not implemented yet; "
+            "see spec/design/polar-axes.md §9"
+        )
+
+    def set_thetamax(self, thetamax: float) -> None:
+        self._require_polar("set_thetamax")
+        raise NotImplementedError(
+            "partial sectors (set_thetamin/set_thetamax) are not implemented yet; "
+            "see spec/design/polar-axes.md §9"
+        )
+
     def set_xscale(self, scale: str, **kwargs: Any) -> None:
         """Set the x-axis scale.
 
@@ -8182,6 +8322,7 @@ class Axes(PlotTypeMixin):
             height=height,
             padding=chart_padding,
             styles=chrome_styles,
+            coords=self._projection,
         )
         core_figure = self._chart.figure()
         core_figure.title_options = [

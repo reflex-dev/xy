@@ -117,8 +117,10 @@ __all__ = [
     "mark",
     "marker",
     "modebar",
+    "polar_bar_chart",
     "polar_chart",
     "r_axis",
+    "radar_chart",
     "scatter",
     "scatter_chart",
     "segments",
@@ -141,6 +143,7 @@ __all__ = [
     "violin",
     "violin_chart",
     "vline",
+    "wind_rose",
     "x_axis",
     "x_band",
     "y_axis",
@@ -6024,6 +6027,197 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
     """
     props.setdefault("coords", "polar")
     return Chart("polar_chart", children, **props)
+
+
+def radar_chart(
+    categories: Sequence[str],
+    *children: Component,
+    fill: bool = True,
+    **props: Any,
+) -> Chart:
+    """A radar (spider) chart: one closed polygon per series.
+
+    Radar is a composition, not a renderer — matplotlib's own gallery builds it
+    from a `PolarAxes` subclass plus line/fill calls, and Plotly from a filled
+    `Scatterpolar`. This wraps that composition: evenly spaced spokes labelled
+    with `categories`, and each series closed back to its first value.
+
+        xy.radar_chart(
+            ["speed", "power", "range", "agility"],
+            xy.area([0.9, 0.7, 0.55, 0.85], name="model A"),
+            xy.area([0.6, 0.8, 0.7, 0.5], name="model B"),
+        )
+
+    Each mark child supplies **values only**, one per category, in the same
+    order; the angles are derived. Closing is done here rather than by the
+    caller because the seam is easy to get wrong: appending the first *angle*
+    makes the final segment sweep backwards through the whole circle, so the
+    closing sample is placed at a full turn instead.
+
+    Args:
+        categories: Spoke labels, one per value.
+        *children: `area` (filled) or `line` (outline) marks carrying values,
+            plus any axis/legend children.
+        fill: Unused placeholder for symmetry with future options; the mark
+            kind chooses fill today (`area` fills, `line` does not).
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart` with categorical spokes.
+    """
+    names = [str(c) for c in categories]
+    if len(names) < 3:
+        raise ValueError("radar_chart needs at least 3 categories")
+    count = len(names)
+    step = 2.0 * math.pi / count
+    angles = [i * step for i in range(count)]
+    closed_angles = [*angles, 2.0 * math.pi]
+
+    rebuilt: list[Component] = []
+    for child in children:
+        if isinstance(child, Mark) and child.kind in {"area", "line"}:
+            values = _radar_values(child, count)
+            rebuilt.append(replace(child, x=closed_angles, y=[*values, values[0]]))
+        else:
+            rebuilt.append(child)
+    has_theta = any(isinstance(c, Axis) and c.which == "x" for c in rebuilt)
+    if not has_theta:
+        rebuilt.append(theta_axis(tick_values=angles, tick_labels=names))
+    props.setdefault("coords", "polar")
+    return Chart("radar_chart", tuple(rebuilt), **props)
+
+
+def _radar_values(mark: "Mark", count: int) -> list[float]:
+    """The one value-per-category column a radar mark carries.
+
+    A radar mark is written `xy.area(values)`, so the single positional
+    argument lands in `x`; `y` is accepted too for callers who spell it out.
+    """
+    raw = mark.y if mark.y is not None else mark.x
+    if raw is None:
+        raise ValueError(f"radar_chart {mark.kind} mark needs one value per category")
+    values = [float(v) for v in np.asarray(raw, dtype=float).reshape(-1)]
+    if len(values) != count:
+        raise ValueError(
+            f"radar_chart {mark.kind} mark has {len(values)} values "
+            f"but there are {count} categories"
+        )
+    return values
+
+
+def polar_bar_chart(*children: Component, **props: Any) -> Chart:
+    """Radial bars: each bar is an annular sector rather than a rectangle.
+
+    Bars carry the angle as their first channel and the radius as their second,
+    with `width` in the angular axis's own unit (radians by default, degrees
+    when the theta axis says so).
+
+        xy.polar_bar_chart(
+            xy.bar(directions, counts, width=30.0),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        )
+
+    Args:
+        *children: `bar` marks plus axis/legend children.
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart`.
+    """
+    props.setdefault("coords", "polar")
+    return Chart("polar_bar_chart", children, **props)
+
+
+def wind_rose(
+    directions: ArrayLike,
+    speeds: ArrayLike,
+    *,
+    sectors: int = 16,
+    speed_bins: Optional[Sequence[float]] = None,
+    **props: Any,
+) -> Chart:
+    """A wind rose: directional frequency, stacked by speed band.
+
+    Binning is done here in Python rather than by a renderer — the same
+    arrangement `hist` uses — so the chart is polar bars over counts and nothing
+    about the render path is wind-specific.
+
+    Directions are compass bearings in degrees (0 = north, increasing
+    clockwise), which is why the theta axis defaults to `zero="N"` with
+    `direction="clockwise"`.
+
+    Args:
+        directions: Bearings in degrees, one per observation.
+        speeds: Speeds, one per observation.
+        sectors: Number of angular bins around the circle.
+        speed_bins: Upper edges of the speed bands. Defaults to four quartile
+            bands derived from the data. Each band takes the next colour from
+            the chart's palette cycle, as stacked series do everywhere else.
+        **props: Any `polar_chart` keyword.
+
+    Returns:
+        A polar `Chart` of stacked bars.
+    """
+    bearings = np.asarray(directions, dtype=float).reshape(-1)
+    magnitudes = np.asarray(speeds, dtype=float).reshape(-1)
+    if bearings.size != magnitudes.size:
+        raise ValueError("wind_rose directions and speeds must be the same length")
+    if sectors < 3:
+        raise ValueError("wind_rose sectors must be at least 3")
+    finite = np.isfinite(bearings) & np.isfinite(magnitudes)
+    bearings, magnitudes = bearings[finite], magnitudes[finite]
+    if bearings.size == 0:
+        raise ValueError("wind_rose needs at least one finite observation")
+
+    if speed_bins is None:
+        # Quartile bands, rounded to three significant figures: the raw
+        # quantiles are readable as a legend only by accident ("<= 2.76651").
+        quartiles = np.quantile(magnitudes, [0.25, 0.5, 0.75, 1.0])
+        edges = np.unique([float(f"{value:.3g}") for value in quartiles])
+        # The top edge rounds *up*, never down: it has to cover the fastest
+        # observation, and restoring the raw maximum would put "27.2197" in the
+        # legend next to "2.77".
+        top = float(magnitudes.max())
+        if top > 0:
+            unit = 10.0 ** (math.floor(math.log10(top)) - 2)
+            edges[-1] = math.ceil(top / unit) * unit
+    else:
+        edges = np.unique(np.asarray(speed_bins, dtype=float).reshape(-1))
+    if edges.size == 0:
+        raise ValueError("wind_rose speed_bins must contain at least one edge")
+
+    width = 360.0 / sectors
+    # Bin centred on each sector: a bearing of 0 belongs to the sector centred
+    # on north, not to the one starting there.
+    index = np.floor(((bearings % 360.0) + width / 2.0) / width).astype(int) % sectors
+    centres = np.arange(sectors, dtype=float) * width
+
+    marks: list[Component] = []
+    base = np.zeros(sectors, dtype=float)
+    lower = -np.inf
+    for upper in edges:
+        in_band = (magnitudes > lower) & (magnitudes <= upper)
+        counts = np.bincount(index[in_band], minlength=sectors).astype(float)
+        marks.append(
+            bar(
+                centres,
+                base + counts,
+                base=base.copy(),
+                width=width,
+                name=f"\u2264 {upper:g}",
+            )
+        )
+        base = base + counts
+        lower = upper
+
+    props.setdefault("coords", "polar")
+    props.setdefault("title", None)
+    children = (
+        *marks,
+        theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        r_axis(label="count"),
+    )
+    return Chart("wind_rose", children, **props)
 
 
 def area_chart(*children: Component, **props: Any) -> Chart:

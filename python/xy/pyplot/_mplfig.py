@@ -391,6 +391,11 @@ class Figure:
                 self._ensure_grid(nrows, ncols)
                 ax = self._claim_or_create_subplot(subplot_key, index - 1)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            ax._set_projection(projection)
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
         self._share_subplot_axes(ax, sharex=sharex, sharey=sharey)

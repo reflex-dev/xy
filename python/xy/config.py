@@ -39,13 +39,21 @@ PROTOCOL_VERSION = 11
 # segment and mesh shaders expand geometry in pixel space after the coordinate
 # map, so under polar they would draw chord-edged shapes where arcs belong.
 # spec/design/polar-axes.md §7 tracks the order the rest land in.
-POLAR_MARK_KINDS = frozenset({"line", "scatter"})
+POLAR_MARK_KINDS = frozenset({"line", "scatter", "area", "bar", "column"})
 
 # Polar traces ship tier="direct" (§7): M4 decimation buckets on a monotonic
 # screen-x column, which a spiral is not, and density binning in (theta, r)
 # distorts by area near the origin. Cap the direct path explicitly rather than
 # letting an unbounded polar scatter allocate its way to a cliff.
 POLAR_DIRECT_CEILING = 200_000
+
+# Subdivisions across one polar bar's angular span, for the renderers that
+# flatten arcs (the raster display list has no arc opcode, and the GPU sweeps a
+# fixed triangle strip). Mirrored by POLAR_BAR_SEGMENTS in js/src/50_chartview.ts.
+# Fixed rather than px-adaptive: bar counts are small — a dense wind rose is
+# ~80 sectors — so the ceiling is free, and a view-dependent count would have to
+# be recorded per §28 rather than chosen silently.
+POLAR_BAR_SEGMENTS = 24
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

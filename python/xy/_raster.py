@@ -52,7 +52,6 @@ from ._svg import (
     _decode_title_geometry,
     _density_column,
     _estimated_text_width,
-    _fmt_angle,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
@@ -75,6 +74,7 @@ from ._svg import (
     legend_items,
     legend_options_with_slot,
     minor_axis_ticks,
+    polar_wedge_points,
     slot_font_size,
     slot_styles,
     slot_text_color,
@@ -836,6 +836,7 @@ def _emit_polar_tick_labels(
     polar: _PolarProjection,
     theta_values: list[float],
     r_values: list[float],
+    theta_step: float,
     r_step: float,
     theta_axis: dict[str, Any],
     r_axis: dict[str, Any],
@@ -853,7 +854,6 @@ def _emit_polar_tick_labels(
     axis) and neither concept survives a disc.
     """
     if not hide_theta:
-        unit = theta_axis.get("theta_unit", "radians")
         for v in theta_values:
             angle = float(polar.angle(v))
             x = polar.cx + (polar.radius + _POLAR_TICK_GAP) * math.cos(angle)
@@ -861,7 +861,9 @@ def _emit_polar_tick_labels(
             cos_a, sin_a = math.cos(angle), math.sin(angle)
             anchor = 1 if abs(cos_a) < 0.3 else (0 if cos_a > 0 else 2)
             dy = 0.0 if abs(sin_a) < 0.3 else (-0.1 * theta_size if sin_a > 0 else 0.8 * theta_size)
-            cmd.text(x, y + dy, anchor, theta_size, color, _fmt_angle(v, unit))
+            # _tick_text, not _fmt_angle: authored tick_labels (radar category
+            # names) must win over the angle, exactly as in the SVG twin.
+            cmd.text(x, y + dy, anchor, theta_size, color, _tick_text(theta_axis, v, theta_step))
     if hide_r:
         return
     angle = polar.zero + polar.dir * math.radians(_POLAR_RLABEL_DEG)
@@ -1022,7 +1024,7 @@ def render_raster(
         elif kind == "line":
             _emit_line(cmd, t, blob, cols, trace_sx, trace_sy, style, color, polar)
         elif kind in ("area", "error_band"):
-            _emit_area(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
+            _emit_area(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
         elif kind == "scatter":
             _emit_scatter(cmd, t, blob, cols, trace_sx, trace_sy, style, color, polar)
         elif kind == "hexbin":
@@ -1030,7 +1032,7 @@ def render_raster(
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
-            _emit_bars(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
+            _emit_bars(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
         elif kind == "heatmap" and t.get("heatmap"):
             _emit_grid(
                 cmd, "heatmap", t["heatmap"], blob, cols, trace_sx, trace_sy, style, borrowed
@@ -1312,6 +1314,7 @@ def render_raster(
             polar,
             xlab,
             ylab,
+            xstep,
             ystep,
             xa,
             ya,
@@ -1797,13 +1800,20 @@ def _emit_area(
     style: dict[str, Any],
     color: str,
     plot: dict[str, float],
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
     bv = _column(blob, cols[t["base"]])
     smooth = style.get("curve") == "smooth"
-    top = _scene.curve_points(xv, yv, sx, sy, smooth)
-    base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)
+    if polar is not None:
+        # Chord-bounded polygon (polar-axes.md §5); smoothing is skipped because
+        # its control points are only exact under an affine map.
+        top = np.column_stack(polar(xv, yv))
+        base = np.column_stack(polar(xv[::-1], bv[::-1]))
+    else:
+        top = _scene.curve_points(xv, yv, sx, sy, smooth)
+        base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)
     poly = np.vstack([top, base])
     op = _fill_opacity(style, 0.35)
     fill_spec = style.get("fill")
@@ -2390,6 +2400,7 @@ def _emit_bars(
     style: dict[str, Any],
     color: str,
     plot: dict[str, float],
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     b = t["bar"]
     pos = _column(blob, cols[b["pos"]])
@@ -2406,6 +2417,27 @@ def _emit_bars(
         return _column(blob, cols[index])
 
     fills, strokes, widths, radii = _rect_style_arrays(t, len(pos), color, read, 0.85)
+    if polar is not None:
+        # Annular sectors, flattened: the display list has no arc opcode, so the
+        # same wedge the SVG exporter draws with `A` ships as a polygon here.
+        for i in range(len(pos)):
+            poly = polar_wedge_points(
+                polar,
+                float(pos[i]) - half,
+                float(pos[i]) + half,
+                float(min(v0[i], v1[i])),
+                float(max(v0[i], v1[i])),
+            )
+            if len(poly) < 3:
+                continue
+            cmd.fill(poly, tuple(int(v) for v in fills[i]))
+            if widths[i] > 0:
+                cmd.stroke(
+                    [*poly, poly[0]],
+                    float(widths[i]),
+                    tuple(int(v) for v in strokes[i]),
+                )
+        return
     if not isinstance(style.get("fill"), dict) and not np.any(radii) and not np.any(widths):
         if horizontal:
             xa, xb = sx(np.minimum(v0, v1)), sx(np.maximum(v0, v1))

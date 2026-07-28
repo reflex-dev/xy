@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+from itertools import pairwise
 
 import numpy as np
 import pytest
@@ -92,15 +93,15 @@ def test_angular_axis_spans_a_full_turn(unit: str, expected: float) -> None:
 # -- refusals --------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mark", ["bar", "area", "histogram"])
+@pytest.mark.parametrize("mark", ["histogram", "box", "hexbin"])
 def test_unsupported_marks_are_refused_not_approximated(mark: str) -> None:
     """These kinds expand geometry in pixel space after the coordinate map, so
     under polar they draw chord-edged shapes where arcs belong. A plausible
     wrong picture is worse than an error (dossier §28)."""
     builders = {
-        "bar": lambda: xy.bar(["a", "b"], [1.0, 2.0]),
-        "area": lambda: xy.area([0.0, 1.0], [1.0, 2.0]),
         "histogram": lambda: xy.hist(np.array([1.0, 2.0, 3.0])),
+        "box": lambda: xy.box(np.array([1.0, 2.0, 3.0, 4.0])),
+        "hexbin": lambda: xy.hexbin(np.array([1.0, 2.0]), np.array([1.0, 2.0])),
     }
     chart = xy.polar_chart(builders[mark]())
     with pytest.raises(ValueError, match=r"coords='polar' does not support"):
@@ -109,8 +110,10 @@ def test_unsupported_marks_are_refused_not_approximated(mark: str) -> None:
 
 def test_refusal_names_the_supported_set() -> None:
     with pytest.raises(ValueError) as excinfo:
-        xy.polar_chart(xy.bar(["a"], [1.0])).figure().build_payload_split()
-    assert "'line', 'scatter'" in str(excinfo.value)
+        xy.polar_chart(xy.hist(np.array([1.0, 2.0]))).figure().build_payload_split()
+    message = str(excinfo.value)
+    for supported in ("area", "bar", "column", "line", "scatter"):
+        assert repr(supported) in message
 
 
 def test_polar_forces_direct_tier() -> None:
@@ -142,11 +145,23 @@ def test_svg_draws_rings_spokes_and_one_outer_frame() -> None:
     assert doc.count('data-xy-frame="polar"') == 1
 
 
-def test_svg_clips_to_the_disc_not_the_rect() -> None:
+def test_svg_clips_marks_to_the_disc_but_not_the_legend() -> None:
+    """Two clip paths, deliberately.
+
+    The rect clip also bounds every legend, so reusing one disc clip for both
+    made a legend sitting outside the circle vanish from the SVG while the
+    raster still drew it.
+    """
     doc = _svg(_chart())
-    clip = re.search(r"<clipPath[^>]*>(.*?)</clipPath>", doc, re.S)
-    assert clip is not None
-    assert "<circle" in clip.group(1)
+    clips = re.findall(r"<clipPath[^>]*>(.*?)</clipPath>", doc, re.S)
+    assert any("<circle" in c for c in clips), "marks need a disc clip"
+    assert any("<rect" in c for c in clips), "the legend still needs a rect clip"
+
+
+def test_polar_legend_survives_the_disc_clip() -> None:
+    theta, r = _rose()
+    doc = _svg(_chart(children=[xy.line(theta, r, name="series one")]))
+    assert "series one" in doc
 
 
 def test_svg_angular_labels_use_pi_notation() -> None:
@@ -227,3 +242,174 @@ def test_raster_and_svg_agree_on_where_the_data_lands() -> None:
     assert darkest_near(float(cart_x), float(cart_y)) >= 128, (
         "raster drew a mark at the cartesian position — it ignored coords='polar'"
     )
+
+
+# -- area and radar (P3) ---------------------------------------------------
+
+
+def test_area_renders_under_polar() -> None:
+    theta, r = _rose(24)
+    doc = _svg(_chart(children=[xy.area(theta, r, color="#2563eb")]))
+    assert "<path" in doc and "fill-opacity" in doc
+
+
+def test_radar_chart_closes_across_the_seam() -> None:
+    """Closing with the first *angle* would sweep the final segment backwards
+    through the whole circle; the closing sample sits at a full turn instead."""
+    chart = xy.radar_chart(["a", "b", "c", "d"], xy.area([1.0, 2.0, 3.0, 4.0]))
+    mark = next(c for c in chart.children if getattr(c, "kind", None) == "area")
+    assert mark.x[-1] == pytest.approx(2.0 * math.pi)
+    assert mark.x[0] == pytest.approx(0.0)
+    assert mark.y[-1] == mark.y[0] == pytest.approx(1.0)
+
+
+def test_radar_chart_labels_spokes_with_the_categories() -> None:
+    cats = ["speed", "power", "range", "agility"]
+    doc = xy.radar_chart(cats, xy.area([0.9, 0.7, 0.5, 0.8])).figure().to_image(format="svg")
+    text = doc.decode()
+    for name in cats:
+        assert name in text
+
+
+def test_radar_chart_authored_theta_axis_wins() -> None:
+    chart = xy.radar_chart(["a", "b", "c"], xy.area([1.0, 2.0, 3.0]), xy.theta_axis(label="custom"))
+    axes = [c for c in chart.children if isinstance(c, xy.Axis) and c.which == "x"]
+    assert len(axes) == 1 and axes[0].label == "custom"
+
+
+def test_radar_chart_rejects_a_value_count_mismatch() -> None:
+    with pytest.raises(ValueError, match="but there are 4 categories"):
+        xy.radar_chart(["a", "b", "c", "d"], xy.area([1.0, 2.0]))
+
+
+def test_radar_chart_needs_three_categories() -> None:
+    with pytest.raises(ValueError, match="at least 3 categories"):
+        xy.radar_chart(["a", "b"], xy.area([1.0, 2.0]))
+
+
+def test_authored_tick_labels_beat_the_angle_format() -> None:
+    """Radar category names must win over pi notation on the theta axis."""
+    doc = _svg(
+        _chart(
+            children=[
+                xy.line(*_rose()),
+                xy.theta_axis(tick_values=[0.0, math.pi], tick_labels=["north", "south"]),
+            ]
+        )
+    )
+    assert "north" in doc and "south" in doc
+
+
+# -- bars and wind rose (P4) -----------------------------------------------
+
+
+def test_polar_bars_render_as_wedge_paths_in_svg() -> None:
+    """A polar bar is an annular sector: SVG expresses the arcs with `A`.
+
+    A 180-degree bar with chorded ends would read as a triangle.
+    """
+    chart = xy.polar_bar_chart(
+        xy.bar([0.0, math.pi / 2, math.pi], [1.0, 2.0, 3.0], width=0.8),
+        width=420,
+        height=420,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    wedges = [d for d in re.findall(r'<path d="([^"]+)"', doc) if " A " in d]
+    assert len(wedges) >= 3, "expected one arc path per bar"
+
+
+def test_polar_wedge_points_close_the_sector() -> None:
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection({}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400})
+    # A ring segment with a hole: both arcs, so 2*(steps+1) points.
+    poly = polar_wedge_points(project, 0.0, math.pi / 2, 0.5, 1.0, steps=8)
+    assert len(poly) == 18
+    outer = math.hypot(poly[0][0] - 200.0, poly[0][1] - 200.0)
+    inner = math.hypot(poly[-1][0] - 200.0, poly[-1][1] - 200.0)
+    assert outer == pytest.approx(200.0, abs=1e-6)
+    assert inner == pytest.approx(100.0, abs=1e-6)
+
+
+def test_polar_wedge_from_the_centre_is_a_fan() -> None:
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection({}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400})
+    poly = polar_wedge_points(project, 0.0, math.pi / 2, 0.0, 1.0, steps=8)
+    assert poly[0] == pytest.approx((200.0, 200.0))
+    assert len(poly) == 10
+
+
+def test_wind_rose_counts_every_observation() -> None:
+    rng = np.random.default_rng(3)
+    directions = rng.uniform(0, 360, 500)
+    speeds = rng.gamma(2.0, 2.0, 500)
+    chart = xy.wind_rose(directions, speeds, sectors=12)
+    bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
+    counted = sum(float(np.asarray(b.y).sum() - np.asarray(b.props["base"]).sum()) for b in bars)
+    assert counted == pytest.approx(500.0)
+
+
+def test_wind_rose_bands_stack_without_gaps() -> None:
+    rng = np.random.default_rng(4)
+    chart = xy.wind_rose(rng.uniform(0, 360, 300), rng.gamma(2.0, 2.0, 300), sectors=8)
+    bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
+    for lower, upper in pairwise(bars):
+        assert np.asarray(upper.props["base"]) == pytest.approx(np.asarray(lower.y))
+
+
+def test_wind_rose_uses_the_compass_convention() -> None:
+    """0 degrees is north and angles increase clockwise, or the rose is a
+    mirror image of the weather it describes."""
+    rng = np.random.default_rng(5)
+    chart = xy.wind_rose(rng.uniform(0, 360, 100), rng.gamma(2.0, 2.0, 100))
+    axis = next(c for c in chart.children if isinstance(c, xy.Axis) and c.which == "x")
+    assert axis.theta_zero == "N"
+    assert axis.theta_direction == "clockwise"
+    assert axis.theta_unit == "degrees"
+
+
+def test_wind_rose_bins_bearings_centred_on_each_sector() -> None:
+    """A bearing of exactly 0 belongs to the sector centred on north, not to
+    the one starting there."""
+    chart = xy.wind_rose(np.array([0.0, 0.0, 90.0]), np.array([1.0, 1.0, 1.0]), sectors=4)
+    bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
+    totals = np.zeros(4)
+    for b in bars:
+        totals += np.asarray(b.y) - np.asarray(b.props["base"])
+    assert totals[0] == pytest.approx(2.0)  # sector centred on 0 degrees
+    assert totals[1] == pytest.approx(1.0)  # sector centred on 90 degrees
+
+
+def test_wind_rose_rejects_mismatched_inputs() -> None:
+    with pytest.raises(ValueError, match="same length"):
+        xy.wind_rose(np.array([0.0, 90.0]), np.array([1.0]))
+
+
+def test_wind_rose_band_labels_are_readable() -> None:
+    """Raw quantiles make a legend like '<= 2.76651'."""
+    rng = np.random.default_rng(6)
+    chart = xy.wind_rose(rng.uniform(0, 360, 400), rng.gamma(3.0, 2.0, 400))
+    for bar_mark in [c for c in chart.children if getattr(c, "kind", None) == "bar"]:
+        value = bar_mark.name.split()[-1]
+        assert len(value.split(".")[-1]) <= 3, f"unreadable band label {bar_mark.name!r}"
+
+
+def test_polar_bars_reach_the_raster_export() -> None:
+    chart = xy.polar_bar_chart(
+        xy.bar([0.0, math.pi], [1.0, 1.0], width=1.0, color="#000000"),
+        width=400,
+        height=400,
+    )
+    fig = chart.figure()
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    from test_png_export import _decode_rgba
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    height, width, _ = pixels.shape
+    # Mid-radius along theta=0 must be inside the first wedge.
+    px, py = project(0.0, 0.5)
+    window = pixels[max(0, int(py) - 2) : int(py) + 3, max(0, int(px) - 2) : int(px) + 3, 0]
+    assert int(window.min()) < 128, "raster drew no wedge at theta=0"

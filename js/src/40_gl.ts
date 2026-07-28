@@ -815,6 +815,7 @@ uniform float u_revealProgress; uniform float u_revealSegments;
 out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
 void main() {
   vec2 c = corners[gl_VertexID];
   float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode, u_xconstant);
@@ -827,6 +828,27 @@ void main() {
   x1 = mix(x0, x1, reveal);
   y1 = mix(y0, y1, reveal);
   b1 = mix(b0, b1, reveal);
+  if (u_coordMode == 1) {
+    // Polar interpolates in DATA space and projects the result, rather than
+    // interpolating already-projected clip coordinates: the quad's two radial
+    // edges must run along true radii. The outer and inner edges come out as
+    // chords between projected corners, which is the fill semantics radar
+    // polygons require (polar-axes.md §5).
+    float th = mix(xyAxisCoord(ax0, u_xmeta, u_xmode, u_xconstant),
+                   xyAxisCoord(ax1, u_xmeta, u_xmode, u_xconstant), c.x);
+    float topR = mix(xyAxisCoord(ay0, u_ymeta, u_ymode, u_yconstant),
+                     xyAxisCoord(ay1, u_ymeta, u_ymode, u_yconstant), c.x);
+    float baseR = mix(xyAxisCoord(ab0, u_bmeta, u_ymode, u_yconstant),
+                      xyAxisCoord(ab1, u_bmeta, u_ymode, u_yconstant), c.x);
+    float rr = mix(baseR, topR, c.y);
+    // The fragment stage divides these for a height fraction, so any space
+    // affine in the fill direction works — radius is that space here.
+    v_top = topR;
+    v_base = baseR;
+    v_pos = rr;
+    gl_Position = vec4(xyPolarPos(th, rr, u_polar, u_rrange, u_zdir), 0.0, 1.0);
+    return;
+  }
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -918,6 +940,8 @@ out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+uniform int u_polarSegments;
 void main() {
   vec2 c = corners[gl_VertexID];
   float nextP = xyMap(a_pos, u_pmap, u_pmeta, u_pmode, u_pconstant);
@@ -939,6 +963,38 @@ void main() {
   v1 = mix(v0, v1, u_animationProgress);
   float halfW = abs(width * u_pmap.x) * 0.5;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  if (u_coordMode == 1) {
+    // A polar bar is an annular sector, which four corners cannot express. The
+    // instance is drawn as a triangle strip of u_polarSegments+1 vertex PAIRS
+    // sweeping theta0..theta1, so both radial edges are true radii and the two
+    // arcs are subdivided rather than chorded (polar-axes.md §5).
+    //
+    // Everything here is data space: the clip-space p/v0/v1 above are the
+    // cartesian path's, and a polar bar needs its angle and radius before the
+    // affine map, not after.
+    float thC = xyAxisCoord(a_pos, u_pmeta, u_pmode, u_pconstant);
+    // A bar with no explicit baseline starts at the radial axis minimum, which
+    // is exactly the inner edge of the disc.
+    float r0C = u_v0Mode == 0
+      ? u_rrange.x
+      : xyAxisCoord(a_v0, u_v0meta, u_vmode, u_vconstant);
+    float r1C = mix(r0C, xyAxisCoord(a_v1, u_v1meta, u_vmode, u_vconstant), u_animationProgress);
+    float hw = abs(width) * 0.5;
+    int pair = gl_VertexID >> 1;
+    float t = float(pair) / float(max(u_polarSegments, 1));
+    float th = mix(thC - hw, thC + hw, t);
+    float rr = (gl_VertexID & 1) == 0 ? r0C : r1C;
+    gl_Position = vec4(xyPolarPos(th, rr, u_polar, u_rrange, u_zdir), 0.0, 1.0);
+    v_t = float(gl_VertexID & 1);
+    // Rounded corners and the stroke SDF are a rectangle contract; a sector has
+    // no axis-aligned half-extent, so they are switched off rather than
+    // approximated. v_half huge => the SDF reports "deep inside", cover = 1.
+    v_half = vec2(1e6);
+    v_local = vec2(0.0);
+    v_radius = vec2(-1.0, -1.0);
+    v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
+    return;
+  }
   vec2 clipA, clipB;
   if (u_orientation == 0) {
     clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);

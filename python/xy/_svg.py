@@ -31,7 +31,7 @@ import numpy as np
 
 from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
-from .config import DEFAULT_PALETTE
+from .config import DEFAULT_PALETTE, POLAR_BAR_SEGMENTS
 
 
 def escape(data: str, entities: dict[str, str] | None = None) -> str:
@@ -776,7 +776,32 @@ def _collapsed_to_zero(formatted: Optional[str]) -> bool:
         return False
 
 
+def _fmt_angle(value: float, unit: str) -> str:
+    """Angular tick text. Mirrors `fmtAngle` in js/src/30_ticks.ts.
+
+    Degrees get a degree sign; radians are written as multiples of pi, because
+    "2.094" is not a readable angle and "2pi/3" is.
+    """
+    if unit == "degrees":
+        return f"{_fmt_linear(value, 1.0)}°"
+    if abs(value) < 1e-12:
+        return "0"
+    frac = value / math.pi
+    for denominator in (1, 2, 3, 4, 6, 8, 12):
+        scaled = frac * denominator
+        nearest = round(scaled)
+        if nearest and abs(scaled - nearest) < 1e-9:
+            numerator = "" if abs(nearest) == 1 else str(abs(nearest))
+            sign = "-" if nearest < 0 else ""
+            body = f"{sign}{numerator}π"
+            return body if denominator == 1 else f"{body}/{denominator}"
+    return _fmt_linear(value, 0.01)
+
+
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
+    # Mirrors the same first branch in `fmtAxis` (js/src/30_ticks.ts).
+    if axis.get("theta_unit"):
+        return _fmt_angle(v, axis["theta_unit"])
     kind = axis.get("kind")
     if kind == "category":
         cats = axis.get("categories") or []
@@ -2659,6 +2684,86 @@ def _axis_label_geometry(
     }
 
 
+def polar_wedge_points(
+    polar: "_PolarProjection",
+    theta0: float,
+    theta1: float,
+    r0: float,
+    r1: float,
+    steps: int = POLAR_BAR_SEGMENTS,
+) -> list[tuple[float, float]]:
+    """An annular sector as a closed polygon — the flattened twin of
+    `_polar_wedge_path`, for the raster display list (no arc opcode).
+
+    Both are driven by the same angles and radii, so the two exports agree to
+    within the flattening; `steps` is the shared POLAR_BAR_SEGMENTS.
+    """
+    outer = float(polar.norm_radius(r1)) * polar.radius
+    inner = max(0.0, float(polar.norm_radius(r0)) * polar.radius)
+    if outer <= 0.0:
+        return []
+    a0 = float(polar.angle(theta0))
+    a1 = float(polar.angle(theta1))
+
+    def arc(radius: float, reverse: bool) -> list[tuple[float, float]]:
+        out = []
+        for i in range(steps + 1):
+            t = i / steps
+            angle = a1 + (a0 - a1) * t if reverse else a0 + (a1 - a0) * t
+            out.append((polar.cx + radius * math.cos(angle), polar.cy - radius * math.sin(angle)))
+        return out
+
+    if inner <= 0.0:
+        return [(polar.cx, polar.cy), *arc(outer, False)]
+    return [*arc(outer, False), *arc(inner, True)]
+
+
+def _polar_wedge_path(
+    polar: "_PolarProjection",
+    theta0: float,
+    theta1: float,
+    r0: float,
+    r1: float,
+) -> str:
+    """An annular sector as an SVG path: outer arc, inner arc reversed, closed.
+
+    A polar bar is a wedge, not a rectangle — a 180-degree bar with chorded ends
+    would read as a triangle. SVG expresses the two arcs exactly with `A`; the
+    raster exporter flattens the same sector because its display list has no arc
+    opcode (polar-axes.md §5/§6).
+    """
+    outer = float(polar.norm_radius(r1)) * polar.radius
+    inner = float(polar.norm_radius(r0)) * polar.radius
+    if outer <= 0.0:
+        return ""
+    inner = max(0.0, inner)
+    a0 = float(polar.angle(theta0))
+    a1 = float(polar.angle(theta1))
+    # `sweep` is in SVG's screen sense: y grows downward, so a counterclockwise
+    # data sweep draws as a clockwise-negative arc.
+    sweep = 0 if a1 > a0 else 1
+    large = 1 if abs(a1 - a0) > math.pi else 0
+
+    def at(radius: float, angle: float) -> tuple[float, float]:
+        return polar.cx + radius * math.cos(angle), polar.cy - radius * math.sin(angle)
+
+    ox0, oy0 = at(outer, a0)
+    ox1, oy1 = at(outer, a1)
+    if inner <= 0.0:
+        return (
+            f"M {_num(polar.cx)} {_num(polar.cy)} L {_num(ox0)} {_num(oy0)} "
+            f"A {_num(outer)} {_num(outer)} 0 {large} {sweep} {_num(ox1)} {_num(oy1)} Z"
+        )
+    ix1, iy1 = at(inner, a1)
+    ix0, iy0 = at(inner, a0)
+    return (
+        f"M {_num(ox0)} {_num(oy0)} "
+        f"A {_num(outer)} {_num(outer)} 0 {large} {sweep} {_num(ox1)} {_num(oy1)} "
+        f"L {_num(ix1)} {_num(iy1)} "
+        f"A {_num(inner)} {_num(inner)} 0 {large} {1 - sweep} {_num(ix0)} {_num(iy0)} Z"
+    )
+
+
 def _polar_grid(
     grid: list[str],
     polar: "_PolarProjection",
@@ -2711,6 +2816,7 @@ def _polar_tick_labels(
     polar: "_PolarProjection",
     theta_values: list[float],
     r_values: list[float],
+    theta_step: float,
     r_step: float,
     theta_axis: dict[str, Any],
     r_axis: dict[str, Any],
@@ -2730,7 +2836,6 @@ def _polar_tick_labels(
     attrs = slot_text_attrs(slot)
     if not hide_theta:
         size = slot_font_size(slot, _axis_tick_font_size(theta_axis))
-        unit = theta_axis.get("theta_unit", "radians")
         for v in theta_values:
             angle = float(polar.angle(v))
             # Just outside the rim, and nudged along the outward normal so the
@@ -2745,7 +2850,9 @@ def _polar_tick_labels(
             labels.append(
                 f'<text data-xy-tick="theta" x="{_num(x)}" y="{_num(y + dy)}" fill="{color}" '
                 f'font-size="{_num(size)}" text-anchor="{anchor}"{attrs}>'
-                f"{escape(_fmt_angle(v, unit))}</text>"
+                # _tick_text, not _fmt_angle: authored tick_labels (the
+                # category names on a radar chart) must win over the angle.
+                f"{escape(_tick_text(theta_axis, v, theta_step))}</text>"
             )
     if hide_r:
         return
@@ -2766,28 +2873,6 @@ def _polar_tick_labels(
         )
 
 
-def _fmt_angle(value: float, unit: str) -> str:
-    """Angular tick text. Mirrors `fmtAngle` in js/src/30_ticks.ts.
-
-    Degrees get a degree sign; radians are written as multiples of pi, because
-    "2.094" is not a readable angle and "2pi/3" is.
-    """
-    if unit == "degrees":
-        return f"{_fmt_linear(value, 1.0)}°"
-    if abs(value) < 1e-12:
-        return "0"
-    frac = value / math.pi
-    for denominator in (1, 2, 3, 4, 6, 8, 12):
-        scaled = frac * denominator
-        nearest = round(scaled)
-        if nearest and abs(scaled - nearest) < 1e-9:
-            numerator = "" if abs(nearest) == 1 else str(abs(nearest))
-            sign = "-" if nearest < 0 else ""
-            body = f"{sign}{numerator}π"
-            return body if denominator == 1 else f"{body}/{denominator}"
-    return _fmt_linear(value, 0.01)
-
-
 @_textblock.cached_measurements
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
     spec = _decode_title_geometry(spec, blob)
@@ -2803,15 +2888,19 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # clips to the disc instead, so nothing bleeds into the corners outside the
     # outer ring.
     clip_id = svg.uid("clip")
+    svg.defs.append(
+        f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
+        f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
+    )
+    # Marks clip to the disc under polar so nothing bleeds into the corners the
+    # outer ring does not cover. This is a SECOND id: `clip_id` also bounds
+    # every legend, and a legend sitting outside the circle would vanish.
+    marks_clip_id = clip_id
     if polar is not None:
+        marks_clip_id = svg.uid("clip")
         svg.defs.append(
-            f'<clipPath id="{clip_id}"><circle cx="{_num(polar.cx)}" cy="{_num(polar.cy)}" '
-            f'r="{_num(polar.radius)}"/></clipPath>'
-        )
-    else:
-        svg.defs.append(
-            f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
-            f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
+            f'<clipPath id="{marks_clip_id}"><circle cx="{_num(polar.cx)}" '
+            f'cy="{_num(polar.cy)}" r="{_num(polar.radius)}"/></clipPath>'
         )
 
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
@@ -2972,7 +3061,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     if polar is not None:
         _polar_tick_labels(
-            labels, polar, xlab, ylab, ystep, xa, ya, slots, default_text, hide_x, hide_y
+            labels, polar, xlab, ylab, xstep, ystep, xa, ya, slots, default_text, hide_x, hide_y
         )
     else:
         append_tick_labels(xa, xlab, xstep, sx, is_x=True)
@@ -3032,8 +3121,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             yv = _column(blob, cols[t["y"]])
             bv = _column(blob, cols[t["base"]])
             smooth = style.get("curve") == "smooth"
-            top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth)
-            base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth)
+            top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth, polar)
+            base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth, polar)
             fill_spec = style.get("fill")
             fill = (
                 svg.gradient(fill_spec, color, plot)
@@ -3070,7 +3159,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             marks.append(_segment_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif kind in ("bar", "column") and t.get("bar"):
-            marks.append(_bar_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
+            marks.append(
+                _bar_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot, polar)
+            )
 
         elif kind == "heatmap" and t.get("heatmap"):
             marks.append(_heatmap_image(t["heatmap"], blob, cols, trace_sx, trace_sy, style))
@@ -3424,7 +3515,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             "<g>",
             *grid,
             "</g>",
-            f'<g clip-path="url(#{clip_id})">',
+            f'<g clip-path="url(#{marks_clip_id})">',
             *marks,
             "</g>",
             *unclipped_annotation_marks,
@@ -4414,6 +4505,7 @@ def _bar_marks(
     color: str,
     svg: _Svg,
     plot: dict,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> str:
     b = t["bar"]
     pos = _column(blob, cols[b["pos"]])
@@ -4431,6 +4523,20 @@ def _bar_marks(
 
     fills, extras, radii = _rect_svg_styles(t, len(pos), color, read, style, svg, plot)
     out = []
+    if polar is not None:
+        # Annular sectors. SVG has real arcs, so these are exact `A` commands
+        # rather than the flattened polygons the raster path needs.
+        for i in range(len(pos)):
+            d = _polar_wedge_path(
+                polar,
+                float(pos[i]) - half,
+                float(pos[i]) + half,
+                float(min(v0[i], v1[i])),
+                float(max(v0[i], v1[i])),
+            )
+            if d:
+                out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
+        return "".join(out)
     for i in range(len(pos)):
         if horizontal:
             x0, x1 = float(sx(min(v0[i], v1[i]))), float(sx(max(v0[i], v1[i])))

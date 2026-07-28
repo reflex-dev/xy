@@ -19,6 +19,10 @@ export interface ChartView {
 }
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+// Subdivisions across one polar bar's angular span. Mirrored by
+// POLAR_BAR_SEGMENTS in python/xy/config.py so the raster exporter flattens the
+// same arc; the SVG exporter draws a true `A` arc and needs no count.
+const POLAR_BAR_SEGMENTS = 24;
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
 // character count makes "WWWW" and "iiii" reserve the same (wrong) width.
@@ -5231,6 +5235,10 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_p", g.posMeta, pAxis);
     this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
     this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
+    // Bars name their axes u_p/u_v rather than u_x/u_y, so they need this
+    // explicitly — without it u_coordMode stays 0 and a polar bar chart draws
+    // cartesian rectangles inside correct polar chrome.
+    this._setPolarUniforms(prog);
     gl.uniform1i(u("u_pmode"), this._axisMode(pAxis));
     gl.uniform1f(u("u_pconstant"), this._axisConstant(pAxis));
     gl.uniform1i(u("u_vmode"), this._axisMode(vAxis));
@@ -5302,7 +5310,18 @@ export class ChartView {
     if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    // A polar bar sweeps an annular sector: segments+1 vertex PAIRS instead of
+    // one quad's four corners. Subdivision is fixed rather than px-adaptive —
+    // bar counts are small (a dense wind rose is ~80 sectors) so the ceiling
+    // costs nothing, and a view-dependent count would have to be recorded per
+    // §28 rather than chosen silently.
+    const polarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
+    if (polarSegments) {
+      gl.uniform1i(u("u_polarSegments"), polarSegments);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (polarSegments + 1), g.n);
+    } else {
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    }
   }
 
   _dataPxX(value) {
