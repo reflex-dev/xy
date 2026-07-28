@@ -141,18 +141,17 @@ for examples. For a detailed breakdown of what can be customized, see the
 
 ## Benchmarks
 
-Live interactive charts, 10k to 100M points. Each library gets every row —
-nothing is thinned before it — and is driven through its own input path in a
-real browser. The clock stops only when the canvas is both *correct* (planted
-sentinel points verified lit at their projected positions) and *stable* (the
-drawing buffer byte-identical for 10 consecutive frames), so a library that
-paints progressively is charged until its last chunk lands.
+Live interactive charts, 10k to 100M points. Every library gets every row and
+is driven through its own input path in a real browser. The clock stops only
+when the canvas is both correct (planted sentinel points verified lit) and
+stable (10 byte-identical frames), so progressive renderers are charged until
+their last chunk lands.
 
 <p align="center">
   <img src="spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-XY holds **0.071 s at 10k and 0.081 s at 100M** — flat across four orders of
+XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of
 magnitude, because above 200k rows it draws a screen-bounded density surface
 instead of one marker per row, and zoom drills back to exact rows. Every
 exact-marker path scales with N instead: Matplotlib crosses a second at ~3M
@@ -166,7 +165,7 @@ At 100M points XY peaks at **2.58 GiB** of Python-side RSS. Plotly ran out
 first, failing to construct the figure at all at 50M after 4.70 GiB at 25M;
 Matplotlib reached 50M at 3.85 GiB and then failed to resolve a zoom at 100M.
 
-The pale line in both charts is XY with `density=False` — the same engine
+The pale line in both charts is XY with `density=False`: the same engine
 drawing one marker per row, subject to the same physics as everyone else. It
 renders 100M exact markers in 1.34 s on 5.26 GiB, and the gap between the two
 XY lines is exactly what the density default buys.
