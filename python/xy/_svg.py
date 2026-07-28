@@ -3367,7 +3367,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             marks.append(_triangle_mesh_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
-            marks.append(_rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
+            marks.append(
+                _rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot, polar)
+            )
 
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
@@ -3497,7 +3499,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
 
     annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
-        spec.get("annotations") or [], sx, sy, plot, width, height
+        spec.get("annotations") or [], sx, sy, plot, width, height, polar
     )
     marks.extend(annotation_marks)
     labels.extend(annotation_labels)
@@ -3734,6 +3736,7 @@ def annotation_label_placement(
     plot: dict[str, float],
     width: float,
     height: float,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> tuple[float, float, Optional[str], Optional[str]]:
     """Where an annotation's `text=` hangs, as `(x, y, anchor, vertical_align)`.
 
@@ -3768,6 +3771,11 @@ def annotation_label_placement(
         y = (float(sy(float(ann["y0"]))) + float(sy(float(ann["y1"])))) / 2
         return x, y, anchor or "middle", vertical_align or "middle"
     if kind == "marker":
+        if polar is not None:
+            # (theta, r) projects jointly; the separable pair would read the
+            # disc centre (r = 0, any angle) as the bottom-left corner.
+            ax, ay = polar(float(ann["x"]), float(ann["y"]))
+            return float(ax), float(ay), anchor, vertical_align
         return float(sx(float(ann["x"]))), float(sy(float(ann["y"]))), anchor, vertical_align
     x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
     space = style.get("coordinate_space")
@@ -3779,6 +3787,12 @@ def annotation_label_placement(
         return px0 + x * plot["w"], float(sy(y)), anchor, vertical_align
     if space == "xaxis_transform":
         return float(sx(x)), py0 + (1.0 - y) * plot["h"], anchor, vertical_align
+    if polar is not None:
+        # Data-space (theta, r) projects jointly; the separable pair would read
+        # the disc centre (r = 0, at any angle) as the bottom-left corner. The
+        # fraction-space branches above are already renderer-neutral.
+        ax, ay = polar(x, y)
+        return float(ax), float(ay), anchor, vertical_align
     return float(sx(x)), float(sy(y)), anchor, vertical_align
 
 
@@ -3851,11 +3865,30 @@ def _annotation_svg(
     plot: dict[str, float],
     width: float,
     height: float,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
     unclipped_marks: list[str] = []
     labels: list[str] = []
     px0, py0 = plot["x"], plot["y"]
+
+    def point(x: float, y: float) -> tuple[float, float]:
+        """A point-anchored annotation's position.
+
+        Under polar the pair is (theta, r) and must project jointly — the
+        separable sx/sy would read them as cartesian, putting `(0, 0)` (the
+        disc centre, at any angle) in the bottom-left corner instead.
+
+        Only point-anchored kinds route through here. `rule` and `band` are
+        genuinely different geometry on a disc — a theta rule is a spoke, an r
+        rule is a ring, a band is an annulus or a sector — and stay deferred
+        (polar-axes.md §9) rather than being drawn as straight cartesian bars.
+        """
+        if polar is not None:
+            px, py = polar(x, y)
+            return float(px), float(py)
+        return float(sx(x)), float(sy(y))
+
     for ann in annotations:
         style = ann.get("style") or {}
         color = escape(_css(style.get("color"), "#667085"))
@@ -3893,10 +3926,10 @@ def _annotation_svg(
                 unclipped_marks if _annotation_connector_unclipped(ann, sx, sy, plot) else marks
             )
             if kind == "arrow":
-                x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
-                x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+                x0, y0 = point(float(ann["x0"]), float(ann["y0"]))
+                x1, y1 = point(float(ann["x1"]), float(ann["y1"]))
             else:  # pointer from the offset label back to the data point
-                x1, y1 = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+                x1, y1 = point(float(ann["x"]), float(ann["y"]))
                 x0, y0 = x1 + float(ann.get("dx", 0.0)), y1 + float(ann.get("dy", 0.0))
             if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
                 shapes = _arrow_shapes(x0, y0, x1, y1, style)
@@ -3928,7 +3961,7 @@ def _annotation_svg(
                             f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
                         )
         elif kind == "marker":
-            mx, my = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+            mx, my = point(float(ann["x"]), float(ann["y"]))
             if all(np.isfinite(v) for v in (mx, my)):
                 radius = max(0.5, float(ann.get("size", 8.0)) / 2.0)
                 builder = _SYMBOL_BUILDERS.get(str(ann.get("symbol", "circle")))
@@ -3949,7 +3982,7 @@ def _annotation_svg(
                 marks.append(f'{shape} fill="{fill}" fill-opacity="{_num(opacity)}"{stroke_attr}/>')
         if ann.get("text"):
             tx, ty, label_anchor, vertical_align = annotation_label_placement(
-                ann, style, sx, sy, plot, width, height
+                ann, style, sx, sy, plot, width, height, polar
             )
             if not (np.isfinite(tx) and np.isfinite(ty)):
                 continue
@@ -4766,6 +4799,7 @@ def _rect_marks(
     color: str,
     svg: _Svg,
     plot: dict,
+    polar: "Optional[_PolarProjection]" = None,
 ) -> str:
     x0v = _column(blob, cols[t["x0"]])
     x1v = _column(blob, cols[t["x1"]])
@@ -4777,6 +4811,22 @@ def _rect_marks(
 
     fills, extras, radii = _rect_svg_styles(t, len(x0v), color, read, style, svg, plot)
     out = []
+    if polar is not None:
+        # Four edge columns are an annular sector: (x0, x1) is the angular span
+        # and (y0, y1) the radial one. This is the path unequal-width slices (a
+        # pie or donut) take, since the compact bar path ships one scalar width.
+        out = []
+        for i in range(len(x0v)):
+            d = _polar_wedge_path(
+                polar,
+                float(x0v[i]),
+                float(x1v[i]),
+                float(min(y0v[i], y1v[i])),
+                float(max(y0v[i], y1v[i])),
+            )
+            if d:
+                out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
+        return "".join(out)
     for i in range(len(x0v)):
         xa_, xb = float(sx(x0v[i])), float(sx(x1v[i]))
         ya_, yb = float(sy(y0v[i])), float(sy(y1v[i]))

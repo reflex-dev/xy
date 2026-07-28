@@ -262,6 +262,13 @@ grid blits will silently project through a straight-line map.
 **Legal under `coords="polar"`:** `line`, `scatter`, `area`, `bar`, `column`
 (`POLAR_MARK_KINDS`, `python/xy/config.py`).
 
+A bar's angular width may vary per bar. Equal widths ship through the compact
+bar path (one scalar width, `BAR_VS`); unequal widths ship four edge columns,
+which under polar *are* an annular sector — `(x0, x1)` is the angular span and
+`(y0, y1)` the radial one. That is what makes pie and donut charts a
+composition rather than a chart type: a slice is one bar carrying its own
+width, and `RECT_VS` sweeps it exactly as `BAR_VS` does.
+
 Everything else is **rejected at payload build** with an error naming the
 supported set. This is not a limitation to be discovered at render time: a
 histogram drawn through the four-edge rect shader would come out chord-edged,
@@ -330,6 +337,8 @@ Each row lands as its own change and updates this table when it does.
 
 | Feature | Notes |
 |---|---|
+| Sector layout | `sector`/`thetamin`/`thetamax` limits AND the layout that should follow: a gauge drawn as a partial arc still gets a full-circle plot rect, so the unused portion is dead space. The disc should shrink to the sector's bounding box. |
+| Polar `rule` / `band` annotations | Point-anchored annotations (`text`, `label`, `marker`, `arrow`) project through the transform. A rule/band is genuinely different geometry on a disc — a θ rule is a spoke, an r rule is a ring, a band is an annulus or a sector — and still draws as a straight cartesian bar. |
 | pyplot `projection="polar"` | How matplotlib users arrive. Partially landed: the `Axes` projection state and PolarAxes method surface exist; routing of the polar axis options into the built chart is in progress. |
 | Polar heatmap / contour | Beyond Plotly parity. Needs the fragment-stage inverse (§6). |
 | Partial sector (`thetamin`/`thetamax`) | Layout, clipping and tick trimming. |

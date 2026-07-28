@@ -5282,6 +5282,10 @@ export class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
+    // Four edge columns are an annular sector under polar — this is the path
+    // unequal-width slices (a pie or donut) take, since the compact bar path
+    // ships one scalar width.
+    this._setPolarUniforms(prog);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._transitionOpacity ?? 1) * (g._legendDim ?? 1));
@@ -5321,7 +5325,13 @@ export class ChartView {
     if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    const rectPolarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
+    if (rectPolarSegments) {
+      gl.uniform1i(u("u_polarSegments"), rectPolarSegments);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (rectPolarSegments + 1), g.n);
+    } else {
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    }
   }
 
   _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {

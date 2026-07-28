@@ -899,6 +899,8 @@ out vec2 v_local; out vec2 v_half; out float v_t;
 out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
+${POLAR_GLSL_UNIFORMS}
+uniform int u_polarSegments;
 void main() {
   vec2 c = corners[gl_VertexID];
   float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode, u_xconstant) + u_edgePad.x;
@@ -906,6 +908,33 @@ void main() {
   float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode, u_yconstant) + u_edgePad.z;
   float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode, u_yconstant) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  if (u_coordMode == 1) {
+    // Four edge columns ARE an annular sector under polar: (x0, x1) is the
+    // angular span and (y0, y1) the radial one. Same triangle-strip sweep as
+    // BAR_VS, which is what lets a slice carry its OWN angular width — the
+    // compact bar path only ships one scalar width, so unequal slices (a pie
+    // or donut) route here.
+    float th0 = xyAxisCoord(ax0, u_x0meta, u_xmode, u_xconstant);
+    float th1 = xyAxisCoord(ax1, u_x1meta, u_xmode, u_xconstant);
+    // Clamp, do not cull: a sector's visible extent is its span intersected
+    // with the radial range (polar-axes.md §8).
+    float r0C = clamp(xyAxisCoord(ay0, u_y0meta, u_ymode, u_yconstant), u_rrange.x, u_rrange.y);
+    float r1C = clamp(xyAxisCoord(ay1, u_y1meta, u_ymode, u_yconstant), u_rrange.x, u_rrange.y);
+    int pair = gl_VertexID >> 1;
+    float t = float(pair) / float(max(u_polarSegments, 1));
+    float th = mix(th0, th1, t);
+    float rr = (gl_VertexID & 1) == 0 ? r0C : r1C;
+    gl_Position = vec4(xyPolarPos(th, rr, u_polar, u_rrange, u_zdir), 0.0, 1.0);
+    v_t = float(gl_VertexID & 1);
+    // Rounded corners and the stroke SDF are a rectangle contract; a sector
+    // has no axis-aligned half-extent, so they switch off rather than being
+    // approximated (v_half huge => "deep inside", cover = 1).
+    v_half = vec2(1e6);
+    v_local = vec2(0.0);
+    v_radius = vec2(-1.0, -1.0);
+    v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
+    return;
+  }
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
   vec2 pA = (vec2(x0, y0) * 0.5 + 0.5) * u_res;

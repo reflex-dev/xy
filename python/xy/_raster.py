@@ -1051,15 +1051,25 @@ def render_raster(
         elif kind == "triangle_mesh":
             _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
-            _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
+            _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
 
-    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height)
+    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height, polar=polar)
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
     # Text annotations are unclipped like matplotlib Text (clip_on=False):
     # margin titles and edge labels may live outside the plot rectangle.
-    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height, phase="text")
+    _emit_annotations(
+        cmd,
+        spec.get("annotations") or [],
+        sx,
+        sy,
+        plot,
+        width,
+        height,
+        phase="text",
+        polar=polar,
+    )
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
@@ -1568,6 +1578,7 @@ def _emit_annotations(
     height: float,
     *,
     phase: str = "marks",
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     px0, py0 = plot["x"], plot["y"]
     text_phase = phase == "text"
@@ -1666,7 +1677,7 @@ def _emit_annotations(
             cmd.clip(plot["x"], plot["y"], plot["w"], plot["h"])
         if text_phase and ann.get("text"):
             x, y, label_anchor, vertical_align = annotation_label_placement(
-                ann, style, sx, sy, plot, width, height
+                ann, style, sx, sy, plot, width, height, polar
             )
             if not (np.isfinite(x) and np.isfinite(y)):
                 continue
@@ -2518,6 +2529,7 @@ def _emit_rects(
     style: dict[str, Any],
     color: str,
     plot: dict[str, float],
+    polar: "Optional[_PolarProjection]" = None,
 ) -> None:
     x0v, x1v = _column(blob, cols[t["x0"]]), _column(blob, cols[t["x1"]])
     y0v, y1v = _column(blob, cols[t["y0"]]), _column(blob, cols[t["y1"]])
@@ -2526,6 +2538,23 @@ def _emit_rects(
         return _column(blob, cols[index])
 
     fills, strokes, widths, radii = _rect_style_arrays(t, len(x0v), color, read, 0.85)
+    if polar is not None:
+        # Four edge columns are an annular sector, flattened (no arc opcode).
+        # This is the path unequal-width slices — a pie or donut — take.
+        for i in range(len(x0v)):
+            poly = polar_wedge_points(
+                polar,
+                float(x0v[i]),
+                float(x1v[i]),
+                float(min(y0v[i], y1v[i])),
+                float(max(y0v[i], y1v[i])),
+            )
+            if len(poly) < 3:
+                continue
+            cmd.fill(poly, tuple(int(v) for v in fills[i]))
+            if widths[i] > 0:
+                cmd.stroke([*poly, poly[0]], float(widths[i]), tuple(int(v) for v in strokes[i]))
+        return
     if not isinstance(style.get("fill"), dict) and not np.any(radii) and not np.any(widths):
         xa, xb = sx(x0v), sx(x1v)
         ya, yb = sy(y0v), sy(y1v)
