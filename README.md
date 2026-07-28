@@ -171,12 +171,19 @@ drawing one marker per row, subject to the same physics as everyone else. It
 renders 100M exact markers in 1.34 s on 5.26 GiB, and the gap between the two
 XY lines is exactly what the density default buys.
 
-| | Renders to | Still interactive (frame p95 ≤ 100 ms) |
-| --- | ---: | ---: |
-| **XY** | **100M** | **100M** |
-| XY (`density=False`) | 100M | 100M |
-| Matplotlib (WebAgg) | 50M | — server round trip per zoom |
-| Plotly (scattergl) | 25M | 5M |
+Time until every point is on screen, in seconds. `✕` is a size the library
+did not render: Plotly never finishes constructing the figure at 50M, and
+Matplotlib draws at 100M but never resolves the zoom that follows.
+
+| Points | 10k | 100k | 500k | 1M | 2.5M | 5M | 10M | 25M | 50M | 100M |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **XY** | **0.071** | **0.072** | **0.075** | **0.084** | **0.083** | **0.089** | **0.083** | **0.077** | **0.076** | **0.081** |
+| XY (`density=False`) | 0.085 | 0.074 | 0.087 | 0.098 | 0.111 | 0.144 | 0.206 | 0.424 | 0.645 | 1.343 |
+| Matplotlib (WebAgg) | 0.086 | 0.115 | 0.224 | 0.357 | 0.758 | 1.424 | 2.804 | 6.838 | 13.385 | ✕ |
+| Plotly (scattergl) | 0.341 | 0.373 | 0.477 | 0.614 | 1.033 | 1.785 | 3.367 | 9.794 | ✕ | ✕ |
+
+One machine (Apple M5 Pro), one run per cell; at the small end the numbers
+carry roughly ±10 ms of run-to-run spread.
 
 For the environment, methodology, per-size videos, and raw results, see the
 [benchmark runbook](benchmarks/README.md) and
