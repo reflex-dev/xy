@@ -218,7 +218,8 @@ export path for notebook/export tools that inspect HTML representations instead
 of anywidget display hooks. `to_html()` remains the canonical method because it
 already exists and clearly communicates export behavior. `Chart.to_html(path)`
 delegates to the engine's standalone export path, including same-directory
-atomic file replacement for path writes.
+atomic file replacement for path writes (with the Windows held-open-destination
+fallback documented in `spec/api/export.md` §8).
 
 `show(display=None)` resolves which notebook host renders the chart, and bare
 rich display (`_ipython_display_`) on `Chart` and `Figure` follows the same
