@@ -5960,7 +5960,8 @@ export class ChartView {
         label(item.text, placement.css, sideAxis, "tick", null, placement);
       }
     }
-    const attachYTitleToTicks = (title, axis, onRight) => {
+    const pendingYTitleAttachments = [];
+    const measureYTitleAttachment = (title, axis, onRight, root) => {
       if (!title || !axis) return;
       const position = String(axis.label_position || "center").replace(/-/g, "_");
       if (position.startsWith("inside_")) return;
@@ -5969,7 +5970,6 @@ export class ChartView {
         && element.dataset.xyAxis === String(axis.id ?? "")
         && element.dataset.xyAxisSide === (onRight ? "right" : "left")
       );
-      const root = this.root.getBoundingClientRect();
       const tickRects = tickLabels.map((element) => element.getBoundingClientRect());
       const titleRect = title.getBoundingClientRect();
       const fontSize = parseFloat(getComputedStyle(title).fontSize) || 12;
@@ -6000,7 +6000,7 @@ export class ChartView {
       const correction = adjustedLeft < root.left
         ? root.left - adjustedLeft + 1
         : adjustedRight > root.right ? root.right - adjustedRight - 1 : 0;
-      title.style.left = `${currentLeft + delta + correction}px`;
+      return { title, left: currentLeft + delta + correction };
     };
     const renderYTitle = (axis, text, onRight) => {
       const angle = onRight ? 90 : -90;
@@ -6013,8 +6013,8 @@ export class ChartView {
       // A structured CSS label_position is the placement authority. It may
       // deliberately omit `left` in favor of `right`, so tick attachment must
       // not synthesize a competing left offset.
-      if (placement.style === null) {
-        attachYTitleToTicks(title, axis, onRight);
+      if (title && placement.style === null) {
+        pendingYTitleAttachments.push({ title, axis, onRight });
       }
     };
     for (const axis of extraYAxes) {
@@ -6045,6 +6045,20 @@ export class ChartView {
     }
     if (s.y_axis.label && !hideY) {
       renderYTitle(yAxis, s.y_axis.label, yAxis.side === "right");
+    }
+    if (pendingYTitleAttachments.length) {
+      // Finish creating every y-axis label before the first geometry read,
+      // then apply all offsets after the complete measurement pass. Keeping
+      // DOM reads and writes in separate phases avoids one forced layout per
+      // named axis during settled interaction redraws.
+      const root = this.root.getBoundingClientRect();
+      const adjustments = pendingYTitleAttachments
+        .map(({ title, axis, onRight }) =>
+          measureYTitleAttachment(title, axis, onRight, root))
+        .filter(Boolean);
+      for (const { title, left } of adjustments) {
+        title.style.left = `${left}px`;
+      }
     }
     this._drawAnnotationLabels(updateLabels);
     // Label layout resolves responsive callout offsets before the pointer is
