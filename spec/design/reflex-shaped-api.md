@@ -220,6 +220,33 @@ already exists and clearly communicates export behavior. `Chart.to_html(path)`
 delegates to the engine's standalone export path, including same-directory
 atomic file replacement for path writes.
 
+`show(display=None)` resolves which notebook host renders the chart, and bare
+rich display (`_ipython_display_`) on `Chart` and `Figure` follows the same
+resolution with no argument. `"widget"` is the live anywidget host (Python callbacks, streaming
+`append`, kernel-served LOD); `"html"` is the standalone-HTML host — the same
+isolated `notebook_iframe` document as `_repr_html_()`, interactive in the
+browser but with no kernel channel; on it `show()` returns an
+`export.HtmlView` rich-repr handle instead of a widget. `None`/`"auto"`
+consults the `XY_NOTEBOOK_DISPLAY` environment variable, then defaults by
+runtime: an Emscripten/WASM kernel (JupyterLite, Pyodide) resolves to
+`"html"`, everything else to `"widget"`. The WASM rule exists because the
+widget host needs the anywidget *frontend* extension, which a prebuilt Lite
+frontend cannot gain from a kernel-side `%pip install` — the comm opens
+against a frontend that cannot answer it ("No version of module anywidget is
+registered") and the kernel cannot observe that failure, so the fallback must
+be decided kernel-side from the runtime. Two carve-outs keep the heuristic
+honest: Marimo bundles its own anywidget frontend even in its WASM build, so
+an Emscripten kernel with `marimo` imported stays on the widget host; and a
+custom JupyterLite deployment that ships the anywidget extension can force
+the widget host back via `XY_NOTEBOOK_DISPLAY=widget` or
+`show(display="widget")`. Invalid values fail loud, naming the argument or
+environment variable. `Figure.show`, `FacetChart.show`, and `FacetGrid.show`
+follow the same resolution. `FacetChart`'s *bare* rich display is the one
+deliberate exception: it always emits the composed standalone-grid document —
+the only representation that preserves the grid layout (N stacked panel
+widgets would not) — and that document is WASM-safe on every host. Live panel
+widgets remain an explicit `widget()` / `show(display="widget")` choice.
+
 ## 4. Styling Contract
 
 XY should support styling through three layers, in this order:
@@ -484,8 +511,8 @@ The component tree compiles once and can target multiple renderers.
 
 | Target | Method | Notes |
 |---|---|---|
-| Notebook widget | `show()` / `widget()` | Python callbacks available |
-| Notebook/static HTML repr | `_repr_html_()` | Self-contained fallback that reuses standalone export |
+| Notebook widget | `show()` / `widget()` | Python callbacks available; the `show()` default except on WASM kernels (§3.3) |
+| Notebook/static HTML repr | `_repr_html_()` / `show(display="html")` | Self-contained fallback that reuses standalone export; auto-selected by `show()` on WASM kernels (JupyterLite/Pyodide), whose prebuilt frontends cannot load the anywidget extension |
 | Standalone HTML | `to_html()` / optional `html()` alias | Self-contained, no Python callbacks |
 | Static PNG | `to_png()` | Fast native default; optional Chromium standalone screenshot |
 | Future Reflex | external adapter package | Uses the smallest supported Reflex surface; core does not import Reflex |

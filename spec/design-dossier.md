@@ -1178,7 +1178,14 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    implementation works across Jupyter, JupyterLab, VS Code, Colab, and Marimo, and
    gives us the binary comm channel (§29's Jupyter row) without maintaining N
    frontend extensions. Server frameworks (Reflex/Dash-style) mount the same client
-   as a component.
+   as a component. One boundary is spec'd (reflex-shaped-api.md §3.3): the widget
+   host still needs the anywidget *frontend* extension, which a prebuilt
+   WASM-kernel frontend (JupyterLite's `%pip`, e.g. try-jupyter) cannot gain at
+   runtime — there `show()`/rich display resolve to the standalone-HTML iframe
+   host instead (same client, §29 static-export row; no kernel channel), with
+   `XY_NOTEBOOK_DISPLAY` / `show(display=...)` overriding in both directions.
+   Marimo's WASM build is the carve-out: it bundles its own anywidget frontend,
+   so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
 - **Comm-protocol versioning.** The native core and JS client ship together but can

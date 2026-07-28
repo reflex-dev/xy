@@ -371,6 +371,10 @@ Locked in before implementation, in the PR #117 fail-first style:
   the pre-reset view.
 - **Ordering:** `on_brush` before `on_select` holds for programmatic
   geometric selects.
+- **Browsing-context release:** every capture-owning gesture follows the same
+  loss detector. Pans end once at the last in-frame view; selection/box-zoom
+  and lasso-handle edits restore committed state; axis and modebar drags do
+  not resume on buttonless re-entry.
 - **Rows non-durability:** a rows-selection never enters the history stack,
   `view_state()` reports the `{"rows": true}` marker rather than indices,
   and Back after a rows-select restores the prior geometric state.

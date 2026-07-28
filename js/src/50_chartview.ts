@@ -1020,6 +1020,51 @@ export class ChartView {
     return handler;
   }
 
+  // Detach a handler registered through `_listen`. The record carries the live
+  // target, so a listener that context-loss recovery re-bound onto a
+  // replacement canvas still detaches from the node it ended up on.
+  _unlisten(handler) {
+    const index = this._listeners.findIndex((record) => record.handler === handler);
+    if (index === -1) return;
+    const [record] = this._listeners.splice(index, 1);
+    record.target.removeEventListener(record.type, record.handler, record.options);
+  }
+
+  _captureGesturePointer(owner, event, onLost) {
+    const pointerId = event.pointerId;
+    let active = true;
+    const release = () => {
+      if (!active) return;
+      active = false;
+      this._unlisten(lost);
+      // Guarded, so this is a no-op when the browser already took capture back
+      // (a real `lostpointercapture`, or the implicit release after pointerup).
+      try {
+        if (owner.hasPointerCapture(pointerId)) owner.releasePointerCapture(pointerId);
+      } catch (_err) { /* synthetic event */ }
+    };
+    const lost = (lostEvent) => {
+      if (!active || lostEvent.pointerId !== pointerId) return;
+      release();
+      onLost(lostEvent);
+    };
+    const guard = (moveEvent) => {
+      if (!active || moveEvent.pointerId !== pointerId) return false;
+      // Pointer capture cannot cross a browsing-context boundary. A mouse
+      // released outside an iframe can return without pointerup; treat the
+      // first trusted buttonless move as the missing capture-loss signal.
+      if (moveEvent.type === "pointermove" && moveEvent.isTrusted
+          && moveEvent.pointerType === "mouse" && !(moveEvent.buttons & 1)) {
+        lost(moveEvent);
+        return false;
+      }
+      return true;
+    };
+    this._listen(owner, "lostpointercapture", lost);
+    try { owner.setPointerCapture(pointerId); } catch (_err) { /* synthetic event */ }
+    return { guard, release };
+  }
+
   _interactionFlag(name, fallback = false) {
     const value = this.interaction && this.interaction[name];
     return value === undefined ? fallback : value === true;

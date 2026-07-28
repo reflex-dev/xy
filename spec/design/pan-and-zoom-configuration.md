@@ -618,6 +618,15 @@ controls transport work.
 - DOM events may emit once per animation frame.
 - Python/Reflex events are coalesced.
 - Continuous gestures always deliver a final `end` event.
+- Every capture-owning gesture acquires its pointer through one shared
+  capture-loss detector (`ChartView._captureGesturePointer`), so the behavior
+  cannot be opted out of; each gesture then declares its own end policy — a pan
+  finalizes at its last in-frame view, coordinate-dependent gestures cancel, and
+  chrome drags release. The detector fires on `lostpointercapture`, and falls
+  back to the first trusted buttonless re-entry move for browsers that delay or
+  omit it. That backstop is mouse-only (it reads the primary-button bit, which
+  has no equivalent for pen or touch); pen and touch rely on
+  `lostpointercapture` alone.
 - LOD and view-event throttles may differ.
 - Linked peers receive browser-local updates without a Python round trip.
 

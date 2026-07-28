@@ -199,8 +199,12 @@ def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
         capture_lines = [
             line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
         ]
-        # canvas drag, band select, lasso handle, modebar surface, axis band
-        assert len(capture_lines) == 5, f"{path} has an unexpected capture site"
+        # One acquisition site: every capture-owning gesture goes through
+        # `_captureGesturePointer`, so capture-loss handling cannot be opted out
+        # of. Which gestures inherit it is asserted behaviorally instead, by
+        # tests/test_view_state_client.py::
+        # test_capture_loss_policy_covers_every_capture_owning_gesture.
+        assert len(capture_lines) == 1, f"{path} acquires pointer capture outside the shared policy"
         assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
             f"{path} leaves pointer capture unguarded for synthetic events"
         )

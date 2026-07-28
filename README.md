@@ -9,36 +9,26 @@
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
 </p>
 
-<p align="center">
-  <strong>Small data should be effortless. Large data should stay interactive.<br>
-  Neither should limit the design.</strong>
-</p>
+XY is an extremely fast, interactive, customizable Python charting library for
+the web, notebooks, and static exports.
 
-XY is an actively evolving, early-alpha project with one ambition: become the
-fastest and most customizable charting library for Python — across every chart
-type and every scale, from a handful of values to billions of rows.
+Charts are composed declaratively or through matplotlib conventions. You can
+fully customize them with Python, CSS, or Tailwind.
 
-Small datasets render directly and exactly. As data grows, XY's Rust core,
-binary transport, and WebGL2 renderer reduce work to what the screen can show,
-then bring detail back as you zoom. The same composable API controls marks,
-axes, annotations, legends, tooltips, interactions, themes, responsive layout,
-and HTML, raster, and vector exports.
+With small charts, every point is sent to the browser. For large charts, the
+Rust core computes only what the screen needs to display, based on its
+resolution. Pan, zoom, hover, and selection can show full details by running the
+same process for the new range, and a selection returns the original rows.
 
-## Highlights
+XY is early alpha, and is receiving frequent enhancements. Any contributions are
+appreciated!
 
-- **Designed for every scale.** Ordinary datasets take the direct path; large datasets automatically use decimated or density representations.
-- **Customize every layer.** Control marks and composition in Python, then style chart chrome through stable CSS and Tailwind hooks.
-- **Declarative interface.** Compose marks and guides, or use the familiar `xy.pyplot`.
-- **Interactive by default.** Pan, zoom, hover, select, and inspect exact source rows.
-- **One chart, many outputs.** Use notebooks or export HTML, raster, and vector formats.
-- **Built for apps.** Embed responsive charts and style them with Python, CSS, or Tailwind.
+## Is XY right for me?
 
-## Is XY for me?
-
-XY is for Python users who want one charting system for everyday plots, deeply
-custom application visuals, and data too large for conventional browser chart
-stacks. Build charts once, then display them in notebooks and apps or export
-them as self-contained HTML, images, and vector graphics.
+XY is for Python users who want one flexible charting library for everything
+from everyday plots to custom application visuals and large datasets. Build a
+chart once, then use it in notebooks and web apps or export it as HTML, PNG,
+SVG, or PDF.
 
 ## Installation
 
@@ -49,10 +39,10 @@ pip install xy
 uv add xy
 ```
 
-## Getting started: one API, every scale
+## Getting started
 
-A chart is a container plus the marks inside it. Any sequence works — plain
-Python lists need no NumPy:
+A chart is a container plus the marks inside it. Any sequence works; NumPy is
+optional.
 
 ```python
 import xy
@@ -64,8 +54,7 @@ chart = xy.line_chart(xy.line([1, 2, 3, 4, 5], [120, 180, 165, 240, 310]))
 chart  # notebooks render it
 ```
 
-The data size changes; the chart model does not. The same API scales to a
-hundred million points as a density surface:
+The same API scales to a hundred million points as a density surface:
 
 <p align="center">
   <picture>
@@ -122,28 +111,21 @@ ax.legend()
 plt.show()
 ```
 
-The shim intentionally covers common plotting workflows rather than every
-matplotlib feature. See the [compatibility guide](spec/matplotlib/compat.md).
+See the [compatibility guide](spec/matplotlib/compat.md); not all charts and
+functionality are supported yet.
 
 ## Customize every layer
 
-Performance is not a preset. Use Python to control data marks and chart
-composition, then style browser chrome through stable CSS and Tailwind hooks.
+Use Python to control the chart, from marks and axes to interactions and layout.
 
-- **Marks:** data-driven color and size, custom colormaps, opacity, symbols,
-  gradients, strokes, and curves.
-- **Guides:** axes, ticks, grids, annotations, legends, colorbars, and tooltips.
-- **Interaction:** pan, zoom, hover, selection, crosshairs, callbacks, and
+- **Marks:** Control color, size, opacity, symbols, gradients, strokes, curves,
+  and colormaps.
+- **Guides:** Customize axes, ticks, grids, annotations, legends, colorbars, and
+  tooltips.
+- **Interaction:** Add pan, zoom, hover, selections, crosshairs, callbacks, and
   linked charts.
-- **Layout and output:** layering, facets, responsive dimensions, themes, and
-  HTML, raster, or vector export.
-
-See the [styling guide](docs/styling/index.md) for patterns and examples.
-
-What each mechanism reaches — per property, per chrome slot, per renderer, and
-where it stops — is the [capability matrix](spec/api/capability-matrix.md),
-generated from `python/xy/styling/capabilities.py` and checked against the
-implementation.
+- **Layout:** Create layers and facets, set responsive dimensions, and apply
+  themes.
 
 ```python
 chart = xy.line_chart(
@@ -153,37 +135,31 @@ chart = xy.line_chart(
 )
 ```
 
+See the [styling guide](https://github.com/reflex-dev/xy/blob/main/docs/styling/index.md)
+for examples. For a detailed breakdown of what can be customized, see the
+[capability matrix](https://github.com/reflex-dev/xy/blob/main/spec/api/capability-matrix.md).
+
 ## Benchmarks
 
 <p align="center">
   <img src="spec/assets/launch-benchmark-comparison.svg" alt="Cold-render time for a 10-million-point chart in XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-In the recorded 10-million-point baseline, XY produced a static PNG in 0.018 s
-versus 2.7 s for Matplotlib and 9.6 s for Plotly, and reached first interactive
-render 16–18× sooner.
+In the recorded 10-million-point launch baseline, XY wrote a static PNG in
+0.018 s against 2.7 s for Matplotlib and 9.6 s for Plotly, and reached first
+interactive render 16–18× sooner. The baseline uses identical seeded data, a
+900×420 output, and three isolated cold runs.
 
-That baseline is one proof point, not the finish line. XY is being built to
-outperform every competing charting library across small-data startup,
-massive-data rendering, interaction, memory, payload and export size,
-multi-chart applications, chart breadth, and customization. The committed
-benchmark program, raw results, capability matrix, and visual examples are how
-the project measures and proves that goal.
-
-The committed launch baseline uses identical seeded data, a 900×420 output,
-and three isolated cold runs. See the
+For the environment, methodology, and raw results, see the
 [launch report](benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md),
 [benchmark runbook](benchmarks/README.md), and
-[competitive benchmark specification](spec/benchmarks/results.md) for the
-environment, methodology, raw results, and full evidence program.
+[competitive benchmark specification](spec/benchmarks/results.md).
 
 ## Embed XY in a Reflex app
 
-With the `reflex-xy` adapter, any XY chart becomes a regular Reflex component.
-Place it inside cards, grids, tabs, or dashboards with no JavaScript, iframe,
-or separate chart service.
-
-The adapter ships as its own package, and pulls in `xy` and `reflex`:
+The `reflex-xy` adapter turns any XY chart into a regular Reflex component, with
+no JavaScript, iframe, or separate chart service. It ships as its own package
+and pulls in `xy` and `reflex`:
 
 ```bash
 pip install reflex-xy
@@ -230,17 +206,30 @@ app = rx.App()
 app.add_page(index)
 ```
 
-The chart keeps its built-in hover, pan, and zoom behavior. For charts driven
-by Reflex state, events, or live streams, see the
-[Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/)
-and the [runnable example app](examples/reflex/).
+Hover, pan, and zoom keep working. For charts driven by Reflex state, events, or
+live streams, see the
+[Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/) and
+the [runnable example app](examples/reflex/).
+
+## Examples
+
+Each notebook fetches its rows from the linked public source; no raw datasets
+are stored in this repository. Counts describe the featured chart, and the
+notebooks scale further. See the
+[example guide](examples/real_world/README.md) for sources, workload controls,
+and setup.
+
+|  |  |  |
+| :---: | :---: | :---: |
+| **Gaia DR3 · HR diagram**<br><sub>250,000 plotted stars</sub><br><br>![Gaia DR3 stellar color versus absolute magnitude.](examples/real_world/assets/01-gaia-hr-diagram.png)<br><br>[Open notebook](examples/real_world/01_gaia_hr_diagram.ipynb) | **gnomAD v4.1 · allele frequency**<br><sub>164,000 plotted variants</sub><br><br>![gnomAD allele frequency across all autosomes.](examples/real_world/assets/02-gnomad-allele-frequency.png)<br><br>[Open notebook](examples/real_world/02_gnomad_allele_frequency.ipynb) | **Pan-UKBB · Manhattan plot**<br><sub>814,294 plotted variants</sub><br><br>![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)<br><br>[Open notebook](examples/real_world/03_pan_ukbb_manhattan.ipynb) |
+| **Dukascopy · EUR/USD ticks**<br><sub>101,427 plotted ticks</sub><br><br>![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)<br><br>[Open notebook](examples/real_world/04_dukascopy_fx_ticks.ipynb) | **LIGO · GW150914 strain**<br><sub>16,777,216 raw · 3,441 shown</sub><br><br>![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)<br><br>[Open notebook](examples/real_world/05_ligo_gw150914_strain.ipynb) | **NYC TLC · taxi pickup density**<br><sub>300,000 pickup records</sub><br><br>![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)<br><br>[Open notebook](examples/real_world/06_nyc_taxi_density.ipynb) |
 
 ## How it works
 
 Most chart stacks serialize every value as JSON and ask the browser to draw
-every mark. XY instead keeps exact values in a `ColumnStore`, computes an
-appropriate level of detail in Rust, and transfers typed binary buffers.
-Decimated and density views are bounded by the visible result.
+every mark. XY keeps exact values in a `ColumnStore`, computes a level of detail
+in Rust, and transfers typed binary buffers. Decimated and density views are
+bounded by the visible result.
 
 ```mermaid
 flowchart TB
@@ -253,61 +242,27 @@ flowchart TB
     API --> STORE --> CORE --> PAYLOAD --> RENDER
 ```
 
-This is why zooming matters: a dense overview can use aggregation, while a
-narrow view can return to exact points. With a live host, pan and zoom can
-request a refined payload. Canonical f64 data stays in Python so hover and
-selection can still return original rows.
+So a dense overview can aggregate while a narrow view returns exact points. With
+a live host, pan and zoom request a refined payload. Canonical f64 data stays in
+Python, so hover and selection still return original rows.
 
 For the full design, see the [design dossier](spec/design-dossier.md).
 
-## What you can build today
-
-- Declarative 2D charts with marks, axes, annotations, legends, tooltips, and
-  CSS/Tailwind-friendly styling hooks.
-- Interactive notebook and application views with pan, zoom, hover, and
-  selection.
-- Self-contained HTML and browser-free PNG, JPEG, WebP, SVG, and PDF exports
-  from the same chart object.
-- Large-data views that adapt from direct rendering to decimated and density
-  representations as the visible range changes.
-
-## Examples
-
-Each notebook fetches working rows from its linked public source; raw datasets
-are not stored in this repository. See the
-[example guide](examples/real_world/README.md) for source links, workload
-controls, and setup. Counts describe the data behind each featured chart; the
-notebooks can scale further.
-
-|  |  |  |
-| :---: | :---: | :---: |
-| **Gaia DR3 · cosmic observatory**<br><sub>250,000 plotted stars</sub><br><br>![Gaia DR3 stellar color versus absolute magnitude.](examples/real_world/assets/01-gaia-hr-diagram.png)<br><br>[Open notebook](examples/real_world/01_gaia_hr_diagram.ipynb) | **gnomAD v4.1 · genomic atlas**<br><sub>164,000 plotted variants</sub><br><br>![gnomAD allele frequency across all autosomes.](examples/real_world/assets/02-gnomad-allele-frequency.png)<br><br>[Open notebook](examples/real_world/02_gnomad_allele_frequency.ipynb) | **Pan-UKBB · biobank editorial**<br><sub>814,294 plotted variants</sub><br><br>![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)<br><br>[Open notebook](examples/real_world/03_pan_ukbb_manhattan.ipynb) |
-| **Dukascopy · trading terminal**<br><sub>101,427 plotted ticks</sub><br><br>![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)<br><br>[Open notebook](examples/real_world/04_dukascopy_fx_ticks.ipynb) | **LIGO · signal-lab oscilloscope**<br><sub>16,777,216 raw · 3,441 shown</sub><br><br>![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)<br><br>[Open notebook](examples/real_world/05_ligo_gw150914_strain.ipynb) | **NYC TLC · night cartography**<br><sub>300,000 pickup records</sub><br><br>![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)<br><br>[Open notebook](examples/real_world/06_nyc_taxi_density.ipynb) |
-
-## Documentation
-
-Start with the [XY documentation](https://reflex.dev/docs/xy/) for installation,
-the chart gallery, guides, and API reference. The repository also includes
-[copyable API examples](spec/api/api-examples.md),
-[benchmark details](benchmarks/README.md), and the [changelog](CHANGELOG.md).
-
 ## Roadmap
 
-XY is headed toward every chart family. The current implementation sequence
-builds broad 2D coverage on top of the binary transport and screen-bounded
-renderer, then extends the same performance and customization goals to
-geographic, 3D, and volume visualization. Queued next, no dates implied:
+Broad 2D coverage first, then geographic, 3D, and volume visualization. Queued
+next, no dates implied:
 
-- **Categorical distributions** &mdash; strip, swarm, beeswarm, boxen, rug
-- **Regression diagnostics** &mdash; trendline, residual, QQ, PP
-- **Scatter matrix and joint plots** &mdash; SPLOM, pair grid, marginal histograms
-- **Pie / donut** &mdash; in `xy.pyplot` today, promoting to `xy.pie_chart(xy.pie(...))`
-- **Candlestick / OHLC and finance overlays** &mdash; SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
+- **Categorical distributions:** strip, swarm, beeswarm, boxen, rug
+- **Regression diagnostics:** trendline, residual, QQ, PP
+- **Scatter matrix and joint plots:** SPLOM, pair grid, marginal histograms
+- **Pie / donut:** in `xy.pyplot` today, promoting to `xy.pie_chart(xy.pie(...))`
+- **Candlestick / OHLC and finance overlays:** SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
 - **Waterfall and funnel**
 - **Treemap, sunburst, and icicle**
-- **Radar / polar and gauge** &mdash; needs polar axes first
+- **Radar / polar and gauge:** needs polar axes first
 - **Slope, bump, and dumbbell**
-- **3D and volume** &mdash; scatter, surfaces, meshes, isosurfaces, and volumetric views
+- **3D and volume:** scatter, surfaces, meshes, isosurfaces, and volumetric views
 
 The full ranked backlog is in the [chart roadmap](spec/api/chart-roadmap.md).
 Want a chart or feature that isn't listed?

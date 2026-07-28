@@ -55,8 +55,8 @@ Object.assign(ChartView.prototype, {
     };
 
     const moveLassoHandle = (e) => {
-      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
-          || !this._lassoPolygon) return;
+      if (!lassoHandleDrag || !this._lassoPolygon) return;
+      if (!lassoHandleDrag.capture.guard(e)) return;
       const distance = Math.hypot(
         e.clientX - lassoHandleDrag.startX,
         e.clientY - lassoHandleDrag.startY,
@@ -78,6 +78,19 @@ Object.assign(ChartView.prototype, {
       e.preventDefault();
       e.stopPropagation();
     };
+    const cancelLassoHandleDrag = (e) => {
+      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+      const cancelledDrag = lassoHandleDrag;
+      lassoHandleDrag = null;
+      cancelledDrag.capture.release();
+      delete cancelledDrag.handle.dataset.xyActive;
+      lassoHandleClick = null;
+      if (this._lassoPolygon) {
+        this._lassoPolygon[cancelledDrag.index] = cancelledDrag.original;
+        this._renderLassoSelection();
+      }
+      e.stopPropagation();
+    };
     this._listen(this.selLasso, "pointerdown", (e) => {
       const handle = e.target.closest?.("[data-xy-selection-lasso-handle]");
       if (!handle || !this._lassoPolygon) return;
@@ -93,9 +106,13 @@ Object.assign(ChartView.prototype, {
         moved: false,
         interactionId: null,
       };
+      lassoHandleDrag.capture = this._captureGesturePointer(
+        this.selLasso,
+        e,
+        cancelLassoHandleDrag,
+      );
       handle.dataset.xyActive = "";
       this._hideTooltip();
-      try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       e.preventDefault();
       e.stopPropagation();
     });
@@ -105,6 +122,7 @@ Object.assign(ChartView.prototype, {
       moveLassoHandle(e);
       const completedDrag = lassoHandleDrag;
       lassoHandleDrag = null;
+      completedDrag.capture.release();
       delete completedDrag.handle.dataset.xyActive;
       if (completedDrag.moved && this._lassoPolygon) {
         lassoHandleClick = null;
@@ -125,17 +143,7 @@ Object.assign(ChartView.prototype, {
         removeLassoHandle(completedDrag.index);
       }
     });
-    this._listen(this.selLasso, "pointercancel", (e) => {
-      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
-      if (this._lassoPolygon) {
-        this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
-      }
-      delete lassoHandleDrag.handle.dataset.xyActive;
-      lassoHandleDrag = null;
-      lassoHandleClick = null;
-      if (this._lassoPolygon) this._renderLassoSelection();
-      e.stopPropagation();
-    });
+    this._listen(this.selLasso, "pointercancel", cancelLassoHandleDrag);
 
     if (this._interactionFlag("crosshair")) {
       this.crosshairX = document.createElement("div");
@@ -175,6 +183,45 @@ Object.assign(ChartView.prototype, {
       });
       this.draw();
       return true;
+    };
+
+    const finishPanDrag = () => {
+      if (!drag) return;
+      const finished = drag;
+      drag = null;
+      finished.capture.release();
+      if (finished.moved) {
+        this._ignoreNextClick = true;
+        if (finished.changedAxes.length) this._emitViewChange("pan_drag", {
+          axes: finished.changedAxes,
+          phase: "end",
+          interactionId: finished.interactionId,
+        });
+      } else {
+        this._hideTooltip();
+      }
+    };
+    const cancelPointerGesture = () => {
+      band?.capture.release();
+      drag?.capture.release();
+      this.selRect.style.display = "none";
+      this.selLasso.style.display = "none";
+      if (band?.previousLasso) {
+        this._lassoPolygon = band.previousLasso;
+        this._renderLassoSelection();
+      } else if (band?.previousBox) {
+        this._boxSelection = band.previousBox;
+        this._renderBoxSelection();
+      }
+      band = null;
+      drag = null;
+    };
+    // A capture-owning gesture ended without a release this document saw: a pan
+    // keeps the view it already reached, while an unfinished selection/box-zoom
+    // has no release coordinate to complete with and therefore rolls back.
+    const endGestureWithoutRelease = () => {
+      if (drag) finishPanDrag();
+      else if (band) cancelPointerGesture();
     };
 
     this._listen(c, "pointerdown", (e) => {
@@ -217,7 +264,7 @@ Object.assign(ChartView.prototype, {
           previousBox,
           replacingLasso: false,
         };
-        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+        band.capture = this._captureGesturePointer(c, e, endGestureWithoutRelease);
         this._hideTooltip();
         return;
       }
@@ -237,11 +284,13 @@ Object.assign(ChartView.prototype, {
           ])],
           changedAxes: [],
         };
-        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+        drag.capture = this._captureGesturePointer(c, e, endGestureWithoutRelease);
         this._hideTooltip();
       }
     });
     this._listen(c, "pointermove", (e) => {
+      const capture = band?.capture || drag?.capture;
+      if (capture && !capture.guard(e)) return;
       if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
@@ -276,6 +325,7 @@ Object.assign(ChartView.prototype, {
     });
     const end = (e) => {
       if (band) {
+        band.capture.release();
         // Pointermove is not guaranteed to run at the pointer-up coordinate.
         // Capture that final vertex before deciding whether the gesture moved;
         // a naturally closed lasso finishes near its start and therefore has
@@ -327,31 +377,10 @@ Object.assign(ChartView.prototype, {
         band = null;
         return;
       }
-      if (drag && drag.moved) {
-        this._ignoreNextClick = true;
-        if (drag.changedAxes.length) this._emitViewChange("pan_drag", {
-          axes: drag.changedAxes,
-          phase: "end",
-          interactionId: drag.interactionId,
-        });
-      }
-      if (drag && !drag.moved) this._hideTooltip();
-      drag = null;
+      finishPanDrag();
     };
     this._listen(c, "pointerup", end);
-    this._listen(c, "pointercancel", () => {
-      this.selRect.style.display = "none";
-      this.selLasso.style.display = "none";
-      if (band?.previousLasso) {
-        this._lassoPolygon = band.previousLasso;
-        this._renderLassoSelection();
-      } else if (band?.previousBox) {
-        this._boxSelection = band.previousBox;
-        this._renderBoxSelection();
-      }
-      band = null;
-      drag = null;
-    });
+    this._listen(c, "pointercancel", cancelPointerGesture);
     this._listen(c, "pointerleave", () => this._pointerHoverExit());
     // Backstop for missed canvas pointerleave: browsers skip boundary events
     // when the element under a stationary cursor changes (page scroll,
@@ -396,6 +425,11 @@ Object.assign(ChartView.prototype, {
     });
     this._listen(c, "keydown", (e) => {
       if (e.key === "Escape" && (band || drag)) {
+        // Release before dropping the records: the capture object is the only
+        // handle on its `lostpointercapture` listener, so an unreleased gesture
+        // strands that listener on the canvas for the life of the view.
+        band?.capture.release();
+        drag?.capture.release();
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
         band = null;
@@ -1145,11 +1179,11 @@ Object.assign(ChartView.prototype, {
         dy: e.clientY - barRect.top,
         moved: false,
       };
-      try { bar.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      modebarDrag.capture = this._captureGesturePointer(bar, e, endModebarDrag);
       setVisible(true);
     });
     this._listen(bar, "pointermove", (e) => {
-      if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      if (!modebarDrag || !modebarDrag.capture.guard(e)) return;
       const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
       if (!modebarDrag.moved) {
         if (distance < DRAG_THRESHOLD_PX) return;
@@ -1169,15 +1203,14 @@ Object.assign(ChartView.prototype, {
     });
     const endModebarDrag = (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      const completedDrag = modebarDrag;
       modebarDrag = null;
+      completedDrag.capture.release();
       this._modebarDragging = false;
       bar.style.transition = "opacity .15s";
       setVisible(root.matches(":hover"));
       bar.classList.remove("xy-dragging");
       updateDragPeekSide();
-      try {
-        if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
-      } catch (_err) { /* synthetic event */ }
     };
     this._listen(bar, "pointerup", endModebarDrag);
     this._listen(bar, "pointercancel", endModebarDrag);

@@ -382,7 +382,7 @@ Object.assign(ChartView.prototype, {
         interactionId: ++this._interactionSeq,
         changedAxes: [],
       };
-      try { band.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      drag.capture = this._captureGesturePointer(band, e, end);
       this.tooltip.style.display = "none";
       e.preventDefault();
     });
@@ -397,7 +397,7 @@ Object.assign(ChartView.prototype, {
       && this._axisPolicy("zoom_axes").includes(axisId);
 
     this._listen(band, "pointermove", (e) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
+      if (!drag || !drag.capture.guard(e)) return;
       const dx = e.clientX - drag.sx;
       const dy = e.clientY - drag.sy;
       if (!drag.mode) {
@@ -469,9 +469,12 @@ Object.assign(ChartView.prototype, {
       if (!drag || e.pointerId !== drag.pointerId) return;
       const finished = drag;
       drag = null;
+      finished.capture.release();
       band.style.cursor = this._axisBandCursor(axisId, dim);
       if (finished.mode === "span") this.selRect.style.display = "none";
-      if (e.type === "pointercancel") return;
+      // Only a real release commits a coordinate-dependent gesture; a pan keeps
+      // the view it already reached however the gesture ended.
+      if (e.type !== "pointerup" && finished.mode !== "pan") return;
       if (finished.mode === "pan" && finished.changedAxes.length) {
         this._emitViewChange("pan_drag", {
           axes: finished.changedAxes,

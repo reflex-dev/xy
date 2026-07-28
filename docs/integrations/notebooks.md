@@ -37,6 +37,40 @@ The JavaScript/WebGL client is bundled in the installed XY wheel. Notebook
 display does not fetch a client from a CDN, so it also works in an air-gapped
 runtime once the Python packages are installed.
 
+## JupyterLite and Pyodide (WASM Kernels)
+
+XY publishes a Pyodide/Emscripten wheel, so `%pip install xy` works in a
+JupyterLite notebook. Hosted deployments with a prebuilt frontend — for
+example [try Jupyter](https://jupyter.org/try-jupyter/lab/) — cannot load the
+`anywidget` frontend extension at runtime, because `%pip` installs only the
+kernel-side package. Displaying the live widget there fails in the browser
+with `Failed to load model class 'AnyModel' from module 'anywidget'`.
+
+On WASM kernels XY therefore switches to its standalone-HTML display host
+automatically: `chart.show()` (or a bare `chart`) renders the same
+self-contained interactive document as `to_html()` inside an isolated iframe.
+Pan, zoom, hover, the modebar, and export all work in the browser. Python
+callbacks (`on_select`, ...), `chart.append(...)` live refreshes, and
+kernel-served zoom refinement need the live widget host, so they stay
+inactive on the HTML host; re-run the cell to display mutated chart state.
+
+Marimo is the exception among WASM hosts: it ships its own anywidget frontend
+as part of the app, so charts in Marimo's WASM build keep the live widget
+host automatically.
+
+Override the automatic choice per call with `chart.show(display="widget")` /
+`chart.show(display="html")`, or process-wide with the `XY_NOTEBOOK_DISPLAY`
+environment variable (`auto`, `widget`, or `html`):
+
+~~~python
+import os
+
+os.environ["XY_NOTEBOOK_DISPLAY"] = "widget"
+~~~
+
+Forcing `widget` is useful in a self-built JupyterLite deployment that added
+`anywidget` to `jupyter lite build`, where the frontend extension does exist.
+
 ## Callbacks
 
 Pass `on_hover`, `on_click`, `on_brush`, `on_select`, or `on_view_change` to a
