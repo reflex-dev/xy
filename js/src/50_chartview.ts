@@ -3031,6 +3031,18 @@ export class ChartView {
     // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
     // new chart kind is an entry in that registry, not another branch here.
     markOf(t.kind).build(this, g, t, buffer);
+    if (t.tier === "decimated") {
+      // T1 covering representation for M4 traces.  Density has its texture
+      // cache; decimated line/area traces need the same guarantee while a
+      // window-specific re-decimation is in flight.  Keep the initial (home)
+      // buffers in a separate drawable so refined replies never overwrite
+      // the only geometry that covers the full initial domain.
+      g._homeDecimated = {
+        ...g, _vaos: null, _homeDecimated: null, _decimatedWindow: null,
+      };
+      g._decimatedWindow = [...this._axisRange(g.xAxis)];
+      g._decimatedRefined = false;
+    }
     if (t.keys && Number.isInteger(t.keys.lo) && Number.isInteger(t.keys.hi)) {
       const lo = this._columnView(buffer, this.spec.columns[t.keys.lo]);
       const hi = this._columnView(buffer, this.spec.columns[t.keys.hi]);
@@ -4045,6 +4057,18 @@ export class ChartView {
         const [gy0, gy1] = this._axisRange(g.yAxis);
         lodDrawDensityTier(this, g, gx0, gx1, gy0, gy1);
         return;
+      }
+      if (g.tier === "decimated" && g._decimatedRefined && g._homeDecimated) {
+        const r = g._decimatedWindow;
+        const [vx0, vx1] = this._axisRange(g.xAxis);
+        const eps = r ? Math.abs(r[1] - r[0]) * 1e-9 + 1e-300 : 0;
+        // A prior refined window is not a truthful covering representation
+        // after a pan/zoom leaves it.  Draw the retained overview until the
+        // pending reply installs a buffer covering this view (T1/T8).
+        if (!r || vx0 < r[0] - eps || vx1 > r[1] + eps) {
+          markOf(g.trace.kind).draw(this, g._homeDecimated, x0, x1, y0, y1);
+          return;
+        }
       }
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     };
@@ -6194,6 +6218,7 @@ export class ChartView {
     this._destroyDensitySample(g);
     lodDropPointCache(this, g); // retired point windows die with the trace (T13)
     this._deleteVaos(g);
+    this._deleteVaos(g._homeDecimated);
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
@@ -6202,6 +6227,12 @@ export class ChartView {
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
     ]);
+    // Only geometry is owned independently by the retained M4 overview;
+    // style/channel buffers are shared with the live trace and were deleted
+    // above exactly once.
+    if (g._decimatedRefined) {
+      this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf"]);
+    }
     this._deleteBuffers(g.drill, [
       "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf", "selBuf", "dBuf",
     ]);
@@ -6228,6 +6259,7 @@ export class ChartView {
     g.densityCache = [];
     g.heatmap = null;
     g._cpu = null;
+    g._homeDecimated = null;
   }
 
   _destroyGlResources() {

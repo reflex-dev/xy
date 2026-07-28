@@ -471,6 +471,10 @@ def decimate_view(
         )
         update = {
             "id": t.id,
+            # The client retains the home M4 buffer as T1's covering
+            # representation.  Record the exact window served by this reply
+            # so it can fall back to home while a later pan is in flight.
+            "x_range": [lo_x, hi_x],
             "x": writer.add_encoded(x_col),
             "y": writer.add_encoded(y_col),
         }

@@ -744,6 +744,16 @@ Object.assign(ChartView.prototype, {
         const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
         const src = sm || { x: xArr, y: yArr, n };
         const st = this._stepArrays(g.trace, src.x, src.y, src.n);
+        if (g.tier === "decimated" && !g._decimatedRefined) {
+          // The initial buffers belong to the retained home drawable (T1).
+          // Give refinements their own stores rather than destroying that
+          // covering representation with the first window reply.
+          this._deleteVaos(g);
+          g.xBuf = gl.createBuffer();
+          g.yBuf = gl.createBuffer();
+          if (bArr && g.baseBuf) g.baseBuf = gl.createBuffer();
+          g._decimatedRefined = true;
+        }
         gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
         gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
@@ -766,6 +776,9 @@ Object.assign(ChartView.prototype, {
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
         g.n = st ? st.n : src.n;
+        if (Array.isArray(upd.x_range) && upd.x_range.length === 2) {
+          g._decimatedWindow = [Number(upd.x_range[0]), Number(upd.x_range[1])];
+        }
       }
       this.draw();
     } else if (msg.type === "density_update") {
