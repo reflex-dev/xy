@@ -79,6 +79,9 @@ def build(
         marks.append(
             xy.line(labels, values, name=style["name"], color=style["color"], width=style["width"])
         )
+        # Every measured cell is a visible dot: the reader can see exactly
+        # which sizes were run rather than inferring them from line bends.
+        marks.append(xy.scatter(x=labels, y=values, color=style["color"], size=4.5))
         unit = "s" if metric == "time" else " GiB"
         text = f"{values[-1]:.3f}{unit}" if metric == "time" else f"{values[-1]:.2f}{unit}"
         if stopped:
