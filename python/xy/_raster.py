@@ -1534,10 +1534,23 @@ def _emit_line(
     if polar is not None:
         # Chords between projected points (polar-axes.md §5). The smooth branch
         # is skipped outright: its Bezier control points are only exact under an
-        # affine map, and `smooth_stroke` bakes that map into Rust.
+        # affine map, and `smooth_stroke` bakes that map into Rust. Vertices
+        # outside the radial range split the stroke into visible runs — the
+        # same cull the client shader applies; a mirrored-through-the-centre
+        # chord is the alternative, and no disc clip exists here to hide it.
         px, py = polar(xv, yv)
-        points = list(zip(px.tolist(), py.tolist(), strict=True))
-        cmd.stroke(points, width, c, dash=style.get("dash"), cap=cap)
+        visible = polar.visible_mask(yv)
+        indices = np.flatnonzero(visible)
+        runs = (
+            [np.arange(len(xv))]
+            if bool(visible.all())
+            else np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1)
+        )
+        for run in runs:
+            if len(run) < 2:
+                continue
+            points = list(zip(px[run].tolist(), py[run].tolist(), strict=True))
+            cmd.stroke(points, width, c, dash=style.get("dash"), cap=cap)
     elif style.get("curve") == "smooth" and len(xv) >= 3 and affine_fast_path(sx, sy, polar):
         cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"), cap=cap)
     else:
@@ -1905,6 +1918,9 @@ def _emit_authored_scatter(
     """Paint bounded pyplot-authored paths/glyphs in display-list space."""
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     px, py = polar(xv, yv) if polar is not None else (sx(xv), sy(yv))
+    # Out-of-range radii are culled like the client shader culls them; this
+    # path has no disc clip, and a below-range glyph mirrors into the disc.
+    visible = polar.visible_mask(yv) if polar is not None else None
     n = len(xv)
     if not n:
         return
@@ -1954,6 +1970,8 @@ def _emit_authored_scatter(
     filled = bool(marker_path and marker_path.get("filled", True))
 
     for index in range(n):
+        if visible is not None and not visible[index]:
+            continue
         fill = tuple(int(value) for value in fills[index])
         stroke = tuple(int(value) for value in strokes[index])
         diameter = max(0.0, 2 * (float(radii[index]) - float(widths[index]) / 2))
@@ -2117,6 +2135,17 @@ def _emit_scatter(
         _paint.effective_rgba(stroke_intrinsic, t, read, component="stroke", default_opacity=0.8)
         * 255.0
     ).astype(np.uint8)
+    if polar is not None:
+        # Cull out-of-range radii the way the client shader does: below r_lo a
+        # sprite mirrors through the centre, above r_hi it lands past the outer
+        # ring, and this path has no disc clip to catch either.
+        visible = polar.visible_mask(yv)
+        if not bool(visible.all()):
+            px, py, radii, fills = px[visible], py[visible], radii[visible], fills[visible]
+            symbols, widths, strokes = symbols[visible], widths[visible], strokes[visible]
+            n = len(px)
+            if n == 0:
+                return
     if (
         np.all(widths == widths[0])
         and np.all(symbols == symbols[0])

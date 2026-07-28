@@ -684,6 +684,133 @@ def test_radar_rejects_column_names_with_a_readable_error() -> None:
 # -- radial clipping semantics ---------------------------------------------
 
 
+def test_below_range_scatter_is_culled_not_mirrored() -> None:
+    """A radius below an authored r_lo normalizes negative and mirrors through
+    the centre to a position INSIDE the disc, where no clip can hide it. The
+    client shader NaN-culls the point; both exporters must drop the same row."""
+    theta = np.array([0.0, math.pi / 2])
+    r = np.array([0.2, 0.75])  # first point below r_lo
+    chart = xy.polar_chart(
+        xy.scatter(theta, r, size=9.0, color="#000000"),
+        xy.r_axis(domain=(0.5, 1.0)),
+        width=400,
+        height=400,
+    )
+    fig = chart.figure()
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    mirrored_x, mirrored_y = (float(v) for v in project(0.0, 0.2))
+    kept_x, kept_y = (float(v) for v in project(math.pi / 2, 0.75))
+
+    doc = fig.to_image(format="svg").decode()
+    centres = [
+        (float(cx), float(cy))
+        for cx, cy in re.findall(r'<circle cx="(-?[\d.]+)" cy="(-?[\d.]+)" r="4', doc)
+    ]
+    assert not any(math.hypot(cx - mirrored_x, cy - mirrored_y) < 2.0 for cx, cy in centres), (
+        "SVG drew the below-range point mirrored through the centre"
+    )
+    assert any(math.hypot(cx - kept_x, cy - kept_y) < 2.0 for cx, cy in centres), (
+        "SVG dropped the in-range point too"
+    )
+
+    from test_png_export import _decode_rgba
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+
+    def darkest_near(x: float, y: float) -> int:
+        ix, iy = int(round(x)), int(round(y))
+        window = pixels[max(0, iy - 3) : iy + 4, max(0, ix - 3) : ix + 4, 0]
+        return int(window.min())
+
+    assert darkest_near(mirrored_x, mirrored_y) >= 128, "raster drew the mirrored point"
+    assert darkest_near(kept_x, kept_y) < 128, "raster dropped the in-range point too"
+
+
+def test_above_range_scatter_leaves_no_ink_beyond_the_ring() -> None:
+    """The raster path has no disc clip, so an above-range point used to draw
+    past the outer ring into the corner the disc does not cover."""
+    chart = xy.polar_chart(
+        xy.scatter(np.array([math.pi / 4]), np.array([1.3]), size=10.0, color="#000000"),
+        xy.r_axis(domain=(0.0, 1.0)),
+        width=400,
+        height=400,
+    )
+    fig = chart.figure()
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    px, py = (float(v) for v in project(math.pi / 4, 1.3))
+
+    from test_png_export import _decode_rgba
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    window = pixels[int(py) - 3 : int(py) + 4, int(px) - 3 : int(px) + 4, 0]
+    assert int(window.min()) >= 128, "raster drew a mark beyond the outer ring"
+
+
+def test_line_vertices_outside_the_radial_range_split_the_path() -> None:
+    """A chord with a culled endpoint is dropped whole in every renderer (§8):
+    the path splits into visible runs instead of routing through the mirrored
+    position of the out-of-range vertex."""
+    theta = np.array([0.0, math.pi / 4, math.pi / 2, 3 * math.pi / 4, math.pi])
+    r = np.array([0.75, 0.8, 0.2, 0.8, 0.75])  # middle vertex below r_lo
+    chart = xy.polar_chart(
+        xy.line(theta, r, color="#2563eb"),
+        xy.r_axis(domain=(0.5, 1.0)),
+        width=400,
+        height=400,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    line_path = re.search(r'<path d="(M [^"]+)" stroke="#2563eb"', doc)
+    assert line_path is not None
+    assert line_path.group(1).count("M ") == 2, "expected two visible runs around the gap"
+
+
+def test_full_turn_slice_draws_an_annulus_not_nothing() -> None:
+    """Arc endpoints coincide at a full turn and SVG omits such segments, so a
+    100% donut slice (a progress ring at 100%) rendered as nothing."""
+    chart = xy.polar_chart(
+        xy.bar([180.0], [1.0], base=0.5, width=360.0, color="#7c3aed"),
+        xy.theta_axis(unit="degrees"),
+        xy.r_axis(domain=(0.0, 1.0)),
+        width=400,
+        height=400,
+    )
+    fig = chart.figure()
+    doc = fig.to_image(format="svg").decode()
+    wedges = [d for d in re.findall(r'<path d="([^"]+)"', doc) if " A " in d]
+    assert len(wedges) == 1
+    arcs = re.findall(r"A [\d.]+ [\d.]+ 0 1 \d (-?[\d.]+) (-?[\d.]+)", wedges[0])
+    assert len(arcs) == 4, "an annulus needs two half-turn arcs per circle"
+
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    from test_png_export import _decode_rgba
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    for degrees in (0.0, 90.0, 180.0, 270.0):
+        px, py = (float(v) for v in project(degrees, 0.75))
+        window = pixels[int(py) - 2 : int(py) + 3, int(px) - 2 : int(px) + 3, 1]
+        assert int(window.min()) < 200, f"raster annulus missing at {degrees} degrees"
+
+
+def test_fractional_degree_ticks_keep_their_precision() -> None:
+    """`_fmt_angle` used a hardcoded step of 1, so an authored 22.5-degree grid
+    labelled itself 22°/68° (round-half-even) instead of 22.5°/67.5°."""
+    theta, r = _rose()
+    chart = xy.polar_chart(
+        xy.line(np.degrees(theta), r),
+        xy.theta_axis(unit="degrees", tick_values=[0.0, 22.5, 45.0, 67.5, 90.0]),
+        width=400,
+        height=400,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    assert "22.5°" in doc and "67.5°" in doc
+
+
 def test_area_fill_clamps_to_the_radial_range_rather_than_vanishing() -> None:
     """A fill's extent at each angle is [base, top] intersected with the radial
     range. Culling an out-of-range endpoint instead made a whole radar polygon

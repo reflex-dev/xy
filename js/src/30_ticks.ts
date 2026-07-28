@@ -138,9 +138,11 @@ export function angularTicks(lo, hi, unit, target = 6) {
   return { ticks: out, step };
 }
 
-// Mirrored by _fmt_angle in python/xy/_svg.py.
-export function fmtAngle(v, unit) {
-  if (unit === "degrees") return `${fmtLinear(v, 1)}\u00b0`;
+// Mirrored by _fmt_angle in python/xy/_svg.py. `step` sets the degree
+// precision: the generated ladder is all integers, but authored fractional
+// tick_values (a 22.5-degree compass grid) mislabel under a hardcoded 1.
+export function fmtAngle(v, unit, step = 1) {
+  if (unit === "degrees") return `${fmtLinear(v, step || 1)}\u00b0`;
   if (Math.abs(v) < 1e-12) return "0";
   const frac = v / Math.PI;
   for (const den of [1, 2, 3, 4, 6, 8, 12]) {
@@ -277,7 +279,7 @@ function collapsedToZero(formatted) {
 }
 
 export function fmtAxis(axis, v, tickStep) {
-  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit);
+  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit, tickStep);
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);

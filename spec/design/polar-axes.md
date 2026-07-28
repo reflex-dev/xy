@@ -317,14 +317,20 @@ MVP surface, deliberately small:
   rejected from interactive testing: an interior anchor lifts `r_lo` and carves
   a hole in the middle of the disc — an annulus view that reads as broken, not
   as zoom.
-  Marks outside the zoomed radial range are **culled in the shader** (NaN
-  position, the same gap semantics NaN data gets): below `r_lo` a mark would
-  reflect through the centre, and above `r_hi` it would draw past the outer
-  ring into the rect corners — the GL canvas is the plot rect, so the shader
-  cull is the client's equivalent of the SVG exporter's disc `clipPath`. A
-  chord that straddles the ring is dropped whole on the client and clipped at
-  the ring in the static exports; at data resolution the difference is under
-  one segment.
+  Marks outside the radial range are **culled in the shader** (NaN position,
+  the same gap semantics NaN data gets): below `r_lo` a mark would reflect
+  through the centre, and above `r_hi` it would draw past the outer ring into
+  the rect corners — the GL canvas is the plot rect, so the shader cull is the
+  client's equivalent of the SVG exporter's disc `clipPath`. The exporters'
+  line and scatter paths apply the same cull (`_PolarProjection.visible_mask`)
+  rather than relying on that clip: a below-range point mirrors through the
+  centre to a position *inside* the disc, and the raster path has no disc clip
+  at all. A chord with a culled endpoint is therefore dropped whole in every
+  renderer; at data resolution the gap is under one segment. Fills and bars
+  **clamp** their radial span to `[r_lo, r_hi]` instead of culling: their
+  visible extent at an angle is `[base, top] ∩ [r_lo, r_hi]`, and culling one
+  endpoint made a radar fill vanish the moment zoom lifted `r_lo` above its
+  baseline. A span fully outside collapses to zero and draws nothing.
 - **Reset** — existing modebar, no change.
 
 Deferred and explicitly disabled rather than half-working: θ pan (rotation),

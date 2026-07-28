@@ -776,14 +776,16 @@ def _collapsed_to_zero(formatted: Optional[str]) -> bool:
         return False
 
 
-def _fmt_angle(value: float, unit: str) -> str:
+def _fmt_angle(value: float, unit: str, step: float = 1.0) -> str:
     """Angular tick text. Mirrors `fmtAngle` in js/src/30_ticks.ts.
 
     Degrees get a degree sign; radians are written as multiples of pi, because
-    "2.094" is not a readable angle and "2pi/3" is.
+    "2.094" is not a readable angle and "2pi/3" is. `step` sets the degree
+    precision: the generated ladder is all integers, but authored fractional
+    tick_values (a 22.5° compass grid) mislabel under a hardcoded step of 1.
     """
     if unit == "degrees":
-        return f"{_fmt_linear(value, 1.0)}°"
+        return f"{_fmt_linear(value, step or 1.0)}°"
     if abs(value) < 1e-12:
         return "0"
     frac = value / math.pi
@@ -801,7 +803,7 @@ def _fmt_angle(value: float, unit: str) -> str:
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     # Mirrors the same first branch in `fmtAxis` (js/src/30_ticks.ts).
     if axis.get("theta_unit"):
-        return _fmt_angle(v, axis["theta_unit"])
+        return _fmt_angle(v, axis["theta_unit"], step)
     kind = axis.get("kind")
     if kind == "category":
         cats = axis.get("categories") or []
@@ -954,6 +956,20 @@ class _PolarProjection:
     def norm_radius(self, r: Any) -> Any:
         span = (self.r_hi - self.r_lo) or 1.0
         return (np.asarray(r, dtype=np.float64) - self.r_lo) / span
+
+    def visible_mask(self, r: Any) -> np.ndarray:
+        """Which radii have an honest polar position — `xyPolarPos`'s cull.
+
+        Below the radial minimum a point would mirror through the centre into
+        the opposite quadrant (still *inside* the disc, so no clip saves it);
+        above the maximum it lands past the outer ring, and the raster path
+        has no disc clip at all. The client's shader NaN-culls both
+        (`rn < 0 || rn > 1 + 1e-6` in js/src/40_gl.ts); line and scatter in
+        the exporters must drop the same rows or the three renderers disagree.
+        Same epsilon, so the outermost home-view point survives everywhere.
+        """
+        rn = self.norm_radius(r)
+        return (rn >= 0.0) & (rn <= 1.0 + 1e-6)
 
     def __call__(self, theta: Any, r: Any) -> tuple[Any, Any]:
         a = self.angle(theta)
@@ -1548,9 +1564,20 @@ def _curve_path(
     Under `polar` the separable (sx, sy) pair is replaced by the joint
     projection and the result is always a polyline: consecutive data points are
     joined by straight **chords**, which is Plotly's polar semantics and what
-    makes radar/spider edges come out straight (polar-axes.md §5)."""
+    makes radar/spider edges come out straight (polar-axes.md §5). Vertices
+    outside the radial range are culled like the client shader culls them —
+    the path splits into visible runs, dropping any chord with a culled
+    endpoint whole (§8)."""
     if polar is not None:
-        return _poly_path(*polar(xv, yv))
+        px, py = polar(xv, yv)
+        visible = polar.visible_mask(yv)
+        if bool(visible.all()):
+            return _poly_path(px, py)
+        runs = np.split(
+            np.flatnonzero(visible),
+            np.flatnonzero(np.diff(np.flatnonzero(visible)) > 1) + 1,
+        )
+        return " ".join(_poly_path(px[run], py[run]) for run in runs if len(run) >= 2)
     px, py = sx(xv), sy(yv)
     if not smooth or len(xv) < 3 or not (sx.affine and sy.affine):
         return _poly_path(px, py)
@@ -2846,6 +2873,23 @@ def _polar_wedge_path(
 
     def at(radius: float, angle: float) -> tuple[float, float]:
         return polar.cx + radius * math.cos(angle), polar.cy - radius * math.sin(angle)
+
+    if abs(a1 - a0) >= 2.0 * math.pi * (1.0 - 1e-9):
+        # A full turn makes the arc endpoints coincide, and SVG omits such an
+        # arc segment entirely — a 100% donut slice rendered as nothing. Each
+        # circle is drawn as two half-turn arcs instead; the inner ring winds
+        # the opposite way so the default nonzero fill leaves the hole open.
+        def full_circle(radius: float, sweep_flag: int) -> str:
+            x0, y0 = at(radius, a0)
+            xm, ym = at(radius, a0 + math.pi)
+            arc = f"A {_num(radius)} {_num(radius)} 0 1 {sweep_flag}"
+            return (
+                f"M {_num(x0)} {_num(y0)} {arc} {_num(xm)} {_num(ym)} {arc} {_num(x0)} {_num(y0)} Z"
+            )
+
+        if inner <= 0.0:
+            return full_circle(outer, sweep)
+        return f"{full_circle(outer, sweep)} {full_circle(inner, 1 - sweep)}"
 
     ox0, oy0 = at(outer, a0)
     ox1, oy1 = at(outer, a1)
@@ -4296,8 +4340,11 @@ def _scatter_marks(
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
     # Only the centres move under polar; the marker glyphs are pixel-space
-    # around each centre and stay round.
+    # around each centre and stay round. Out-of-range radii are culled like
+    # the client shader culls them — below r_lo a point mirrors through the
+    # centre INSIDE the disc, where no clip can save it.
     px, py = polar(xv, yv) if polar is not None else (sx(xv), sy(yv))
+    visible = polar.visible_mask(yv) if polar is not None else None
     n = len(xv)
 
     def read(index: int) -> np.ndarray:
@@ -4369,6 +4416,8 @@ def _scatter_marks(
         blocks = ["<g>"]
     out: list[str] = []
     for i in range(n):
+        if visible is not None and not visible[i]:
+            continue
         fill = face_rgba[i]
         fill_value = (
             escape(face_css)
