@@ -356,8 +356,13 @@ invariants so future kinds don't regress them:
   finer one arrives. Density uses density-under-points and its broadest-cache
   fallback; an M4-decimated line/area retains its initial home/overview buffer
   and draws that whenever the current refined window does not cover the view.
-  Each tier reply records its served `x_range`; the overview hold ends only
-  when that reply has installed covering geometry (T8).
+  Each tier reply records its served `x_range` (small JSON metadata per the
+  Transport Matrix — the served window is a scalar control descriptor, not
+  point data, and stays f64 so deep-zoom coverage compares stay exact); the
+  overview hold ends only when that reply has installed covering geometry
+  (T8). Coverage compares normalized `[lo, hi]` bounds on both sides, so a
+  direction-preserving (reversed) axis range still resolves coverage
+  correctly.
 - **T2 — never hard-cut:** representation changes crossfade (entry fade on
   the aggregate→marks transition only — restarting per refresh reads as
   flashing; exit fade with the "dying" state so buffers outlive the fade).

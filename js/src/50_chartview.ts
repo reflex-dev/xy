@@ -4060,12 +4060,17 @@ export class ChartView {
       }
       if (g.tier === "decimated" && g._decimatedRefined && g._homeDecimated) {
         const r = g._decimatedWindow;
+        // _axisRange preserves axis direction (a reversed axis yields
+        // hi-before-lo) while the served window arrives normalized, so the
+        // coverage compare runs on normalized bounds.
         const [vx0, vx1] = this._axisRange(g.xAxis);
+        const viewLo = Math.min(vx0, vx1);
+        const viewHi = Math.max(vx0, vx1);
         const eps = r ? Math.abs(r[1] - r[0]) * 1e-9 + 1e-300 : 0;
         // A prior refined window is not a truthful covering representation
         // after a pan/zoom leaves it.  Draw the retained overview until the
         // pending reply installs a buffer covering this view (T1/T8).
-        if (!r || vx0 < r[0] - eps || vx1 > r[1] + eps) {
+        if (!r || viewLo < r[0] - eps || viewHi > r[1] + eps) {
           markOf(g.trace.kind).draw(this, g._homeDecimated, x0, x1, y0, y1);
           return;
         }
