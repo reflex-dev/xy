@@ -140,7 +140,7 @@ function lodUploadGridBytes(gl, tex, data, w, h, isRgba, filter) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
-function lodUploadWireGrid(gl, u8Wire, w, h, filter) {
+export function lodUploadWireGrid(gl, u8Wire, w, h, filter) {
   const tex = gl.createTexture();
   lodUploadGridBytes(gl, tex, u8Wire, w, h, false, filter);
   return tex;
@@ -1237,6 +1237,7 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
   const reducedMotion = view._prefersReducedMotion();
   const normMax = reducedMotion ? d.max : normStart;
   const directWire = d.enc === "log-u8" && !rgba && reducedMotion;
+  const wire = directWire ? new Uint8Array(view._asU8(buffers[d.buf])) : null;
   const grid = directWire
     ? null
     : d.enc === "log-u8"
@@ -1255,11 +1256,12 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
     // enough to points territory to be worth a round-trip at all.
     visible: upd.visible,
     grid,
+    wire,
     rgba,
     filter,
     _filterKey: replyFilterKey,
     tex: directWire
-      ? lodUploadWireGrid(view.gl, view._asU8(buffers[d.buf]), d.w, d.h, filter)
+      ? lodUploadWireGrid(view.gl, wire, d.w, d.h, filter)
       : view._uploadGrid(
         grid, d.w, d.h, normMax, rgba, filter, view._fillOpacity(g.trace.style),
       ),

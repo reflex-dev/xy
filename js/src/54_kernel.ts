@@ -4,6 +4,7 @@ import { parseColor } from "./20_theme";
 import {
   lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
   lodDrillServesView, lodDropDrill, lodFilterKey, lodPromoteCachedDrill, lodRememberDensity,
+  lodUploadWireGrid,
 } from "./45_lod";
 import { xyCreateRebinWorker } from "./46_worker";
 import { ChartView } from "./50_chartview";
@@ -280,10 +281,12 @@ Object.assign(ChartView.prototype, {
         const hd = g._homeDensity;
         this._applySampleRebinGrid(g, {
           ...hd,
-          tex: this._uploadGrid(
-            hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
-            this._fillOpacity(g.trace.style),
-          ),
+          tex: hd.grid
+            ? this._uploadGrid(
+              hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1, hd.rgba, hd.filter,
+              this._fillOpacity(g.trace.style),
+            )
+            : lodUploadWireGrid(this.gl, hd.wire, hd.w, hd.h, hd.filter),
         }, false);
       }
       return;
