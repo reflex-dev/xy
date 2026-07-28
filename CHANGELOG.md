@@ -8,6 +8,16 @@ in the README).
 
 ## [Unreleased]
 
+### Fixed
+- On Windows, saving to a path whose file another handle holds open — most
+  commonly `tempfile.NamedTemporaryFile(...).name` inside the `with` block —
+  no longer fails with `PermissionError: [WinError 5]`. Every path save
+  (`to_html`, `write_image`, SVG/PDF, facet and batch export) still writes
+  atomically via `os.replace` where possible, and now falls back to rewriting
+  the held-open destination in place, retrying briefly for transient
+  antivirus/indexer locks before raising an error that names the held-open
+  file as the cause (`spec/api/export.md` §8).
+
 ## [0.0.4] - 2026-07-27
 
 ### Added
