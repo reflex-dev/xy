@@ -161,14 +161,12 @@ and reaches 13.4 s at 50M; Plotly crosses at ~2.5M and reaches 9.8 s at 25M.
   <img src="spec/assets/ux-python-memory.png" alt="Peak Python-side resident memory, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
-At 100M points XY peaks at **2.58 GiB** of Python-side RSS. Plotly ran out
-first, failing to construct the figure at all at 50M after 4.70 GiB at 25M;
-Matplotlib reached 50M at 3.85 GiB and then failed to resolve a zoom at 100M.
+At 100M points XY peaks at **2.58 GiB** of Python-side RSS, against 4.70 GiB
+for Plotly at 25M and 3.85 GiB for Matplotlib at 50M.
 
-The pale line in both charts is XY with `density=False`: the same engine
-drawing one marker per row, subject to the same physics as everyone else. It
-renders 100M exact markers in 1.34 s on 5.26 GiB, and the gap between the two
-XY lines is exactly what the density default buys.
+The pale line is XY with `density=False`: the same engine drawing one marker
+per row, no aggregation credit. It renders 100M exact markers in 1.34 s on
+5.26 GiB.
 
 Time until every point is on screen, in seconds. `✕` is a size the library
 did not render: Plotly never finishes constructing the figure at 50M, and
