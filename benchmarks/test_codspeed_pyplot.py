@@ -9,10 +9,11 @@ bytes for the export pair), so the gap between a ``*_pyplot`` row and its
 fmt-string parsing, and figure-lifecycle bookkeeping. Everything below the
 shim is shared engine work and moves both rows together.
 
-``tests/pyplot/test_perf_guardrail.py`` remains the hard relative gate on
-this promise; these rows track it continuously so a structural regression in
-the shim (an O(n) copy, per-build revalidation) shows up attributed to the
+These rows track the promise continuously so a structural regression in the
+shim (an O(n) copy, per-build revalidation) shows up attributed to the
 ``*_pyplot`` arm instead of surfacing as an unexplained engine slowdown.
+Deterministic invariants behind that promise remain hard pytest gates in
+``tests/pyplot/test_perf_guardrail.py``.
 
 Run locally with:
 
@@ -154,7 +155,7 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 # Matplotlib's 5% line margins, and the 640x480 canvas) so the pair differs
 # only in which API expressed the chart.
 # The pyplot arm includes plt.close("all") because figure-registry bookkeeping
-# is part of the shim's per-figure cost — the exact cost the guardrail bounds.
+# is part of the shim's per-figure cost — the exact cost these pairs track.
 
 
 def _raw_line_payload(x: np.ndarray, y: np.ndarray) -> int:

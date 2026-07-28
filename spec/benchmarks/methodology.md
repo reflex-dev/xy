@@ -331,14 +331,12 @@ Two `make` targets bound the `xy.pyplot` shim from opposite sides. Both appear
 in the focused-gate table of `spec/process/production-readiness.md`.
 
 - **`make check-pyplot`** → `pytest tests/pyplot -q`. The correctness side: shim
-  behavior, matplotlib interoperability, and the reference corpus. It also
-  carries the *relative* speed gate, `tests/pyplot/test_perf_guardrail.py`,
-  which asserts the pyplot build stays within 1.6x the declarative build at 10k
-  points and 1.5x at 100k (best-of-N, plus a 100us absolute allowance for CI
-  timer jitter) and that theme/axis components come from the component cache
-  instead of being rebuilt. Its own docstring scopes it: a structural-regression
-  gate for an O(n) copy or per-build revalidation sneaking into the shim, not a
-  re-measurement of the margin.
+  behavior, matplotlib interoperability, and the reference corpus.
+  `tests/pyplot/test_perf_guardrail.py` hard-gates deterministic structural
+  invariants: theme/axis components come from the component cache instead of
+  being rebuilt, and ordinary bar probes avoid materializing full geometry.
+  Sub-millisecond wall-clock comparisons do not run as blocking pytest tests
+  because shared-runner jitter overwhelms their useful margin.
 - **`make check-pyplot-speed`** → `benchmarks/bench_pyplot_vs_matplotlib.py
   --profile standard --reps 21 --warmups 3 --target-speedup 10 --require-target`
   (needs Matplotlib from the pinned benchmark environment). The *absolute*

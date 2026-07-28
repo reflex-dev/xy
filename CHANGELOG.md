@@ -14,6 +14,10 @@ in the README).
   Plotly-only `bench` extra was removed; cross-library benchmark environments
   continue to install their pinned external baselines explicitly. Published
   `xy` metadata now advertises only its two runtime dependencies.
+- Pyplot's sub-millisecond relative timing check is no longer a blocking
+  pytest test, where shared-runner jitter made it flaky. Deterministic
+  structural invariants remain hard gates, while the paired CodSpeed rows
+  continue to track shim overhead.
 
 ## [0.0.4] - 2026-07-27
 

@@ -123,10 +123,10 @@ Matplotlib's caret arrows.
 - The shim's figure/axes bookkeeping adds ~50µs of fixed per-figure cost over
   the declarative API (measured 2026-07-14, M-series: +60% at 10k points, +26%
   at 100k — fixed cost over an ~85µs baseline, not O(n) work).
-  `tests/pyplot/test_perf_guardrail.py` gates the relationship at 10k and 100k
-  with generous headroom (1.6x and 1.5x ceilings plus a 100µs absolute
-  allowance for CI timer jitter), to catch structural regressions rather than
-  to re-measure the margin.
+  CodSpeed's paired raw/pyplot arms track that relationship at 10k, 100k, and
+  1M points. Blocking pytest tests enforce the underlying cache and
+  no-materialization invariants without relying on sub-millisecond wall-clock
+  comparisons on shared CI runners.
 
 ## Boundaries (enforced by `tests/pyplot/test_boundaries.py`)
 
