@@ -1820,9 +1820,12 @@ def _emit_area(
     smooth = style.get("curve") == "smooth"
     if polar is not None:
         # Chord-bounded polygon (polar-axes.md §5); smoothing is skipped because
-        # its control points are only exact under an affine map.
-        top = np.column_stack(polar(xv, yv))
-        base = np.column_stack(polar(xv[::-1], bv[::-1]))
+        # its control points are only exact under an affine map. Radii clamp to
+        # the radial range — the fill at each theta is [base, top] ∩
+        # [r_lo, r_hi], and a base below r_lo would otherwise mirror through
+        # the centre (mirrors the SVG area branch and AREA_VS).
+        top = np.column_stack(polar(xv, np.clip(yv, polar.r_lo, polar.r_hi)))
+        base = np.column_stack(polar(xv[::-1], np.clip(bv[::-1], polar.r_lo, polar.r_hi)))
     else:
         top = _scene.curve_points(xv, yv, sx, sy, smooth)
         base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)

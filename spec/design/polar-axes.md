@@ -301,8 +301,12 @@ MVP surface, deliberately small:
 
 - **Hover** — screen-space nearest-point test, seam-aware per §3.2, with the
   readout reporting (θ, r) in the axis's declared unit.
-- **Radial zoom** — wheel adjusts `[r_lo, r_hi]`, anchored at the cursor's
-  normalized radius, serialized through the existing view-state machinery.
+- **Radial zoom** — wheel scales the radial maximum about a **fixed** radial
+  minimum (Plotly's radial semantics), serialized through the existing
+  view-state machinery. Anchoring at the cursor's radius was tried first and
+  rejected from interactive testing: an interior anchor lifts `r_lo` and carves
+  a hole in the middle of the disc — an annulus view that reads as broken, not
+  as zoom.
   Marks outside the zoomed radial range are **culled in the shader** (NaN
   position, the same gap semantics NaN data gets): below `r_lo` a mark would
   reflect through the centre, and above `r_hi` it would draw past the outer

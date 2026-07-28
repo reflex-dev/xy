@@ -2796,9 +2796,12 @@ def polar_wedge_points(
     Both are driven by the same angles and radii, so the two exports agree to
     within the flattening; `steps` is the shared POLAR_BAR_SEGMENTS.
     """
-    outer = float(polar.norm_radius(r1)) * polar.radius
-    inner = max(0.0, float(polar.norm_radius(r0)) * polar.radius)
-    if outer <= 0.0:
+    # Clamp both radii into the disc: with an explicit radial domain a bar can
+    # start below r_lo or run past r_hi, and the raster path has no disc clip
+    # to save it (the client clamps identically in BAR_VS).
+    outer = min(1.0, float(polar.norm_radius(r1))) * polar.radius
+    inner = min(1.0, max(0.0, float(polar.norm_radius(r0)))) * polar.radius
+    if outer <= 0.0 or outer <= inner:
         return []
     a0 = float(polar.angle(theta0))
     a1 = float(polar.angle(theta1))
@@ -2830,11 +2833,10 @@ def _polar_wedge_path(
     raster exporter flattens the same sector because its display list has no arc
     opcode (polar-axes.md §5/§6).
     """
-    outer = float(polar.norm_radius(r1)) * polar.radius
-    inner = float(polar.norm_radius(r0)) * polar.radius
-    if outer <= 0.0:
+    outer = min(1.0, float(polar.norm_radius(r1))) * polar.radius
+    inner = min(1.0, max(0.0, float(polar.norm_radius(r0)))) * polar.radius
+    if outer <= 0.0 or outer <= inner:
         return ""
-    inner = max(0.0, inner)
     a0 = float(polar.angle(theta0))
     a1 = float(polar.angle(theta1))
     # `sweep` is in SVG's screen sense: y grows downward, so a counterclockwise
@@ -3313,6 +3315,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             yv = _column(blob, cols[t["y"]])
             bv = _column(blob, cols[t["base"]])
             smooth = style.get("curve") == "smooth"
+            if polar is not None:
+                yv = np.clip(yv, polar.r_lo, polar.r_hi)
+                bv = np.clip(bv, polar.r_lo, polar.r_hi)
             top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth, polar)
             base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth, polar)
             fill_spec = style.get("fill")

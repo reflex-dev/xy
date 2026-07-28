@@ -679,3 +679,55 @@ def test_radar_rejects_marks_it_cannot_close() -> None:
 def test_radar_rejects_column_names_with_a_readable_error() -> None:
     with pytest.raises(ValueError, match="must carry values directly"):
         xy.radar_chart(["a", "b", "c"], xy.area("speed"))
+
+
+# -- radial clipping semantics ---------------------------------------------
+
+
+def test_area_fill_clamps_to_the_radial_range_rather_than_vanishing() -> None:
+    """A fill's extent at each angle is [base, top] intersected with the radial
+    range. Culling an out-of-range endpoint instead made a whole radar polygon
+    disappear the moment zoom lifted the minimum above its baseline."""
+    theta = np.linspace(0.0, 2.0 * math.pi, 24)
+    values = np.full(24, 3.0)
+    chart = xy.polar_chart(
+        xy.area(theta, values, color="#2563eb"),
+        xy.r_axis(domain=(1.0, 2.0)),  # every value sits ABOVE the range
+        width=400,
+        height=400,
+    )
+    doc = chart.figure().to_image(format="svg").decode()
+    fills = re.findall(r'<path d="([^"]+)" fill="[^"]*" fill-opacity', doc)
+    assert fills, "the fill was dropped entirely instead of clamping to the rim"
+
+
+def test_wedge_beyond_the_outer_ring_clips_instead_of_disappearing() -> None:
+    """A bar whose tip crosses the outer ring draws up to the ring."""
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection({}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400})
+    poly = polar_wedge_points(project, 0.0, math.pi / 4, 0.0, 5.0, steps=8)
+    assert poly, "an over-range wedge vanished"
+    for px, py in poly:
+        assert math.hypot(px - 200.0, py - 200.0) <= 200.0 + 1e-6
+
+
+def test_wedge_entirely_outside_the_range_draws_nothing() -> None:
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection({}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400})
+    assert polar_wedge_points(project, 0.0, math.pi / 4, 2.0, 5.0, steps=8) == []
+
+
+def test_bar_below_the_radial_minimum_is_clipped_not_mirrored() -> None:
+    """A radius below the minimum normalizes negative, which would reflect the
+    wedge through the centre into the opposite quadrant."""
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection({}, {"range": [2.0, 4.0]}, {"x": 0, "y": 0, "w": 400, "h": 400})
+    poly = polar_wedge_points(project, 0.0, math.pi / 4, 0.0, 3.0, steps=8)
+    for px, py in poly:
+        # theta in [0, pi/4] is the upper-right quadrant; a mirrored point
+        # would land left of or below the centre.
+        assert px >= 200.0 - 1e-6
+        assert py <= 200.0 + 1e-6

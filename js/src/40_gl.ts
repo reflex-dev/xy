@@ -832,6 +832,13 @@ void main() {
                      xyAxisCoord(ay1, u_ymeta, u_ymode, u_yconstant), c.x);
     float baseR = mix(xyAxisCoord(ab0, u_bmeta, u_ymode, u_yconstant),
                       xyAxisCoord(ab1, u_bmeta, u_ymode, u_yconstant), c.x);
+    // CLAMP the span to the visible annulus rather than letting xyPolarPos
+    // NaN-cull an out-of-range corner: the fill at a given theta is exactly
+    // [base, top] intersected with [r_lo, r_hi], and culling instead made the
+    // whole radar fill vanish the moment radial zoom lifted r_lo above the
+    // base. A span fully outside collapses to zero height and draws nothing.
+    topR = clamp(topR, u_rrange.x, u_rrange.y);
+    baseR = clamp(baseR, u_rrange.x, u_rrange.y);
     float rr = mix(baseR, topR, c.y);
     // The fragment stage divides these for a height fraction, so any space
     // affine in the fill direction works — radius is that space here.
@@ -969,10 +976,16 @@ void main() {
     // cartesian u_v0Const is already clip-space and useless here. Baselines
     // below the radial minimum clamp to the centre, matching the exporters'
     // max(0, inner) clamp, instead of reflecting through it.
-    float r0C = max(
+    // CLAMP both radii to the visible annulus: a bar crossing the zoomed outer
+    // ring draws up to the ring (matplotlib/Plotly clip semantics); relying on
+    // xyPolarPos's NaN cull instead vanished the whole wedge the moment its
+    // tip left the range. A bar fully outside collapses to zero span.
+    float r0C = clamp(
       u_v0Mode == 0 ? u_polarV0C : xyAxisCoord(a_v0, u_v0meta, u_vmode, u_vconstant),
-      u_rrange.x);
-    float r1C = mix(r0C, xyAxisCoord(a_v1, u_v1meta, u_vmode, u_vconstant), u_animationProgress);
+      u_rrange.x, u_rrange.y);
+    float r1C = clamp(
+      mix(r0C, xyAxisCoord(a_v1, u_v1meta, u_vmode, u_vconstant), u_animationProgress),
+      u_rrange.x, u_rrange.y);
     float hw = abs(width) * 0.5;
     int pair = gl_VertexID >> 1;
     float t = float(pair) / float(max(u_polarSegments, 1));

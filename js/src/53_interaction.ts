@@ -409,16 +409,7 @@ Object.assign(ChartView.prototype, {
       const f = Math.pow(1.0015, e.deltaY);
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
-      let fy = 1 - (e.clientY - r.top) / r.height;
-      const polarGeom = this._polarGeometry?.();
-      if (polarGeom) {
-        // Radial zoom anchors at the cursor's RADIUS, not its height: the y
-        // axis carries r, and anchorFrac is a fraction of the axis range, which
-        // on a disc is the normalized radius (polar-axes.md §8).
-        const dx = (e.clientX - r.left) - r.width / 2;
-        const dy = r.height / 2 - (e.clientY - r.top);
-        fy = Math.min(1, Math.hypot(dx, dy) / (polarGeom.radius || 1));
-      }
+      const fy = 1 - (e.clientY - r.top) / r.height;
       this._queueWheelZoom(f, fx, fy);
     }, { passive: false });
 
@@ -2131,8 +2122,17 @@ Object.assign(ChartView.prototype, {
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
     const anchors = {};
+    // Polar radial zoom anchors at the CENTRE, always: an interior anchor
+    // lifts r_lo and carves a hole in the middle of the disc — an annulus view
+    // that reads as broken, not as zoom. Scaling r_hi about a fixed minimum is
+    // Plotly's radial semantics and stays legible from any cursor position
+    // (polar-axes.md §8). One site covers the wheel, the modebar buttons and
+    // axis-band gestures alike.
+    const polarRadial = this.spec?.coords === "polar";
     for (const axisId of axes) {
-      const anchor = this._axisDim(axisId) === "x" ? fx : fy;
+      const anchor = this._axisDim(axisId) === "x"
+        ? fx
+        : (polarRadial ? 0 : fy);
       const [lo, hi] = ranges[axisId];
       const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
       if (range) ranges[axisId] = range;
