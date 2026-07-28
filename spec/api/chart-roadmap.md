@@ -124,7 +124,7 @@ not fall out of sight.
 | 15 | Funnel | funnel, funnel area, conversion funnel | Planned | Product analytics and sales/ops dashboard expectation. |
 | 16 | Treemap | treemap, squarified treemap | Planned | Common BI hierarchy chart; requires layout and label polish. |
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
-| 18 | Radar / polar | radar, spider, polar area, radial bar | Planned | Common in Chart.js/Highcharts; needs polar axes and interaction semantics. |
+| 18 | Radar / polar | radar, spider, polar area, radial bar | Implemented core | `xy.polar_chart` renders line/scatter/area/bar through the polar coordinate system (spec/design/polar-axes.md); `xy.radar_chart`, `xy.polar_bar_chart` and `xy.wind_rose` are the compositions. Follow-ups: polar hover/zoom polish, sector limits, categorical theta. |
 | 19 | Gauge / indicator | gauge, bullet, KPI indicator | Planned | Dashboard compatibility; mostly DOM/SVG/canvas chrome rather than large-data rendering. |
 | 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Implemented core | `xy.facet_chart(...)` builds per-panel screen-bounded Figures with optional shared domains. |
 | 21 | Scatter matrix / pair plots | SPLOM, pairplot, corner plot | Planned | High-value exploratory data analysis; should reuse scatter kernels across many panels. |
@@ -138,9 +138,9 @@ not fall out of sight.
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
 | 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Planned later | Important flow chart, but requires layout and interaction work. |
 | 31 | Network/tree/org | network graph, force graph, tree, dendrogram, org chart, arc diagram | Planned later | Valuable but layout-heavy; should follow core 2D marks. |
-| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented in `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments; wind rose remains tied to future polar axes. |
+| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented | Quiver, barbs, and bounded streamlines feed shared instanced segments; `xy.wind_rose` ships as stacked polar bars over Python-side binning. |
 | 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Implemented in `xy.pyplot` | Curvilinear quads and explicit/native triangulations route through indexed meshes and marching-triangle kernels. |
-| 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar scatter/line/bar | Planned later | Plotly/science compatibility; axis systems are the main work. |
+| 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar scatter/line/bar | Partially implemented | Polar shipped as the first non-cartesian system (chart-level `coords`, spec/design/polar-axes.md); ternary/Smith/carpet remain planned and should reuse the same seam. |
 | 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Prototyped (PR closed unmerged) | The closed `codex/finance-charting-surface` exploration branch has a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 36 | Maps and geo | choropleth, tile choropleth, point map, bubble map, density map, route map, filled-area map | Deferred 2D domain | 2D, but requires projection/tile/geography stack; do after core chart breadth. |
 | 37 | Statistical evaluation | ROC, precision-recall, lift, calibration, Manhattan, volcano | Planned later | Mostly composed line/scatter variants with domain helpers. |
@@ -203,9 +203,9 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 
 | Rank | Chart family | Why it matters | Caveat |
 |---:|---|---|---|
-| 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Needs polar axes and interaction semantics. |
+| 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Implemented core: polar coordinate system + radar/polar-bar/wind-rose compositions. Interaction depth (radial zoom, sector select) tracked in polar-axes.md §8. |
 | 28 | Ternary / Smith / carpet | Plotly/scientific compatibility. | New coordinate systems, not new mark primitives. |
-| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Quiver, barbs, and streamplot are implemented through `xy.pyplot`; wind rose awaits polar support. |
+| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | All implemented; `xy.wind_rose` rides the polar bar path. |
 | 30 | Pcolormesh / tricontour / tripcolor | Matplotlib-style irregular grid science. | Implemented through `xy.pyplot` with native quad/triangle geometry. |
 | 31 | Waffle / mosaic / Mekko / variwide | Business/category compatibility. | Mostly rectangle layout algorithms. |
 | 32 | Packed bubble / Venn / Euler | Compatibility and presentation charts. | Layout algorithms and label placement dominate. |

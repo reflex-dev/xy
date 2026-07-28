@@ -59,7 +59,14 @@ Three properties this pins down, each of which has a matching fixture:
   circle is centred in the rect rather than stretched to fill it.
 - **`R` carries no fill factor.** Room for angular tick labels is reserved by
   *shrinking the plot rect during layout*, not by scaling the radius. The
-  transform stays pure; layout owns the gutters.
+  transform stays pure; layout owns the gutters. Concretely, after the
+  cartesian gutter passes converge, `_inset_polar_plot` (`_svg.py`, mirrored by
+  `_recutPolarPlot` in the client) gives back the cartesian tick-label gutters
+  — polar labels ring the disc instead of hugging two edges — and reserves a
+  uniform `_POLAR_LABEL_ROOM` all round. Reservations that still mean something
+  survive: the title band, a colorbar's gutter, and the left gutter when the
+  radial axis has a title (which is drawn there and would otherwise leave the
+  canvas).
 - **The y term is a subtraction.** This is the single most likely parity bug in
   the codebase. Screen/SVG/raster space has y growing **down**, so upward angles
   must *decrease* py. GL clip space has y growing **up**, so the GLSL form is
@@ -148,9 +155,11 @@ Fixture cases are chosen so a human can check them by inspection:
 Three consumers must agree with that file:
 
 1. **Python** — a unit test over `_polar_project`. Fast, always runs.
-2. **GLSL** — a headless-Chrome probe renders points at the fixture (θ, r) and
-   reads back their pixel positions. This binds the *actual shader*, not a JS
-   mirror of it, which is the only version that can drift silently.
+2. **GLSL** — `scripts/polar_parity_smoke.py` renders one scatter point per
+   fixture sample in headless Chrome and compares each colour's lit-pixel
+   centroid to the fixture value. This binds the *actual shader* in the shipped
+   bundle, not a JS mirror of it, which is the only version that can drift
+   silently. It runs in the stdlib-only CI lane beside the other smokes.
 3. **Exporters** — SVG and raster inherit (1) because they share the Python
    projection, so their obligation is a rendered-output check, not a second
    transform test.
@@ -174,8 +183,15 @@ matplotlib arc-interpolates paths.
 | Bar edges (annular sectors) | **true arc** | A wide bar with chorded ends reads as a triangle. |
 | Heatmap / contour cells | **true arc** | Scientific fidelity (later increment). |
 
-Chords need no subdivision, which is why line and scatter are cheap. Arcs are
-flattened to polylines at render time; §6 covers the per-renderer cost.
+Chords need no subdivision, which is why line, scatter and area are cheap. Arcs
+flatten to polylines wherever the medium lacks a real arc: the raster display
+list always, and the GPU bar sweep by construction. The subdivision count is
+`POLAR_BAR_SEGMENTS` (`python/xy/config.py`, mirrored in
+`js/src/50_chartview.ts`) — fixed rather than view-adaptive, because bar counts
+are small and a view-dependent count would have to be recorded per §28 rather
+than chosen silently. SVG needs no count: it draws real `A` arcs
+(`_polar_wedge_path`), and `polar_wedge_points` is the flattened twin the
+raster path consumes.
 
 An opt-in arc-interpolated line mode (matplotlib's behaviour) is a possible
 later flag. It is not in this increment, and the default does not change.
@@ -198,8 +214,9 @@ math. Three of them draw points:
 | `LINE_VS` | 486 | line | yes |
 | `SEGMENT_VS` | 588 | error bars, stems, contour | no — §7 |
 | `MESH_VS` | 653 | hexbin, triangle mesh | no — §7 |
-| `AREA_VS` | 738 | area, error bands | no — §7 |
-| `RECT_VS` | 796 | bar, histogram, box, violin | no — §7 |
+| `AREA_VS` | 738 | area, error bands | yes — interpolates in data space, then projects, so radial edges are true radii and fill boundaries are chords |
+| `BAR_VS` | — | compact bars | yes — sweeps `POLAR_BAR_SEGMENTS`+1 vertex pairs per instance: an annular sector, not a quad |
+| `RECT_VS` | 796 | histogram, box, violin (four-edge rects) | no — §7 |
 
 `POINT_SIMPLE_VS` and `PICK_VS` are the traps. Scatter silently switches to the
 simple program whenever `_canDrawSimplePoints` holds, so transforming only
@@ -240,20 +257,27 @@ satisfies that predicate while being emphatically non-affine. Any polar scale
 object must therefore report `affine = False`, or scatter, line smoothing and
 grid blits will silently project through a straight-line map.
 
-## 7. Scope of this increment
+## 7. Scope
 
-**Legal under `coords="polar"`:** `line`, `scatter`.
+**Legal under `coords="polar"`:** `line`, `scatter`, `area`, `bar`, `column`
+(`POLAR_MARK_KINDS`, `python/xy/config.py`).
 
-Everything else is **rejected at figure construction** with an error naming the
-supported set. This is not a limitation to be discovered at render time: a bar
-drawn through a chord-based rect shader is a wrong picture, and §28 of the
-dossier requires that such a decision ship as a recorded refusal rather than a
-silent approximation.
+Everything else is **rejected at payload build** with an error naming the
+supported set. This is not a limitation to be discovered at render time: a
+histogram drawn through the four-edge rect shader would come out chord-edged,
+and §28 of the dossier requires that such a decision ship as a recorded refusal
+rather than a silent approximation.
 
-Later increments, in order: area/radar (fill boundaries are chords, so this is
-the cheapest next step), polar bars and wind rose (needs annular-sector
-tessellation in three places), pyplot `projection="polar"`, then polar heatmap
-and contour — the last being the differentiator, since Plotly has no native
+On top of the mark kinds, three compositions are public API rather than
+renderers: `xy.radar_chart(categories, ...)` (evenly spaced spokes labelled
+with the categories; each series closed at a **full turn**, never by repeating
+the first angle, which would sweep the closing segment backwards through the
+whole circle), `xy.polar_bar_chart(...)`, and `xy.wind_rose(directions,
+speeds)` (Python-side binning like `hist`, stacked bars, compass convention
+`zero="N"` + clockwise).
+
+Later increments, in order: pyplot `projection="polar"`, then polar heatmap
+and contour — the latter being the differentiator, since Plotly has no native
 polar heatmap, contour or error-bar trace.
 
 ### Tier policy
@@ -294,9 +318,7 @@ Each row lands as its own change and updates this table when it does.
 
 | Feature | Notes |
 |---|---|
-| Area / radar fill | Cheapest next increment; chords already correct. |
-| Polar bars, wind rose, rose histogram | Annular sectors in client + SVG + raster. |
-| pyplot `projection="polar"` | How matplotlib users arrive; closes roadmap 29/32. |
+| pyplot `projection="polar"` | How matplotlib users arrive. Partially landed: the `Axes` projection state and PolarAxes method surface exist; routing of the polar axis options into the built chart is in progress. |
 | Polar heatmap / contour | Beyond Plotly parity. Needs the fragment-stage inverse (§6). |
 | Partial sector (`thetamin`/`thetamax`) | Layout, clipping and tick trimming. |
 | Hole / r-origin | `rn` gains a floor; touches every hit test. |
