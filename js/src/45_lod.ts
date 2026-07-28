@@ -1230,8 +1230,8 @@ export function lodApplyDensityUpdate(view, g, upd, buffers) {
       }
     }
   }
-  // Mean point color plane (LOD doc §2), copied because exposure easing
-  // re-reads it on every norm step, after the wire buffer may be gone.
+  // Mean point color plane (LOD doc §2), copied because legend-hover dimming
+  // and home-restore re-uploads re-read it after the wire buffer may be gone.
   const rgba = d.rgba !== undefined ? new Uint8Array(view._asU8(buffers[d.rgba])) : null;
   const normStart = lodNormMax(g, d.max);
   const reducedMotion = view._prefersReducedMotion();
