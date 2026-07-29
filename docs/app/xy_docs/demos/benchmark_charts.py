@@ -1,4 +1,4 @@
-"""Live XY charts for the public launch-benchmark documentation."""
+"""Live XY chart for the public interactive-UX benchmark documentation."""
 
 from __future__ import annotations
 
@@ -8,10 +8,13 @@ import reflex_xy
 import xy
 
 XY_COLOR = "#6E56CF"
+XY_EXACT_COLOR = "#A594E8"
 MATPLOTLIB_COLOR = "#8B8D98"
 PLOTLY_COLOR = "#B9BBC6"
+FAILURE_COLOR = "#D64545"
 SERIES = (
     ("XY", XY_COLOR),
+    ("XY · density off", XY_EXACT_COLOR),  # noqa: RUF001
     ("Matplotlib", MATPLOTLIB_COLOR),
     ("Plotly", PLOTLY_COLOR),
 )
@@ -27,14 +30,10 @@ _CARD_CLASS = (
     "w-full overflow-hidden rounded-xl border border-secondary-4 bg-white "
     "shadow-[0_12px_32px_#1c20240f] dark:bg-black"
 )
-_PANEL_CLASS = (
-    "min-w-0 overflow-hidden rounded-xl border border-secondary-4 "
-    "bg-white shadow-[0_8px_24px_#1c20240a] dark:bg-black"
-)
 
 
 def _theme() -> xy.Theme:
-    """Return the neutral benchmark theme shared by every live chart."""
+    """Return the neutral benchmark theme shared by the docs site."""
     return xy.theme(
         background="var(--benchmark-bg, #ffffff)",
         plot_background="var(--benchmark-plot, #fcfcfd)",
@@ -45,7 +44,7 @@ def _theme() -> xy.Theme:
 
 
 def _legend() -> rx.Component:
-    """Render the compact Reflex legend used by both benchmark cards."""
+    """Render the benchmark series legend."""
     return rx.el.div(
         *(
             rx.el.div(
@@ -62,338 +61,153 @@ def _legend() -> rx.Component:
             )
             for label, color in SERIES
         ),
-        class_name="flex shrink-0 flex-wrap items-center justify-end gap-x-2 gap-y-2",
+        class_name="flex flex-wrap items-center gap-x-3 gap-y-2",
         aria_label="Benchmark series legend",
     )
 
 
-def _heading(title: str, subtitle: str, *, show_legend: bool = True) -> rx.Component:
-    """Render benchmark title, methodology subtitle, and optional legend."""
-    return rx.el.div(
-        rx.el.div(
-            rx.el.h3(
-                title,
-                class_name="text-xl font-semibold tracking-[-0.02em] text-secondary-12",
-            ),
-            rx.el.p(
-                subtitle,
-                class_name="mt-1 text-sm font-medium text-secondary-10",
-            ),
-            class_name="min-w-0 flex-1",
-        ),
-        _legend() if show_legend else rx.fragment(),
-        class_name=(
-            "flex flex-col gap-4 px-5 pt-5 sm:px-4 sm:pt-7 lg:flex-row "
-            "lg:items-start lg:justify-between"
-        ),
+_SIZES = [
+    10_000,
+    100_000,
+    500_000,
+    1_000_000,
+    2_500_000,
+    5_000_000,
+    10_000_000,
+    25_000_000,
+    50_000_000,
+    100_000_000,
+]
+_XY_VALUES = [0.071, 0.072, 0.075, 0.084, 0.083, 0.089, 0.083, 0.077, 0.076, 0.081]
+_XY_EXACT_VALUES = [
+    0.085,
+    0.074,
+    0.087,
+    0.098,
+    0.111,
+    0.144,
+    0.206,
+    0.424,
+    0.645,
+    1.343,
+]
+_MATPLOTLIB_VALUES = [0.086, 0.115, 0.224, 0.357, 0.758, 1.424, 2.804, 6.838, 13.385]
+_PLOTLY_VALUES = [0.341, 0.373, 0.477, 0.614, 1.033, 1.785, 3.367, 9.794]
+
+
+def _series(values: list[float], name: str, color: str, width: float) -> tuple[xy.Mark, xy.Mark]:
+    """Return a line and a dot for every measured benchmark cell."""
+    sizes = _SIZES[: len(values)]
+    return (
+        xy.line(sizes, values, name=name, color=color, width=width),
+        xy.scatter(x=sizes, y=values, color=color, size=6.5),
     )
 
 
-_SNAPSHOT_CATEGORIES = [
-    "Static CPU PNG",
-    "Interactive · default GPU",
-    "Interactive · CPU fallback",
-]
-_SNAPSHOT_VALUES = [
-    [0.0184, 0.1875, 1.0352],
-    [2.7432, 2.9842, 3.6121],
-    [9.6433, 3.3729, 8.0888],
-]
-
-_SNAPSHOT_CHART = xy.bar_chart(
-    xy.bar(
-        _SNAPSHOT_CATEGORIES,
-        _SNAPSHOT_VALUES,
-        orientation="horizontal",
-        mode="grouped",
-        series=[label for label, _color in SERIES],
-        colors=[color for _label, color in SERIES],
-        opacity=1,
-        # Square ends keep the true 1–2 px linear bar visible; a rounded cap
-        # collapses this particular value into a dot at the current scale.
-        corner_radius=0,
-        stroke_width=1,
-    ),
-    xy.tooltip(title="{x}", format={"y": ".4f s"}),
-    xy.legend(show=False),
-    xy.modebar(show=False),
-    xy.interaction_config(navigation=False),
-    xy.x_axis(
-        label="Render time (seconds) · lower is better",
-        domain=(0, 10),
-        tick_values=[0, 2, 4, 6, 8, 10],
-        tick_labels=["0 s", "2 s", "4 s", "6 s", "8 s", "10 s"],
-        style={"grid_width": 1, "grid_opacity": 1},
-    ),
-    xy.y_axis(
-        reverse=True,
-        style={"grid_opacity": 0, "axis_width": 0, "tick_width": 0},
-    ),
-    _theme(),
-    width="100%",
-    height=430,
-    padding=(18, 30, 58, 170),
-    class_name=_CHART_CLASS,
-)
-
-
-def launch_snapshot_demo() -> rx.Component:
-    """Render the 10M comparison as a live grouped horizontal bar chart."""
-    return rx.el.section(
-        _heading(
-            "10M-point cold-render time",
-            "900×420 output · mean of three isolated runs · shared linear scale",  # noqa: RUF001
-        ),
-        rx.el.div(
-            rx.el.div(
-                reflex_xy.chart(_SNAPSHOT_CHART, height="430px"),
-                rx.el.span(
-                    class_name=(
-                        "pointer-events-none absolute left-[170px] top-[30px] "
-                        "h-[31px] w-2 bg-[#6E56CF]"
-                    ),
-                    aria_hidden="true",
-                ),
-                class_name="relative",
-            ),
-            class_name="px-2 pb-2 sm:px-4 sm:pb-4",
-        ),
-        class_name=_CARD_CLASS,
-        aria_label="10-million-point cold-render benchmark comparison",
-    )
-
-
-_SIZE_LABELS = ["10k", "100k", "1M", "10M", "1B"]
-_XY_SCALING_VALUES = [0.0036, 0.0060, 0.0058, 0.0184, 1.1288]
-_MATPLOTLIB_SCALING_VALUES = [0.0224, 0.0456, 0.2858, 2.7432]
-_PLOTLY_SCALING_VALUES = [2.0231, 2.1100, 2.8086, 9.6433]
-
-_SCALING_CHART = xy.line_chart(
+_RENDER_TIME_CHART = xy.line_chart(
+    *_series(_XY_VALUES, "XY", XY_COLOR, 3),
+    *_series(_XY_EXACT_VALUES, "XY · density off", XY_EXACT_COLOR, 2.5),  # noqa: RUF001
+    *_series(_MATPLOTLIB_VALUES, "Matplotlib WebAgg", MATPLOTLIB_COLOR, 2),
+    *_series(_PLOTLY_VALUES, "Plotly scattergl", PLOTLY_COLOR, 2),
     xy.line(
-        _SIZE_LABELS,
-        _XY_SCALING_VALUES,
-        name="XY",
-        color=XY_COLOR,
-        width=2.5,
-    ),
-    xy.line(
-        _SIZE_LABELS[:4],
-        _MATPLOTLIB_SCALING_VALUES,
-        name="Matplotlib",
-        color=MATPLOTLIB_COLOR,
-        width=2,
-    ),
-    xy.line(
-        _SIZE_LABELS[:4],
-        _PLOTLY_SCALING_VALUES,
-        name="Plotly",
-        color=PLOTLY_COLOR,
-        width=2,
-    ),
-    *(
-        xy.marker(
-            size,
-            value,
-            text=label,
-            size=9,
-            dx=0,
-            dy=-11,
-            anchor="middle",
-            color=XY_COLOR,
-        )
-        for size, value, label in zip(
-            _SIZE_LABELS,
-            _XY_SCALING_VALUES,
-            ["3.6 ms", "6.0 ms", "5.8 ms", "18.4 ms", "1.129 s"],
-            strict=True,
-        )
-    ),
-    *(
-        xy.marker(
-            size,
-            value,
-            text=label,
-            size=9,
-            dx=0,
-            dy=-27,
-            anchor="middle",
-            color=MATPLOTLIB_COLOR,
-        )
-        for size, value, label in zip(
-            _SIZE_LABELS[:4],
-            _MATPLOTLIB_SCALING_VALUES,
-            ["22.4 ms", "45.6 ms", "0.286 s", "2.743 s"],
-            strict=True,
-        )
-    ),
-    *(
-        xy.marker(
-            size,
-            value,
-            text=label,
-            size=9,
-            dx=0,
-            dy=16 if size == "10M" else -11,
-            anchor="middle",
-            color=PLOTLY_COLOR,
-        )
-        for size, value, label in zip(
-            _SIZE_LABELS[:4],
-            _PLOTLY_SCALING_VALUES,
-            ["2.023 s", "2.110 s", "2.809 s", "9.643 s"],
-            strict=True,
-        )
-    ),
-    xy.vline(
-        "1M",
-        text="Density threshold",
-        color=XY_COLOR,
-        opacity=0.28,
+        [_SIZES[7], _SIZES[8]],
+        [_PLOTLY_VALUES[-1], _PLOTLY_VALUES[-1]],
+        color=FAILURE_COLOR,
         width=1.5,
+        dash="dashed",
+        opacity=0.6,
+    ),
+    xy.marker(
+        _SIZES[8],
+        _PLOTLY_VALUES[-1],
+        size=10,
+        symbol="cross",
+        color=FAILURE_COLOR,
     ),
     xy.text(
-        "1B",
-        9.6,
-        "× Plotly · failed",  # noqa: RUF001
-        dx=-4,
-        anchor="end",
-        color=PLOTLY_COLOR,
+        _SIZES[8],
+        _PLOTLY_VALUES[-1],
+        "fails at 50M",
+        dx=12,
+        dy=4,
+        anchor="start",
+        color=FAILURE_COLOR,
+    ),
+    xy.line(
+        [_SIZES[8], _SIZES[9]],
+        [_MATPLOTLIB_VALUES[-1], _MATPLOTLIB_VALUES[-1]],
+        color=FAILURE_COLOR,
+        width=1.5,
+        dash="dashed",
+        opacity=0.6,
+    ),
+    xy.marker(
+        _SIZES[9],
+        _MATPLOTLIB_VALUES[-1],
+        size=10,
+        symbol="cross",
+        color=FAILURE_COLOR,
     ),
     xy.text(
-        "1B",
-        8.7,
-        "× Matplotlib · >36 GiB",  # noqa: RUF001
-        dx=-4,
-        anchor="end",
-        color=MATPLOTLIB_COLOR,
+        70_710_678,
+        _MATPLOTLIB_VALUES[-1],
+        "fails at 100M",
+        dy=18,
+        anchor="middle",
+        color=FAILURE_COLOR,
     ),
-    xy.tooltip(format={"y": ".4f s"}),
-    xy.legend(show=False),
-    xy.modebar(show=False),
-    xy.interaction_config(navigation=False),
-    xy.x_axis(tick_label_anchor="center"),
-    xy.y_axis(
-        label="Render time (seconds)",
-        label_position="center",
-        domain=(0, 10.5),
-        tick_values=[0, 2, 4, 6, 8, 10],
-        tick_labels=["0 s", "2 s", "4 s", "6 s", "8 s", "10 s"],
-        style={"grid_width": 1, "grid_opacity": 1},
-    ),
-    _theme(),
-    width="100%",
-    height=360,
-    padding=(18, 24, 44, 68),
-    class_name=_CHART_CLASS,
-)
-
-_MEMORY_CATEGORIES = ["XY", "Matplotlib", "Plotly / Kaleido"]
-_MEMORY_VALUES = [0.286, 0.831, 5.298]
-_MEMORY_CHART = xy.bar_chart(
-    *(
-        xy.bar(
-            [category],
-            [value],
-            name=category,
-            orientation="horizontal",
-            color=color,
-            opacity=1,
-            corner_radius=6,
-        )
-        for category, value, color in zip(
-            _MEMORY_CATEGORIES,
-            _MEMORY_VALUES,
-            (XY_COLOR, MATPLOTLIB_COLOR, PLOTLY_COLOR),
-            strict=True,
-        )
-    ),
-    xy.text(0.42, "XY", "0.286", color="var(--benchmark-text, #60646c)"),
-    xy.text(0.98, "Matplotlib", "0.831", color="var(--benchmark-text, #60646c)"),
-    xy.text(
-        5.11,
-        "Plotly / Kaleido",
-        "5.298",
-        anchor="end",
-        color="var(--benchmark-text, #60646c)",
-    ),
-    xy.tooltip(format={"y": ".3f GiB"}),
+    xy.tooltip(format={"y": ".3f s"}),
     xy.legend(show=False),
     xy.modebar(show=False),
     xy.interaction_config(navigation=False),
     xy.x_axis(
-        label="Peak process-tree RSS (GiB)",
-        domain=(0, 6),
-        tick_values=[0, 2, 4, 6],
-        tick_labels=["0", "2", "4", "6 GiB"],
+        label="Points plotted",
+        type_="log",
+        domain=(8_000, 125_000_000),
+        tick_values=[10_000, 100_000, 1_000_000, 10_000_000, 100_000_000],
+        tick_labels=["10k", "100k", "1M", "10M", "100M"],
         style={"grid_width": 1, "grid_opacity": 1},
     ),
     xy.y_axis(
-        reverse=True,
-        style={"grid_opacity": 0, "axis_width": 0, "tick_width": 0},
+        label="Time until every point is on screen",
+        domain=(0, 14.6),
+        tick_values=[0, 2, 4, 6, 8, 10, 12, 14],
+        tick_labels=["0", "2", "4", "6", "8", "10", "12", "14 s"],
+        style={"grid_width": 1, "grid_opacity": 1},
     ),
     _theme(),
     width="100%",
-    height=260,
-    padding=(16, 22, 46, 110),
+    height=500,
+    padding=(24, 30, 58, 92),
     class_name=_CHART_CLASS,
 )
 
 
-def _panel(
-    title: str,
-    subtitle: str,
-    chart: xy.Chart,
-    *,
-    height: str,
-    show_legend: bool = False,
-) -> rx.Component:
-    """Wrap one XY chart in a titled responsive panel."""
+def interactive_ux_demo() -> rx.Component:
+    """Render the published 10k-to-100M interactive UX comparison."""
     return rx.el.section(
         rx.el.div(
             rx.el.div(
                 rx.el.h3(
-                    title,
-                    class_name="text-lg font-semibold tracking-[-0.01em] text-secondary-12",
+                    "Live interactive render time",
+                    class_name="text-xl font-semibold tracking-[-0.02em] text-secondary-12",
                 ),
                 rx.el.p(
-                    subtitle,
+                    "Correct and stable canvas · Apple M5 Pro · lower is better",  # noqa: RUF001
                     class_name="mt-1 text-sm font-medium text-secondary-10",
                 ),
-                class_name="min-w-0 flex-1",
+                class_name="min-w-0",
             ),
-            _legend() if show_legend else rx.fragment(),
-            class_name=(
-                "flex flex-col gap-3 px-5 pb-2 pt-5 sm:flex-row "
-                "sm:items-start sm:justify-between sm:px-6 sm:pt-6"
-            ),
+            _legend(),
+            class_name="flex flex-col gap-4 px-5 pt-5 sm:px-6 sm:pt-7",
         ),
         rx.el.div(
-            reflex_xy.chart(chart, height=height),
-            class_name="px-2 pb-2 sm:px-3 sm:pb-3",
+            reflex_xy.chart(_RENDER_TIME_CHART, height="500px"),
+            class_name="px-2 pb-2 sm:px-4 sm:pb-4",
         ),
-        class_name=_PANEL_CLASS,
+        class_name=_CARD_CLASS,
+        aria_label="Interactive render-time benchmark from 10,000 to 100 million points",
     )
 
 
-def scaling_and_memory_demo() -> rx.Component:
-    """Render coordinated live scaling-time and peak-memory charts."""
-    return rx.el.div(
-        _panel(
-            "Static render time by input size",
-            "Static 900×420 PNG · measured runs · × marks guarded failures",  # noqa: RUF001
-            _SCALING_CHART,
-            height="360px",
-            show_legend=True,
-        ),
-        _panel(
-            "10M static peak RSS",
-            "Static 900×420 PNG · complete process tree · GiB",  # noqa: RUF001
-            _MEMORY_CHART,
-            height="260px",
-        ),
-        class_name="grid w-full grid-cols-1 gap-5",
-        aria_label="Launch benchmark scaling time and peak memory",
-    )
-
-
-__all__ = ["launch_snapshot_demo", "scaling_and_memory_demo"]
+__all__ = ["interactive_ux_demo"]

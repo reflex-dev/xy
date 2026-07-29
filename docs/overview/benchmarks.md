@@ -1,163 +1,120 @@
 ---
 title: Benchmarks
-description: Inspect XY's recorded launch benchmark with its exact output contracts and caveats.
+description: Inspect XY's live interactive benchmark from 10,000 to 100 million points, including its output contract, memory use, and caveats.
 ---
 
 # Benchmarks
 
-XY's large-data architecture reduces source rows to the representation useful
-for a fixed-size output instead of drawing every row as an individual marker.
-The committed launch baseline measures identical seeded scatter data at
-900×420 pixels on an Apple M5 Pro with 64 GiB RAM. Each successful cell below
-is the mean of three isolated cold runs. The machine name and memory are copied
-verbatim from the committed environment record.
+This benchmark measures what a user waits for on a live interactive scatter
+chart. Every library receives every source row and runs through its own normal
+input path in a real browser. The sweep covers 10,000 to 100 million points on
+one Apple M5 Pro.
 
-The numbers on this page come from the 2026-07-26 rerun of that benchmark. It
-repeats the original 0.1.0 launch contracts on the same machine with the same
-pinned Plotly, Kaleido, Matplotlib, NumPy, and Python versions, so the intended
-variables are the XY revision and a Chrome patch bump. The 0.1.0 baseline stays
-committed and unchanged next to it.
-
-> **How to read this comparison.** XY switches dense scatter output to a
-> screen-bounded density representation, while the default Plotly and
-> Matplotlib paths retain every marker. These results compare each library's
-> default user-visible outcome at the same output size; the libraries send
-> different geometry to the renderer.
-
-## Snapshot at 10 million points
+The clock stops only when the canvas is both correct and stable. Correct means
+sentinel points planted at known coordinates are lit in the expected places.
+Stable means the full drawing buffer is byte-identical for 10 consecutive
+frames. Progressive renderers are therefore charged until their last chunk
+lands, not just until their first paint.
 
 ~~~python demo-only exec
-from xy_docs.demos.benchmark_charts import launch_snapshot_demo
+from xy_docs.demos.benchmark_charts import interactive_ux_demo
 
-benchmark_launch_snapshot = launch_snapshot_demo
+benchmark_interactive_ux = interactive_ux_demo
 ~~~
 
-| 900×420 output contract | XY | Matplotlib | Plotly | XY representation |
-| --- | ---: | ---: | ---: | --- |
-| Static CPU PNG | 0.0184 s | 2.7432 s | 9.6433 s | density |
-| Interactive first render, default GPU | 0.1875 s | 2.9842 s | 3.3729 s | density + sample |
-| Interactive first render, CPU fallback | 1.0352 s | 3.6121 s | 8.0888 s | density + sample |
+XY holds **0.071 seconds at 10k and 0.081 seconds at 100M**, nearly flat across
+four orders of magnitude. Above 200k rows, the default path draws a
+screen-bounded density surface and retains a sample for interaction instead of
+drawing one marker per row. Deep zooms request exact source rows.
 
-These summary tables show means only; the linked launch report publishes the
-sample standard deviation for every successful timing cell. Small reversals in
-adjacent means, such as 100k versus 1M on the static path, are within the
-observed three-run variation and should not be read as evidence that more rows
-are inherently faster.
+Every exact-marker path scales with the row count. Matplotlib crosses one
+second at about 3M and reaches 13.4 seconds at 50M. Plotly crosses one second
+at about 2.5M and reaches 9.8 seconds at 25M.
 
-The output contracts are intentionally separate. Static PNG rows compare
-validated CPU-rendered images. Interactive rows include figure construction,
-standalone HTML, a fresh browser, readiness, GPU completion, and a nonblank
-pixel check. Hardware-WebGL and SwiftShader results are never merged.
+## Time until every point is on screen
 
-## Time and memory across scale
+Times are seconds. `✕` marks a size that did not satisfy the full benchmark
+contract: Plotly never finished constructing the 50M figure, while Matplotlib
+drew 100M points but did not resolve the zoom that followed.
 
-The 10-million-point snapshot is one point on a larger curve. Static render
-time stays close to the output cost after XY switches to density, while the
-exact-marker paths continue to grow with the number of rows. Peak process-tree
-RSS tells the same practical story from a different angle.
+| Points | 10k | 100k | 500k | 1M | 2.5M | 5M | 10M | 25M | 50M | 100M |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| *XY speedup* | *1×* | *2×* | *3×* | *4×* | *9×* | *16×* | *34×* | *89×* | *177×* | *—* |
+| **XY** | **0.071** | **0.072** | **0.075** | **0.084** | **0.083** | **0.089** | **0.083** | **0.077** | **0.076** | **0.081** |
+| XY (`density=False`) | 0.085 | 0.074 | 0.087 | 0.098 | 0.111 | 0.144 | 0.206 | 0.424 | 0.645 | 1.343 |
+| Matplotlib (WebAgg) | 0.086 | 0.115 | 0.224 | 0.357 | 0.758 | 1.424 | 2.804 | 6.838 | 13.385 | ✕ |
+| Plotly (scattergl) | 0.341 | 0.373 | 0.477 | 0.614 | 1.033 | 1.785 | 3.367 | 9.794 | ✕ | ✕ |
 
-~~~python demo-only exec
-from xy_docs.demos.benchmark_charts import scaling_and_memory_demo
+The speedup row compares default XY with the next-fastest other library at each
+size. One run was recorded per cell. At the small end, timings carry roughly
+±10 ms of run-to-run spread.
 
-benchmark_scaling_and_memory = scaling_and_memory_demo
-~~~
+## Peak Python-side memory
 
-At 10 million points, the static CPU output contract recorded:
+Peak resident memory is reported in GiB. Browser memory is measured separately
+and excluded here because headless Chrome occupies about 1 GiB before it draws
+a chart.
 
-| Peak process-tree RSS | XY | Matplotlib | Plotly / Kaleido |
-| --- | ---: | ---: | ---: |
-| Static 900×420 PNG | 0.286 GiB | 0.831 GiB | 5.298 GiB |
+| Points | 10k | 100k | 500k | 1M | 2.5M | 5M | 10M | 25M | 50M | 100M |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| *XY advantage* | *1.8×* | *1.7×* | *1.9×* | *2.1×* | *2.1×* | *2.4×* | *2.6×* | *2.9×* | *2.8×* | *—* |
+| **XY** | **0.05** | **0.05** | **0.06** | **0.07** | **0.13** | **0.19** | **0.32** | **0.70** | **1.36** | **2.58** |
+| XY (`density=False`) | 0.05 | 0.05 | 0.07 | 0.10 | 0.18 | 0.31 | 0.57 | 1.35 | 2.66 | 5.26 |
+| Matplotlib (WebAgg) | 0.09 | 0.09 | 0.12 | 0.15 | 0.28 | 0.46 | 0.84 | 2.06 | 3.85 | ✕ |
+| Plotly (scattergl) | 0.21 | 0.18 | 0.28 | 0.36 | 0.60 | 1.05 | 1.86 | 4.70 | ✕ | ✕ |
 
-Plotly's static value includes the Kaleido and Chrome processes used by
-`to_image()`. RSS was sampled across each complete process tree every 50 ms, so
-very brief peaks may be missed. At one billion points, XY's successful static
-row peaked at 22.413 GiB; Matplotlib crossed the 36 GiB guardrail and Plotly did
-not produce a PNG on its first guarded attempt.
+The advantage row compares default XY with the next-lowest Python-side peak
+from another library. The exact-marker XY path reaches 100M in 1.343 seconds
+and 5.26 GiB, showing the engine's scaling without giving it aggregation
+credit.
 
-## What scales with rows—and what does not
+## Why the density path is a fair product comparison
 
-XY keeps exact source columns in Python. Ingest, range scans, binning, and line
-decimation still perform work that depends on the number of source rows. Once a
-large scatter has been reduced, however, the density grid and retained sample
-are bounded by the viewport rather than growing one marker per row. Long line
-output is similarly bounded after decimation.
+No benchmark arm receives pre-thinned input. Each library gets all rows, then
+uses its normal rendering strategy. XY's density arm proves that all rows were
+included with a count oracle, while Matplotlib, Plotly, and `density=False`
+draw one marker per row.
 
-That distinction is visible in the recorded sweep:
+That makes the default comparison an end-to-end product question: what does a
+user get from the ordinary API at this data size? The pale exact-marker XY
+series answers the separate like-for-like question of how the same engine
+scales when every row stays an individual marker.
 
-| Points | Native static PNG | Interactive, default GPU | XY representation |
-| ---: | ---: | ---: | --- |
-| 10k | 0.0036 s | 0.1643 s | direct |
-| 100k | 0.0060 s | 0.1680 s | direct |
-| 1M | 0.0058 s | 0.1762 s | density; density + sample interactive |
-| 10M | 0.0184 s | 0.1875 s | density; density + sample interactive |
-| 1B | 1.1288 s | 1.2419 s | density; density + sample interactive |
+## What this benchmark does and does not show
 
-At one billion points, XY ingested the rows and produced a validated density
-PNG and interactive density overview. It did **not** draw one billion markers.
-The exact-point Plotly and Matplotlib paths did not complete at that size within
-this run's 36 GiB process-tree and 180-second limits; those are local guarded
-outcomes, not universal limits.
-
-## What this benchmark does—and does not show
-
-| The recorded baseline shows | It does not establish |
+| The recorded sweep shows | It does not establish |
 | --- | --- |
-| Cold time to a validated, nonblank 900×420 output | Warm-service throughput after browser or Kaleido startup is amortized |
-| Peak process-tree RSS on one reference machine | GPU memory or performance on every platform |
-| Default large-scatter behavior for each library | Equivalent rendered geometry after XY enters density mode |
-| The effect of a screen-bounded representation at large sizes | Performance for every chart family, dashboard, or interaction |
+| Navigation to a correct, stable live scatter chart | Performance for every chart family or dashboard layout |
+| Default XY and exact-marker XY across the same row ladder | Equivalent rendered geometry after default XY enters density mode |
+| Whether the scripted zoom returns a final correct frame | Every interaction pattern or server deployment |
+| Python-side peak RSS on one Apple M5 Pro | Browser memory, GPU memory, or performance on every platform |
 
-The result is strongest as an end-to-end product comparison: what a user gets
-from the default API under a fixed output contract. A separate like-for-like
-representation study is still useful when the question is about the cost of
-aggregation itself.
-
-## Next benchmark coverage
-
-The repository already has harnesses for more than the launch scatter. Results
-will be published separately as their contracts and reference artifacts are
-frozen:
-
-- **Adaptive peers:** dense scatter against Datashader / HoloViews and long
-  lines against Plotly Resampler, kept separate from exact-marker baselines.
-- **Interaction and applications:** pan and zoom refinement, selection,
-  append/streaming updates, transport, and 10/20/50-chart dashboards.
-- **More chart families:** long lines and heatmaps, where decimation and
-  fixed-resolution aggregation exercise different kernels.
-- **Release and hardware tracking:** immutable release directories plus
-  clearly separated macOS hardware-WebGL and CI SwiftShader results.
-
-The launch scatter is the first committed proof point. The competitive
-benchmark program expands it across these workloads, chart families,
-competitors, and environments.
+The benchmark also records first paint, during-gesture frame timing, settle
+time, browser memory, screenshots, raw JSON, and a synchronized video for each
+size. Those measurements remain separate so a fast first frame cannot hide
+unfinished rendering or deferred work.
 
 ## Inspect and reproduce the evidence
 
-The baseline records its source commit (`7604775`), exact dependency lock,
-hardware, browser, raw samples, failure rows, and render oracles:
+The methodology and artifact contracts are documented in the repository:
 
-- [Launch report](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/report.md)
-- [Environment](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/environment.json)
-- [Raw default-path results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/default-results.json)
-- [Raw CPU-fallback results](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro/cpu-fallback-results.json)
-- [Original 0.1.0 launch baseline](https://github.com/reflex-dev/xy/blob/main/benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md)
+- [README benchmark summary](https://github.com/reflex-dev/xy#benchmarks)
 - [Benchmark runbook](https://github.com/reflex-dev/xy/blob/main/benchmarks/README.md)
+- [Interactive UX harness](https://github.com/reflex-dev/xy/blob/main/benchmarks/bench_ux.py)
+- [Full ladder runner](https://github.com/reflex-dev/xy/blob/main/benchmarks/run_ux_suite.sh)
+- [Result summarizer](https://github.com/reflex-dev/xy/blob/main/benchmarks/summarize_ux.py)
+- [Competitive benchmark specification](https://github.com/reflex-dev/xy/blob/main/spec/benchmarks/results.md)
 
-After completing the runbook setup, reproduce the frozen default-path sweep
-from the source revision recorded in the environment file:
+After completing the runbook setup, run the same size ladder:
 
 ```bash
-BASELINE=benchmarks/launch_baselines/xy-main-2026-07-26/macos-arm64-m5-pro
-uv sync --project "$BASELINE" --frozen --python 3.14.5
-CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+export CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+./benchmarks/run_ux_suite.sh /path/to/xy-ux-suite
 
-uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py \
-  --sizes 10000,100000,1000000,10000000,1000000000 \
-  --repetitions 3 --timeout 180 --memory-gib 36 \
-  --chrome "$CHROME" --out launch-scatter-default.json
+.venv/bin/python benchmarks/summarize_ux.py /path/to/xy-ux-suite
+.venv/bin/python benchmarks/plot_ux.py /path/to/xy-ux-suite --out-dir charts
 ```
 
-Each new comparison records its chart type, data size, representation, backend,
-output target, and browser-TTFR status so the result can be reproduced and
-improved. For the rendering model behind the numbers, read
-[Large data and performance](/docs/xy/core-concepts/large-data-and-performance/).
+Keep results separated by environment. Hardware WebGL and SwiftShader rows are
+not interchangeable. For the rendering model behind XY's flat default curve,
+read [Large data and performance](/docs/xy/core-concepts/large-data-and-performance/).

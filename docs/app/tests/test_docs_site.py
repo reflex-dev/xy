@@ -678,7 +678,7 @@ def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
     # call-to-action); embedded demo and shell fences don't count.
     why_prose = re.sub(r"~~~.*?~~~|```.*?```", "", why_copy, flags=re.DOTALL)
     assert len(why_prose.split()) < 260
-    assert "10-million-point launch benchmark" in why_copy
+    assert "recorded live interactive sweep" in why_copy
     assert "Compare by workflow, not by slogan" not in why_copy
 
 
