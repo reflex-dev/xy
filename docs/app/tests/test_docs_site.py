@@ -32,6 +32,7 @@ from reflex_docgen.markdown import (
     TextBlock,
     parse_document,
 )
+from reflex_site_shared.constants import DISCORD_URL
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
 from rxconfig import config
@@ -68,7 +69,7 @@ from xy_docs.markdown import (
     page_with_api_reference_toc,
     render_xy_markdown_page,
 )
-from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
+from xy_docs.navbar import XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
     CHART_FAMILY_SIDEBAR_SECTIONS,
     CHART_GALLERY_SIDEBAR_LINK,
@@ -2042,8 +2043,8 @@ def test_xy_sidebar_opens_only_the_current_chart_family(
     )
 
 
-def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
-    """Match the official navbar while retaining its mobile drawer trigger."""
+def test_xy_navbar_uses_xy_links_forum_github_and_the_official_drawer() -> None:
+    """Keep the XY navbar focused while retaining its mobile drawer trigger."""
     component = xy_docs_navbar()
     assert isinstance(component, MemoComponent)
 
@@ -2052,12 +2053,23 @@ def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
     assert 'href:"/"' in rendered
     assert '"aria-label":"Reflex XY"' in rendered
     assert "M29 16H32V10H39V7H32V4H39V1H29V16" in rendered
-    assert 'href:"/docs/"' in rendered
-    assert 'href:"/docs/ai/overview/best-practices/"' in rendered
-    assert 'href:"/docs/getting-started/introduction/"' in rendered
-    assert 'href:"/docs/hosting/deploy-quick-start/"' in rendered
     assert 'href:"/docs/xy/"' in rendered
-    assert 'variant:"ghost"},"XY"' in rendered
+    assert 'href:"/docs/xy/integrations/reflex/"' in rendered
+    assert "Overview" in rendered
+    assert "Reflex Integration" in rendered
+    assert 'variant:"ghost"},"Build with AI"' not in rendered
+    assert 'variant:"ghost"},"Framework"' not in rendered
+    assert 'variant:"ghost"},"Cloud"' not in rendered
+    assert 'variant:"ghost"},"XY"' not in rendered
+    assert DISCORD_URL in rendered
+    assert "Forum" in rendered
+    assert "Discord Community" not in rendered
+    assert "Open the Reflex community forum" in rendered
+    assert 'variant:"primary"' in rendered
+    assert "View XY on GitHub -" not in rendered
+    assert rendered.count("View XY on GitHub") == 2
+    assert 'target:"_blank"' in rendered
+    assert 'rel:"noopener noreferrer"' in rendered
     assert "Open sidebar" in rendered
     assert "Menu01Icon" in rendered
     assert "Cancel01Icon" in rendered
@@ -2065,9 +2077,6 @@ def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
     assert "<details" not in rendered
     assert "<summary" not in rendered
     assert XY_REPOSITORY_URL in rendered
-    assert f"View XY on GitHub - {XY_GITHUB_STARS} stars" in rendered
-    assert 'target:"_blank"' in rendered
-    assert 'rel:"noopener noreferrer"' in rendered
     assert "XY's initial launch is here" in rendered
     assert "Get started" in rendered
     assert "Reserve your spot" not in rendered

@@ -5,18 +5,15 @@ import reflex_components_internal as ui
 from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.components.inkeep import inkeep
 from reflex_site_shared.components.marketing_button import button
-from reflex_site_shared.constants import REFLEX_ASSETS_CDN
+from reflex_site_shared.constants import DISCORD_URL, REFLEX_ASSETS_CDN
 from reflex_site_shared.views.hosting_banner import HostingBannerState
 from reflex_site_shared.views.sidebar import navbar_sidebar_button
 
 XY_REPOSITORY_URL = "https://github.com/reflex-dev/xy"
-XY_GITHUB_STARS = 5
 
-_REFLEX_NAV_LINKS = (
-    ("Overview", "/docs/"),
-    ("Build with AI", "/docs/ai/overview/best-practices/"),
-    ("Framework", "/docs/getting-started/introduction/"),
-    ("Cloud", "/docs/hosting/deploy-quick-start/"),
+_XY_NAV_LINKS = (
+    ("Overview", "/docs/xy/"),
+    ("Reflex Integration", "/docs/xy/integrations/reflex/"),
 )
 
 
@@ -62,34 +59,64 @@ def xy_docs_logo() -> rx.Component:
     )
 
 
-def _menu_item(label: str, href: str, *, active: bool = False) -> rx.Component:
+def _menu_item(label: str, href: str) -> rx.Component:
     """Render one desktop navbar item with the official treatment.
 
     Args:
         label: Visible item label.
         href: Destination URL.
-        active: Whether to render the active section underline.
 
     Returns:
         Official-style navigation menu item.
     """
-    active_class = (
-        "shadow-[inset_0_-1px_0_0_var(--primary-10)] "
-        "[&_button]:text-primary-10 [&_div]:text-primary-10"
-        if active
-        else ""
-    )
     return ui.navigation_menu.item(
         rx.el.elements.a(
             button(label, size="sm", variant="ghost", native_button=False),
             href=href,
             class_name="no-underline",
         ),
-        class_name=ui.cn(
-            "hidden h-full items-center justify-center md:flex",
-            active_class,
-        ),
+        class_name="hidden h-full items-center justify-center md:flex",
         custom_attrs={"role": "menuitem"},
+    )
+
+
+def _forum_button() -> rx.Component:
+    """Render the external Reflex community forum link."""
+    label = "Open the Reflex community forum"
+    return rx.el.elements.a(
+        button(
+            get_icon(icon="discord_navbar", class_name="size-4 shrink-0"),
+            "Forum",
+            custom_attrs={"aria-label": label},
+            size="sm",
+            variant="primary",
+            native_button=False,
+            class_name="whitespace-nowrap",
+        ),
+        href=DISCORD_URL,
+        target="_blank",
+        rel="noopener noreferrer",
+        aria_label=label,
+    )
+
+
+def _github_button() -> rx.Component:
+    """Render the external XY repository link."""
+    label = "View XY on GitHub"
+    return rx.el.elements.a(
+        button(
+            get_icon(icon="github_navbar", class_name="size-4 shrink-0"),
+            "GitHub",
+            custom_attrs={"aria-label": label},
+            size="sm",
+            variant="ghost",
+            native_button=False,
+            class_name="whitespace-nowrap",
+        ),
+        href=XY_REPOSITORY_URL,
+        target="_blank",
+        rel="noopener noreferrer",
+        aria_label=label,
     )
 
 
@@ -101,8 +128,7 @@ def _navigation_menu() -> rx.Component:
     """
     return ui.navigation_menu.root(
         ui.navigation_menu.list(
-            *(_menu_item(label, href) for label, href in _REFLEX_NAV_LINKS),
-            _menu_item("XY", "/docs/xy/", active=True),
+            *(_menu_item(label, href) for label, href in _XY_NAV_LINKS),
             class_name="m-0 flex h-full list-none flex-row items-center gap-2",
             custom_attrs={"role": "menubar"},
         ),
@@ -113,23 +139,15 @@ def _navigation_menu() -> rx.Component:
                 custom_attrs={"role": "menuitem"},
             ),
             ui.navigation_menu.item(
-                rx.el.elements.a(
-                    button(
-                        get_icon(icon="github_navbar", class_name="size-4 shrink-0"),
-                        str(XY_GITHUB_STARS),
-                        custom_attrs={
-                            "aria-label": (f"View XY on GitHub - {XY_GITHUB_STARS} stars")
-                        },
-                        size="sm",
-                        variant="ghost",
-                    ),
-                    href=XY_REPOSITORY_URL,
-                    target="_blank",
-                    rel="noopener noreferrer",
-                    aria_label=f"View XY on GitHub - {XY_GITHUB_STARS} stars",
-                ),
+                _forum_button(),
                 unstyled=True,
-                class_name="hidden xl:flex",
+                class_name="hidden md:flex",
+                custom_attrs={"role": "menuitem"},
+            ),
+            ui.navigation_menu.item(
+                _github_button(),
+                unstyled=True,
+                class_name="hidden lg:flex",
                 custom_attrs={"role": "menuitem"},
             ),
             ui.navigation_menu.item(
@@ -281,7 +299,6 @@ def xy_docs_navbar() -> rx.Component:
 
 
 __all__ = [
-    "XY_GITHUB_STARS",
     "XY_REPOSITORY_URL",
     "xy_docs_logo",
     "xy_docs_navbar",
