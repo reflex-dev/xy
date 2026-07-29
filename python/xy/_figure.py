@@ -1317,6 +1317,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
         configured_margin = opts.get("margin")
         if lo == hi and configured_margin is None:
+            if self.coords == "polar" and self._axis_dim(axis_id) == "y" and scale != "log":
+                # Constant-radius data must not bypass the centre-origin
+                # default below: padding a singleton r=5 to [4.75, 5.25] draws
+                # a unit circle as a ring floating mid-disc, exactly the
+                # picture the polar branch exists to forbid. Same rule as the
+                # non-singleton branch: centre origin, no outer pad.
+                lo_out = min(0.0, lo)
+                hi_out = hi if hi > lo_out else lo_out + 1.0
+                return (hi_out, lo_out) if opts.get("reverse") else (lo_out, hi_out)
             pad = abs(lo) * 0.05 or 0.5
             lo, hi = lo - pad, hi + pad
             if scale == "log" and lo <= 0:

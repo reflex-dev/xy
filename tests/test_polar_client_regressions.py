@@ -379,3 +379,103 @@ setTimeout(() => {
     assert result["panButton"] is False
     assert result["afterZoom"] != pytest.approx(result["beforeZoom"])
     assert result["afterDrag"] == pytest.approx(result["afterZoom"])
+
+
+def test_polar_wheel_zoom_is_alive_and_keeps_r_lo_fixed(tmp_path: Path) -> None:
+    """Real wheel events must zoom the radial axis with r_lo pinned (§8).
+
+    Two regressions in one probe. First, the wheel gate `dragMode === "none"`
+    conflated the user's modebar opt-out with the RESOLVED default — polar
+    disables pan/box/select, so its default drag tool is `none`, and the gate
+    made radial wheel zoom (polar's only navigation) dead on arrival. Second,
+    the assertion is on the §8 contract itself — r_lo fixed, r_hi scaled —
+    not just `after != before`.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    theta = [i * 2.0 * math.pi / 40.0 for i in range(40)]
+    r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
+    chart = xy.polar_chart(xy.line(theta, r, animation=False), width=420, height=420)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const before = view._axisRange("y").slice();
+    const canvas = view.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width * 0.62;
+    const cy = rect.top + rect.height * 0.42;
+    for (let i = 0; i < 5; i++) {
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        deltaY: -120, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
+      }));
+    }
+    setTimeout(() => {
+      const after = view._axisRange("y").slice();
+      document.body.setAttribute("data-xy-polar-wheel", JSON.stringify({ before, after }));
+    }, 260);
+  } catch (error) {
+    document.body.setAttribute("data-xy-polar-wheel-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_wheel.html",
+        "data-xy-polar-wheel",
+        label="polar wheel zoom",
+    )
+    before, after = result["before"], result["after"]
+    assert before[0] == 0.0
+    assert after[0] == 0.0, f"radial zoom moved r_lo: {after}"
+    assert after[1] < before[1] * 0.9, f"wheel did not zoom: {before} -> {after}"
+
+
+def test_polar_bar_hover_wraps_across_the_seam(tmp_path: Path) -> None:
+    """A wedge straddling theta = 0/turn (a wind-rose "N" sector) must be
+    hoverable on BOTH sides of the seam. `_barHover` compared |dataX - centre|
+    in unwrapped data space, so dataX = 355 missed a 30-degree bar centred on
+    0 (|355 - 0| = 355), which drew correctly and was silently un-hoverable
+    on its wrap side — the exact miss spec §3.2 calls out."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    chart = xy.polar_chart(
+        xy.bar([0.0, 90.0, 180.0], [3.0, 2.0, 1.0], width=30.0, animation=False),
+        xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        width=420,
+        height=420,
+    )
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const g = view.gpuTraces.find((t) => t.trace.bar);
+    document.body.setAttribute("data-xy-polar-seam-hover", JSON.stringify({
+      direct: !!view._barHover(g, 10.0, 1.5),
+      wrapped: !!view._barHover(g, 355.0, 1.5),
+      outside: !!view._barHover(g, 40.0, 1.5),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-polar-seam-hover-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_seam_hover.html",
+        "data-xy-polar-seam-hover",
+        label="polar seam hover",
+    )
+    assert result == {"direct": True, "wrapped": True, "outside": False}

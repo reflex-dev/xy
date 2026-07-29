@@ -271,9 +271,9 @@ them draw points:
 | `LINE_VS` | 486 | line | yes |
 | `SEGMENT_VS` | 588 | error bars, stems, contour | **yes for allowlisted `errorbar` and `contour` only** — this does not make generic segment marks polar-legal |
 | `MESH_VS` | 653 | hexbin, triangle mesh | no — §7 |
-| `AREA_VS` | 738 | area, error bands | yes — interpolates in data space, then projects, so radial edges are true radii and fill boundaries are chords |
+| `AREA_VS` | 738 | area (error bands stay outside the polar allowlist) | yes — interpolates in data space, then projects, so radial edges are true radii and fill boundaries are chords |
 | `BAR_VS` | — | compact bars | yes — sweeps `POLAR_BAR_SEGMENTS`+1 vertex pairs per instance: an annular sector, not a quad |
-| `RECT_VS` | 796 | histogram, box, violin (four-edge rects) | no — §7 |
+| `RECT_VS` | 796 | four-edge rects: the unequal-width slice path (§7); histogram/box/violin stay refused | yes — sweeps the same annular sector as `BAR_VS` |
 
 `POINT_SIMPLE_VS` and `PICK_VS` are the traps. Scatter silently switches to the
 simple program whenever `_canDrawSimplePoints` holds, so transforming only
@@ -321,6 +321,10 @@ share geometry. So the Python projection is written **once** in `_svg.py` and
 both exporters inherit it. Two consequences:
 
 - SVG can express rings as `<circle>` and sectors as `A` path commands.
+- PDF inherits every polar chart from the SVG: the full-disc clip lowers to
+  four Bézier quarter-arcs, and the hole/sector clips — emitted as a single
+  `<path>` clipPath — lower to PDF path ops with SVG's `clip-rule` mapped onto
+  `W`/`W*`. A clip shape outside that set still fails loudly.
 - The raster path still has no arc or wedge paint primitive. Curves are
   pre-flattened polylines/polygons, following the `_round_rect_pts` precedent.
   It does have one analytic annular-sector **mark clip** in the private display
@@ -422,6 +426,11 @@ MVP surface, deliberately small:
   endpoint made a radar fill vanish the moment zoom lifted `r_lo` above its
   baseline. A span fully outside collapses to zero and draws nothing.
 - **Reset** — existing modebar, no change.
+- The wheel gesture stays live even though polar's resolved default drag tool
+  is `none` (pan/box/select are all disabled, so there is nothing to drag).
+  Only the *user* choosing the `none` tool releases page scroll — the gate
+  distinguishes that from a chart that simply has no drag tools, because
+  conflating them made radial zoom dead on arrival.
 
 Deferred and explicitly disabled rather than half-working: θ pan (rotation),
 sector zoom, and box select. Box select's rectangle has no polar meaning; the

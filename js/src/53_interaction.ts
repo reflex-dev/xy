@@ -400,9 +400,11 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "wheel", (e) => {
       // The drag tool never disables the wheel (box-zoom/select drags are
-      // drag-only tools) — except `none`, the modebar's escape hatch that
-      // releases page scroll for embedded charts.
-      if (this.dragMode === "none") return;
+      // drag-only tools) — except `none` CHOSEN by the user, the modebar's
+      // escape hatch that releases page scroll for embedded charts. A chart
+      // whose resolved default is `none` because no drag tool applies (polar)
+      // keeps its wheel gesture.
+      if (this.dragMode === "none" && this._dragModeUserSet) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -1750,7 +1752,7 @@ Object.assign(ChartView.prototype, {
     // A chart can mount beneath an already-stationary pointer, so initialize
     // from the current hover state instead of waiting for pointerenter.
     setVisible(root.matches(":hover"));
-    this._setDragMode(this.dragMode);
+    this._setDragMode(this.dragMode, { userInitiated: false });
   },
 
   // The modebar is unusable chrome once the plot box can't contain it — in a
@@ -1775,7 +1777,16 @@ Object.assign(ChartView.prototype, {
     this._clampModebar();
   },
 
-  _setDragMode(mode) {
+  _setDragMode(mode, { userInitiated = true } = {}) {
+    // Calls here are explicit tool changes (modebar, keyboard, the
+    // select-fallback) except the modebar-build re-assert, which passes
+    // userInitiated: false. The wheel gate needs the distinction: a user
+    // choosing the `none` tool releases page scroll, but a chart whose
+    // resolved default is `none` because it HAS no drag tools (polar
+    // disables pan/box/select) must keep its wheel gesture — radial zoom is
+    // the only navigation polar has, and gating it on dragMode made it dead
+    // on arrival.
+    if (userInitiated) this._dragModeUserSet = true;
     this.dragMode = mode;
     // Cursor telegraphs the gesture (grab for pan, crosshair for box-zoom) but
     // lives in the defeatable :where([data-xy-slot="canvas"]) stylesheet keyed on
@@ -2091,7 +2102,13 @@ Object.assign(ChartView.prototype, {
     if (![c0, c1].every(Number.isFinite) || c0 === c1) return null;
     const ca = c0 + anchorFrac * (c1 - c0);
     if (f < 1) {
-      const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
+      // Floor on the interval's own magnitude, not the anchor's: polar radial
+      // zoom anchors at r_lo = 0, making |ca| = 0 and the old floor 1e-42 —
+      // no floor at all, so sustained wheel-in sailed past f32 quantization
+      // into visible banding. |ca| never exceeds max(|c0|, |c1|), so this is
+      // at least as strict everywhere, including centre-anchored cartesian
+      // zoom on a symmetric range (which had the same hole).
+      const minSpan = Math.max(Math.abs(c0), Math.abs(c1), 1e-30) * 1e-12;
       if (Math.abs((c1 - c0) * f) < minSpan) return null;
     }
     const next0 = ca - (ca - c0) * f;

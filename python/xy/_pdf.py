@@ -190,6 +190,7 @@ _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "defs": frozenset(),
     "clipPath": frozenset({"id"}),
     "clip-circle": frozenset({"cx", "cy", "r"}),
+    "clip-path-shape": frozenset({"d", "clip-rule"}),
     "clip-rect": frozenset({"x", "y", "width", "height"}),
     "linearGradient": frozenset({"id", "x1", "y1", "x2", "y2", "gradientUnits"}),
     "stop": frozenset({"offset", "stop-color", "stop-opacity"}),
@@ -837,10 +838,23 @@ class _Converter:
                 cid = el.get("id")
                 children = list(el)
                 child_tag = _local(children[0].tag) if len(children) == 1 else None
-                if cid is None or child_tag not in ("rect", "circle"):
-                    _unsupported("<clipPath> without a single <rect> or <circle>")
+                if cid is None or child_tag not in ("rect", "circle", "path"):
+                    _unsupported("<clipPath> without a single <rect>, <circle> or <path>")
                 shape = children[0]
-                if child_tag == "circle":
+                if child_tag == "path":
+                    # Polar hole/sector clips: an annular or partial-sector
+                    # region the SVG emitter writes as one path of arcs. PDF
+                    # clips take any path, so the parsed segments (arcs already
+                    # lowered to cubics by _parse_path) apply verbatim.
+                    _check_attrs(shape, "clipPath path", _ALLOWED_ATTRS["clip-path-shape"])
+                    d = shape.get("d")
+                    if d is None:
+                        _unsupported("<clipPath> path without d")
+                    rule = shape.get("clip-rule", "nonzero")
+                    if rule not in ("nonzero", "evenodd"):
+                        _unsupported(f"clip-rule {rule!r}")
+                    self.clips[cid] = ("path", _parse_path(d), rule)
+                elif child_tag == "circle":
                     # The polar disc clip. PDF has no circle primitive, so the
                     # emitter draws it as four Bezier quarter-arcs.
                     _check_attrs(shape, "clipPath circle", _ALLOWED_ATTRS["clip-circle"])
@@ -1175,13 +1189,21 @@ class _Converter:
                 _unsupported(f"clip-path {clip_ref!r}")
             clip = self.clips[m.group(1)]
             self._push()
+            clip_op = "W n"
             if clip[0] == "circle":
                 _, cx, cy, radius = clip
                 self._append_circle_path(cx, cy, radius)
+            elif clip[0] == "path":
+                self._emit_segments(clip[1])
+                # PDF winding: `W` is nonzero, `W*` evenodd — the same
+                # vocabulary as SVG's clip-rule, so an annular hole clip
+                # stays a hole.
+                if clip[2] == "evenodd":
+                    clip_op = "W* n"
             else:
                 _, x, y, w, h = clip
                 self.ops.append(f"{_f(x)} {_f(y)} {_f(w)} {_f(h)} re")
-            self.ops.append("W n")
+            self.ops.append(clip_op)
             clipped = True
         self._render_children(el, child)
         if clipped:

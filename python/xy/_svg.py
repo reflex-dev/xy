@@ -3076,8 +3076,13 @@ def polar_wedge_points(
     # The client clamps identically in BAR_VS; the static shaped clips then
     # contain stroke antialiasing at the exact annular-sector boundary.
     floor = polar.inner_fraction
-    outer = min(1.0, max(floor, float(polar.norm_radius(r1)))) * polar.radius
-    inner = min(1.0, max(floor, float(polar.norm_radius(r0)))) * polar.radius
+    # Order the NORMALIZED fractions before clamping: on a reversed radial
+    # axis `norm_radius` is decreasing, so norm(r1) < norm(r0) for r1 > r0 and
+    # taking them positionally dropped every wedge from both static exports
+    # while the shader (which min/maxes u_rrange) kept drawing them.
+    lo_frac, hi_frac = sorted((float(polar.norm_radius(r0)), float(polar.norm_radius(r1))))
+    outer = min(1.0, max(floor, hi_frac)) * polar.radius
+    inner = min(1.0, max(floor, lo_frac)) * polar.radius
     if outer <= 0.0 or outer <= inner:
         return []
     angles = polar.wedge_angles(theta0, theta1)
@@ -3183,8 +3188,13 @@ def _polar_wedge_path(
     opcode (polar-axes.md §5/§6).
     """
     floor = polar.inner_fraction
-    outer = min(1.0, max(floor, float(polar.norm_radius(r1)))) * polar.radius
-    inner = min(1.0, max(floor, float(polar.norm_radius(r0)))) * polar.radius
+    # Order the NORMALIZED fractions before clamping: on a reversed radial
+    # axis `norm_radius` is decreasing, so norm(r1) < norm(r0) for r1 > r0 and
+    # taking them positionally dropped every wedge from both static exports
+    # while the shader (which min/maxes u_rrange) kept drawing them.
+    lo_frac, hi_frac = sorted((float(polar.norm_radius(r0)), float(polar.norm_radius(r1))))
+    outer = min(1.0, max(floor, hi_frac)) * polar.radius
+    inner = min(1.0, max(floor, lo_frac)) * polar.radius
     if outer <= 0.0 or outer <= inner:
         return ""
     angles = polar.wedge_angles(theta0, theta1)

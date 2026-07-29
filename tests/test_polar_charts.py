@@ -205,10 +205,18 @@ def test_raster_and_svg_agree_on_where_the_data_lands() -> None:
     This is the check that catches an exporter silently keeping its own
     geometry — the failure two export-parity audits found in this repo.
     """
-    # One point at theta=0, r=max: due right of centre, on the outer ring.
+    # Constant r once autoranged to a padded band; it now centre-origins
+    # (constant-radius singleton fix), which would park these marks exactly on
+    # the outer ring and under the frame stroke. An explicit domain keeps them
+    # mid-disc so the negative probe below samples genuinely empty canvas.
     theta = np.array([0.0, math.pi / 2, math.pi])
     r = np.array([1.0, 1.0, 1.0])
-    chart = xy.polar_chart(xy.scatter(theta, r, size=9.0, color="#000000"), width=400, height=400)
+    chart = xy.polar_chart(
+        xy.scatter(theta, r, size=9.0, color="#000000"),
+        xy.r_axis(domain=(0.0, 2.0)),
+        width=400,
+        height=400,
+    )
     fig = chart.figure()
     spec, _blob = fig.build_payload_split()
     _w, _h, _compact, plot = layout(spec)
@@ -1049,3 +1057,108 @@ def test_client_projects_point_annotations_through_polar() -> None:
     assert point_kinds >= 6, "point-anchored annotations must use the joint polar projection"
     # rule/band stay on the separable path on purpose (deferred geometry).
     assert "_dataPxX(Number(ann.value))" in source
+
+
+# -- review round 3: reversed-r exports, PDF clips, singleton range, area cull
+
+
+def test_reversed_radial_axis_keeps_wedges_in_static_exports() -> None:
+    """The static twin of the client reversed-r regression: `norm_radius` is
+    decreasing on a reversed axis, so taking the normalized endpoints
+    positionally made outer <= inner and silently dropped every wedge from
+    SVG/PNG while the shader (which min/maxes) kept drawing them."""
+
+    def wedge_paths(**rkw) -> int:
+        chart = xy.polar_chart(
+            xy.bar([0.0, 1.0, 2.0], [3.0, 5.0, 4.0], width=0.5),
+            xy.r_axis(**rkw),
+            width=360,
+            height=340,
+        )
+        doc = chart.figure().to_image(format="svg").decode()
+        return len([d for d in re.findall(r'<path d="([^"]+)"', doc) if " A " in d])
+
+    assert wedge_paths(domain=(1.0, 10.0)) == 3
+    assert wedge_paths(domain=(1.0, 10.0), reverse=True) == 3
+
+
+@pytest.mark.parametrize(
+    ("label", "theta_kwargs", "r_kwargs"),
+    [
+        ("hole", {}, {"hole": 0.3}),
+        ("sector", {"sector": (0.0, 90.0)}, {}),
+        ("hole+sector", {"sector": (20.0, 160.0)}, {"hole": 0.4}),
+    ],
+)
+def test_pdf_export_supports_hole_and_sector_clips(label, theta_kwargs, r_kwargs) -> None:
+    """The marks clip is a <circle> only for the full disc; hole/sector emit a
+    <path> clipPath, which the PDF converter refused — so the headline polar
+    features crashed `to_image(format="pdf")`. The path clip now lowers to PDF
+    ops with the SVG clip-rule mapped onto W/W*."""
+    chart = xy.polar_chart(
+        xy.bar([30.0, 70.0], [3.0, 5.0], width=8.0),
+        xy.theta_axis(unit="degrees", **theta_kwargs),
+        xy.r_axis(**r_kwargs),
+        width=320,
+        height=300,
+    )
+    pdf = chart.figure().to_image(format="pdf")
+    assert pdf[:5] == b"%PDF-" and len(pdf) > 800
+
+
+def test_constant_radius_series_still_starts_at_the_centre() -> None:
+    """The singleton (lo == hi) early-return fired before the polar branch, so
+    constant-radius data resolved to a padded [4.75, 5.25] — a unit circle
+    rendered as a ring floating mid-disc."""
+    spec, _ = (
+        xy.polar_chart(xy.line([0.0, 1.0, 2.0, 3.0], [5.0] * 4), width=320, height=300)
+        .figure()
+        .build_payload_split()
+    )
+    assert spec["y_axis"]["range"] == [0.0, 5.0]
+
+
+def test_raster_polar_area_culls_vertices_outside_the_sector() -> None:
+    """The raster polar area branch only clamped radii; SVG (via _curve_path's
+    position_mask) and the shader cull out-of-sector and NaN vertices. The PNG
+    painted the full-turn polygon with chords across the sector boundary and
+    let NaN reach the display list (§19)."""
+    from xy import _raster
+
+    captured: list[int] = []
+    original_fill = _raster._Cmd.fill
+    original_grad = _raster._Cmd.grad
+
+    def spy_fill(self, pts, color):
+        captured.append(len(pts))
+        return original_fill(self, pts, color)
+
+    def spy_grad(self, pts, g0, g1, stops):
+        captured.append(len(pts))
+        return original_grad(self, pts, g0, g1, stops)
+
+    _raster._Cmd.fill = spy_fill
+    _raster._Cmd.grad = spy_grad
+    try:
+        theta = np.linspace(0.0, 360.0, 40)
+        r = 1 + 0.3 * np.sin(np.radians(theta) * 3)
+        r_nan = r.copy()
+        r_nan[20] = np.nan
+        chart = xy.polar_chart(
+            xy.area(theta, r_nan),
+            xy.theta_axis(unit="degrees", sector=(0.0, 90.0)),
+            xy.r_axis(domain=(0.0, 1.5)),
+            width=320,
+            height=300,
+        )
+        chart.figure().to_image(format="png", scale=1)
+    finally:
+        _raster._Cmd.fill = original_fill
+        _raster._Cmd.grad = original_grad
+
+    in_sector = int(((theta >= 0.0) & (theta <= 90.0)).sum())
+    area_polys = [n for n in captured if n > 8]
+    assert area_polys, "the area fill vanished entirely"
+    # Every emitted polygon must be bounded by the visible-run size, not the
+    # full 2 * 40-vertex turn.
+    assert all(n <= 2 * in_sector for n in area_polys), (theta.size, area_polys)

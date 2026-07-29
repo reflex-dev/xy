@@ -1920,33 +1920,59 @@ def _emit_area(
         # its control points are only exact under an affine map. Radii clamp to
         # the radial range — the fill at each theta is [base, top] ∩
         # [r_lo, r_hi], and a base below r_lo would otherwise mirror through
-        # the centre (mirrors the SVG area branch and AREA_VS).
+        # the centre (mirrors the SVG area branch and AREA_VS). Vertices
+        # outside the theta sector (or NaN) are CULLED, splitting the fill
+        # into visible runs — the SVG path applies position_mask inside
+        # _curve_path and the client NaN-culls in the shader; painting them
+        # here drew chords across the sector boundary and let NaN reach the
+        # display list (§19).
         radial_min, radial_max = sorted((polar.r_lo, polar.r_hi))
-        top = np.column_stack(polar(xv, np.clip(yv, radial_min, radial_max)))
-        base = np.column_stack(polar(xv[::-1], np.clip(bv[::-1], radial_min, radial_max)))
+        top_r = np.clip(yv, radial_min, radial_max)
+        base_r = np.clip(bv, radial_min, radial_max)
+        visible = polar.position_mask(xv, top_r) & polar.position_mask(xv, base_r)
+        if bool(visible.all()):
+            runs = [np.arange(len(xv))]
+        else:
+            indices = np.flatnonzero(visible)
+            runs = (
+                []
+                if indices.size == 0
+                else np.split(indices, np.flatnonzero(np.diff(indices) > 1) + 1)
+            )
+        pieces = []
+        for run in runs:
+            if len(run) < 2:
+                continue
+            run_top = np.column_stack(polar(xv[run], top_r[run]))
+            run_base = np.column_stack(polar(xv[run][::-1], base_r[run][::-1]))
+            pieces.append((run_top, run_base))
     else:
         top = _scene.curve_points(xv, yv, sx, sy, smooth)
         base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)
-    poly = np.vstack([top, base])
+        pieces = [(top, base)]
     op = _fill_opacity(style, 0.35)
     fill_spec = style.get("fill")
-    if isinstance(fill_spec, dict):
-        xs, ys = poly[:, 0], poly[:, 1]
-        bbox = (xs.min(), ys.min(), xs.max() - xs.min(), ys.max() - ys.min())
-        g0, g1 = _grad_line(
-            fill_spec.get("space", "mark"), fill_spec.get("dir", "down"), bbox, plot
-        )
-        stops = [(o, (c[0], c[1], c[2], int(c[3] * op))) for o, c in _grad_stops(fill_spec, color)]
-        cmd.grad(poly.tolist(), g0, g1, stops)
-    else:
-        cmd.fill(poly.tolist(), _rgba(style.get("color"), color, op))
-    lw = float(style.get("line_width", 1.2))
-    if lw > 0:
-        lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
-        line_color = _rgba(style.get("line_color"), style.get("color") or color, lop)
-        cmd.stroke(top, lw, line_color, dash=style.get("dash"))
-        if style.get("stroke_perimeter"):
-            cmd.stroke(base, lw, line_color, dash=style.get("dash"))
+    for top, base in pieces:
+        poly = np.vstack([top, base])
+        if isinstance(fill_spec, dict):
+            xs, ys = poly[:, 0], poly[:, 1]
+            bbox = (xs.min(), ys.min(), xs.max() - xs.min(), ys.max() - ys.min())
+            g0, g1 = _grad_line(
+                fill_spec.get("space", "mark"), fill_spec.get("dir", "down"), bbox, plot
+            )
+            stops = [
+                (o, (c[0], c[1], c[2], int(c[3] * op))) for o, c in _grad_stops(fill_spec, color)
+            ]
+            cmd.grad(poly.tolist(), g0, g1, stops)
+        else:
+            cmd.fill(poly.tolist(), _rgba(style.get("color"), color, op))
+        lw = float(style.get("line_width", 1.2))
+        if lw > 0:
+            lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
+            line_color = _rgba(style.get("line_color"), style.get("color") or color, lop)
+            cmd.stroke(top, lw, line_color, dash=style.get("dash"))
+            if style.get("stroke_perimeter"):
+                cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
 def _trace_paint_rgba(

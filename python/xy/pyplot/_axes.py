@@ -3844,8 +3844,13 @@ class Axes(PlotTypeMixin):
         xticklabels = kwargs.pop("xticklabels", None)
         yticklabels = kwargs.pop("yticklabels", None)
         projection = kwargs.pop("projection", None)
-        if projection not in (None, "rectilinear"):
-            raise not_implemented(f"projection={projection!r} axes", "2-D rectilinear charts")
+        if projection is not None:
+            # Pre-polar this raised NotImplementedError for every non-default
+            # value, which left `plt.subplot(111, projection="polar")` on an
+            # already-claimed slot rejecting a now-supported idiom.
+            # _set_projection accepts 'polar'/'rectilinear' and stays loud
+            # (ValueError) for anything else.
+            self._set_projection(projection)
         unknown: list[str] = []
         for name, value in kwargs.items():
             setter = aliases.get(name)
@@ -4505,6 +4510,15 @@ class Axes(PlotTypeMixin):
         spec = host._scale_specs[key]
         if self._axis_is_dataless(axis):
             return (1.0, 10.0) if spec["name"] == "log" else (0.0, 1.0)
+        if axis == "y" and self._projection == "polar" and spec["name"] != "log":
+            # The radial preview must match the engine's polar autorange
+            # (centre origin, no outer pad — _figure._range), or every
+            # rlim call snapshots cartesian-padded values: set_rmax(2.0)
+            # froze [0.85, 2.0] where matplotlib gives [0, 2].
+            lo, hi = self._entry_extent(axis)
+            lo = min(0.0, float(lo))
+            hi = float(hi) if hi > lo else lo + 1.0
+            return lo, hi
         if spec["name"] == "log":
             # The core consumes log domains in the original positive data
             # space, while Matplotlib applies margins after transforming to
@@ -5784,9 +5798,24 @@ class Axes(PlotTypeMixin):
         return -1 if self._polar_options.get("theta_direction") == "clockwise" else 1
 
     def set_rlim(self, bottom: Any = None, top: Any = None, **kwargs: Any) -> Any:
-        """Radial limits — the polar spelling of `set_ylim`."""
+        """Radial limits — the polar spelling of `set_ylim`.
+
+        Accepts matplotlib's documented ``rmin``/``rmax`` keywords; anything
+        else is refused by name rather than forwarded to `set_ylim`, whose
+        signature does not know them.
+        """
         self._require_polar("set_rlim")
-        return self.set_ylim(bottom, top, **kwargs)
+        if "rmin" in kwargs:
+            if bottom is not None:
+                raise ValueError("set_rlim: pass either bottom or rmin, not both")
+            bottom = kwargs.pop("rmin")
+        if "rmax" in kwargs:
+            if top is not None:
+                raise ValueError("set_rlim: pass either top or rmax, not both")
+            top = kwargs.pop("rmax")
+        if kwargs:
+            raise TypeError(f"set_rlim got unexpected keyword(s) {sorted(kwargs)}")
+        return self.set_ylim(bottom, top)
 
     def set_rmin(self, rmin: float) -> None:
         self._require_polar("set_rmin")

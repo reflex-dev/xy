@@ -7058,9 +7058,21 @@ export class ChartView {
     return best;
   }
 
+  // Seam-aware angular containment for wedge hover: |dataX - centre| in
+  // unwrapped data space misses any wedge straddling theta = 0/turn (a
+  // wind-rose "N" sector), which draws fine and was silently un-hoverable on
+  // its wrap side. Distances re-base through the same positive-mod the
+  // heatmap inverse uses (spec section 3.2: any angular metric must wrap).
+  _polarAngularDistance(geom, a, b) {
+    const turn = geom.turn || 1;
+    const forward = this._polarPositiveMod(a - b, turn);
+    return Math.min(forward, turn - forward);
+  }
+
   _barHover(g, dataX, dataY) {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
+    const geom = this._polarGeometry();
     const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
       const x = this._decodeValue(cpu.x, cpu.xMeta, i);
@@ -7074,8 +7086,13 @@ export class ChartView {
         if (dataX >= lo && dataX <= hi && Math.abs(dataY - y) <= g.width / 2) {
           return { trace: g.trace.id, index: i, g, synthetic: true };
         }
-      } else if (Math.abs(dataX - x) <= g.width / 2 && dataY >= lo && dataY <= hi) {
-        return { trace: g.trace.id, index: i, g, synthetic: true };
+      } else {
+        const near = geom
+          ? this._polarAngularDistance(geom, dataX, x) <= g.width / 2
+          : Math.abs(dataX - x) <= g.width / 2;
+        if (near && dataY >= lo && dataY <= hi) {
+          return { trace: g.trace.id, index: i, g, synthetic: true };
+        }
       }
     }
     return null;
@@ -7083,16 +7100,24 @@ export class ChartView {
 
   _rectHover(g, dataX, dataY) {
     const r = g._cpuRect;
+    const geom = this._polarGeometry();
     const limit = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length, g.n || r.x0.length);
     for (let i = 0; i < limit; i++) {
       const x0 = this._decodeValue(r.x0, r.x0Meta, i);
       const x1 = this._decodeValue(r.x1, r.x1Meta, i);
       const y0 = this._decodeValue(r.y0, r.y0Meta, i);
       const y1 = this._decodeValue(r.y1, r.y1Meta, i);
-      if (
-        dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1) &&
-        dataY >= Math.min(y0, y1) && dataY <= Math.max(y0, y1)
-      ) {
+      let insideX;
+      if (geom) {
+        // A four-edge wedge's angular span may straddle the seam; test the
+        // wrapped offset from the span's start instead of a raw interval.
+        const turn = geom.turn || 1;
+        const span = this._polarPositiveMod(x1 - x0, turn) || Math.abs(x1 - x0);
+        insideX = this._polarPositiveMod(dataX - Math.min(x0, x1), turn) <= span;
+      } else {
+        insideX = dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1);
+      }
+      if (insideX && dataY >= Math.min(y0, y1) && dataY <= Math.max(y0, y1)) {
         return { trace: g.trace.id, index: i, g, synthetic: true };
       }
     }

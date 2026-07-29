@@ -446,6 +446,14 @@ class Figure:
         if existing is None:
             return self.add_subplot(*args, **kwargs)
         self._current_ax = existing
+        projection = kwargs.pop("projection", None)
+        if kwargs.pop("polar", False):
+            projection = "polar"
+        if projection is not None:
+            # Same handling as add_subplot: re-requesting a claimed slot with
+            # a projection reconfigures it rather than bouncing off the
+            # generic Axes.set path.
+            existing._set_projection(projection)
         sharex = kwargs.pop("sharex", None)
         sharey = kwargs.pop("sharey", None)
         self._share_subplot_axes(existing, sharex=sharex, sharey=sharey)
