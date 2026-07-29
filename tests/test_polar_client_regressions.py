@@ -409,15 +409,32 @@ setTimeout(() => {
     const rect = canvas.getBoundingClientRect();
     const cx = rect.left + rect.width * 0.62;
     const cy = rect.top + rect.height * 0.42;
+
+    // Wheel deltas apply a frame later; make frames deterministic instead of
+    // waiting out a wall-clock delay. The headless probe runs under
+    // --virtual-time-budget, which fast-forwards timers but still needs real
+    // frames for rAF, so a timed wait can resolve BEFORE the zoom commits.
+    view._raf = null;
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 4 && frames.length; round++) {
+        const queued = frames;
+        frames = [];
+        for (const fn of queued) fn();
+      }
+    };
+
     for (let i = 0; i < 5; i++) {
       canvas.dispatchEvent(new WheelEvent("wheel", {
         deltaY: -120, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
       }));
     }
-    setTimeout(() => {
-      const after = view._axisRange("y").slice();
-      document.body.setAttribute("data-xy-polar-wheel", JSON.stringify({ before, after }));
-    }, 260);
+    flush();
+    const after = view._axisRange("y").slice();
+    window.requestAnimationFrame = realRaf;
+    document.body.setAttribute("data-xy-polar-wheel", JSON.stringify({ before, after }));
   } catch (error) {
     document.body.setAttribute("data-xy-polar-wheel-error", String(error));
   }
