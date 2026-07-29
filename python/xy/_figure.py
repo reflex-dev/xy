@@ -533,6 +533,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
     stairs = _marks.stairs
     stem = _marks.stem
     segments = _marks.segments
+    ribbon = _marks.ribbon
+    sankey = _marks.sankey
     triangle_mesh = _marks.triangle_mesh
     bar = _marks.bar
     column = _marks.column
@@ -1374,6 +1376,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             and t.y1 is not None
         ):
             return [t.x0, t.x1, t.x] if axis == "x" else [t.y0, t.y1, t.y]
+        if t.kind == "ribbon":
+            # x is just the two faces; y needs all four span edges, two of
+            # which ride in the `x`/`y` slots (ribbon geometry contract).
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]

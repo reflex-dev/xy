@@ -36,6 +36,8 @@ COMPOSITION_ONLY = {"data", "class_name", "key", "animation", "x_axis", "y_axis"
 # explicit so a future rename must update the guard deliberately).
 MARK_PAIRS = [
     ("scatter", "scatter"),
+    ("ribbon", "ribbon"),
+    ("sankey", "sankey"),
     ("line", "line"),
     ("area", "area"),
     ("histogram", "histogram"),
@@ -60,6 +62,8 @@ MARK_PAIRS = [
 # One inline-data Mark per applier kind, used to exercise real forwarding.
 SAMPLE_MARKS = {
     "scatter": lambda: xy.scatter(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "ribbon": lambda: xy.ribbon([0.0], [1.0], [0.0], [0.4], [0.2], [0.6]),
+    "sankey": lambda: xy.sankey([("a", "b", 1.0)]),
     "line": lambda: xy.line(x=[1.0, 2.0], y=[3.0, 4.0]),
     "area": lambda: xy.area(x=[1.0, 2.0], y=[3.0, 4.0]),
     "histogram": lambda: xy.histogram(values=[1.0, 2.0, 3.0]),

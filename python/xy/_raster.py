@@ -920,6 +920,10 @@ def render_raster(
             )
         elif kind == "triangle_mesh":
             _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+        elif kind == "ribbon":
+            # MUST precede the rect fall-through: a ribbon ships x0/x1/y0/y1
+            # too, so a later branch would draw every band as a rectangle.
+            _emit_ribbon(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
 
@@ -2054,6 +2058,78 @@ def _emit_hexbin(
     y2 = np.asarray(sy(cy[:n, None] + ring_y[None, 1:]), dtype=np.float64).reshape(-1)
     fills = np.repeat(_mesh_fill_rgba(t, blob, cols, n, style, color), 6, axis=0)
     cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
+
+
+def _emit_ribbon(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
+    """Flow bands, flattened, with the gradient running along the flow.
+
+    Geometry comes from `_scene.ribbon_polygon` — the same reference the SVG
+    exporter's cubics and the golden test consume — so the two static outputs
+    cannot drift. `cmd.grad` takes an arbitrary two-point gradient vector, which
+    is what lets the ramp follow the flow rather than an axis.
+    """
+    x0v = _column(blob, cols[t["x0"]])
+    x1v = _column(blob, cols[t["x1"]])
+    slo = _column(blob, cols[t["y0"]])
+    shi = _column(blob, cols[t["y1"]])
+    tlo = _column(blob, cols[t["target_y0"]])
+    thi = _column(blob, cols[t["target_y1"]])
+    n = len(x0v)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    source_rgba = _trace_paint_rgba(t, "color", n, color, read)
+    fills = np.rint(
+        _paint.effective_rgba(source_rgba, t, read, component="fill", default_opacity=1.0) * 255.0
+    ).astype(np.uint8)
+    if t.get("color_target"):
+        target_rgba = _trace_paint_rgba(t, "color_target", n, color, read)
+        fills2 = np.rint(
+            _paint.effective_rgba(target_rgba, t, read, component="fill", default_opacity=1.0)
+            * 255.0
+        ).astype(np.uint8)
+    else:
+        fills2 = fills
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_c = _parse_color(_css(style.get("stroke"), color)) if stroke_width > 0 else None
+
+    for i in range(n):
+        poly_data = _scene.ribbon_polygon(
+            float(x0v[i]),
+            float(x1v[i]),
+            float(slo[i]),
+            float(shi[i]),
+            float(tlo[i]),
+            float(thi[i]),
+        )
+        px = sx(poly_data[:, 0])
+        py = sy(poly_data[:, 1])
+        if not (np.all(np.isfinite(px)) and np.all(np.isfinite(py))):
+            continue
+        poly = list(zip(px.tolist(), py.tolist(), strict=True))
+        # effective_rgba already folded the trace opacity into the alpha.
+        a = tuple(int(v) for v in fills[i])
+        b = tuple(int(v) for v in fills2[i])
+        if a[:3] == b[:3]:
+            cmd.fill(poly, a)
+        else:
+            # Gradient vector spans the two faces horizontally; the y term is
+            # irrelevant because the ramp is purely along the flow.
+            gx0, gx1 = float(sx(x0v[i])), float(sx(x1v[i]))
+            gy = float(py[0])
+            cmd.grad(poly, (gx0, gy), (gx1, gy), [(0.0, a), (1.0, b)])
+        if stroke_c is not None:
+            cmd.stroke([*poly, poly[0]], stroke_width, stroke_c)
 
 
 def _emit_triangle_mesh(

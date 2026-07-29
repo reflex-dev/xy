@@ -117,6 +117,9 @@ __all__ = [
     "mark",
     "marker",
     "modebar",
+    "ribbon",
+    "sankey",
+    "sankey_chart",
     "scatter",
     "scatter_chart",
     "segments",
@@ -988,6 +991,138 @@ def segments(
             "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
+        },
+    )
+
+
+def ribbon(
+    x0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    source_lo: Union[str, ArrayLike, None] = None,
+    source_hi: Union[str, ArrayLike, None] = None,
+    target_lo: Union[str, ArrayLike, None] = None,
+    target_hi: Union[str, ArrayLike, None] = None,
+    *,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
+    color_target: Union[str, ColorLike, ArrayLike, None] = None,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Flow bands: a vertical span at `x0` joined to one at `x1` by a cubic.
+
+    The primitive behind `xy.sankey_chart` — and behind alluvial and chord
+    diagrams later. Each band may carry a different colour at each end
+    (`color` at the source, `color_target` at the target); the gradient runs
+    along the flow. Omitting `color_target` paints the band flat.
+
+    Args:
+        x0: Source face x coordinates or a column name.
+        x1: Target face x coordinates or a column name.
+        source_lo: Lower edge of the span at `x0`.
+        source_hi: Upper edge of the span at `x0`.
+        target_lo: Lower edge of the span at `x1`.
+        target_hi: Upper edge of the span at `x1`.
+        data: Table used to resolve column-name inputs.
+        color: Source-end colour(s).
+        color_target: Target-end colour(s); omit for a flat band.
+        colormap: Ramp for continuous colour values.
+        name: Series label used by legends and tooltips.
+        opacity: Band fill opacity from zero to one.
+        stroke: Optional band outline colour.
+        stroke_width: Band outline width in pixels.
+        style: Mark style overrides.
+        class_name: Adapter-only trace metadata.
+        x_axis: Identifier of the x axis used by this mark.
+        y_axis: Identifier of the y axis used by this mark.
+    """
+    return Mark(
+        kind="ribbon",
+        x=x0,
+        y=x1,
+        data=data,
+        name=name,
+        class_name=class_name,
+        style=_mark_style_dict(style, "ribbon style"),
+        props={
+            "source_lo": source_lo,
+            "source_hi": source_hi,
+            "target_lo": target_lo,
+            "target_hi": target_hi,
+            "color": color,
+            "color_target": color_target,
+            "colormap": colormap,
+            "opacity": opacity,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def sankey(
+    links: Any = None,
+    *,
+    nodes: Optional[Sequence[Any]] = None,
+    node_width: float = 0.02,
+    node_padding: float = 0.02,
+    align: str = "justify",
+    iterations: int = 6,
+    colors: Optional[Sequence[str]] = None,
+    link_opacity: Any = 0.4,
+    labels: bool = True,
+    label_size: float = 12.0,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Mark:
+    """A Sankey flow diagram from ``(source, target, value)`` links.
+
+    Layout — layering, crossing minimisation, value-proportional heights and
+    endpoint stacking — happens in Python at build time, the way `hist` owns
+    its binning; the renderers only ever see `ribbon` geometry. Prefer
+    `xy.sankey_chart(...)`, which also hides the axes.
+
+    Args:
+        links: ``(source, target, value)`` triples; endpoints are node names.
+        nodes: Explicit node order. Defaults to first appearance in `links`.
+        node_width: Node rectangle width as a fraction of the diagram.
+        node_padding: Vertical gap between nodes in a layer, as a fraction.
+        align: ``"justify"`` (default) flushes sinks to the last layer.
+        iterations: Crossing-minimisation sweeps.
+        colors: One CSS colour per node, in node order.
+        link_opacity: Ribbon opacity; node rectangles stay opaque.
+        labels: Draw node names beside the nodes.
+        label_size: Node label font size in px.
+        style: Style overrides for the link ribbons.
+    """
+    return Mark(
+        kind="sankey",
+        x=None,
+        y=None,
+        data=None,
+        name=None,
+        class_name=None,
+        style=_mark_style_dict(style, "sankey style"),
+        props={
+            # Validation is deferred to figure build, like every factory:
+            # compute_layout refuses an empty or missing link list by name.
+            "links": [] if links is None else list(links),
+            "nodes": None if nodes is None else list(nodes),
+            "node_width": node_width,
+            "node_padding": node_padding,
+            "align": align,
+            "iterations": iterations,
+            "colors": None if colors is None else list(colors),
+            "link_opacity": link_opacity,
+            "labels": labels,
+            "label_size": label_size,
         },
     )
 
@@ -5393,6 +5528,44 @@ def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _apply_ribbon(fig: Figure, m: Mark, data: Any) -> None:
+    fig.ribbon(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x0"),
+        _resolve_axis_values(fig, data, m.y, "x", f"{m.kind}.x1"),
+        _resolve_axis_values(fig, data, m.props["source_lo"], "y", f"{m.kind}.source_lo"),
+        _resolve_axis_values(fig, data, m.props["source_hi"], "y", f"{m.kind}.source_hi"),
+        _resolve_axis_values(fig, data, m.props["target_lo"], "y", f"{m.kind}.target_lo"),
+        _resolve_axis_values(fig, data, m.props["target_hi"], "y", f"{m.kind}.target_hi"),
+        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+        color_target=_resolve_color(
+            data, m.props["color_target"], context=f"{m.kind}.color_target"
+        ),
+        colormap=m.props["colormap"],
+        name=m.name,
+        opacity=m.props["opacity"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        style=m.style,
+    )
+
+
+def _apply_sankey(fig: Figure, m: Mark, data: Any) -> None:
+    del data  # links are literal triples; there is no frame to resolve against
+    fig.sankey(
+        m.props["links"],
+        nodes=m.props["nodes"],
+        node_width=m.props["node_width"],
+        node_padding=m.props["node_padding"],
+        align=m.props["align"],
+        iterations=m.props["iterations"],
+        colors=m.props["colors"],
+        link_opacity=m.props["link_opacity"],
+        labels=m.props["labels"],
+        label_size=m.props["label_size"],
+        style=m.style,
+    )
+
+
 def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
     color = m.props["color"]
     fig.triangle_mesh(
@@ -5762,6 +5935,8 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "step": _apply_step,
     "stairs": _apply_stairs,
     "stem": _apply_stem,
+    "ribbon": _apply_ribbon,
+    "sankey": _apply_sankey,
     "triangle_mesh": _apply_triangle_mesh,
     "violin": _apply_violin,
 }
@@ -6011,6 +6186,46 @@ def stem_chart(*children: Component, **props: Any) -> Chart:
 def segments_chart(*children: Component, **props: Any) -> Chart:
     """A segment chart composing generic independent segment marks."""
     return Chart("segments_chart", children, **props)
+
+
+def sankey_chart(
+    links: Any = None,
+    *children: Component,
+    **props: Any,
+) -> Chart:
+    """A Sankey diagram chart: flow layout, gradient ribbons, hidden axes.
+
+        xy.sankey_chart([
+            ("Inflow", "Equities", 78000),
+            ("Inflow", "Bonds", 46000),
+            ("Equities", "Growth", 61000),
+        ])
+
+    Keyword arguments that belong to `xy.sankey` (``nodes``, ``colors``,
+    ``node_width``, ``link_opacity``, ``labels``, …) are forwarded there;
+    everything else (``width``, ``height``, ``title``, …) styles the chart.
+    The diagram lives in a unit box with a small margin, y inverted so flow
+    reads top-down like every other Sankey.
+    """
+    mark_keys = (
+        "nodes",
+        "node_width",
+        "node_padding",
+        "align",
+        "iterations",
+        "colors",
+        "link_opacity",
+        "labels",
+        "label_size",
+    )
+    mark_kwargs = {key: props.pop(key) for key in mark_keys if key in props}
+    children = (
+        sankey(links, **mark_kwargs),
+        x_axis(domain=(-0.09, 1.09), show=False),
+        y_axis(domain=(-0.05, 1.05), reverse=True, show=False),
+        *children,
+    )
+    return Chart("sankey_chart", children, **props)
 
 
 def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:

@@ -136,7 +136,7 @@ not fall out of sight.
 | 27 | Timeline/Gantt/event charts | event timeline, bar range, Gantt, milestone chart | Partially implemented in `xy.pyplot` | `eventplot(positions, orientation=, lineoffsets=, linelengths=, linewidths=, colors=, linestyles=)` renders event timelines through instanced segments; `broken_barh(xranges, yrange)` renders bar ranges as horizontal `bar` marks with a per-range base and categorical y support. Gantt/milestone composition and date-axis polish remain planned later. |
 | 28 | Calendar charts | calendar heatmap, contribution graph, daily cohort grid | Planned later | Product analytics and ops compatibility; grid + date-axis specialization. |
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
-| 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Planned later | Important flow chart, but requires layout and interaction work. |
+| 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Implemented core | `xy.sankey_chart(links)` — Python layout (`_sankey.py`: layering, barycentre crossing minimisation, endpoint stacking) over the new `ribbon` primitive (per-end colours, flow-axis gradient, protocol v11). Alluvial/dependency-wheel remain compositions to build on the same primitive. Deferred: GPU picking (CPU hover only), legend swatches, cycle auto-breaking. |
 | 31 | Network/tree/org | network graph, force graph, tree, dendrogram, org chart, arc diagram | Planned later | Valuable but layout-heavy; should follow core 2D marks. |
 | 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented in `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments; wind rose remains tied to future polar axes. |
 | 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Implemented in `xy.pyplot` | Curvilinear quads and explicit/native triangulations route through indexed meshes and marching-triangle kernels. |
@@ -194,7 +194,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 |---:|---|---|---|
 | 21 | Treemap | Common BI hierarchy chart. | Requires layout algorithm, labels, and color scale polish. |
 | 22 | Sunburst / icicle | Plotly/ECharts hierarchy compatibility. | Requires hierarchy layout and radial/rectangular variants. |
-| 23 | Sankey / alluvial / dependency wheel | Common flow visualization in BI and systems analysis. | Layout and interaction are the hard parts. |
+| 23 | Sankey / alluvial / dependency wheel | Common flow visualization in BI and systems analysis. | Core implemented: `xy.sankey_chart` + `ribbon`. Interaction depth (link picking, hover highlight) tracked in the ribbon contract's deferred list. |
 | 24 | Network / tree / org / dendrogram / arc | Graph and hierarchy compatibility. | Requires graph layout algorithms and selection semantics. |
 | 25 | Gauge / bullet / indicator | Dashboard/KPI compatibility. | Mostly chrome and layout, not large-array rendering. |
 | 26 | Table-adjacent views | Table, pivot-like summary, annotated table. | Basic `table` is implemented through `xy.pyplot` as tessellated cell geometry; pivot-like summary and annotated-table depth remain deferred. |

@@ -120,7 +120,7 @@ def test_tick_sides_bump_wire_protocol_and_client_in_lockstep() -> None:
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert spec["x_axis"]["tick_sides"] == ["bottom", "top"]
-    assert spec["protocol"] == PROTOCOL_VERSION == 10
+    assert spec["protocol"] == PROTOCOL_VERSION == 11
     assert f"PROTOCOL = {PROTOCOL_VERSION};" in header
     assert 'import { PROTOCOL, xyByteSpan } from "./00_header";' in client
     assert "spec.protocol !== PROTOCOL" in client

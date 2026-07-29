@@ -36,6 +36,10 @@ export const ATTR_SLOTS = {
   // a_sval/a_sel — none ever co-resident with a_prev* in the same program.
   a_prevx: 4, a_prevy: 5, a_prevx1: 7, a_prevy1: 8,
   a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
+  // Ribbon target-end colour. Aliases a_style's slot: the ribbon program uses
+  // neither the style nor the stroke channel families, so the slot is free
+  // there, and no other program declares a_rgba2.
+  a_rgba2: 13,
 };
 
 export function makeProgram(gl, vs, fs) {
@@ -650,6 +654,63 @@ void main() {
 
 // Filled triangle meshes: one instance per triangle, with optional scalar LUT
 // color and antialiased barycentric edge strokes.
+// Segments per ribbon edge. Must match _scene.RIBBON_STEPS: the raster
+// exporter flattens the same cubic at the same count, so the live chart and a
+// PNG disagree by strictly less than one segment.
+export const RIBBON_STEPS = 24;
+
+// Flow band between two vertical spans (the ribbon geometry contract in
+// spec/api/chart-kind-contract.md). One instance per band, swept as a
+// triangle strip of 2*(RIBBON_STEPS+1) vertices; both edges are the
+// curveBumpX cubic — control points at the horizontal midpoint, each holding
+// its own end's y — evaluated in clip space, which equals the exporters'
+// data-space evaluation under affine axes. The six mesh attribute slots are
+// reused with the ribbon column meaning: ay0/ay1 = source span, ax2/ay2 =
+// target span.
+export const RIBBON_VS = `#version 300 es
+in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
+in vec4 a_rgba; in vec4 a_rgba2;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta;
+uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_t0meta; uniform vec2 u_t1meta;
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
+uniform int u_segments;
+out vec4 v_rgba;
+${AXIS_GLSL}
+void main() {
+  float X0 = xyMap(ax0, u_xmap, u_x0meta, u_xmode, u_xconstant);
+  float X1 = xyMap(ax1, u_xmap, u_x1meta, u_xmode, u_xconstant);
+  float SLO = xyMap(ay0, u_ymap, u_y0meta, u_ymode, u_yconstant);
+  float SHI = xyMap(ay1, u_ymap, u_y1meta, u_ymode, u_yconstant);
+  float TLO = xyMap(ax2, u_ymap, u_t0meta, u_ymode, u_yconstant);
+  float THI = xyMap(ay2, u_ymap, u_t1meta, u_ymode, u_yconstant);
+  float t = floor(float(gl_VertexID) * 0.5) / float(max(u_segments, 1));
+  float side = float(gl_VertexID & 1);
+  float u = 1.0 - t;
+  float b0 = u * u * u;
+  float b1 = 3.0 * u * u * t;
+  float b2 = 3.0 * u * t * t;
+  float b3 = t * t * t;
+  float xm = (X0 + X1) * 0.5;
+  float x = b0 * X0 + (b1 + b2) * xm + b3 * X1;
+  float lo = (b0 + b1) * SLO + (b2 + b3) * TLO;
+  float hi = (b0 + b1) * SHI + (b2 + b3) * THI;
+  gl_Position = vec4(x, mix(lo, hi, side), 0.0, 1.0);
+  // The gradient runs along the flow: each fragment mixes the two end colours
+  // by its own progress across the band.
+  v_rgba = mix(a_rgba, a_rgba2, t);
+}`;
+
+export const RIBBON_FS = `#version 300 es
+precision highp float;
+uniform float u_opacity;
+in vec4 v_rgba;
+out vec4 outColor;
+void main() {
+  float alpha = v_rgba.a * u_opacity;
+  outColor = vec4(v_rgba.rgb * alpha, alpha);
+}`;
+
 export const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;

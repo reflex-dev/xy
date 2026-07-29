@@ -24,9 +24,9 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 Establish the primitive once; the charts sharing it are mostly wiring.
 
 The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.ts`)
-holds eighteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
+holds nineteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
 `column`, `contour`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `histogram`,
-`line`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
+`line`, `ribbon`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
 matching `_emit_<K>` in `_payload.py`. `density` is a *tier* of `scatter`, not a
 kind. Public builders that reuse an existing kind add no registry entry:
 `hist` → `histogram`, and `step`/`stairs`/`ecdf` → `line`.
@@ -56,6 +56,57 @@ by the string `K` on the wire (`trace.kind`).
   pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`. A categorical channel
   carries its own palette (`ColorChannel.palette`, resolved at build against the
   figure's cycle), so no palette is threaded through the ship call.
+
+#### The ribbon geometry contract
+
+A `ribbon` is a flow band: it leaves a vertical span on one x and arrives at a
+vertical span on another, carrying a colour at each end. It is the primitive
+behind Sankey, and behind alluvial, chord and parallel-categories later.
+
+Three renderers draw it — SVG emits true cubics, the raster flattens them, WebGL
+evaluates them per vertex — so this section is normative and a fourth renderer
+implements it without reading the other three.
+
+**On the wire.** The six geometry slots are saturated; there is no `base`:
+
+| Field | Meaning | Axis |
+| --- | --- | --- |
+| `kind` | `"ribbon"` | |
+| `tier` | always `"direct"` — a Sankey is small-N by nature, and no decimation or density tier is meaningful for a flow band | |
+| `x0` | source face x | x |
+| `x1` | target face x | x |
+| `y0`, `y1` | source span, lower and upper edge | y |
+| `x`, `y` | **target** span, lower and upper edge — y values in the `x`/`y` slots, which is why `_range_columns` needs a ribbon branch | y |
+| `color` | channel record for the **source** end | |
+| `color_target` | channel record for the **target** end; absent means flat, painted with `color` | |
+
+**The curve.** A cubic in *data space* with both control points at the
+horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y — d3's
+`curveBumpX`. The band therefore leaves and arrives horizontally, and its width
+is measured vertically the whole way across. Exact under affine axes.
+
+```
+upper edge: (x0, y1) C (xm, y1) (xm, y)  -> (x1, y)
+lower edge: (x1, x)  C (xm, x)  (xm, y0) -> (x0, y0)
+closed path: M x0,y1  C…  L x1,x  C…  Z
+```
+
+The raster flattens each edge at 24 steps; the client sweeps a triangle strip of
+the same 24 segments. Both consume the same Python reference,
+`_scene.ribbon_polygon`, so a divergence is a test failure rather than a
+rendering difference.
+
+**Paint.** The gradient runs along the **flow axis**, from `x0` to `x1` — not
+along a value axis, which is what separates a ribbon from every other filled
+mark and is why `style.fill` gradients are rejected on it (per-end colour is a
+channel, not per-trace style). When the two ends resolve to the same colour the
+renderers must emit a flat fill, not a two-stop gradient, so a plain Sankey
+stays cheap in every output format.
+
+**Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
+`gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the
+cursor's data x and testing vertical containment, so tooltips work and box or
+lasso selection is correctly absent rather than present and wrong.
 
 #### Shared-geometry marks: the hexbin centers-only contract
 
@@ -211,9 +262,18 @@ mark. `_MARK_APPLIERS` is consulted first, so a plugin can never shadow a
 built-in.
 
 The dividing line is whether the kind needs a **new primitive**. A candlestick,
-a dumbbell, a ribbon, a high-low band — all compositions, all plugin territory.
-A kind that needs geometry no shader draws yet is a core kind and takes the
-checklist. Composition is one level deep on purpose: plugins compose built-ins,
+a dumbbell, a high-low band — all compositions, all plugin territory. A kind
+that needs geometry no shader draws yet is a core kind and takes the checklist.
+
+A **ribbon** was listed here as plugin territory until Sankey was built, and the
+attempt is what moved it. A ribbon carries two colours — one per end — and no
+existing primitive can hold that. The seam-free `triangle_mesh` path in both
+exporters is gated on a single uniform fill (`_svg.py`, `_raster.py`:
+`np.all(fills == fills[0])`), so per-triangle colour falls out of the fast path
+and re-introduces an antialiasing seam on every shared edge; and on the client
+`MESH_VS` reads colour per *instance*, so a mesh triangle is flat-shaded by
+construction and cannot interpolate at all. Two renderers, two independent
+reasons, same conclusion: the gradient ribbon is a primitive, not a composition. Composition is one level deep on purpose: plugins compose built-ins,
 not each other, which keeps the registry a lookup rather than a dependency
 graph.
 

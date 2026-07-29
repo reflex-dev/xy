@@ -28,7 +28,12 @@ import warnings
 # including axes-fraction y and pixel padding. A v9 client would ignore that
 # field and silently omit non-center slots and their placement, so it must
 # reject the payload.
-PROTOCOL_VERSION = 10
+# v11 adds the `ribbon` trace kind (flow bands: six geometry columns and an
+# optional second paint channel, `color_target`). markOf() falls back to
+# scatter for unknown kinds, so a v10 client would silently draw every ribbon
+# as a point cloud of its y-corner columns — a plausible wrong picture, so it
+# must reject the payload.
+PROTOCOL_VERSION = 11
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

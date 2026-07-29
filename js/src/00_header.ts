@@ -36,7 +36,10 @@
 // v10: `title_options` carries independent left/center/right title artists,
 // including axes-fraction y and pixel padding. A v9 client would silently omit
 // non-center slots and their placement, so v10 rejects it before rendering.
-export const PROTOCOL = 10;
+// v11: the `ribbon` trace kind (flow bands; Sankey). markOf() falls back to
+// scatter for unknown kinds, so a v10 client would render ribbons as a point
+// cloud with no error; it must reject the payload instead.
+export const PROTOCOL = 11;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

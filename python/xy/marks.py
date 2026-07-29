@@ -406,6 +406,241 @@ def segments(
     return self
 
 
+def ribbon(
+    self: "Figure",
+    x0: ArrayLike,
+    x1: ArrayLike,
+    source_lo: ArrayLike,
+    source_hi: ArrayLike,
+    target_lo: ArrayLike,
+    target_hi: ArrayLike,
+    *,
+    color: Union[str, ArrayLike, None] = None,
+    color_target: Union[str, ArrayLike, None] = None,
+    colormap: channels.ColormapLike = channels.DEFAULT_COLORMAP,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    style: styles.StyleMapping | None = None,
+) -> "Figure":
+    """Add flow bands: a span at `x0` joined to a span at `x1` by a cubic.
+
+    The primitive behind Sankey, and the reason it is a primitive rather than a
+    composition: each band carries a colour at *each* end and the gradient runs
+    along the flow, which no existing mark can express (see the ribbon geometry
+    contract in spec/api/chart-kind-contract.md).
+    """
+    css = styles.compile_mark_style("ribbon", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    name = self._optional_text(name, "ribbon name")
+    arrays = [
+        self._as_1d_float(values, f"ribbon {label}")
+        for label, values in (
+            ("x0", x0),
+            ("x1", x1),
+            ("source_lo", source_lo),
+            ("source_hi", source_hi),
+            ("target_lo", target_lo),
+            ("target_hi", target_hi),
+        )
+    ]
+    lengths = {len(values) for values in arrays}
+    if len(lengths) != 1:
+        raise ValueError(f"ribbon columns must be the same length; got {sorted(lengths)}")
+    n = int(arrays[0].size)
+    style_channels: dict[str, channels.StyleChannel] = {}
+    opacity_value = _direct_style(
+        opacity,
+        n,
+        "ribbon opacity",
+        style_channels,
+        "opacity",
+        default=1.0,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    stroke_value, stroke_ch = _stroke_channel(stroke, n, "ribbon stroke")
+    stroke_width_value = _direct_style(
+        stroke_width,
+        n,
+        "ribbon stroke_width",
+        style_channels,
+        "stroke_width",
+        default=0.0,
+        minimum=0.0,
+    )
+    color_ch = channels.resolve_color(
+        color,
+        n,
+        colormap=colormap,
+        default_constant=self.next_series_color,
+        palette=self.palette,
+    )
+    # No target colour means a flat band. Resolving one anyway would ship a
+    # second buffer and turn every plain ribbon into a two-stop gradient in
+    # three renderers for no visible difference.
+    color2_ch = (
+        None
+        if color_target is None
+        else channels.resolve_color(
+            color_target,
+            n,
+            colormap=colormap,
+            default_constant=self.next_series_color,
+            palette=self.palette,
+        )
+    )
+    checkpoint = self._checkpoint()
+    try:
+        x0c, x1c, slo, shi, tlo, thi = [self.store.ingest(values) for values in arrays]
+        style_dict: dict[str, Any] = {"opacity": opacity_value, "role": "ribbon"}
+        style_dict.update(styles._opacity_channels(css))
+        if stroke_value is not None:
+            style_dict["stroke"] = stroke_value
+        if stroke_width_value:
+            style_dict["stroke_width"] = stroke_width_value
+        self.traces.append(
+            Trace(
+                id=len(self.traces),
+                kind="ribbon",
+                # The six geometry slots are saturated: `x`/`y` carry the
+                # TARGET span's y values, which is why `_range_columns` needs a
+                # ribbon branch to autorange them on the y axis.
+                x=tlo,
+                y=thi,
+                x0=x0c,
+                x1=x1c,
+                y0=slo,
+                y1=shi,
+                name=name,
+                style=style_dict,
+                color_ch=color_ch,
+                color2_ch=color2_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
+                count=n,
+            )
+        )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
+def sankey(
+    self: "Figure",
+    links: Any,
+    *,
+    nodes: Optional[Sequence[Any]] = None,
+    node_width: float = 0.02,
+    node_padding: float = 0.02,
+    align: str = "justify",
+    iterations: int = 6,
+    colors: Optional[Sequence[str]] = None,
+    link_opacity: Any = 0.4,
+    labels: bool = True,
+    label_size: float = 12.0,
+    style: styles.StyleMapping | None = None,
+) -> "Figure":
+    """Add a Sankey flow diagram: placed nodes, gradient ribbons, labels.
+
+    The layout (layering, crossing minimisation, value-proportional heights,
+    endpoint stacking) is pure Python in `_sankey.compute_layout`, exactly as
+    `hist` owns its binning; the drawing is two `ribbon` traces — the links,
+    and the nodes themselves, since a band whose two spans are equal *is* a
+    rectangle. Each link takes its source node's colour at the source end and
+    its target node's at the target end, so the gradient reads as flow.
+
+    Args:
+        links: ``(source, target, value)`` triples; endpoints are node names.
+        nodes: Explicit node order. Defaults to first appearance in `links`.
+        node_width: Node rectangle width as a fraction of the diagram.
+        node_padding: Vertical gap between nodes in a layer, as a fraction.
+        align: ``"justify"`` flushes sinks to the last layer.
+        iterations: Barycentre sweeps for crossing minimisation.
+        colors: One CSS colour per node, in node order. Defaults to the
+            figure's palette cycle.
+        link_opacity: Ribbon fill opacity; nodes stay opaque.
+        labels: Draw node names beside the nodes.
+        label_size: Node label font size in px.
+        style: Mark style overrides for the LINK ribbons.
+    """
+    from . import _sankey
+
+    triples = [(s_, t_, v_) for s_, t_, v_ in links]
+    layout = _sankey.compute_layout(
+        triples,
+        nodes=list(nodes) if nodes is not None else None,
+        node_width=node_width,
+        node_padding=node_padding,
+        align=align,
+        iterations=iterations,
+    )
+    n_nodes = len(layout.nodes)
+    if colors is not None:
+        if len(colors) != n_nodes:
+            raise ValueError(
+                f"sankey colors must have one entry per node ({n_nodes}); got {len(colors)}"
+            )
+        node_css = [str(c) for c in colors]
+    else:
+        node_css = [self.palette_color(i) for i in range(n_nodes)]
+
+    link_alpha = float(link_opacity)
+    if not 0.0 < link_alpha <= 1.0:
+        raise ValueError("sankey link_opacity must be in (0, 1]")
+
+    checkpoint = self._checkpoint()
+    try:
+        if layout.links:
+            self.ribbon(
+                [layout.nodes[link.source].x1 for link in layout.links],
+                [layout.nodes[link.target].x0 for link in layout.links],
+                [link.source_y0 for link in layout.links],
+                [link.source_y1 for link in layout.links],
+                [link.target_y0 for link in layout.links],
+                [link.target_y1 for link in layout.links],
+                color=[node_css[link.source] for link in layout.links],
+                color_target=[node_css[link.target] for link in layout.links],
+                name=None,
+                opacity=link_alpha,
+                style=style,
+            )
+        # The nodes: a ribbon whose two spans are equal is an axis-aligned
+        # rectangle, so nodes need no second primitive.
+        self.ribbon(
+            [node.x0 for node in layout.nodes],
+            [node.x1 for node in layout.nodes],
+            [node.y0 for node in layout.nodes],
+            [node.y1 for node in layout.nodes],
+            [node.y0 for node in layout.nodes],
+            [node.y1 for node in layout.nodes],
+            color=node_css,
+            opacity=1.0,
+        )
+        if labels:
+            last = max(node.layer for node in layout.nodes)
+            for node in layout.nodes:
+                at_right = node.layer >= (last + 1) / 2
+                self.text(
+                    node.x0 - 0.008 if at_right else node.x1 + 0.008,
+                    (node.y0 + node.y1) / 2.0,
+                    node.name,
+                    dx=0.0,
+                    dy=0.0,
+                    anchor="end" if at_right else "start",
+                    style={"font_size": label_size},
+                )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
 def triangle_mesh(
     self: "Figure",
     x0: ArrayLike,

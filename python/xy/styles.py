@@ -35,6 +35,11 @@ _POINT_KINDS = frozenset({"scatter"})
 _RECT_KINDS = frozenset({"histogram", "hist", "bar", "column"})
 _FILL_KINDS = frozenset({"box", "violin"})
 _MESH_KINDS = frozenset({"triangle_mesh"})
+# A ribbon is filled and outlined but never gradient-filled through `style`:
+# its two end colors are channels, not per-trace state, so "fill" is
+# deliberately absent from its property set and the guard below rejects a
+# `linear-gradient(...)` on it with the standard message.
+_RIBBON_KINDS = frozenset({"ribbon"})
 _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 
 _AXIS_COLOR_PROPERTIES = frozenset(
@@ -82,6 +87,7 @@ _MARK_KINDS = tuple(
         | _RECT_KINDS
         | _FILL_KINDS
         | _MESH_KINDS
+        | _RIBBON_KINDS
         | _DENSITY_KINDS
     )
 )
@@ -285,6 +291,11 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         # distribution outline, so keep their smaller fill-only contract.
         if kind == "box":
             props |= {"stroke", "stroke-width", "stroke-opacity"}
+    elif kind in _RIBBON_KINDS:
+        # No "fill": a ribbon's two end colors are channels. Leaving the
+        # property out is what makes `style={"fill": "linear-gradient(...)"}`
+        # raise instead of silently painting one end's colour across the band.
+        props |= {"fill-opacity", "stroke", "stroke-width", "stroke-opacity"}
     elif kind in _MESH_KINDS:
         props |= {
             "fill",

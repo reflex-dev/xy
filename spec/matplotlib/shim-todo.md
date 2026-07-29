@@ -692,3 +692,8 @@ discard boundary, dash geometry, interpolated fills, violin extrema, and the
 colormap validation boundary are implemented and regression-tested. Items
 listed above as approximations or open inconsistencies are exactly that —
 none of this is claimed as full Matplotlib parity.
+
+- `matplotlib.sankey.Sankey`: deliberately NOT shimmed. Its API is a
+  path-drawing toolkit (trunk/branch offsets in axes units), not a flow-data
+  API; `xy.sankey_chart(links)` is the supported spelling. Revisit only if
+  corpus evidence shows real notebooks using mpl's Sankey.
