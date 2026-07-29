@@ -117,6 +117,7 @@ __all__ = [
     "mark",
     "marker",
     "modebar",
+    "pie_chart",
     "polar_bar_chart",
     "polar_chart",
     "r_axis",
@@ -6227,6 +6228,107 @@ def polar_bar_chart(*children: Component, **props: Any) -> Chart:
     """
     props.setdefault("coords", "polar")
     return Chart("polar_bar_chart", children, **props)
+
+
+def pie_chart(
+    labels: Sequence[Any],
+    values: ArrayLike,
+    *children: Component,
+    hole: float = 0.55,
+    pad: float = 3.0,
+    colors: Optional[Sequence[str]] = None,
+    corner_radius: float = 6.0,
+    show_values: bool = True,
+    show_percent: bool = True,
+    **props: Any,
+) -> Chart:
+    """A pie or donut: one slice per label, sized by value.
+
+        xy.pie_chart(
+            ["Skyline", "Datawell", "Cloudpeak"],
+            [27, 21, 13],
+        )
+
+    A pie is a composition over the polar coordinate system, not a chart
+    type: each slice is a wedge bar whose ANGULAR WIDTH carries the value.
+    That is exactly why the generic hover readout has nothing meaningful to
+    print for a slice — theta is layout and the radius is the constant rim —
+    so this composition owns its tooltip: hovering a slice shows its
+    category and value (and share), nothing else. A user-supplied
+    `xy.tooltip(...)` child still wins.
+
+    Args:
+        labels: One category name per slice.
+        values: One non-negative value per slice.
+        *children: Extra components (legend placement, a user tooltip, …).
+        hole: Inner radius fraction; 0 is a full pie, the default is a donut.
+        pad: Angular gap between slices, in degrees.
+        colors: One CSS colour per slice. Defaults to the palette cycle.
+        corner_radius: Rounded slice corners, in px.
+        show_values: Include the value in the slice's name (legend + tooltip).
+        show_percent: Include the share in the slice's name (legend + tooltip).
+        **props: Any `polar_chart` keyword (`width`, `height`, `title`, …).
+    """
+    names = [str(label) for label in labels]
+    amounts = [float(v) for v in np.asarray(values, dtype=float).reshape(-1)]
+    if len(names) != len(amounts):
+        raise ValueError(
+            f"pie_chart needs one value per label; got {len(names)} labels "
+            f"and {len(amounts)} values"
+        )
+    if not names:
+        raise ValueError("pie_chart needs at least one slice")
+    if any(not math.isfinite(v) or v < 0.0 for v in amounts):
+        raise ValueError("pie_chart values must be finite and non-negative")
+    total = sum(amounts)
+    if total <= 0.0:
+        raise ValueError("pie_chart values must sum to a positive total")
+    if not 0.0 <= float(hole) < 1.0:
+        raise ValueError("pie_chart hole must be in [0, 1)")
+    if colors is not None and len(colors) != len(names):
+        raise ValueError(
+            f"pie_chart colors must have one entry per slice ({len(names)}); got {len(colors)}"
+        )
+
+    slices: list[Component] = []
+    cursor = 0.0
+    for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
+        span = value / total * 360.0
+        # The pad shrinks each slice symmetrically but never below a sliver,
+        # so many tiny slices degrade to hairlines rather than vanishing.
+        gap = min(float(pad), span * 0.9)
+        display = label
+        if show_values:
+            display += f"  {value:g}"
+        if show_percent:
+            display += f"  ({value / total * 100:.0f}%)"
+        slices.append(
+            bar(
+                [cursor + span / 2.0],
+                [1.0 - float(hole)],
+                base=float(hole),
+                width=max(span - gap, 1e-6),
+                color=None if colors is None else colors[index],
+                name=display,
+                corner_radius=corner_radius,
+                animation=False,
+            )
+        )
+        cursor += span
+
+    # The slice's name IS the readout (category, value, share); theta and the
+    # rim radius are layout, not data, and would only add noise.
+    has_tooltip = any(isinstance(child, Tooltip) for child in children)
+    defaults: tuple[Component, ...] = () if has_tooltip else (tooltip(title="{name}"),)
+    children = (
+        *slices,
+        theta_axis(unit="degrees", zero="N", direction="clockwise", show=False),
+        r_axis(domain=(0.0, 1.0), show=False),
+        *defaults,
+        *children,
+    )
+    props.setdefault("coords", "polar")
+    return Chart("pie_chart", children, **props)
 
 
 def wind_rose(

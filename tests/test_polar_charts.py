@@ -1162,3 +1162,38 @@ def test_raster_polar_area_culls_vertices_outside_the_sector() -> None:
     # Every emitted polygon must be bounded by the visible-run size, not the
     # full 2 * 40-vertex turn.
     assert all(n <= 2 * in_sector for n in area_polys), (theta.size, area_polys)
+
+
+# -- pie_chart composition ---------------------------------------------------
+
+
+def test_pie_chart_slices_carry_category_value_and_share() -> None:
+    chart = xy.pie_chart(["a", "b", "c"], [50.0, 30.0, 20.0], width=300, height=300)
+    spec, _ = chart.figure().build_payload()
+    names = [t["name"] for t in spec["traces"]]
+    assert names == ["a  50  (50%)", "b  30  (30%)", "c  20  (20%)"]
+    # The composition owns its readout: the tooltip is the slice name alone,
+    # never theta (layout) or the constant rim radius.
+    assert spec["tooltip"] == {"title": "{name}"}
+    widths = [t["bar"]["width"] for t in spec["traces"]]
+    assert sum(widths) == pytest.approx(360.0 - 3.0 * 3, abs=1e-6)
+
+
+def test_pie_chart_user_tooltip_wins() -> None:
+    chart = xy.pie_chart(["a", "b"], [1.0, 1.0], xy.tooltip(title="custom"), width=300, height=300)
+    spec, _ = chart.figure().build_payload()
+    assert spec["tooltip"]["title"] == "custom"
+
+
+@pytest.mark.parametrize(
+    ("labels", "values", "message"),
+    [
+        (["a"], [1.0, 2.0], "one value per label"),
+        ([], [], "at least one slice"),
+        (["a"], [-1.0], "finite and non-negative"),
+        (["a", "b"], [0.0, 0.0], "positive total"),
+    ],
+)
+def test_pie_chart_refusals(labels, values, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        xy.pie_chart(labels, values)

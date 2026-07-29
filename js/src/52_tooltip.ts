@@ -290,6 +290,15 @@ Object.assign(ChartView.prototype, {
   },
 
   _tooltipLookup(row, field) {
+    // "name" is a pseudo-field: the hovered trace's series name. Rows carry
+    // only a trace id, but compositions whose category lives in the mark name
+    // (a pie slice, a wind-rose band) need the tooltip template to reach it —
+    // `xy.tooltip(title="{name}")` is how a pie shows category + value and
+    // nothing else.
+    if (field === "name") {
+      const name = this._tooltipSeriesName(row);
+      return name === null ? [undefined, undefined] : [name, undefined];
+    }
     const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
     const key = row[field] !== undefined ? field : aliases[field];
     if (!key || row[key] === undefined) return [undefined, undefined];
