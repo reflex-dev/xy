@@ -6128,8 +6128,11 @@ def radar_chart(
     for child in children:
         if isinstance(child, Mark) and child.kind in {"area", "line"}:
             values = _radar_values(child, count)
-            kind = "line" if (child.kind == "area" and not fill) else child.kind
-            rebuilt.append(replace(child, kind=kind, x=closed_angles, y=[*values, values[0]]))
+            closed = [*values, values[0]]
+            if child.kind == "area" and not fill:
+                rebuilt.append(_radar_outline(child, closed_angles, closed))
+            else:
+                rebuilt.append(replace(child, x=closed_angles, y=closed))
         elif isinstance(child, Mark):
             raise ValueError(f"radar_chart supports area and line marks; got {child.kind!r}")
         else:
@@ -6149,6 +6152,34 @@ def radar_chart(
         rebuilt.append(theta_axis(tick_values=angles, tick_labels=names))
     props.setdefault("coords", "polar")
     return Chart("radar_chart", tuple(rebuilt), **props)
+
+
+def _radar_outline(mark: "Mark", angles: list[float], values: list[float]) -> "Mark":
+    """Rebuild a filled radar `area` as its outline, for `fill=False`.
+
+    The two marks do not share a prop vocabulary — an area carries
+    `line_color`/`line_width`/`line_opacity` where a line carries
+    `color`/`width`/`opacity` — so swapping only `kind` handed `_apply_line` an
+    area's dict and it died on `m.props["width"]`. The outline inherits the
+    area's stroke settings, falling back to its fill color when the stroke was
+    never given one.
+    """
+    props = mark.props
+    return replace(
+        mark,
+        kind="line",
+        x=angles,
+        y=values,
+        props={
+            "color": props.get("line_color") or props.get("color"),
+            "width": props.get("line_width") or 2.0,
+            "opacity": props.get("line_opacity", 1.0),
+            "curve": props.get("curve", "linear"),
+            "dash": props.get("dash"),
+            "x_axis": props.get("x_axis", "x"),
+            "y_axis": props.get("y_axis", "y"),
+        },
+    )
 
 
 def _radar_values(mark: "Mark", count: int) -> list[float]:
