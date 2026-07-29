@@ -1707,6 +1707,10 @@ def bar(
         series: Optional names for matrix-valued series.
         opacity: Bar opacity from zero to one.
         corner_radius: Bar corner radius in pixels.
+        wedge_gap: Gap between neighbouring polar wedges, in pixels — constant
+            from the hole to the rim. Deliberately a length, not an angle: an
+            angular pad's gap is ``r · dtheta`` wide and so tapers to nothing
+            toward the centre. Ignored outside ``coords="polar"``.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
         _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
@@ -1791,6 +1795,10 @@ def column(
         series: Optional names for matrix-valued series.
         opacity: Column opacity from zero to one.
         corner_radius: Column corner radius in pixels.
+        wedge_gap: Gap between neighbouring polar wedges, in pixels — constant
+            from the hole to the rim. Deliberately a length, not an angle: an
+            angular pad's gap is ``r · dtheta`` wide and so tapers to nothing
+            toward the centre. Ignored outside ``coords="polar"``.
         stroke: Optional column outline color.
         stroke_width: Column outline width in pixels.
         fill: CSS fill value or linear gradient.
@@ -6370,6 +6378,8 @@ def wind_rose(
 
     Args:
         directions: Bearings in degrees, one per observation.
+        children_in: Extra components — an `xy.legend`, or an `xy.tooltip` to
+            replace the default direction/count readout.
         speeds: Speeds, one per observation.
         sectors: Number of angular bins around the circle.
         speed_bins: Upper edges of the speed bands. Defaults to four quartile
