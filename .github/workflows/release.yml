@@ -18,6 +18,11 @@ on:
         type: boolean
         default: true
 
+# Limit build jobs to repository reads. The publish job declares its separate
+# OIDC-only token permissions below.
+permissions:
+  contents: read
+
 jobs:
   # One wheel per platform (the C-ABI core is CPython-version-independent, so
   # each entry produces a single py3-none-<platform> wheel). Coverage matches

@@ -9,6 +9,10 @@ on:
       - "spec/**"
   workflow_dispatch:
 
+# Limit every job to the only repository permission needed by this workflow.
+permissions:
+  contents: read
+
 # Multiple sessions push to two branches in bursts; without this the runner
 # pool drowns in runs for superseded commits and fresh tips queue for ~30 min.
 # Only the newest run per ref carries signal — cancel the rest.

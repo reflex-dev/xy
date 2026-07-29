@@ -18,6 +18,10 @@ on:
         type: string
         default: "45"
 
+# Limit this manual benchmark workflow to repository reads.
+permissions:
+  contents: read
+
 jobs:
   cross-library:
     name: Cross-library benchmark (Ubuntu, native)

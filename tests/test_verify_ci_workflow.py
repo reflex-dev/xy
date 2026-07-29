@@ -502,14 +502,12 @@ def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Pat
 
 def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    # Strip the whole "Upload regression benchmark report" step (name line through
-    # its trailing blank), independent of the pinned upload-artifact SHA.
-    broken = re.sub(
-        r" *- name: Upload regression benchmark report\n(?:[ \t]+.*\n|\n)*?(?=\S| *- |\Z)",
-        "",
-        workflow,
-        count=1,
-    )
+    # Strip the whole step up to its next sibling, independent of the pinned
+    # upload-artifact SHA. Explicit boundaries avoid regex backtracking on
+    # adversarially long workflow text.
+    step_start = workflow.index("      - name: Upload regression benchmark report\n")
+    next_step = workflow.index("\n      - ", step_start)
+    broken = workflow[:step_start] + workflow[next_step + 1 :]
     assert "regression-benchmark-report" not in broken
     path = tmp_path / "ci.yml"
     path.write_text(broken, encoding="utf-8")

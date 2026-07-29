@@ -136,6 +136,38 @@ Fix:
 - Added a narrow file-level `allow(dead_code)` with rationale on `src/simd.rs`.
 - Verified the exact CI clippy command now passes.
 
+### XY-CI-2026-02: Workflows inherited default GITHUB_TOKEN permissions
+
+Severity: medium CI hardening.
+
+GitHub CodeQL reported 13 jobs across `ci.yml`, `release.yml`, and
+`benchmark-refresh.yml` that did not set an explicit `GITHUB_TOKEN` permission
+ceiling. Their effective permissions therefore depended on repository or
+organization defaults instead of being reviewable in the workflow.
+
+Fix:
+
+- Added workflow-level `permissions: { contents: read }` defaults to all three
+  workflows.
+- Kept release jobs with privileged duties on explicit job-level permission
+  blocks, which replace the workflow default rather than inheriting extra
+  grants.
+
+### XY-SEC-2026-05: Workflow-test regex allowed exponential backtracking
+
+Severity: high scanner severity; practical exposure limited to a test fixture.
+
+A negative test removed one CI step with a nested, ambiguous regular
+expression. GitHub CodeQL showed that tab-only lines could be repartitioned
+across the repeated whitespace groups, causing exponential backtracking if the
+terminal lookahead failed.
+
+Fix:
+
+- Replaced the regex with deterministic string-boundary lookup and slicing.
+- Preserved the fixture's deliberate failure on workflow-shape drift and its
+  independence from the pinned `upload-artifact` commit SHA.
+
 ## Confirmed Controls
 
 - Standalone JSON uses `json.dumps(..., allow_nan=False)` and escapes `<`, `>`,
