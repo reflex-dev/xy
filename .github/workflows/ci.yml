@@ -201,6 +201,11 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/smoke_render.py "$CHROME"
 
+      - name: Polar phase 6/7 live examples (Chromium + native exporters)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/polar_phase7_smoke.py "$CHROME"
+
       - name: Browser lifecycle smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")

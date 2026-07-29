@@ -236,6 +236,7 @@ Object.assign(ChartView.prototype, {
         return;
       }
       const canPan = this._interactionFlag("pan", true);
+      const panAxes = this._axisPolicy("pan_axes");
       const canZoom = this._interactionFlag("zoom", true);
       const canNavigate = this._interactionFlag("navigation", true);
       const canBoxZoom = this._interactionFlag("box_zoom", true);
@@ -268,7 +269,7 @@ Object.assign(ChartView.prototype, {
         this._hideTooltip();
         return;
       }
-      if (this.dragMode === "pan" && canNavigate && canPan) {
+      if (this.dragMode === "pan" && canNavigate && canPan && panAxes.length > 0) {
         drag = {
           px: e.clientX,
           py: e.clientY,
@@ -279,7 +280,7 @@ Object.assign(ChartView.prototype, {
           // locked axis's motion in the clamp (it slides inside its home
           // window once zoomed in) instead of removing it from the gesture.
           axes: [...new Set([
-            ...this._axisPolicy("pan_axes"),
+            ...panAxes,
             ...this._axisIds().filter((axisId) => this._axisContained(axisId)),
           ])],
           changedAxes: [],
@@ -553,8 +554,19 @@ Object.assign(ChartView.prototype, {
     // already converted categorical coordinates into display strings.
     const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
     const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
-    const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
-    const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+    const [chartX, chartY] = this._projectDataPoint(
+      g.xAxis || "x",
+      g.yAxis || "y",
+      xValue,
+      yValue,
+    );
+    // A polar view can legitimately cull source rows outside its authored
+    // sector or radial window. Keyboard traversal still advances over that row,
+    // but it must not publish a hover or feed NaN coordinates to tooltip
+    // placement; the next traversal key continues from this source position.
+    if (!Number.isFinite(chartX) || !Number.isFinite(chartY)) return;
+    const x = chartX - this.plot.x;
+    const y = chartY - this.plot.y;
     const rect = this.canvas.getBoundingClientRect();
     const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
     const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
@@ -1236,7 +1248,8 @@ Object.assign(ChartView.prototype, {
     };
 
     const canNavigate = this._interactionFlag("navigation", true);
-    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true)
+      && this._axisPolicy("pan_axes").length > 0;
     const canZoom = canNavigate && this._interactionFlag("zoom", true);
     const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
     const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);

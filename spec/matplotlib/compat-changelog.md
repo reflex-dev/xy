@@ -4,6 +4,24 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Polar projection depth — 2026-07-28 (Matplotlib 3.11.1 reference)
+
+- Polar heatmap/image and contour now use the core polar grid/segment paths,
+  and `errorbar` uses the same allowlisted projected-segment contract. The
+  heatmap samples through a fragment-stage screen→(θ, r) inverse rather than
+  stretching a Cartesian image into the disc.
+- `set_thetamin`/`set_thetamax` and their getters use Matplotlib's degree
+  surface while the core axis remains in its declared angular unit.
+  `set_rorigin`/`get_rorigin` route to the radial-origin geometry, including
+  annular views.
+- Categorical θ, positive log-r autorange, symlog radius, partial-sector
+  layout/clipping, and the core polygonal radial grid are shared across HTML,
+  PNG, and SVG.
+- This does not generalize every segment or mesh artist to polar. Polar
+  rules/spans, LOD, facets/animation, angular navigation/selection, and the
+  stateful `plt.polar`/`plt.thetagrids`/`plt.rgrids` wrappers remain deferred
+  or absent and fail loudly where a Cartesian fallback would be misleading.
+
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
 - `xy.pyplot.boxplot` no longer routes its default call through the native

@@ -33,8 +33,148 @@ const OP_AFFINE_POINTS: u8 = 14;
 const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
 const OP_STROKED_TRIANGLES: u8 = 16;
 const OP_STYLED_TEXT: u8 = 17;
+const OP_POLAR_CLIP: u8 = 18;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
+
+/// Analytic annular-sector clip carried by the display-list state.
+///
+/// The ordinary clip remains a rectangular bbox for cheap work rejection.
+/// This second predicate is applied at the final pixel blend, so every mark
+/// primitive shares one clip: fills, chord strokes, symbols, and images cannot
+/// paint through a polar hole or missing sector.
+#[derive(Clone, Copy)]
+struct PolarClip {
+    cx: f32,
+    cy: f32,
+    inner: f32,
+    outer: f32,
+    start: [f32; 2],
+    end: [f32; 2],
+    direction: f32,
+    wide: bool,
+    full: bool,
+}
+
+impl PolarClip {
+    fn new(cx: f32, cy: f32, inner: f32, outer: f32, start: f32, sweep: f32) -> Option<Self> {
+        if ![cx, cy, inner, outer, start, sweep]
+            .into_iter()
+            .all(f32::is_finite)
+            || inner < 0.0
+            || outer < inner
+            || sweep == 0.0
+        {
+            return None;
+        }
+        let span = sweep.abs();
+        Some(Self {
+            cx,
+            cy,
+            inner,
+            outer,
+            start: [start.cos(), start.sin()],
+            end: [(start + sweep).cos(), (start + sweep).sin()],
+            direction: sweep.signum(),
+            wide: span > std::f32::consts::PI,
+            full: span >= std::f32::consts::TAU * (1.0 - 1e-6),
+        })
+    }
+
+    #[inline]
+    fn contains(&self, x: f32, y: f32) -> bool {
+        let v = [x - self.cx, self.cy - y]; // math coordinates: +y is up
+        let radius2 = v[0] * v[0] + v[1] * v[1];
+        if radius2 < self.inner * self.inner || radius2 > self.outer * self.outer {
+            return false;
+        }
+        if self.full {
+            return true;
+        }
+        let from_start = self.direction * (self.start[0] * v[1] - self.start[1] * v[0]);
+        let before_end = self.direction * (v[0] * self.end[1] - v[1] * self.end[0]);
+        if self.wide {
+            from_start >= 0.0 || before_end >= 0.0
+        } else {
+            from_start >= 0.0 && before_end >= 0.0
+        }
+    }
+
+    #[inline]
+    fn near_boundary(&self, x: f32, y: f32) -> bool {
+        let v = [x - self.cx, self.cy - y];
+        let radius2 = v[0] * v[0] + v[1] * v[1];
+        let radial_band = |radius: f32| {
+            let low = (radius - 1.0).max(0.0);
+            radius2 >= low * low && radius2 <= (radius + 1.0) * (radius + 1.0)
+        };
+        if radial_band(self.outer) || (self.inner > 0.0 && radial_band(self.inner)) {
+            return true;
+        }
+        if self.full {
+            return false;
+        }
+        [self.start, self.end].into_iter().any(|edge| {
+            let along = edge[0] * v[0] + edge[1] * v[1];
+            let perpendicular = edge[0] * v[1] - edge[1] * v[0];
+            perpendicular.abs() <= 1.0 && along >= self.inner - 1.0 && along <= self.outer + 1.0
+        })
+    }
+
+    #[inline]
+    fn pixel_coverage(&self, x: usize, y: usize) -> f32 {
+        // A valid Python hole may be closer to 1 than f32 can distinguish at
+        // the requested device radius.  Its serialized inner/outer radii then
+        // coincide.  That is an empty visible annulus, not a malformed command
+        // stream: mask marks completely and let the later rectangular clip
+        // reset state for chrome.
+        if self.inner >= self.outer {
+            return 0.0;
+        }
+        let center = (x as f32 + 0.5, y as f32 + 0.5);
+        if !self.near_boundary(center.0, center.1) {
+            return if self.contains(center.0, center.1) {
+                1.0
+            } else {
+                0.0
+            };
+        }
+        // Only boundary pixels pay for supersampling. Four samples per axis
+        // match polygon-fill AA and keep the clip edge stable at every scale.
+        let mut covered = 0usize;
+        for sy in 0..SS {
+            let py = y as f32 + (sy as f32 + 0.5) / SS as f32;
+            for sx in 0..SS {
+                let px = x as f32 + (sx as f32 + 0.5) / SS as f32;
+                covered += usize::from(self.contains(px, py));
+            }
+        }
+        covered as f32 / (SS * SS) as f32
+    }
+}
+
+#[inline]
+fn apply_polar_clip(
+    polar_clip: Option<PolarClip>,
+    x: usize,
+    y: usize,
+    mut rgba: [u8; 4],
+) -> Option<[u8; 4]> {
+    let Some(clip) = polar_clip else {
+        return Some(rgba);
+    };
+    let coverage = clip.pixel_coverage(x, y);
+    if coverage <= 0.0 {
+        return None;
+    }
+    if coverage < 1.0 {
+        rgba[3] = (rgba[3] as f32 * coverage + 0.5) as u8;
+        if rgba[3] == 0 {
+            return None;
+        }
+    }
+    Some(rgba)
+}
 
 /// Straight-alpha RGBA8 framebuffer. Static chart export paints an opaque
 /// background first, so keeping the working canvas in its final byte format
@@ -53,6 +193,7 @@ struct Canvas<'a> {
     px: &'a mut [u8],
     opaque: bool,
     clip: [f32; 4], // x0, y0, x1, y1
+    polar_clip: Option<PolarClip>,
 }
 
 impl<'a> Canvas<'a> {
@@ -67,6 +208,7 @@ impl<'a> Canvas<'a> {
             px,
             opaque: opaque_white,
             clip: [0.0, 0.0, w as f32, h as f32],
+            polar_clip: None,
         }
     }
 
@@ -95,6 +237,9 @@ impl<'a> Canvas<'a> {
 
     #[inline]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
+            return;
+        };
         let o = (y * self.w + x) * self.channels();
         blend_px(self.px, o, self.opaque, rgba);
     }
@@ -109,6 +254,7 @@ impl<'a> Canvas<'a> {
             channels: self.channels(),
             opaque: self.opaque,
             clip: self.clip,
+            polar_clip: self.polar_clip,
             px: self.px,
         }
     }
@@ -191,6 +337,7 @@ struct Surface<'a> {
     channels: usize,
     opaque: bool,
     clip: [f32; 4],
+    polar_clip: Option<PolarClip>,
 }
 
 impl Surface<'_> {
@@ -201,6 +348,9 @@ impl Surface<'_> {
 
     #[inline]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
+            return;
+        };
         let o = ((y - self.y0) * self.w + x) * self.channels;
         blend_px(self.px, o, self.opaque, rgba);
     }
@@ -299,6 +449,12 @@ fn to_u8(v: f32) -> u8 {
 /// It is exact at subpixel edges and turns the full-canvas white background
 /// from millions of polygon-coverage blends into a contiguous byte fill.
 fn fill_rect(cv: &mut Canvas<'_>, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
+    // The contiguous-row fast path bypasses per-pixel blending, where the
+    // annular-sector clip lives. Fall back to the general polygon painter while
+    // that clip is active.
+    if cv.polar_clip.is_some() {
+        return false;
+    }
     if pts.len() != 4 {
         return false;
     }
@@ -1235,7 +1391,13 @@ fn paint_image_bands(
     }
     let threads = threads.min(y1 - y0).max(1);
     let band_rows = (y1 - y0).div_ceil(threads);
-    let (w, ch, opaque, clip) = (cv.w, cv.channels(), cv.opaque, cv.clip);
+    let (w, ch, opaque, clip, polar_clip) = (
+        cv.w,
+        cv.channels(),
+        cv.opaque,
+        cv.clip,
+        cv.polar_clip,
+    );
     let row_bytes = w * ch;
     let active = &mut cv.px[y0 * row_bytes..y1 * row_bytes];
     std::thread::scope(|scope| {
@@ -1252,6 +1414,7 @@ fn paint_image_bands(
                     channels: ch,
                     opaque,
                     clip,
+                    polar_clip,
                 };
                 paint(&mut surface);
             });
@@ -1954,7 +2117,14 @@ fn paint_banded(
     y_extent: impl Fn(usize) -> Option<(f32, f32)>,
     paint: impl Fn(&mut Surface, &[u32]) + Sync,
 ) {
-    let (w, h, ch, opaque, clip) = (cv.w, cv.h, cv.channels(), cv.opaque, cv.clip);
+    let (w, h, ch, opaque, clip, polar_clip) = (
+        cv.w,
+        cv.h,
+        cv.channels(),
+        cv.opaque,
+        cv.clip,
+        cv.polar_clip,
+    );
     let n_bands = (threads * 4).min(h.div_ceil(8)).max(1);
     let band_rows = h.div_ceil(n_bands);
     let n_bands = h.div_ceil(band_rows);
@@ -1999,6 +2169,7 @@ fn paint_banded(
                     channels: ch,
                     opaque,
                     clip,
+                    polar_clip,
                 };
                 paint(&mut sf, &bucket);
             });
@@ -2331,6 +2502,22 @@ fn rasterize_with_spans<'a>(
                         (x + cw).min(w as f32),
                         (y + ch).min(h as f32),
                     ];
+                    cv.polar_clip = None;
+                }
+                OP_POLAR_CLIP => {
+                    let (cx, cy, inner, outer) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+                    let (start, sweep) = (r.f32()?, r.f32()?);
+                    let polar = PolarClip::new(cx, cy, inner, outer, start, sweep)?;
+                    // Retain the current rectangular plot clip and tighten it
+                    // by the outer disc bbox. The analytic predicate handles
+                    // the inner radius and angular interval at blend time.
+                    cv.clip = [
+                        cv.clip[0].max(cx - outer).max(0.0),
+                        cv.clip[1].max(cy - outer).max(0.0),
+                        cv.clip[2].min(cx + outer).min(w as f32),
+                        cv.clip[3].min(cy + outer).min(h as f32),
+                    ];
+                    cv.polar_clip = Some(polar);
                 }
                 OP_FILL_POLY => {
                     let n = r.u32()? as usize;
@@ -2782,7 +2969,10 @@ fn rasterize_with_spans<'a>(
                             continue;
                         }
                         let pts = [(xa, ya), (xb, ya), (xb, yb), (xa, yb)];
-                        fill_rect(&mut cv, &pts, rgba_at(fills, i));
+                        let color = rgba_at(fills, i);
+                        if !fill_rect(&mut cv, &pts, color) {
+                            fill_poly(&mut cv, &pts, |_, _| color);
+                        }
                     }
                 }
                 OP_TRIANGLES | OP_STROKED_TRIANGLES => {
@@ -3132,6 +3322,84 @@ mod tests {
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert_eq!(px(&out, 10, 2, 5), [0, 0, 255, 255]); // inside clip
         assert_eq!(px(&out, 10, 8, 5), [0, 0, 0, 0]); // clipped away
+    }
+
+    #[test]
+    fn polar_clip_handles_annular_sectors_in_both_directions() {
+        let ccw = PolarClip::new(10.0, 10.0, 3.0, 9.0, 0.0, std::f32::consts::FRAC_PI_2)
+            .expect("valid counterclockwise sector");
+        assert!(ccw.contains(15.0, 5.0));
+        assert!(!ccw.contains(10.0, 10.0), "the hole must stay empty");
+        assert!(!ccw.contains(5.0, 5.0), "the missing sector must stay empty");
+
+        let clockwise =
+            PolarClip::new(10.0, 10.0, 0.0, 9.0, 0.0, -std::f32::consts::FRAC_PI_2)
+                .expect("valid clockwise sector");
+        assert!(clockwise.contains(15.0, 15.0));
+        assert!(!clockwise.contains(15.0, 5.0));
+
+        let wide = PolarClip::new(
+            10.0,
+            10.0,
+            0.0,
+            9.0,
+            0.0,
+            1.5 * std::f32::consts::PI,
+        )
+        .expect("valid wide sector");
+        assert!(wide.contains(5.0, 10.0));
+        assert!(!wide.contains(15.0, 15.0));
+
+        let collapsed = PolarClip::new(10.0, 10.0, 9.0, 9.0, 0.0, std::f32::consts::TAU)
+            .expect("a float32-collapsed annulus is a valid empty clip");
+        assert_eq!(collapsed.pixel_coverage(18, 10), 0.0);
+    }
+
+    #[test]
+    fn polar_clip_opcode_masks_fill_and_rect_clip_resets_it() {
+        let mut cmd = vec![OP_CLIP];
+        for value in [0.0f32, 0.0, 20.0, 20.0] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_POLAR_CLIP);
+        for value in [
+            10.0f32,
+            10.0,
+            4.0,
+            9.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        ] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_FILL_POLY);
+        cmd.extend(u32le(4));
+        for (x, y) in [(0.0f32, 0.0f32), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)] {
+            cmd.extend(f32le(x));
+            cmd.extend(f32le(y));
+        }
+        cmd.extend([255, 0, 0, 255]);
+
+        // A normal rectangular clip begins a new state and removes the shaped
+        // clip. Paint one small square in what was the missing sector.
+        cmd.push(OP_CLIP);
+        for value in [0.0f32, 0.0, 20.0, 20.0] {
+            cmd.extend(f32le(value));
+        }
+        cmd.push(OP_FILL_POLY);
+        cmd.extend(u32le(4));
+        for (x, y) in [(4.0f32, 4.0f32), (7.0, 4.0), (7.0, 7.0), (4.0, 7.0)] {
+            cmd.extend(f32le(x));
+            cmd.extend(f32le(y));
+        }
+        cmd.extend([0, 0, 255, 255]);
+
+        let mut out = vec![0u8; 20 * 20 * 4];
+        assert!(rasterize_into(&cmd, 20, 20, &mut out));
+        assert_eq!(px(&out, 20, 15, 5), [255, 0, 0, 255]);
+        assert_eq!(px(&out, 20, 10, 10), [0, 0, 0, 0]);
+        assert_eq!(px(&out, 20, 5, 14), [0, 0, 0, 0]);
+        assert_eq!(px(&out, 20, 5, 5), [0, 0, 255, 255]);
     }
 
     #[test]

@@ -275,6 +275,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         theta_unit: Optional[str] = None,
         theta_zero: Optional[Any] = None,
         theta_direction: Optional[str] = None,
+        sector: Optional[tuple[float, float]] = None,
+        grid_shape: Optional[str] = None,
+        hole: Optional[float] = None,
+        r_origin: Optional[float] = None,
     ) -> "Figure":
         axis_id = self._axis_id(axis_id, "axis id")
         axis_dim = self._axis_dim(axis_id)
@@ -307,13 +311,38 @@ class Figure(AnnotationsMixin, PayloadMixin):
             )
         if theta_zero is not None:
             theta_zero = _validate.theta_zero(theta_zero, f"{axis_id} axis theta_zero")
+        if sector is not None:
+            sector = _validate.theta_sector(sector, f"{axis_id} axis sector")
+        if grid_shape is not None:
+            grid_shape = _validate.polar_grid_shape(grid_shape, f"{axis_id} axis grid_shape")
+        if hole is not None:
+            hole = _validate.polar_hole(hole, f"{axis_id} axis hole")
+        if r_origin is not None:
+            r_origin = self._finite_scalar(r_origin, f"{axis_id} axis r_origin")
+        if hole is not None and r_origin is not None:
+            raise ValueError(f"{axis_id} axis hole and r_origin are mutually exclusive")
         if axis_dim == "y" and any(
-            option is not None for option in (theta_unit, theta_direction, theta_zero)
+            option is not None
+            for option in (theta_unit, theta_direction, theta_zero, sector, grid_shape)
         ):
             raise ValueError(
-                f"{axis_id} axis: theta_unit/theta_zero/theta_direction describe the angular "
+                f"{axis_id} axis: theta options describe the angular "
                 "axis and belong on an x axis (xy.theta_axis); the radial axis is the y axis"
             )
+        if axis_dim == "x" and any(option is not None for option in (hole, r_origin)):
+            raise ValueError(
+                f"{axis_id} axis: hole/r_origin describe the radial axis and belong on a "
+                "y axis (xy.r_axis); the angular axis is the x axis"
+            )
+        if type_ == "log" and r_origin is not None and r_origin <= 0:
+            raise ValueError(f"{axis_id} log axis r_origin must be positive")
+        if sector is not None and self.coords == "polar":
+            unit = theta_unit or "radians"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            if sector[1] - sector[0] > turn:
+                raise ValueError(
+                    f"{axis_id} axis sector sweep must not exceed one full turn ({turn:g} {unit})"
+                )
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
@@ -403,6 +432,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "theta_unit": theta_unit,
             "theta_zero": theta_zero,
             "theta_direction": theta_direction,
+            "sector": sector,
+            "grid_shape": grid_shape,
+            "hole": hole,
+            "r_origin": r_origin,
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -806,8 +839,54 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 f"supported kinds are {sorted(POLAR_MARK_KINDS)}. "
                 "See spec/design/polar-axes.md."
             )
+        unsupported_annotations = sorted(
+            {str(annotation.get("kind")) for annotation in self.annotations} & {"rule", "band"}
+        )
+        if unsupported_annotations:
+            raise ValueError(
+                "coords='polar' does not support rule/band annotations yet; "
+                f"found {unsupported_annotations}. Point-anchored text, label, marker, "
+                "arrow, and callout annotations remain supported."
+            )
+        theta = self.axis_options.get("x", {})
+        sector = theta.get("sector")
+        if sector is not None:
+            unit = theta.get("theta_unit") or "radians"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            if sector[1] - sector[0] > turn:
+                raise ValueError(
+                    f"x axis sector sweep must not exceed one full turn ({turn:g} {unit})"
+                )
+        radial = self.axis_options.get("y", {})
+        r_origin = radial.get("r_origin")
+        if r_origin is not None:
+            # The first resolved limit is the centre-side ring and the second
+            # is the outer ring.  On an ordinary radial axis that means the
+            # origin lies at/below r_lo; reversing the axis reverses that
+            # inequality too.  Sorting here accepted an origin on the wrong
+            # side of a reversed view, which then normalized every visible
+            # radius beyond 1 and culled the entire plot.
+            r_inner, r_outer = self._range("y")
+            if radial.get("type") == "log" and r_origin <= 0:
+                raise ValueError("y log axis r_origin must be positive")
+            if r_inner < r_outer:
+                if not r_origin < r_outer:
+                    raise ValueError(
+                        "y axis r_origin must be less than the resolved radial maximum"
+                    )
+                if r_origin > r_inner:
+                    raise ValueError("y axis r_origin must not exceed the resolved radial minimum")
+            else:
+                if not r_origin > r_outer:
+                    raise ValueError(
+                        "y axis r_origin must be greater than the resolved radial minimum"
+                    )
+                if r_origin < r_inner:
+                    raise ValueError(
+                        "y axis r_origin must not be less than the resolved radial maximum"
+                    )
         for t in self.traces:
-            if t.n_points > POLAR_DIRECT_CEILING:
+            if t.kind in {"line", "scatter", "area"} and t.n_points > POLAR_DIRECT_CEILING:
                 # Polar has no decimation or density tier to fall back to
                 # (polar-axes.md §7), so past the cap the only honest options
                 # are refusing or an unbounded direct draw. Refuse, and say
@@ -1223,6 +1302,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
             lo, hi = min(positive_los), max(positive_his)
+        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
+            categories = self._axis_categories.get(axis_id)
+            if categories:
+                # Categorical theta keeps data in category-index coordinates;
+                # the renderer maps those indices evenly across the authored
+                # sector (or the default full turn). Returning angular units
+                # here made category 2 mean two radians and broke bar bands.
+                return (0.0, float(len(categories) - 1))
+            # Numeric theta is used directly as an angle, never rescaled into
+            # the axis range. The independent `sector` field governs partial
+            # layout/clipping; this range remains the full-turn tick domain.
+            unit = self.axis_options.get(axis_id, {}).get("theta_unit") or "radians"
+            return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
         configured_margin = opts.get("margin")
         if lo == hi and configured_margin is None:
             pad = abs(lo) * 0.05 or 0.5
@@ -1245,22 +1337,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
             pad = (hi - lo) * margin
             out_lo = lo - pad
             out_hi = hi + pad
-        if self.coords == "polar" and self._axis_dim(axis_id) == "x":
-            # The angular axis spans a full turn by default. A theta value is
-            # used *directly* as an angle (matplotlib and Plotly both do this),
-            # never rescaled into the axis range, so this range only governs
-            # where the spokes and their labels go. Autoscaling it to the data
-            # would put spokes at arbitrary angles and, for data covering half
-            # the circle, silently imply the other half does not exist.
-            unit = self.axis_options.get(axis_id, {}).get("theta_unit") or "radians"
-            return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
         if self.coords == "polar" and self._axis_dim(axis_id) == "y":
             # The radial axis starts at the centre unless asked otherwise
             # (matplotlib's default rmin=0). A radial axis padded away from
             # zero is actively misleading: it puts the smallest datum at the
             # centre, so a 5%-variation series reads as radiating from nothing.
             # An explicit domain/bounds still wins — it short-circuits above.
-            out_lo = min(0.0, lo)
+            # Log radius has no zero and already resolved its positive extent
+            # above. Linear/symlog keep the established centre-origin default.
+            out_lo = lo if scale == "log" else min(0.0, lo)
             # No outer pad either: the outermost ring should be the data max,
             # matching how both matplotlib and Plotly frame a polar plot.
             out_hi = hi
@@ -1447,9 +1532,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # Angular configuration rides the x (theta) axis. Defaults are
             # spelled out rather than omitted so the client and both exporters
             # read one resolved value instead of each re-deriving a fallback.
-            spec["theta_unit"] = opts.get("theta_unit") or "radians"
+            unit = opts.get("theta_unit") or "radians"
+            spec["theta_unit"] = unit
             spec["theta_zero"] = "E" if opts.get("theta_zero") is None else opts["theta_zero"]
             spec["theta_direction"] = opts.get("theta_direction") or "counterclockwise"
+            turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+            spec["sector"] = list(opts.get("sector") or (0.0, turn))
+            spec["grid_shape"] = opts.get("grid_shape") or "circular"
+        if self.coords == "polar" and self._axis_dim(axis_id) == "y":
+            # `hole` is always resolved on the wire. `r_origin` stays optional:
+            # when absent, renderers use the current visible r_lo, so radial
+            # zoom keeps the ordinary centre origin without a spec rewrite.
+            spec["hole"] = opts.get("hole") or 0.0
+            if opts.get("r_origin") is not None:
+                spec["r_origin"] = opts["r_origin"]
         return spec
 
     def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:

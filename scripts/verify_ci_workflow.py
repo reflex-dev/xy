@@ -331,6 +331,8 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/check_public_api.py",
         "ruff check .",
         "scripts/smoke_render.py",
+        "Polar phase 6/7 live examples",
+        "scripts/polar_phase7_smoke.py",
         "Browser lifecycle smoke",
         "Browser visual regression smoke",
         "Browser interaction stress smoke",

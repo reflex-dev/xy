@@ -1094,18 +1094,28 @@ def _cached_modebar(show: bool) -> Any:
 def _cached_axis(which: str, props: dict) -> Any:
     if props:
         if which == "x" and any(
-            key in props for key in ("theta_unit", "theta_zero", "theta_direction")
+            key in props
+            for key in ("theta_unit", "theta_zero", "theta_direction", "sector", "grid_shape")
         ):
             angular = dict(props)
             unit = angular.pop("theta_unit", None)
             zero = angular.pop("theta_zero", None)
             direction = angular.pop("theta_direction", None)
+            sector = angular.pop("sector", None)
+            grid_shape = angular.pop("grid_shape", None)
             return xy.theta_axis(
                 unit=unit,
                 zero=zero,
                 direction=direction,
+                sector=sector,
+                grid_shape=grid_shape,
                 **angular,
             )
+        if which == "y" and any(key in props for key in ("hole", "r_origin")):
+            radial = dict(props)
+            hole = radial.pop("hole", None)
+            origin = radial.pop("r_origin", None)
+            return xy.r_axis(hole=hole, origin=origin, **radial)
         factory = xy.x_axis if which == "x" else xy.y_axis
         return factory(**props)
     key = ("axis", which)
@@ -1166,6 +1176,7 @@ class Axes(PlotTypeMixin):
         # render into the projection rather than into polar-specific artists.
         self._projection: str = "cartesian"
         self._polar_options: dict[str, Any] = {}
+        self._polar_r_options: dict[str, Any] = {}
         # Natural ``table(loc="bottom")`` height in Matplotlib points. It is
         # converted at render time so savefig DPI changes preserve cell size.
         self._table_bottom_points = 0.0
@@ -1551,6 +1562,10 @@ class Axes(PlotTypeMixin):
         self._cycle = 0
         self._patch_cycle = 0
         self._load_rc_chrome()
+        self._polar_options = {}
+        self._polar_r_options = {}
+        if self._projection == "polar":
+            self._set_projection("polar")
         self._chart = None
         self._twin = None
         self.xaxis = _AxisProxy(self, "x")
@@ -3905,6 +3920,12 @@ class Axes(PlotTypeMixin):
     def get_xlim(self) -> tuple[float, float]:
         """The current x view limits, in data space and display order."""
         host = (self._y2_of or self)._shared_ticker_source("x")
+        if self._projection == "polar" and not self._has_explicit_shared_domain("x"):
+            # Polar theta defaults to one complete turn, independently of the
+            # data's angular extent. This is also the single source read by the
+            # theta-limit setters/getters below; automatic Cartesian x padding
+            # must never become an authored sector.
+            return (0.0, 2.0 * math.pi)
         lo, hi = host._axis["x"].get("domain", self._auto_domain("x"))
         lo, hi = map(
             float,
@@ -5807,17 +5828,55 @@ class Axes(PlotTypeMixin):
 
     def set_thetamin(self, thetamin: float) -> None:
         self._require_polar("set_thetamin")
-        raise NotImplementedError(
-            "partial sectors (set_thetamin/set_thetamax) are not implemented yet; "
-            "see spec/design/polar-axes.md §9"
-        )
+        value = float(thetamin)
+        if not math.isfinite(value):
+            raise ValueError("thetamin must be finite")
+        _lo, hi = sorted(self.get_xlim())
+        lo = math.radians(value)
+        if lo >= hi:
+            raise ValueError("thetamin must be less than thetamax")
+        self.set_xlim(lo, hi)
 
     def set_thetamax(self, thetamax: float) -> None:
         self._require_polar("set_thetamax")
-        raise NotImplementedError(
-            "partial sectors (set_thetamin/set_thetamax) are not implemented yet; "
-            "see spec/design/polar-axes.md §9"
-        )
+        value = float(thetamax)
+        if not math.isfinite(value):
+            raise ValueError("thetamax must be finite")
+        lo, _hi = sorted(self.get_xlim())
+        hi = math.radians(value)
+        if hi <= lo:
+            raise ValueError("thetamax must be greater than thetamin")
+        self.set_xlim(lo, hi)
+
+    def get_thetamin(self) -> float:
+        """Minimum visible theta in degrees, matching Matplotlib PolarAxes."""
+        self._require_polar("get_thetamin")
+        lo, _hi = sorted(self.get_xlim())
+        return math.degrees(float(lo))
+
+    def get_thetamax(self) -> float:
+        """Maximum visible theta in degrees, matching Matplotlib PolarAxes."""
+        self._require_polar("get_thetamax")
+        _lo, hi = sorted(self.get_xlim())
+        return math.degrees(float(hi))
+
+    def set_rorigin(self, origin: Optional[float]) -> None:
+        """Set the data-space radial origin; ``None`` restores rmin."""
+        self._require_polar("set_rorigin")
+        if origin is None:
+            self._polar_r_options.pop("r_origin", None)
+        else:
+            value = float(origin)
+            if not math.isfinite(value):
+                raise ValueError("rorigin must be finite")
+            self._polar_r_options["r_origin"] = value
+        self._invalidate()
+
+    def get_rorigin(self) -> float:
+        """Return the authored radial origin, or the current radial minimum."""
+        self._require_polar("get_rorigin")
+        value = self._polar_r_options.get("r_origin")
+        return self.get_rmin() if value is None else float(value)
 
     def set_xscale(self, scale: str, **kwargs: Any) -> None:
         """Set the x-axis scale.
@@ -8217,12 +8276,22 @@ class Axes(PlotTypeMixin):
         self._apply_tickers("y", y_props, auto_tick_counts["y"])
         self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
         if self._projection == "polar":
+            # A polar angular view defaults to one complete turn. Cartesian
+            # autoscaling above can materialize a padded x domain (bars are a
+            # common trigger), but that internal domain is not an authored
+            # theta limit and must not become a sector. set_xlim() and
+            # set_thetamin/max share the explicit-domain state, so preserve it
+            # only when either public spelling has actually authored it.
+            if not self._has_explicit_shared_domain("x"):
+                x_props.pop("domain", None)
+                x_props.pop("margin", None)
             # The angular descriptors are axis properties, so route them
             # through the authored x-axis component with its ticks, labels and
-            # domain intact. Calling Figure.set_axis() after chart construction
-            # replaces unspecified fields with defaults and used to erase
-            # set_thetagrids()/set_xticks() from polar axes.
+            # explicit limits intact. Calling Figure.set_axis() after chart
+            # construction replaces unspecified fields with defaults and used
+            # to erase set_thetagrids()/set_xticks() from polar axes.
             x_props.update(self._polar_options)
+            y_props.update(self._polar_r_options)
         compact = width < 520
         if chart_padding is None:
             top, right, bottom, left = (

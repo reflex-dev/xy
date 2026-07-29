@@ -32,14 +32,19 @@ import warnings
 # `theta_zero` and `theta_direction` on the angular (x) axis spec. A v10 client
 # would ignore `coords` entirely and draw the (theta, r) columns as cartesian
 # x/y — a plausible, completely wrong picture — so it must reject the payload.
-PROTOCOL_VERSION = 11
+# v12 adds polar sector/grid-shape metadata on the angular axis and hole/origin
+# metadata on the radial axis. A v11 client would silently draw a full circular
+# grid with a centre-origin radius, so the new geometry must fail the handshake.
+PROTOCOL_VERSION = 12
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,
 # segment and mesh shaders expand geometry in pixel space after the coordinate
 # map, so under polar they would draw chord-edged shapes where arcs belong.
 # spec/design/polar-axes.md §7 tracks the order the rest land in.
-POLAR_MARK_KINDS = frozenset({"line", "scatter", "area", "bar", "column"})
+POLAR_MARK_KINDS = frozenset(
+    {"line", "scatter", "area", "bar", "column", "heatmap", "contour", "errorbar"}
+)
 
 # Polar traces ship tier="direct" (§7): M4 decimation buckets on a monotonic
 # screen-x column, which a spiral is not, and density binning in (theta, r)

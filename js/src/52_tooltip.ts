@@ -323,8 +323,7 @@ Object.assign(ChartView.prototype, {
   _tooltipAnchorPx() {
     const a = this._tooltipAnchor;
     if (!a) return null;
-    const lx = this._dataPx(a.xAxis, a.x);
-    const ly = this._dataPx(a.yAxis, a.y);
+    const [lx, ly] = this._projectDataPoint(a.xAxis, a.yAxis, a.x, a.y);
     const p = this.plot;
     if (!Number.isFinite(lx) || !Number.isFinite(ly)
         || lx < p.x || lx > p.x + p.w || ly < p.y || ly > p.y + p.h) {

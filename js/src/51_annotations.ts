@@ -284,6 +284,41 @@ function xyTaperPolygon(points, w0, w1) {
   return left.concat(right.reverse());
 }
 
+// Canvas-authored scatter glyphs and clipped annotation marks share the same
+// annular-sector boundary as GL/SVG marks. A rectangular canvas clip lets a
+// large marker bleed into the hole (or a chord cross a sector's missing
+// wedge), so trace the visible outer arc and return along the inner arc.
+function xyClipPolarCanvas(ctx, geom) {
+  const denom = geom.rHi - geom.rOrigin;
+  const visibleFraction = Math.abs(denom) > 1e-30
+    ? geom.hole + (1 - geom.hole) * ((geom.rLo - geom.rOrigin) / denom)
+    : geom.hole;
+  const inner = Math.max(
+    0,
+    Math.min(geom.radius, visibleFraction * geom.radius),
+  );
+  const start = -geom.angleStart;
+  const end = -geom.angleEnd;
+  const anticlockwise = geom.dir > 0;
+  ctx.beginPath();
+  ctx.moveTo(
+    geom.cx + geom.radius * Math.cos(start),
+    geom.cy + geom.radius * Math.sin(start),
+  );
+  ctx.arc(geom.cx, geom.cy, geom.radius, start, end, anticlockwise);
+  if (inner > 1e-6) {
+    ctx.lineTo(
+      geom.cx + inner * Math.cos(end),
+      geom.cy + inner * Math.sin(end),
+    );
+    ctx.arc(geom.cx, geom.cy, inner, end, start, !anticlockwise);
+  } else {
+    ctx.lineTo(geom.cx, geom.cy);
+  }
+  ctx.closePath();
+  ctx.clip();
+}
+
 Object.assign(ChartView.prototype, {
   _authoredScatterRgba(g, index, continuousLut = null, paletteRgba = null) {
     if (g.colorMode === 3 && g._cpu.rgba) {
@@ -312,10 +347,12 @@ Object.assign(ChartView.prototype, {
     );
     if (!draws.length) return;
     const p = this.plot;
+    const polarGeom = this._polarGeometry();
     ctx.save();
     ctx.beginPath();
     ctx.rect(p.x, p.y, p.w, p.h);
     ctx.clip();
+    if (polarGeom) xyClipPolarCanvas(ctx, polarGeom);
     for (const { g, opacityScale } of draws) {
       if (!g._cpu) continue;
       const style = g.trace.style || {};
@@ -336,7 +373,7 @@ Object.assign(ChartView.prototype, {
         const sourceIndex = g._visMap ? g._visMap[index] : index;
         const x = this._decodeValue(g._cpu.x, g.xMeta, sourceIndex);
         const y = this._decodeValue(g._cpu.y, g.yMeta, sourceIndex);
-        const [px, py] = this._dataPxPoint(x, y, g.xAxis, g.yAxis);
+        const [px, py] = this._projectDataPoint(g.xAxis, g.yAxis, x, y, polarGeom);
         if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
         const sizeValue = g.sizeMode === 1 && g._cpu.size
           ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) *
@@ -560,25 +597,35 @@ Object.assign(ChartView.prototype, {
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
     const p = this.plot;
+    const polarGeom = this._polarGeometry();
+    const project = (x, y) => this._projectDataPoint(
+      "x",
+      "y",
+      Number(x),
+      Number(y),
+      polarGeom,
+    );
     for (const [annotationIndex, ann] of annotations.entries()) {
       ctx.save();
       let targetX = NaN;
       let targetY = NaN;
       if (ann.kind === "arrow") {
-        targetX = this._dataPxX(Number(ann.x1));
-        targetY = this._dataPxY(Number(ann.y1));
+        [targetX, targetY] = project(ann.x1, ann.y1);
       } else if (ann.kind === "callout") {
-        targetX = this._dataPxX(Number(ann.x));
-        targetY = this._dataPxY(Number(ann.y));
+        [targetX, targetY] = project(ann.x, ann.y);
       }
       const connectorTargetInBounds =
         Number.isFinite(targetX) && Number.isFinite(targetY) &&
         targetX >= p.x && targetX <= p.x + p.w &&
         targetY >= p.y && targetY <= p.y + p.h;
       if (!connectorTargetInBounds) {
-        ctx.beginPath();
-        ctx.rect(p.x, p.y, p.w, p.h);
-        ctx.clip();
+        if (polarGeom) {
+          xyClipPolarCanvas(ctx, polarGeom);
+        } else {
+          ctx.beginPath();
+          ctx.rect(p.x, p.y, p.w, p.h);
+          ctx.clip();
+        }
       }
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       if (ann.kind === "band") {
@@ -644,7 +691,7 @@ Object.assign(ChartView.prototype, {
         const [arrowX1, arrowY1] = this._dataPxPoint(Number(ann.x1), Number(ann.y1));
         this._drawArrowLine(ctx, arrowX0, arrowY0, arrowX1, arrowY1, style);
       } else if (ann.kind === "callout") {
-        const [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
+        const [px, py] = project(ann.x, ann.y);
         const resolved = this._resolvedAnnotationAnchors?.get(annotationIndex);
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;

@@ -38,6 +38,7 @@ _CURVES = frozenset({"linear", "smooth"})
 _COORDS = frozenset({"cartesian", "polar"})
 _THETA_UNITS = frozenset({"radians", "degrees"})
 _THETA_DIRECTIONS = frozenset({"counterclockwise", "clockwise"})
+_POLAR_GRID_SHAPES = frozenset({"circular", "linear"})
 # Compass letters for theta=0; resolved to radians by THETA_ZERO in _svg.py and
 # by the THETA_ZERO table in js/src/50_chartview.ts. Kept as letters on the wire so one table serves all renderers.
 _THETA_ZEROS = frozenset({"E", "N", "W", "S"})
@@ -427,6 +428,31 @@ def theta_zero(value: Any, label: str) -> Any:
             )
         return value
     return finite_scalar(value, label)
+
+
+def theta_sector(value: Any, label: str) -> tuple[float, float]:
+    """Increasing angular sector endpoints.
+
+    The maximum sweep depends on the theta axis's resolved unit, so the shared
+    Figure validation performs that final check once the axis is attached to a
+    polar chart.
+    """
+    return finite_increasing_pair(value, label)
+
+
+def polar_grid_shape(value: Any, label: str) -> str:
+    """Polar radial-grid geometry: circular arcs or straight polygons."""
+    if not isinstance(value, str) or value not in _POLAR_GRID_SHAPES:
+        raise ValueError(f"{label} must be one of {sorted(_POLAR_GRID_SHAPES)}")
+    return value
+
+
+def polar_hole(value: Any, label: str) -> float:
+    """Display-space inner-radius fraction, in the half-open interval [0, 1)."""
+    out = finite_scalar(value, label)
+    if out < 0 or out >= 1:
+        raise ValueError(f"{label} must be at least 0 and less than 1")
+    return out
 
 
 _POINT_SYMBOLS = frozenset(

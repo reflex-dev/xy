@@ -279,8 +279,11 @@ function collapsedToZero(formatted) {
 }
 
 export function fmtAxis(axis, v, tickStep) {
-  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit, tickStep);
+  // A categorical theta axis still carries theta_unit for its geometric
+  // transform. Category labels own the display text, so they must win over
+  // angular numeric formatting here.
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
+  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit, tickStep);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
   if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {

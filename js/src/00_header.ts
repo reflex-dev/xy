@@ -40,7 +40,10 @@
 // (`theta_unit`, `theta_zero`, `theta_direction`). A v10 client ignores
 // `coords` and draws the (theta, r) columns as cartesian x/y, so it must
 // reject the payload rather than render a plausible wrong picture.
-export const PROTOCOL = 11;
+// v12: polar angular axes carry `sector`/`grid_shape`, and radial axes carry
+// `hole`/`r_origin`. A v11 client would accept those fields but silently draw
+// full circular, centre-origin geometry.
+export const PROTOCOL = 12;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

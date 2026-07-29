@@ -247,6 +247,12 @@ class Axis(Component):
     theta_unit: Optional[str] = None
     theta_zero: Union[str, float, None] = None
     theta_direction: Optional[str] = None
+    # Phase-7 polar geometry. Appended to preserve the released positional
+    # dataclass surface; ignored unless the owning chart is polar.
+    sector: Optional[tuple[float, float]] = None
+    grid_shape: Optional[str] = None
+    hole: Optional[float] = None
+    r_origin: Optional[float] = None
 
 
 @dataclass
@@ -2647,6 +2653,8 @@ def theta_axis(
     unit: Optional[str] = None,
     zero: Union[str, float, None] = None,
     direction: Optional[str] = None,
+    sector: Optional[tuple[float, float]] = None,
+    grid_shape: Optional[str] = None,
     **kwargs: Any,
 ) -> Axis:
     """Configure the angular axis of an `xy.polar_chart`.
@@ -2662,14 +2670,25 @@ def theta_axis(
         direction: ``"counterclockwise"`` (default) or ``"clockwise"``.
             Compass work usually wants ``zero="N"`` with ``"clockwise"``, which
             puts 90° at east and 180° at south.
+        sector: Visible angular interval in the declared ``unit``. The sweep
+            must be increasing and no wider than one full turn.
+        grid_shape: ``"circular"`` (default) for arc rings or ``"linear"`` for
+            polygonal rings joining the angular spokes.
         **kwargs: Any `x_axis` keyword.
 
     Returns:
         An `Axis` for the angular dimension.
     """
     axis = x_axis(**kwargs)
+    if sector is not None and axis.domain is not None:
+        raise ValueError("theta_axis sector and domain describe the same limit; pass only one")
+    resolved_sector = axis.domain if sector is None else sector
     return replace(
         axis,
+        # On a polar angular axis, the familiar axis `domain=` spelling is an
+        # alias for the visible sector. The data/tick range remains independent
+        # (notably, categorical theta stays in category-index coordinates).
+        domain=None,
         theta_unit=None if unit is None else _validate.theta_unit(unit, "theta_axis unit"),
         theta_zero=None if zero is None else _validate.theta_zero(zero, "theta_axis zero"),
         theta_direction=(
@@ -2677,10 +2696,25 @@ def theta_axis(
             if direction is None
             else _validate.theta_direction(direction, "theta_axis direction")
         ),
+        sector=(
+            None
+            if resolved_sector is None
+            else _validate.theta_sector(resolved_sector, "theta_axis sector")
+        ),
+        grid_shape=(
+            None
+            if grid_shape is None
+            else _validate.polar_grid_shape(grid_shape, "theta_axis grid_shape")
+        ),
     )
 
 
-def r_axis(**kwargs: Any) -> Axis:
+def r_axis(
+    *,
+    hole: Optional[float] = None,
+    origin: Optional[float] = None,
+    **kwargs: Any,
+) -> Axis:
     """Configure the radial axis of an `xy.polar_chart`.
 
     Delegates to `y_axis` — the radial axis *is* the y axis under
@@ -2688,12 +2722,23 @@ def r_axis(**kwargs: Any) -> Axis:
     compositions read in polar vocabulary rather than mixing x/y with theta/r.
 
     Args:
+        hole: Display-space inner-radius fraction, from 0 (no hole) up to but
+            excluding 1.
+        origin: Data-space radial origin. An origin below the visible radial
+            minimum creates an annulus. Mutually exclusive with ``hole``.
         **kwargs: Any `y_axis` keyword.
 
     Returns:
         An `Axis` for the radial dimension.
     """
-    return y_axis(**kwargs)
+    if hole is not None and origin is not None:
+        raise ValueError("r_axis hole and origin are mutually exclusive")
+    axis = y_axis(**kwargs)
+    return replace(
+        axis,
+        hole=None if hole is None else _validate.polar_hole(hole, "r_axis hole"),
+        r_origin=None if origin is None else _validate.finite_scalar(origin, "r_axis origin"),
+    )
 
 
 def legend(
@@ -3425,6 +3470,10 @@ class Chart(Component):
                 theta_unit=axis.theta_unit,
                 theta_zero=axis.theta_zero,
                 theta_direction=axis.theta_direction,
+                sector=axis.sector,
+                grid_shape=axis.grid_shape,
+                hole=axis.hole,
+                r_origin=axis.r_origin,
             )
         # Facet builds pre-seed the union category order (set as a private
         # attribute by FacetChart) so shared categorical domains align the

@@ -420,9 +420,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 11` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 12` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 11` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 12` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -453,7 +453,17 @@ Two independent version constants:
   axes-fraction `y` and pixel `pad` occupy a two-f32 raw geometry column
   referenced by `geometry`, keeping numeric data out of JSON. A cached v9
   client would ignore the field and silently omit non-center slots and their
-  placement, so the v10 mismatch rejects it before rendering.
+  placement, so the v10 mismatch rejects it before rendering. v11 adds the
+  top-level `coords: "polar"` mode plus `theta_unit`, `theta_zero`, and
+  `theta_direction` on the angular axis. A cached v10 client would accept the
+  same x/y columns and render a plausible Cartesian chart, so it must be
+  rejected. v12 adds resolved `sector`/`grid_shape` fields on the angular axis
+  and `hole` plus optional `r_origin` on the radial axis, and makes
+  heatmap/contour/error-bar trace schemas legal in polar coordinates. A cached
+  v11 client would silently draw a full circular, centre-origin view and route
+  those grid/segment traces through their Cartesian paths. The v12 handshake
+  rejects that stale bundle before any of those compatible-looking wrong
+  pictures can appear.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

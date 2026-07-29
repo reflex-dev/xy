@@ -300,7 +300,7 @@ next, no dates implied:
 - **Candlestick / OHLC and finance overlays:** SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
 - **Waterfall and funnel**
 - **Treemap, sunburst, and icicle**
-- **Radar / polar and gauge:** needs polar axes first
+- **Gauge / indicator:** build on the shipped polar axes and composable radial marks
 - **Slope, bump, and dumbbell**
 - **3D and volume:** scatter, surfaces, meshes, isosurfaces, and volumetric views
 

@@ -8,7 +8,24 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- Completed the phase-6/7 polar depth surface: `xy.polar_chart` now admits
+  heatmap, contour, and error-bar traces alongside line/scatter/area/bar; the
+  heatmap uses a fragment-stage polar inverse in the browser and the matching
+  bounded inverse raster for static export. Polar axes add partial-sector
+  layout, `hole`/radial origin, categorical theta, log/symlog radius, and
+  polygonal `grid_shape="linear"` rings. `xy.pyplot` exposes degree-based
+  `set/get_thetamin`, `set/get_thetamax`, and radial
+  `set/get_rorigin`. Generic segment/mesh marks, polar rule/band annotations,
+  LOD, facets/animation, and angular navigation/selection remain deferred.
+
 ### Changed
+- The renderer/spec protocol is now v12. Angular axes resolve
+  `sector`/`grid_shape` and radial axes resolve `hole` plus optional
+  `r_origin`; a cached v11 client would silently draw full-circle,
+  centre-origin Cartesian grid/segment fallbacks, so the protocol mismatch
+  rejects it before rendering. The native renderer ABI is now v47 for the
+  annular-sector display-list clip opcode.
 - Contributor-only test, lint, type-check, and CodSpeed packages now live in
   PEP 735 dependency groups instead of published package extras. The unused
   Plotly-only `bench` extra was removed; cross-library benchmark environments

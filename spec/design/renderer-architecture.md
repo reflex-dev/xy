@@ -27,10 +27,10 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 | `10_colormaps.ts` | 51 | The `COLORMAP_STOPS` table (§36 CVD-safe defaults) as compact RGB stop lists, and `buildLutData`, which linearly interpolates a stop list into the 256-texel RGBA LUT uploaded once per colormap as a texture. |
 | `20_theme.ts` | 163 | Resolves chrome and mark colors: arbitrary CSS color expressions and `--chart-*` custom properties are resolved against a live probe element into f32 RGBA for GL, with a fallback on unparseable input. Also owns `XY_CHROME_CSS` and its one-time stylesheet injection. |
 | `30_ticks.ts` | 224 | CPU-side tick generation in f64 for linear, log, category and time axes, plus every axis/colorbar label formatter (automatic and `format=`-driven). Specified in §6. |
-| `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. The only module that is GPU-API-specific by design (§4). |
+| `40_gl.ts` | 829 | WebGL2 primitives: shader compile/link, `makeProgram` with its per-program uniform-location memo (R1), the fixed `ATTR_SLOTS` attribute-slot table bound at link time, and the shader inventory itself. It owns the shared Cartesian/polar axis-coordinate preamble, including sector/hole/origin uniforms, the heatmap fragment-stage polar inverse, the allowlisted contour/error-bar segment projection, and the annular-sector fragment clip shared by every legal polar mark and pick path. The only module that is GPU-API-specific by design (§4). |
 | `45_lod.ts` | 567 | View-dependent level-of-detail orchestration, deliberately chart-agnostic: tier selection, drill enter/exit hysteresis (`LOD_DRILL_EXIT_FACTOR`), cross-tier fades, and the retained tier caches. Calls back into `view._draw*` rather than drawing itself, which is the seam tests intercept. |
 | `46_worker.ts` | 103 | The standalone density re-bin worker: a worker source string carried inside the bundle and booted from a Blob URL. Re-bins the retained sample off the main thread — counts plus, for channel-bearing traces, the per-cell mean point color (same linear-light law as the kernel, LOD doc §2) — so kernel-less (`to_html`) density charts refine on zoom instead of stretching the overview texture; absence of workers falls back to stretching. |
-| `50_chartview.ts` | 4175 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. Modules 51–54 extend this same class. |
+| `50_chartview.ts` | 4175 | The `ChartView` class: the four drawing surfaces, scale/view state, chrome (background, grid, axes, legend, colorbar), GL buffer and VAO management (R2), and pick orchestration. It resolves the joint polar geometry (sector layout, categorical θ, scaled radius, hole/origin, circular/polygonal grid), uploads the corresponding uniforms, and shares its inverse with hover. Modules 51–54 extend this same class. |
 | `51_annotations.ts` | 591 | The 2D overlay canvas above the marks canvas: annotation markers, arrows, shape fills, and collision-nudged labels. Separates canvas shape style keys from label CSS so annotation styling never leaks into the DOM label. |
 | `52_tooltip.ts` | 321 | Hit → source row → tooltip DOM. Anchors the tooltip at the picked point's data coordinates and reprojects it every draw ([interaction.md](../api/interaction.md) §7). Renders the local f32-decoded row immediately, then replaces it with the kernel's exact f64 row when that reply arrives (sequence- and `drill_seq`-guarded); composes text nodes, never HTML. |
 | `53_interaction.ts` | 1820 | The entire user-facing interaction surface: pointer/drag/wheel wiring, crosshair, box select, box zoom, lasso, the modebar and its export menu, and the animated pan/zoom view state machine. The gesture→action mapping, the modebar tool inventory and the `interaction_config` switches are specified in [interaction.md](../api/interaction.md) §2 and §5. |
@@ -57,6 +57,14 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
 - **Uniform-only pan/zoom**: geometry is static offset-encoded f32; view
   changes touch two vec2 uniforms per mark (`_map`). This is why interaction
   is cheap; nothing below may regress it.
+- **Coordinate-system seam, including non-vertex grids:** point/line/area/bar
+  programs call the shared joint polar projection after ordinary axis decode
+  and scale. Heatmap remains a fullscreen quad and performs the inverse joint
+  map in its fragment shader instead; the CPU exporter has the same bounded
+  inverse-raster contract. `SEGMENT_VS` has a polar path only for the
+  allowlisted `contour` and `errorbar` trace schemas. This does **not** imply
+  generic segment, density-grid, rectangle, or mesh support under
+  `coords="polar"`; Python's `POLAR_MARK_KINDS` remains the recorded gate.
 - **Bounded inputs in the aggregated tiers**: decimated ships M4 output
   bounded by the plot's pixel width; density ships a fixed grid. Direct-tier
   traces still ship O(N) columns — the bound there is the tier threshold, not
@@ -147,7 +155,9 @@ Ordered by how much each compounds as kinds multiply.
   (`GLSL_COMMON`), not a shader framework. Deliberately stop there — a
   "shader graph" is over-engineering at this scale. The original "fine at 5
   kinds" deferral rationale has expired; the trigger is now a third
-  corner-expanding VS.
+  corner-expanding VS. The polar branch in `SEGMENT_VS` is deliberately
+  schema-gated above this layer: only contour/error-bar traces are admitted,
+  so it must not be cited as generic polar segment or mesh support.
 - **R7 — DPR/zoom *changes* aren't observed.** ✅ **Done.** `_armDprWatch`
   re-arms a one-shot `matchMedia('(resolution: Ndppx)')` per dpr value;
   `_resize` re-reads devicePixelRatio so a pure-DPR change re-derives

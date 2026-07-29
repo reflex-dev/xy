@@ -1022,7 +1022,8 @@ export class ChartView {
     const requested = typeof this.interaction?.default_drag_action === "string"
       ? this.interaction.default_drag_action : "auto";
     const canNavigate = this._interactionFlag("navigation", true);
-    const canPan = canNavigate && this._interactionFlag("pan", true);
+    const canPan = canNavigate && this._interactionFlag("pan", true)
+      && this._axisPolicy("pan_axes").length > 0;
     const canZoom = canNavigate && this._interactionFlag("zoom", true)
       && this._interactionFlag("box_zoom", true);
     const canSelect = this._pickable && this._interactionFlag("select", true)
@@ -1084,7 +1085,16 @@ export class ChartView {
 
   _axisTicks(axisId, target): any {
     const axis = this._axis(axisId);
-    const [lo, hi] = this._axisRange(axisId);
+    let [lo, hi] = this._axisRange(axisId);
+    if (this.spec?.coords === "polar" && this._axisDim(axisId) === "x") {
+      if (axis.kind === "category") {
+        lo = 0;
+        hi = Math.max(0, (axis.categories || []).length - 1);
+      } else if (Array.isArray(axis.sector) && axis.sector.length === 2) {
+        lo = Number(axis.sector[0]);
+        hi = Number(axis.sector[1]);
+      }
+    }
     if (Array.isArray(axis.tick_values)) {
       const a = Math.min(lo, hi), b = Math.max(lo, hi);
       const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
@@ -1092,9 +1102,23 @@ export class ChartView {
     }
     // Placed after the authored-tick_values return so explicit ticks still
     // win, and before every kind branch — mirrored by axis_ticks in _svg.py.
+    if (axis.kind === "category") {
+      const categories = axis.categories || [];
+      // Every categorical-theta value defines a spoke (and, for
+      // grid_shape="linear", one polygon vertex). Cartesian categories may be
+      // thinned for legibility, but silently thinning polar categories changes
+      // the grid geometry itself. An explicit tick_count remains the opt-in
+      // control for authors who want fewer spokes.
+      const authoredTarget = Number(axis.tick_count);
+      const categoryTarget = this.spec?.coords === "polar"
+        && this._axisDim(axisId) === "x"
+        && !(Number.isFinite(authoredTarget) && authoredTarget > 0)
+        ? categories.length
+        : target;
+      return categoryTicks(lo, hi, categories, categoryTarget);
+    }
     if (axis.theta_unit) return angularTicks(lo, hi, axis.theta_unit, target);
     if (axis.kind === "time") return timeTicks(lo, hi, target);
-    if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
     if (axis.scale === "symlog") {
       const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
@@ -4407,41 +4431,296 @@ export class ChartView {
   // hover math both need. Null on a cartesian chart.
   //
   // The GL canvas is sized and positioned to exactly the plot rect, so clip
-  // space [-1,1] IS the plot rect: the centre is the rect centre and the
-  // radius converts to clip units per axis (2R/w, 2R/h) — a vec2, because a
-  // round circle in a non-square rect cannot use one scalar.
+  // space [-1,1] IS the plot rect. Full turns center there; partial sectors fit
+  // their visible bounding box and can move the polar origin. Radius therefore
+  // converts to clip units per axis (2R/w, 2R/h) — a vec2, because a round
+  // circle in a non-square rect cannot use one scalar.
   _polarGeometry() {
     if (this.spec?.coords !== "polar") return null;
     const p = this.plot;
     if (!p || !(p.w > 0) || !(p.h > 0)) return null;
-    const axis = this._axis("x") || {};
-    const rawZero = axis.theta_zero ?? "E";
+    const thetaAxis = this._axis("x") || {};
+    const radialAxis = this._axis("y") || {};
+    const rawZero = thetaAxis.theta_zero ?? "E";
     const zero = typeof rawZero === "string" ? (THETA_ZERO[rawZero] ?? 0) : Number(rawZero) || 0;
-    const dir = axis.theta_direction === "clockwise" ? -1 : 1;
-    const unitScale = axis.theta_unit === "degrees" ? Math.PI / 180 : 1;
-    const [rLo, rHi] = this._axisRange("y");
-    const radius = Math.min(p.w, p.h) / 2;
+    const dir = thetaAxis.theta_direction === "clockwise" ? -1 : 1;
+    const unitScale = thetaAxis.theta_unit === "degrees" ? Math.PI / 180 : 1;
+    const angularTurn = thetaAxis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
+    const authoredSector = Array.isArray(thetaAxis.sector) && thetaAxis.sector.length === 2
+      ? [Number(thetaAxis.sector[0]), Number(thetaAxis.sector[1])]
+      : [0, angularTurn];
+    const sectorStart = Number.isFinite(authoredSector[0]) ? authoredSector[0] : 0;
+    const sectorEnd = Number.isFinite(authoredSector[1]) ? authoredSector[1] : angularTurn;
+    const sectorSpan = Math.max(0, sectorEnd - sectorStart);
+    const fullSector = sectorSpan >= angularTurn * (1 - 1e-10);
+    const categories = thetaAxis.kind === "category" ? (thetaAxis.categories || []) : null;
+    const categoryCount = categories ? categories.length : 0;
+    let thetaStart = sectorStart;
+    let thetaEnd = sectorEnd;
+    let dirUnit = dir * unitScale;
+    let angleBase = zero;
+    if (categories) {
+      // Full turns are N equal bands with no duplicated seam. Partial sectors
+      // instead place the first and last category centers on the authored
+      // endpoints, hence N-1 intervals.
+      const intervals = fullSector
+        ? Math.max(categoryCount, 1)
+        : Math.max(categoryCount - 1, 1);
+      dirUnit = dir * unitScale * sectorSpan / intervals;
+      angleBase = zero + dir * unitScale * sectorStart;
+      thetaStart = 0;
+      thetaEnd = fullSector ? Math.max(categoryCount, 1) : Math.max(categoryCount - 1, 0);
+    }
+    const dataTurn = (2 * Math.PI) / Math.max(Math.abs(dirUnit), 1e-30);
+    const [rLoRaw, rHiRaw] = this._axisRange("y");
+    const rLo = this._axisCoord(radialAxis, rLoRaw);
+    const rHi = this._axisCoord(radialAxis, rHiRaw);
+    const originRaw = radialAxis.r_origin != null && Number.isFinite(Number(radialAxis.r_origin))
+      ? Number(radialAxis.r_origin)
+      : Number(rLoRaw);
+    const rOrigin = this._axisCoord(radialAxis, originRaw);
+    const hole = Math.max(0, Math.min(0.999999, Number(radialAxis.hole) || 0));
+    const angleStart = zero + dir * unitScale * sectorStart;
+    const angleEnd = zero + dir * unitScale * sectorEnd;
+    let radius;
+    let cx;
+    let cy;
+    if (fullSector) {
+      radius = Math.min(p.w, p.h) / 2;
+      cx = p.x + p.w / 2;
+      cy = p.y + p.h / 2;
+    } else {
+      // Fit the sector's actual bounding box, including its visible inner
+      // boundary. A semicircular gauge should use the whole plot instead of
+      // reserving an invisible half-disc.
+      const denom = rHi - rOrigin;
+      const inner = Math.max(0, Math.min(1, Math.abs(denom) > 1e-30
+        ? hole + (1 - hole) * ((rLo - rOrigin) / denom)
+        : 0));
+      const loAngle = Math.min(angleStart, angleEnd);
+      const hiAngle = Math.max(angleStart, angleEnd);
+      const angles = [angleStart, angleEnd];
+      for (const cardinal of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
+        const first = Math.ceil((loAngle - cardinal) / (2 * Math.PI));
+        const last = Math.floor((hiAngle - cardinal) / (2 * Math.PI));
+        for (let turnIndex = first; turnIndex <= last; turnIndex++) {
+          angles.push(cardinal + turnIndex * 2 * Math.PI);
+        }
+      }
+      const xs = [];
+      const ys = [];
+      for (const angle of angles) {
+        xs.push(Math.cos(angle), inner * Math.cos(angle));
+        ys.push(-Math.sin(angle), -inner * Math.sin(angle));
+      }
+      if (inner <= 1e-12) {
+        xs.push(0);
+        ys.push(0);
+      }
+      const xmin = Math.min(...xs);
+      const xmax = Math.max(...xs);
+      const ymin = Math.min(...ys);
+      const ymax = Math.max(...ys);
+      const xspan = Math.max(xmax - xmin, 1e-12);
+      const yspan = Math.max(ymax - ymin, 1e-12);
+      radius = Math.min(p.w / xspan, p.h / yspan);
+      const left = p.x + (p.w - radius * xspan) / 2;
+      const top = p.y + (p.h - radius * yspan) / 2;
+      cx = left - radius * xmin;
+      cy = top - radius * ymin;
+    }
     return {
       radius,
-      cx: p.x + p.w / 2,
-      cy: p.y + p.h / 2,
+      cx,
+      cy,
+      clipCx: ((cx - p.x) / p.w) * 2 - 1,
+      clipCy: 1 - ((cy - p.y) / p.h) * 2,
       clipRx: (2 * radius) / p.w,
       clipRy: (2 * radius) / p.h,
-      rLo: this._axisCoord(this._axis("y"), rLo),
-      rHi: this._axisCoord(this._axis("y"), rHi),
-      zero,
-      dirUnit: dir * unitScale,
+      rLo,
+      rHi,
+      rLoRaw,
+      rHiRaw,
+      rOrigin,
+      rOriginRaw: originRaw,
+      hole,
+      zero: angleBase,
+      rawZero: zero,
+      dir,
+      dirUnit,
+      unitScale,
+      turn: dataTurn,
+      angularTurn,
+      thetaStart,
+      thetaEnd,
+      sectorStart,
+      sectorEnd,
+      sectorSpan,
+      fullSector,
+      angleStart,
+      angleEnd,
+      categoryCount,
+      gridShape: thetaAxis.grid_shape || "circular",
     };
   }
 
-  // Every polar-capable program declares these; a cartesian chart uploads
-  // mode 0 and the shaders take the affine path unchanged.
-  // Concentric rings for the radial ticks, spokes for the angular ones.
-  // Canvas 2D has arcs, so rings are exact here; the raster exporter has no arc
-  // opcode and flattens the same rings to polylines instead.
+  _polarPositiveMod(value, period) {
+    return ((value % period) + period) % period;
+  }
+
+  _polarThetaValue(geom, angle) {
+    const raw = (angle - geom.zero) / (geom.dirUnit || 1);
+    return geom.thetaStart
+      + this._polarPositiveMod(raw - geom.thetaStart, geom.turn || 1);
+  }
+
+  _polarThetaVisible(geom, theta) {
+    const sweep = geom.thetaEnd - geom.thetaStart;
+    if (sweep >= geom.turn * (1 - 1e-10)) return true;
+    const offset = this._polarPositiveMod(theta - geom.thetaStart, geom.turn || 1);
+    return offset <= sweep + geom.turn * 1e-10;
+  }
+
+  _polarThetaAngle(geom, theta) {
+    return geom.zero + geom.dirUnit * theta;
+  }
+
+  _polarRadius(geom, value, { coord = false } = {}) {
+    const radial = coord ? Number(value) : this._axisCoord(this._axis("y"), value);
+    const denom = geom.rHi - geom.rOrigin;
+    if (!Number.isFinite(radial) || !Number.isFinite(denom) || Math.abs(denom) <= 1e-30) {
+      return NaN;
+    }
+    const fraction = geom.hole
+      + (1 - geom.hole) * ((radial - geom.rOrigin) / denom);
+    return fraction * geom.radius;
+  }
+
+  _polarProjectCoords(thetaCoord, rCoord, geom) {
+    if (!geom || !this._polarThetaVisible(geom, thetaCoord)) return [NaN, NaN];
+    const rMin = Math.min(geom.rLo, geom.rHi);
+    const rMax = Math.max(geom.rLo, geom.rHi);
+    if (!Number.isFinite(rCoord) || rCoord < rMin - 1e-10 || rCoord > rMax + 1e-10) {
+      return [NaN, NaN];
+    }
+    const projectedRadius = this._polarRadius(geom, rCoord, { coord: true });
+    if (!Number.isFinite(projectedRadius)
+        || projectedRadius < geom.hole * geom.radius - 1e-6
+        || projectedRadius > geom.radius + 1e-6) return [NaN, NaN];
+    const angle = this._polarThetaAngle(geom, thetaCoord);
+    return [
+      geom.cx + projectedRadius * Math.cos(angle),
+      geom.cy - projectedRadius * Math.sin(angle),
+    ];
+  }
+
+  _polarProject(theta, radius, geom = this._polarGeometry()) {
+    return this._polarProjectCoords(
+      this._axisCoord(this._axis("x"), theta),
+      this._axisCoord(this._axis("y"), radius),
+      geom,
+    );
+  }
+
+  _projectDataPoint(xAxisId, yAxisId, x, y, geom = this._polarGeometry()) {
+    if (geom) return this._polarProject(x, y, geom);
+    return [this._dataPx(xAxisId, x), this._dataPx(yAxisId, y)];
+  }
+
+  _projectSegmentEndpoints(g, cpu, index, geom = this._polarGeometry()) {
+    const theta0 = this._decodeValue(cpu.x0, g.x0Meta, index);
+    const theta1 = this._decodeValue(cpu.x1, g.x1Meta, index);
+    const radial0 = this._decodeValue(cpu.y0, g.y0Meta, index);
+    const radial1 = this._decodeValue(cpu.y1, g.y1Meta, index);
+    if (!geom) {
+      return [
+        this._projectDataPoint(g.xAxis, g.yAxis, theta0, radial0, null),
+        this._projectDataPoint(g.xAxis, g.yAxis, theta1, radial1, null),
+      ];
+    }
+    const thetaAxis = this._axis("x");
+    const radialAxis = this._axis("y");
+    const th0 = this._axisCoord(thetaAxis, theta0);
+    const th1 = this._axisCoord(thetaAxis, theta1);
+    const r0 = this._axisCoord(radialAxis, radial0);
+    const r1 = this._axisCoord(radialAxis, radial1);
+    const rMin = Math.min(geom.rLo, geom.rHi);
+    const rMax = Math.max(geom.rLo, geom.rHi);
+    if (Math.max(r0, r1) < rMin || Math.min(r0, r1) > rMax) {
+      return [[NaN, NaN], [NaN, NaN]];
+    }
+    const dr = r1 - r0;
+    let t0 = 0;
+    let t1 = 1;
+    if (Math.abs(dr) > 1e-30) {
+      const ta = (rMin - r0) / dr;
+      const tb = (rMax - r0) / dr;
+      t0 = Math.max(0, Math.min(ta, tb));
+      t1 = Math.min(1, Math.max(ta, tb));
+    }
+    return [
+      this._polarProjectCoords(
+        th0 + (th1 - th0) * t0,
+        Math.max(rMin, Math.min(rMax, r0 + dr * t0)),
+        geom,
+      ),
+      this._polarProjectCoords(
+        th0 + (th1 - th0) * t1,
+        Math.max(rMin, Math.min(rMax, r0 + dr * t1)),
+        geom,
+      ),
+    ];
+  }
+
+  // Concentric rings for radial ticks and spokes for angular ticks. Partial
+  // sectors get radial edges; `grid_shape="linear"` connects spoke
+  // intersections into polygon rings instead of drawing circular arcs.
   _drawPolarGrid(ctx, geom, thetaTicks, rTicks, thetaAxis, rAxis, hideTheta, hideR) {
-    const [rLo, rHi] = this._axisRange("y");
-    const span = rHi - rLo || 1;
+    const sweep = geom.thetaEnd - geom.thetaStart;
+    const full = sweep >= geom.turn * (1 - 1e-10);
+    const angularOffset = (value) => this._polarPositiveMod(
+      value - geom.thetaStart,
+      geom.turn || 1,
+    );
+    const thetaValues = [...thetaTicks, ...(full ? [] : [geom.thetaStart, geom.thetaEnd])]
+      .filter((value) => Number.isFinite(value) && this._polarThetaVisible(geom, value))
+      .sort((a, b) => angularOffset(a) - angularOffset(b))
+      .filter((value, index, values) => (
+        index === 0 || Math.abs(angularOffset(value) - angularOffset(values[index - 1])) > 1e-10
+      ));
+    if (full && thetaValues.length > 1) {
+      const first = angularOffset(thetaValues[0]);
+      const last = angularOffset(thetaValues[thetaValues.length - 1]);
+      if (Math.abs((last - first) - geom.turn) <= geom.turn * 1e-10) thetaValues.pop();
+    }
+    const angles = thetaValues.map((value) => this._polarThetaAngle(geom, value));
+    const point = (angle, radius) => [
+      geom.cx + radius * Math.cos(angle),
+      geom.cy - radius * Math.sin(angle),
+    ];
+    const ringPath = (radius) => {
+      if (!(radius > 0) || radius > geom.radius + 1e-6) return;
+      if (geom.gridShape === "linear" && angles.length >= (full ? 3 : 2)) {
+        const [x0, y0] = point(angles[0], radius);
+        ctx.moveTo(x0, y0);
+        for (let i = 1; i < angles.length; i++) {
+          const [x, y] = point(angles[i], radius);
+          ctx.lineTo(x, y);
+        }
+        if (full) ctx.closePath();
+        return;
+      }
+      if (full) {
+        ctx.moveTo(geom.cx + radius, geom.cy);
+        ctx.arc(geom.cx, geom.cy, radius, 0, Math.PI * 2);
+      } else {
+        const start = this._polarThetaAngle(geom, geom.thetaStart);
+        const end = this._polarThetaAngle(geom, geom.thetaEnd);
+        const [x, y] = point(start, radius);
+        ctx.moveTo(x, y);
+        ctx.arc(geom.cx, geom.cy, radius, -start, -end, geom.dir > 0);
+      }
+    };
     if (!hideR) {
       ctx.strokeStyle = this._axisStylePaint(rAxis, "grid_color", this.theme.grid);
       ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(rAxis, "grid_width", 1));
@@ -4449,10 +4728,7 @@ export class ChartView {
       ctx.setLineDash(this._axisGridDash(rAxis));
       ctx.beginPath();
       for (const v of rTicks) {
-        const radius = ((v - rLo) / span) * geom.radius;
-        if (!(radius > 0)) continue;
-        ctx.moveTo(geom.cx + radius, geom.cy);
-        ctx.arc(geom.cx, geom.cy, radius, 0, Math.PI * 2);
+        ringPath(this._polarRadius(geom, v));
       }
       ctx.stroke();
     }
@@ -4462,38 +4738,55 @@ export class ChartView {
     ctx.globalAlpha = this._axisStyleNumber(thetaAxis, "grid_opacity", 1);
     ctx.setLineDash(this._axisGridDash(thetaAxis));
     ctx.beginPath();
-    for (const v of thetaTicks) {
-      const a = geom.zero + geom.dirUnit * v;
-      ctx.moveTo(geom.cx, geom.cy);
-      // Screen y grows downward, so the sine term subtracts here while the
-      // shader's adds (clip space grows upward).
-      ctx.lineTo(geom.cx + geom.radius * Math.cos(a), geom.cy - geom.radius * Math.sin(a));
+    const innerRadius = Math.max(
+      0,
+      Math.min(geom.radius, this._polarRadius(geom, geom.rLo, { coord: true })),
+    );
+    for (const a of angles) {
+      const [x0, y0] = point(a, innerRadius);
+      const [x1, y1] = point(a, geom.radius);
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
     }
     ctx.stroke();
-    // The outer ring stands in for the axis spines, which are DIVs and cannot
-    // be circular. Both exporters draw the same ring.
+    // Polar spines cannot be represented by the cartesian DIV spines.
     ctx.strokeStyle = this._axisStylePaint(thetaAxis, "axis_color", this.theme.axis);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(thetaAxis, "axis_width", 1));
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
     ctx.beginPath();
-    ctx.arc(geom.cx, geom.cy, geom.radius, 0, Math.PI * 2);
+    ringPath(geom.radius);
+    if (innerRadius > 1e-6) ringPath(innerRadius);
+    if (!full && angles.length >= 2) {
+      for (const a of [angles[0], angles[angles.length - 1]]) {
+        const [x0, y0] = point(a, innerRadius);
+        const [x1, y1] = point(a, geom.radius);
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+      }
+    }
     ctx.stroke();
   }
 
   _setPolarUniforms(prog) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, prog, n);
+    // Fragment-stage polar clipping uses device-pixel gl_FragCoord, including
+    // in the pick framebuffer. Programs without the clip helper optimize this
+    // uniform away; WebGL treats the resulting null location as a no-op.
+    gl.uniform2f(u("u_clipRes"), this.canvas.width, this.canvas.height);
     const g = this._polarGeometry();
     if (!g) {
       gl.uniform1i(u("u_coordMode"), 0);
       return;
     }
     gl.uniform1i(u("u_coordMode"), 1);
-    // Centre is (0,0) in clip space because the canvas is the plot rect.
-    gl.uniform4f(u("u_polar"), 0, 0, g.clipRx, g.clipRy);
+    gl.uniform4f(u("u_polar"), g.clipCx, g.clipCy, g.clipRx, g.clipRy);
     gl.uniform2f(u("u_rrange"), g.rLo, g.rHi);
     gl.uniform2f(u("u_zdir"), g.zero, g.dirUnit);
+    gl.uniform2f(u("u_trange"), g.thetaStart, g.thetaEnd);
+    gl.uniform1f(u("u_turn"), g.turn);
+    gl.uniform2f(u("u_rshape"), g.rOrigin, g.hole);
   }
 
   // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
@@ -4946,6 +5239,7 @@ export class ChartView {
     gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    this._setPolarUniforms(prog);
     // Grid row/column 0 anchors to the bottom/left edge of the grid rect in
     // *display* orientation — the raster/SVG exporters' convention (the shim's
     // imshow pre-flips rows for origin='upper' assuming it). A reversed axis
@@ -5040,6 +5334,7 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
     this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setPolarUniforms(prog);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     gl.uniform1f(u("u_animationProgress"), g._transitionScale ?? 1);
@@ -5105,11 +5400,9 @@ export class ChartView {
     };
     const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
     const dpr = this.dpr;
+    const polarGeom = this._polarGeometry();
     for (let i = 0; i < n; i++) {
-      const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
-      const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
-      const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
-      const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+      const [[x0, y0], [x1, y1]] = this._projectSegmentEndpoints(g, cpu, i, polarGeom);
       k0[i] = key(x0, y0); k1[i] = key(x1, y1);
       lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
       add(k0[i], i); add(k1[i], i);
@@ -5216,13 +5509,24 @@ export class ChartView {
     if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
     const lens = g._lenArr;
     const dpr = this.dpr;
-    let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
-    let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+    const polarGeom = this._polarGeometry();
+    let [px, py] = this._projectDataPoint(
+      g.xAxis,
+      g.yAxis,
+      this._decodeValue(g._dashX, g.xMeta, 0),
+      this._decodeValue(g._dashY, g.yMeta, 0),
+      polarGeom,
+    );
     let acc = 0;
     lens[0] = 0;
     for (let i = 1; i < n; i++) {
-      const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
-      const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+      const [nx, ny] = this._projectDataPoint(
+        g.xAxis,
+        g.yAxis,
+        this._decodeValue(g._dashX, g.xMeta, i),
+        this._decodeValue(g._dashY, g.yMeta, i),
+        polarGeom,
+      );
       if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
         acc += Math.hypot(nx - px, ny - py) * dpr;
       }
@@ -5477,15 +5781,13 @@ export class ChartView {
   // geometry on a disc (a theta rule is a spoke, an r rule is a ring) and stay
   // deferred on the cartesian path, exactly as they do in the exporters.
   _dataPxPoint(x, y, xAxisId = "x", yAxisId = "y") {
-    const geom = this._polarGeometry();
-    if (!geom) return [this._dataPx(xAxisId, x), this._dataPx(yAxisId, y)];
-    const angle = geom.zero + geom.dirUnit * Number(x);
-    const span = (geom.rHi - geom.rLo) || 1;
-    const rn = (this._axisCoord(this._axis(yAxisId), Number(y)) - geom.rLo) / span;
-    const radius = rn * geom.radius;
-    // Screen y grows downward, so the sine term subtracts — the same flip
-    // `_PolarProjection.__call__` makes and the GLSL twin does not.
-    return [geom.cx + radius * Math.cos(angle), geom.cy - radius * Math.sin(angle)];
+    return this._projectDataPoint(
+      xAxisId,
+      yAxisId,
+      Number(x),
+      Number(y),
+      this._polarGeometry(),
+    );
   }
 
   _styleNumber(style, key, fallback) {
@@ -6286,7 +6588,7 @@ export class ChartView {
       const offY = this._axisTickLabelStrategy(yAxis) === "off";
       if (!hideX && !offX) {
         for (const v of (xt.labels || xt.ticks)) {
-          const a = polarGeom.zero + polarGeom.dirUnit * v;
+          const a = this._polarThetaAngle(polarGeom, v);
           const cos = Math.cos(a);
           const sin = Math.sin(a);
           const lx = polarGeom.cx + (polarGeom.radius + GAP) * cos;
@@ -6303,12 +6605,14 @@ export class ChartView {
         }
       }
       if (!hideY && !offY) {
-        const [rLo, rHi] = this._axisRange("y");
-        const span = rHi - rLo || 1;
-        const angle = polarGeom.zero + Math.sign(polarGeom.dirUnit || 1) * RLABEL;
+        const sectorSweep = Math.abs(polarGeom.dirUnit)
+          * Math.max(0, polarGeom.thetaEnd - polarGeom.thetaStart);
+        const labelOffset = Math.min(RLABEL, sectorSweep / 2);
+        const angle = this._polarThetaAngle(polarGeom, polarGeom.thetaStart)
+          + Math.sign(polarGeom.dirUnit || 1) * labelOffset;
         for (const v of (yt.labels || yt.ticks)) {
-          const radius = ((v - rLo) / span) * polarGeom.radius;
-          if (!(radius > 0)) continue;
+          const radius = this._polarRadius(polarGeom, v);
+          if (!(radius > 0) || radius > polarGeom.radius + 1e-6) continue;
           const spinY = Number(yAxis.tick_label_angle) || 0;
           label(
             this._axisTickText(yAxis, v, yt.step),
@@ -6587,17 +6891,21 @@ export class ChartView {
     const geom = this._polarGeometry();
     if (geom) {
       // Screen -> (theta, r), the inverse of xyPolarPos. cssX/cssY are canvas
-      // relative and the canvas IS the plot rect, so the centre is the rect
-      // midpoint in canvas coordinates.
-      const dx = cssX - this.plot.w / 2;
-      const dy = this.plot.h / 2 - cssY; // flip back out of screen space
-      const rn = Math.hypot(dx, dy) / (geom.radius || 1);
-      const theta = (Math.atan2(dy, dx) - geom.zero) / (geom.dirUnit || 1);
-      // Wrap into the angular domain: theta=0 and a full turn are one place,
-      // so an unwrapped value would read as outside the axis range.
-      const turn = xAxis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
-      const wrapped = ((theta % turn) + turn) % turn;
-      return [wrapped, this._axisValue(yAxis, geom.rLo + rn * (geom.rHi - geom.rLo))];
+      // relative, whereas geometry is chart-relative.
+      const dx = cssX - (geom.cx - this.plot.x);
+      const dy = (geom.cy - this.plot.y) - cssY; // flip out of screen space
+      const displayed = Math.hypot(dx, dy) / (geom.radius || 1);
+      if (displayed > 1 + 1e-10 || displayed < geom.hole - 1e-10) {
+        return [NaN, NaN];
+      }
+      const theta = this._polarThetaValue(geom, Math.atan2(dy, dx));
+      if (!this._polarThetaVisible(geom, theta)) return [NaN, NaN];
+      const radialFraction = (displayed - geom.hole) / Math.max(1 - geom.hole, 1e-30);
+      const rCoord = geom.rOrigin + radialFraction * (geom.rHi - geom.rOrigin);
+      const rMin = Math.min(geom.rLo, geom.rHi);
+      const rMax = Math.max(geom.rLo, geom.rHi);
+      if (rCoord < rMin - 1e-10 || rCoord > rMax + 1e-10) return [NaN, NaN];
+      return [theta, this._axisValue(yAxis, rCoord)];
     }
     const cx0 = this._axisCoord(xAxis, x0);
     const cx1 = this._axisCoord(xAxis, x1);
@@ -6635,9 +6943,66 @@ export class ChartView {
     return best;
   }
 
+  _nearestPolarCpuIndex(g, cssX, cssY) {
+    const cpu = g && g._cpu;
+    if (!cpu || !cpu.x || !cpu.y) return -1;
+    const xMeta = cpu.xMeta || g.xMeta;
+    const yMeta = cpu.yMeta || g.yMeta;
+    const progress = g._transitionPositionProgress;
+    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+    const geom = this._polarGeometry();
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+        ? g._transitionPrevXValues[i] + (cpu.x[i] - g._transitionPrevXValues[i]) * progress
+        : cpu.x[i];
+      const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+        ? g._transitionPrevYValues[i] + (cpu.y[i] - g._transitionPrevYValues[i]) * progress
+        : cpu.y[i];
+      const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
+      const y = yEncoded / (yMeta.scale || 1) + yMeta.offset;
+      const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y, geom);
+      const dist = Math.hypot(chartX - this.plot.x - cssX, chartY - this.plot.y - cssY);
+      if (Number.isFinite(dist) && dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  _segmentHover(g, cssX, cssY, maxPx) {
+    const cpu = g && g._segmentCpu;
+    if (!cpu) return null;
+    let best = null;
+    const limit = Math.min(cpu.x0.length, cpu.x1.length, cpu.y0.length, cpu.y1.length, g.n);
+    const geom = this._polarGeometry();
+    for (let i = 0; i < limit; i++) {
+      const [[x0, y0], [x1, y1]] = this._projectSegmentEndpoints(g, cpu, i, geom);
+      const ax = x0 - this.plot.x;
+      const ay = y0 - this.plot.y;
+      const bx = x1 - this.plot.x;
+      const by = y1 - this.plot.y;
+      if (![ax, ay, bx, by].every(Number.isFinite)) continue;
+      const vx = bx - ax;
+      const vy = by - ay;
+      const denom = vx * vx + vy * vy;
+      const t = denom > 0
+        ? Math.max(0, Math.min(1, ((cssX - ax) * vx + (cssY - ay) * vy) / denom))
+        : 0;
+      const dist = Math.hypot(cssX - (ax + t * vx), cssY - (ay + t * vy));
+      if (dist <= maxPx && (!best || dist < best.dist)) {
+        best = { trace: g.trace.id, index: i, g, dist, synthetic: true };
+      }
+    }
+    return best;
+  }
+
   _hoverAt(cssX, cssY) {
     const maxPx = 12;
     let best = null;
+    const polarGeom = this._polarGeometry();
     for (const g of this.gpuTraces) {
       if (g.tier === "density") continue;
       const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
@@ -6657,8 +7022,15 @@ export class ChartView {
         if (hit) return hit;
         continue;
       }
+      if (g._segmentCpu) {
+        const hit = this._segmentHover(g, cssX, cssY, maxPx);
+        if (hit && (!best || hit.dist < best.dist)) best = hit;
+        continue;
+      }
       if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
-      const idx = this._nearestCpuIndex(g, dataX);
+      const idx = polarGeom
+        ? this._nearestPolarCpuIndex(g, cssX, cssY)
+        : this._nearestCpuIndex(g, dataX);
       if (idx < 0) continue;
       const progress = g._transitionPositionProgress;
       const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
@@ -6669,8 +7041,15 @@ export class ChartView {
         : g._cpu.y[idx];
       const x = xEncoded / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset;
       const y = yEncoded / (g._cpu.yMeta.scale || 1) + g._cpu.yMeta.offset;
-      const px = this._dataPx(g.xAxis, x) - this.plot.x;
-      const py = this._dataPx(g.yAxis, y) - this.plot.y;
+      const [chartX, chartY] = this._projectDataPoint(
+        g.xAxis,
+        g.yAxis,
+        x,
+        y,
+        polarGeom,
+      );
+      const px = chartX - this.plot.x;
+      const py = chartY - this.plot.y;
       const dist = Math.hypot(px - cssX, py - cssY);
       if (dist <= maxPx && (!best || dist < best.dist)) {
         best = { trace: g.trace.id, index: idx, g, dist, synthetic: true };
@@ -6725,12 +7104,18 @@ export class ChartView {
     if (!h || !g._cpuHeatmap) return null;
     const [x0, x1] = h.xRange;
     const [y0, y1] = h.yRange;
-    if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
+    const geom = this._polarGeometry();
+    const sampleX = geom
+      ? x0 + this._polarPositiveMod(dataX - x0, geom.turn)
+      : dataX;
+    if (sampleX < Math.min(x0, x1) || sampleX > Math.max(x0, x1)
+        || dataY < Math.min(y0, y1) || dataY > Math.max(y0, y1)) return null;
     // Mirror _drawHeatmap's display-orientation anchoring: on a reversed axis
     // buffer row/column 0 sits at the opposite end of the data range.
     const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
     const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
-    const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+    const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1))
+      ? (x1 - sampleX) : (sampleX - x0);
     const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
     const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
     const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
