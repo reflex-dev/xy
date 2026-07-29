@@ -484,11 +484,11 @@ setTimeout(() => {
 def test_polar_tooltip_content_speaks_polar(tmp_path: Path) -> None:
     """Tooltip *content* on polar charts — the review's coverage gap.
 
-    Three sub-cases through the client's own row -> items pipeline:
-    a named radians line must lead with its series name and print the angle as
-    a pi-fraction (hover values arrive f32-decoded, so the pi-fraction match
-    needs the loosened tolerance); a degrees bar must carry the degree sign;
-    a radar spoke must surface its authored category label, never a number.
+    The default readout shows VALUES, not angles: the angle is where layout put
+    the mark and the cursor is already on it, so a numeric theta row is omitted
+    and only the series name plus the radial value appear. An authored spoke
+    label is a name rather than an angle and still shows (covered below), and
+    naming the row via `labels={"x": ...}` opts it back in.
     """
     chromium = find_chromium()
     if chromium is None:
@@ -524,9 +524,51 @@ setTimeout(() => {
         label="polar tooltip content",
     )
     assert items[0] == {"kind": "title", "value": "gain"}
-    theta_item = next(i for i in items if i.get("label") == "θ")
-    assert theta_item["value"] == "π/2", items
-    assert any(i.get("label") == "r" for i in items)
+    assert not any(i.get("label") == "θ" for i in items), (
+        f"a numeric angle is layout, not data, and must not show by default: {items}"
+    )
+    assert any(i.get("label") == "r" for i in items), items
+
+
+def test_polar_tooltip_angle_row_is_opt_in(tmp_path: Path) -> None:
+    """Naming the row brings the angle back, formatted through the axis's own
+    text function — so a radians chart reads "π/2", not "1.5708"."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    theta = [i * 2.0 * math.pi / 24.0 for i in range(24)]
+    r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
+    chart = xy.polar_chart(
+        xy.line(theta, r, name="gain", animation=False),
+        xy.tooltip(labels={"x": "bearing"}),
+        width=420,
+        height=400,
+    )
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const g = view.gpuTraces[0];
+    const row = view._localRow({ g, index: 6, trace: g.trace.id, synthetic: true });
+    document.body.setAttribute("data-xy-opt-in", JSON.stringify(view._tooltipItems(row)));
+  } catch (error) {
+    document.body.setAttribute("data-xy-opt-in-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    items = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_tooltip_optin.html",
+        "data-xy-opt-in",
+        label="polar tooltip opt-in angle",
+    )
+    angle = next(i for i in items if i.get("label") == "bearing")
+    assert angle["value"] == "π/2", items
 
 
 def test_polar_tooltip_degrees_and_radar_labels(tmp_path: Path) -> None:

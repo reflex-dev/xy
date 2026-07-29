@@ -6334,7 +6334,7 @@ def pie_chart(
 def wind_rose(
     directions: ArrayLike,
     speeds: ArrayLike,
-    *,
+    *children_in: Component,
     sectors: int = 16,
     speed_bins: Optional[Sequence[float]] = None,
     **props: Any,
@@ -6404,7 +6404,13 @@ def wind_rose(
         marks.append(
             bar(
                 centres,
-                base + counts,
+                # `bar` measures its value as a HEIGHT above `base`, not as an
+                # absolute top: passing `base + counts` stacked each band on
+                # top of its own cumulative offset a second time, so a rose of
+                # three observations reached radius 5 and every band above the
+                # first was too thick. The height IS the band's count, which is
+                # also what makes the hover readout the band's own count.
+                counts,
                 base=base.copy(),
                 width=width,
                 name=f"\u2264 {upper:g}",
@@ -6414,10 +6420,30 @@ def wind_rose(
         lower = upper
 
     props.setdefault("coords", "polar")
+    # A wind rose is the one polar composition where the ANGLE is data — it is
+    # the compass bearing — so it opts the direction row back in by naming it,
+    # and pairs it with the band's own count. `y` is the band height (see the
+    # comment above), so this reads "<= 10 / direction 45deg / count 7" rather
+    # than the cumulative stack radius the generic readout would show.
+    has_tooltip = any(isinstance(child, Tooltip) for child in children_in)
+    defaults: tuple[Component, ...] = (
+        ()
+        if has_tooltip
+        else (
+            tooltip(
+                title="{name}",
+                fields=["x", "y"],
+                labels={"x": "direction (\u00b0)", "y": "count"},
+                format={"x": ".0f"},
+            ),
+        )
+    )
     children = (
         *marks,
         theta_axis(unit="degrees", zero="N", direction="clockwise"),
         r_axis(label="count"),
+        *defaults,
+        *children_in,
     )
     return Chart("wind_rose", children, **props)
 

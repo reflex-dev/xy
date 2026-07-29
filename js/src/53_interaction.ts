@@ -421,7 +421,12 @@ Object.assign(ChartView.prototype, {
         clearSelectionOnDoubleClick();
         return;
       }
-      if (this.dragMode === "none") return;
+      // Same distinction as the wheel handler above: `none` CHOSEN by the
+      // user releases every navigation gesture, but a chart whose resolved
+      // default is `none` because no drag tool applies (polar) keeps its
+      // documented double-click reset — several pie/gauge/wind-rose examples
+      // hide the modebar, which otherwise left no reset path at all.
+      if (this.dragMode === "none" && this._dragModeUserSet) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");

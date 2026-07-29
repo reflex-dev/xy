@@ -206,9 +206,13 @@ Object.assign(ChartView.prototype, {
 
   // Under polar the two channels are not x and y, and saying so is actively
   // misleading: "x: 1.5708" on a radar names a spoke the chart labels "power".
-  // The angular value goes through the axis's own text function, so degrees
-  // keep their sign, radians read as pi-fractions, and an authored tick label
-  // wins — the same string the spoke itself carries.
+  // More than that: the default readout shows VALUES, not angles — on most
+  // polar charts the angle is where the layout put the mark, and the cursor
+  // is already sitting on it. A numeric angle row is therefore OMITTED by
+  // default; an authored spoke label (a radar category) survives because it
+  // is a name, not an angle; and an explicit `labels={"x": ...}` opts the
+  // angle row back in, formatted through the axis's own text function so
+  // degrees keep their sign and radians read as pi-fractions.
   _polarTooltipField(channel, value, kind) {
     if (this.spec?.coords !== "polar") return null;
     const axis = this._axis(channel === "x" ? "x" : "y") || {};
@@ -240,21 +244,43 @@ Object.assign(ChartView.prototype, {
     } catch {
       text = null;
     }
-    return { label: "θ", value: text || fmtValue(value, kind) };
+    return { label: "θ", value: text || fmtValue(value, kind), omit: true };
+  },
+
+  // A pie slice or a gauge band is one named wedge: the name IS the datum,
+  // and theta/r are how the layout happened to place it — "Direct - 40%"
+  // followed by "theta: 72, r: 1" answers a question nobody asked. A trace
+  // with MANY wedges (a wind rose, an angular histogram) keeps theta/r,
+  // because there each wedge's angle and radius are the data. Explicit
+  // `labels=` overrides still win via the customized path below.
+  _isNamedSingleWedge(row) {
+    if (this.spec?.coords !== "polar") return false;
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    const trace = traces.find((t) => t && t.id === row.trace);
+    if (!trace || typeof trace.name !== "string" || !trace.name.trim()) return false;
+    const wedge = trace.kind === "bar" || trace.kind === "column" || trace.bar !== undefined
+      || (trace.x0 !== undefined && trace.y0 !== undefined);
+    const count = trace.n_marks ?? trace.n_points;
+    return wedge && count === 1;
   },
 
   _defaultTooltipItems(row, labels = {}, aliases = {}) {
     const items = [];
     const seriesName = this._tooltipSeriesName(row);
     if (seriesName) items.push({ kind: "title", value: seriesName });
+    if (seriesName && this._isNamedSingleWedge(row)) return items;
     if (row.x !== undefined) {
       const polar = this._polarTooltipField("x", row.x, row.x_kind);
       const { label, customized } = this._defaultTooltipLabel("x", "x", labels, aliases);
-      items.push({
-        kind: "field",
-        label: polar && !customized ? polar.label : label,
-        value: polar ? polar.value : fmtValue(row.x, row.x_kind),
-      });
+      // A numeric polar angle only appears when the user asked for the row
+      // by naming it (`labels={"x": ...}`); authored spoke labels always show.
+      if (!polar || !polar.omit || customized) {
+        items.push({
+          kind: "field",
+          label: polar && !customized ? polar.label : label,
+          value: polar ? polar.value : fmtValue(row.x, row.x_kind),
+        });
+      }
     }
     if (row.y !== undefined) {
       const polar = this._polarTooltipField("y", row.y, row.y_kind);

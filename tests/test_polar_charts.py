@@ -357,7 +357,10 @@ def test_wind_rose_counts_every_observation() -> None:
     speeds = rng.gamma(2.0, 2.0, 500)
     chart = xy.wind_rose(directions, speeds, sectors=12)
     bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
-    counted = sum(float(np.asarray(b.y).sum() - np.asarray(b.props["base"]).sum()) for b in bars)
+    # `y` is each band's own count (a HEIGHT above its base), so the totals sum
+    # directly. This assertion used to read `sum(y) - sum(base)`, which is what
+    # let the double-stacking bug through: it happened to cancel out.
+    counted = sum(float(np.asarray(b.y).sum()) for b in bars)
     assert counted == pytest.approx(500.0)
 
 
@@ -366,7 +369,10 @@ def test_wind_rose_bands_stack_without_gaps() -> None:
     chart = xy.wind_rose(rng.uniform(0, 360, 300), rng.gamma(2.0, 2.0, 300), sectors=8)
     bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
     for lower, upper in pairwise(bars):
-        assert np.asarray(upper.props["base"]) == pytest.approx(np.asarray(lower.y))
+        # A band starts where the one below it ENDS: base + height, since the
+        # value is a height above the base rather than an absolute radius.
+        below_top = np.asarray(lower.props["base"], dtype=float) + np.asarray(lower.y, dtype=float)
+        assert np.asarray(upper.props["base"], dtype=float) == pytest.approx(below_top)
 
 
 def test_wind_rose_uses_the_compass_convention() -> None:
@@ -1197,3 +1203,34 @@ def test_pie_chart_user_tooltip_wins() -> None:
 def test_pie_chart_refusals(labels, values, message) -> None:
     with pytest.raises(ValueError, match=message):
         xy.pie_chart(labels, values)
+
+
+def test_wind_rose_bands_are_their_own_count_not_the_cumulative_top() -> None:
+    """`bar` measures its value as a height above `base`, so authoring
+    `base + counts` stacked each band on its own offset twice: three
+    observations reached radius 5 and every band above the first was too
+    thick. The height is the band's count."""
+    directions = np.array([0.0, 0.0, 0.0])
+    speeds = np.array([1.0, 1.0, 9.0])
+    chart = xy.wind_rose(directions, speeds, sectors=4, speed_bins=[2.0, 10.0])
+    bars = [c for c in chart.children if getattr(c, "kind", None) == "bar"]
+    heights = [float(np.asarray(b.y, dtype=float)[0]) for b in bars]
+    bases = [float(np.asarray(b.props["base"], dtype=float)[0]) for b in bars]
+    assert heights == [2.0, 1.0]  # two slow observations, one fast
+    assert bases == [0.0, 2.0]
+    spec, _ = chart.figure().build_payload_split()
+    assert spec["y_axis"]["range"][1] == pytest.approx(3.0)
+
+
+def test_wind_rose_tooltip_reports_band_count_and_direction() -> None:
+    """A rose is the one polar composition where the angle IS data (a compass
+    bearing), so it names the direction row back in and pairs it with the
+    band's own count rather than the cumulative stack radius."""
+    rng = np.random.default_rng(7)
+    chart = xy.wind_rose(rng.uniform(0, 360, 120), rng.gamma(2.0, 2.0, 120), sectors=8)
+    spec, _ = chart.figure().build_payload_split()
+    tip = spec["tooltip"]
+    assert tip["title"] == "{name}"
+    assert tip["fields"] == ["x", "y"]
+    assert tip["labels"]["y"] == "count"
+    assert "direction" in tip["labels"]["x"]
