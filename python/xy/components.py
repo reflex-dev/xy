@@ -1679,6 +1679,7 @@ def bar(
     series: Optional[list[str]] = None,
     opacity: Any = 0.85,
     corner_radius: Any = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
@@ -1737,6 +1738,7 @@ def bar(
             "series": series,
             "opacity": opacity,
             "corner_radius": corner_radius,
+            "wedge_gap": wedge_gap,
             "stroke": stroke,
             "stroke_width": stroke_width,
             "_artist_alpha": _artist_alpha,
@@ -1762,6 +1764,7 @@ def column(
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
     corner_radius: Union[float, tuple[float, float]] = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Union[str, dict[str, str], None] = None,
@@ -1818,6 +1821,7 @@ def column(
             "series": series,
             "opacity": opacity,
             "corner_radius": corner_radius,
+            "wedge_gap": wedge_gap,
             "stroke": stroke,
             "stroke_width": stroke_width,
             "fill": fill,
@@ -5721,6 +5725,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         series=m.props["series"],
         opacity=m.props["opacity"],
         corner_radius=m.props["corner_radius"],
+        wedge_gap=m.props.get("wedge_gap", 0.0),
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         _artist_alpha=m.props.get("_artist_alpha"),
@@ -5744,6 +5749,7 @@ def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
         series=m.props["series"],
         opacity=m.props["opacity"],
         corner_radius=m.props["corner_radius"],
+        wedge_gap=m.props.get("wedge_gap", 0.0),
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
@@ -6121,9 +6127,18 @@ def radar_chart(
     if len(names) < 3:
         raise ValueError("radar_chart needs at least 3 categories")
     count = len(names)
-    step = 2.0 * math.pi / count
+    # Spokes are derived, so they must be generated in the unit the ANGULAR
+    # AXIS declares. Hard-coding radians against an authored
+    # `theta_axis(unit="degrees")` left the samples spanning 0..2pi inside a
+    # 0..360 frame, squeezing the whole radar into the first 6.28 degrees.
+    unit = "radians"
+    for child in children:
+        if isinstance(child, Axis) and child.which == "x" and child.theta_unit:
+            unit = str(child.theta_unit)
+    turn = 360.0 if unit == "degrees" else 2.0 * math.pi
+    step = turn / count
     angles = [i * step for i in range(count)]
-    closed_angles = [*angles, 2.0 * math.pi]
+    closed_angles = [*angles, turn]
 
     rebuilt: list[Component] = []
     for child in children:
@@ -6235,7 +6250,7 @@ def pie_chart(
     values: ArrayLike,
     *children: Component,
     hole: float = 0.55,
-    pad: float = 3.0,
+    pad: float = 4.0,
     colors: Optional[Sequence[str]] = None,
     corner_radius: float = 6.0,
     show_values: bool = True,
@@ -6262,7 +6277,10 @@ def pie_chart(
         values: One non-negative value per slice.
         *children: Extra components (legend placement, a user tooltip, …).
         hole: Inner radius fraction; 0 is a full pie, the default is a donut.
-        pad: Angular gap between slices, in degrees.
+        pad: Gap between neighbouring slices, in PIXELS — constant from the
+            hole to the rim. An angular pad would be `r · dtheta` wide and so
+            taper to nothing toward the centre, which reads as the spacing
+            being applied unevenly across the slice.
         colors: One CSS colour per slice. Defaults to the palette cycle.
         corner_radius: Rounded slice corners, in px.
         show_values: Include the value in the slice's name (legend + tooltip).
@@ -6294,9 +6312,6 @@ def pie_chart(
     cursor = 0.0
     for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
         span = value / total * 360.0
-        # The pad shrinks each slice symmetrically but never below a sliver,
-        # so many tiny slices degrade to hairlines rather than vanishing.
-        gap = min(float(pad), span * 0.9)
         display = label
         if show_values:
             display += f"  {value:g}"
@@ -6307,7 +6322,11 @@ def pie_chart(
                 [cursor + span / 2.0],
                 [1.0 - float(hole)],
                 base=float(hole),
-                width=max(span - gap, 1e-6),
+                # The FULL span: the gap is carved out by the renderer at a
+                # constant pixel width, not by shrinking the angle, so the
+                # wire keeps each slice's true share.
+                width=span,
+                wedge_gap=float(pad),
                 color=None if colors is None else colors[index],
                 name=display,
                 corner_radius=corner_radius,

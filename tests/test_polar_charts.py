@@ -1181,8 +1181,10 @@ def test_pie_chart_slices_carry_category_value_and_share() -> None:
     # The composition owns its readout: the tooltip is the slice name alone,
     # never theta (layout) or the constant rim radius.
     assert spec["tooltip"] == {"title": "{name}"}
+    # Full spans: the gap is carved by the renderer at a constant pixel width
+    # rather than by shrinking each angle, so the shares stay exact.
     widths = [t["bar"]["width"] for t in spec["traces"]]
-    assert sum(widths) == pytest.approx(360.0 - 3.0 * 3, abs=1e-6)
+    assert sum(widths) == pytest.approx(360.0, abs=1e-6)
 
 
 def test_pie_chart_user_tooltip_wins() -> None:
@@ -1234,3 +1236,64 @@ def test_wind_rose_tooltip_reports_band_count_and_direction() -> None:
     assert tip["fields"] == ["x", "y"]
     assert tip["labels"]["y"] == "count"
     assert "direction" in tip["labels"]["x"]
+
+
+def test_wedge_gap_is_a_constant_width_not_a_constant_angle() -> None:
+    """A constant angular pad makes the seam `r · dtheta` wide, so it tapers to
+    nothing at the hole — the spacing visibly narrows toward the centre. The
+    gap is a length: the angular inset grows as the radius shrinks, so the arc
+    removed per edge is the same number of px at every radius."""
+    from xy._svg import _PolarProjection, polar_wedge_points
+
+    project = _PolarProjection(
+        {"theta_unit": "degrees"}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400}
+    )
+    plain = polar_wedge_points(project, 0.0, 90.0, 0.25, 1.0, steps=8)
+    gapped = polar_wedge_points(project, 0.0, 90.0, 0.25, 1.0, steps=8, wedge_gap=12.0)
+    assert plain and gapped
+
+    def arc_inset(a: list, b: list, index: int) -> float:
+        """Arc length (px) the gap removed at one sampled boundary point."""
+        ax, ay = a[index]
+        bx, by = b[index]
+        radius = math.hypot(ax - 200.0, ay - 200.0)
+        ta = math.atan2(200.0 - ay, ax - 200.0)
+        tb = math.atan2(200.0 - by, bx - 200.0)
+        return abs(ta - tb) * radius
+
+    # First sample sits on the outer rim, last on the inner rim: the same 6 px
+    # (half the gap) must come off each, or the seam tapers.
+    outer = arc_inset(plain, gapped, 0)
+    inner = arc_inset(plain, gapped, -1)
+    assert outer == pytest.approx(6.0, abs=0.25), outer
+    assert inner == pytest.approx(6.0, abs=0.25), inner
+
+
+def test_pie_chart_ships_true_shares_and_a_pixel_gap() -> None:
+    """The gap is carved by the renderer, so `width` stays the slice's real
+    share — which is what makes the hovered share exact."""
+    chart = xy.pie_chart(["a", "b", "c", "d"], [40.0, 30.0, 20.0, 10.0], pad=6.0)
+    spec, _ = chart.figure().build_payload_split()
+    widths = [t["bar"]["width"] for t in spec["traces"]]
+    assert widths == pytest.approx([144.0, 108.0, 72.0, 36.0])
+    assert sum(widths) == pytest.approx(360.0)
+    assert all(t["style"]["wedge_gap"] == 6.0 for t in spec["traces"])
+
+
+@pytest.mark.parametrize(
+    ("axis_kwargs", "turn"),
+    [({}, 2.0 * math.pi), ({"unit": "degrees"}, 360.0)],
+)
+def test_radar_spokes_follow_the_authored_angular_unit(axis_kwargs, turn) -> None:
+    """Spokes are derived, so they must be generated in the unit the angular
+    axis declares. Hard-coded radians against an authored degrees axis put
+    0..2pi samples inside a 0..360 frame, squeezing the whole radar into the
+    first 6.28 degrees."""
+    chart = xy.radar_chart(
+        ["a", "b", "c", "d"], xy.area([1.0, 2.0, 3.0, 2.0]), xy.theta_axis(**axis_kwargs)
+    )
+    spec, _ = chart.figure().build_payload_split()
+    assert spec["x_axis"]["range"][1] == pytest.approx(turn)
+    mark = next(c for c in chart.children if getattr(c, "kind", None) in ("area", "line"))
+    # Evenly spaced across the turn, closed back at a full turn.
+    assert list(mark.x) == pytest.approx([turn * i / 4.0 for i in range(5)])

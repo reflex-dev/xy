@@ -11,7 +11,7 @@ Every styling question about XY has the same two halves: *can I change this*,
 and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against.
 
-- **10** mark style properties across **20** mark kinds, drawn by all three renderers.
+- **11** mark style properties across **20** mark kinds, drawn by all three renderers.
 - **29** stable chrome slots for CSS and Tailwind in the browser.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
@@ -31,6 +31,7 @@ built — one renderer never silently ignores what another draws.
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
+| `wedge-gap` | xy | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `marker-shape` | xy | `scatter` | full | full | full | shipped |
 
 ### Notes
@@ -43,6 +44,7 @@ built — one renderer never silently ignores what another draws.
 - **`stroke-dasharray`** — 2-8 positive px lengths, or `none`. The WebGL client tracks arc length on the CPU so dashes stay continuous across segments and constant on screen through zoom.
 - **`stroke-linecap`** — Line family only — a cap is open-path geometry. XY's default is `round`, not CSS's `butt`, because the native rasterizer has always drawn round and is the reference for static export. Verified per renderer: a Rust coverage test, a rasterized-ink test, and three Chromium screenshots that hash differently per cap.
 - **`border-radius`** — Rect kinds only. `corner_radius=(tip, base)` rounds the two ends separately.
+- **`wedge-gap`** — Gap between neighbouring polar wedges, in px. Rect kinds under `coords="polar"` only; ignored elsewhere. Deliberately a LENGTH rather than an angle: an angular pad's seam is `r * dtheta` wide, so it tapers to nothing at the hole and reads as uneven spacing. The angular inset therefore grows as the radius shrinks, which is the same construction as d3's padAngle/padRadius pair. An XY vocabulary name: CSS has no gap between two arcs.
 - **`marker-shape`** — 17 shapes, drawn as analytic signed-distance fields in all three renderers. An XY vocabulary name: CSS has no shape keyword for a non-DOM point mark, and the CSS spelling and `symbol=` compile to the same value.
 
 ## Chrome slots

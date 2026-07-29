@@ -677,6 +677,7 @@ def _bar_like(
     series: Optional[list[str]],
     opacity: Any,
     corner_radius: Any = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
     artist_alpha: Any = None,
@@ -792,6 +793,7 @@ def _bar_like(
             scalar_stroke,
             stroke_width_values[index],
             fill,
+            wedge_gap,
         )
         mark_style.update(style_extra or {})
         merged_channels = {
@@ -2722,6 +2724,7 @@ def bar(
     series: Optional[list[str]] = None,
     opacity: Any = 0.85,
     corner_radius: Any = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Any = None,
     stroke_width: Any = 0.0,
     _artist_alpha: Any = None,
@@ -2738,6 +2741,7 @@ def bar(
     color = css.get("color", color)
     opacity = css.get("opacity", opacity)
     corner_radius = css.get("corner_radius", corner_radius)
+    wedge_gap = css.get("wedge_gap", wedge_gap)
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
     fill = css.get("fill", fill)
@@ -2756,6 +2760,7 @@ def bar(
         series=series,
         opacity=opacity,
         corner_radius=corner_radius,
+        wedge_gap=wedge_gap,
         stroke=stroke,
         stroke_width=stroke_width,
         artist_alpha=_artist_alpha,
@@ -2779,6 +2784,7 @@ def column(
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
     corner_radius: Union[float, tuple[float, float]] = 0.0,
+    wedge_gap: float = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Union[str, dict[str, str], None] = None,
@@ -2789,6 +2795,7 @@ def column(
     color = css.get("color", color)
     opacity = css.get("opacity", opacity)
     corner_radius = css.get("corner_radius", corner_radius)
+    wedge_gap = css.get("wedge_gap", wedge_gap)
     stroke = css.get("stroke", stroke)
     stroke_width = css.get("stroke_width", stroke_width)
     fill = css.get("fill", fill)
@@ -2807,6 +2814,7 @@ def column(
         series=series,
         opacity=opacity,
         corner_radius=corner_radius,
+        wedge_gap=wedge_gap,
         stroke=stroke,
         stroke_width=stroke_width,
         fill=fill,

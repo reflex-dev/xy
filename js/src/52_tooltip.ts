@@ -254,21 +254,59 @@ Object.assign(ChartView.prototype, {
   // because there each wedge's angle and radius are the data. Explicit
   // `labels=` overrides still win via the customized path below.
   _isNamedSingleWedge(row) {
-    if (this.spec?.coords !== "polar") return false;
+    return this._namedWedge(row) !== null;
+  },
+
+  // A pie slice or a gauge band is ONE named wedge whose datum is its angular
+  // width. Returns that trace when the hovered row is such a wedge.
+  _namedWedge(row) {
+    if (this.spec?.coords !== "polar") return null;
     const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
     const trace = traces.find((t) => t && t.id === row.trace);
-    if (!trace || typeof trace.name !== "string" || !trace.name.trim()) return false;
+    if (!trace || typeof trace.name !== "string" || !trace.name.trim()) return null;
     const wedge = trace.kind === "bar" || trace.kind === "column" || trace.bar !== undefined
       || (trace.x0 !== undefined && trace.y0 !== undefined);
     const count = trace.n_marks ?? trace.n_points;
-    return wedge && count === 1;
+    return wedge && count === 1 ? trace : null;
+  },
+
+  // A single wedge's share of the wedges actually drawn. The angular width IS
+  // the datum, so the readout that means something is "how much of the whole"
+  // — and the whole is the span the wedges cover between them, not the axis
+  // range: a gauge's four bands sweep 240 degrees of a full-turn axis, and
+  // their shares must add to 100% of the gauge, not 67% of a circle.
+  _wedgeSharePercent(trace) {
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    let total = 0;
+    let own = 0;
+    for (const t of traces) {
+      const width = Number(t?.bar?.width);
+      if (!Number.isFinite(width) || width <= 0) continue;
+      const marks = t.n_marks ?? t.n_points;
+      if (marks !== 1) return null; // a multi-wedge trace makes "share" undefined
+      total += width;
+      if (t.id === trace.id) own = width;
+    }
+    if (!(total > 0) || !(own > 0)) return null;
+    return (own / total) * 100;
   },
 
   _defaultTooltipItems(row, labels = {}, aliases = {}) {
     const items = [];
     const seriesName = this._tooltipSeriesName(row);
     if (seriesName) items.push({ kind: "title", value: seriesName });
-    if (seriesName && this._isNamedSingleWedge(row)) return items;
+    const wedge = this._namedWedge(row);
+    if (seriesName && wedge) {
+      // The wedge's share is the only number that means anything here: theta
+      // is where layout put it and the radius is the ring thickness. Skipped
+      // when the name already carries a percentage (pie_chart bakes one in),
+      // so a slice never reads "40% ... 40%".
+      const share = /\d\s*%/.test(seriesName) ? null : this._wedgeSharePercent(wedge);
+      if (share !== null) {
+        items.push({ kind: "field", label: "share", value: `${share.toFixed(1)}%` });
+      }
+      return items;
+    }
     if (row.x !== undefined) {
       const polar = this._polarTooltipField("x", row.x, row.x_kind);
       const { label, customized } = this._defaultTooltipLabel("x", "x", labels, aliases);

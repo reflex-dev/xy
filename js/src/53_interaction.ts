@@ -2087,9 +2087,16 @@ Object.assign(ChartView.prototype, {
     const ranges = Object.fromEntries(
       this._axisIds().map((axisId) => [axisId, [...this._axisRange(axisId, base)]])
     );
+    // Polar radial zoom scales r_hi about a FIXED r_lo (polar-axes.md §8) —
+    // the wheel path already does. The modebar used a centred anchor for every
+    // coordinate system, so the only reachable polar zoom moved the radial
+    // minimum and carved a hole in the middle of the disc, contradicting the
+    // documented contract.
+    const polarRadial = this.spec?.coords === "polar";
     for (const axisId of axes) {
       const [lo, hi] = ranges[axisId];
-      const range = this._zoomAxisRange(axisId, lo, hi, f, 0.5);
+      const anchor = polarRadial && this._axisDim(axisId) === "y" ? 0 : 0.5;
+      const range = this._zoomAxisRange(axisId, lo, hi, f, anchor);
       if (range) ranges[axisId] = range;
     }
     this._setView({ ranges }, {

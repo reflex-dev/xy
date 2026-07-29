@@ -613,6 +613,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         stroke: Optional[str],
         stroke_width: float,
         fill: Any,
+        wedge_gap: float = 0.0,
     ) -> dict[str, Any]:
         """Validate the rect-family mark styling (rounded corners, border,
         gradient fill) into the sparse style keys the client renders.
@@ -635,6 +636,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             radius = self._nonnegative_scalar(corner_radius, f"{kind} corner_radius")
             if radius:
                 style["corner_radius"] = radius
+        gap = self._nonnegative_scalar(wedge_gap, f"{kind} wedge_gap")
+        if gap:
+            # Gap between neighbouring polar wedges, in PX — an angular pad's
+            # gap is `r · dtheta` wide and so tapers to nothing at the hole.
+            # Meaningless under cartesian coords, where bars have their own
+            # width; recorded on the style and read only by the wedge paths.
+            style["wedge_gap"] = gap
         stroke = self._optional_css_color(stroke, f"{kind} stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
         if stroke is not None and stroke_width == 0.0:

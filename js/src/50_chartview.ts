@@ -5648,6 +5648,7 @@ export class ChartView {
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     const rectPolarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
     if (rectPolarSegments) {
+      gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
       gl.uniform1i(u("u_polarSegments"), rectPolarSegments);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (rectPolarSegments + 1), g.n);
     } else {
@@ -5751,6 +5752,7 @@ export class ChartView {
     // §28 rather than chosen silently.
     const polarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
     if (polarSegments) {
+      gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
       gl.uniform1i(u("u_polarSegments"), polarSegments);
       const vAxisId = g.orientation === 1 ? g.xAxis : g.yAxis;
       gl.uniform1f(u("u_polarV0C"), this._axisCoord(this._axis(vAxisId), g.value0Const ?? 0));

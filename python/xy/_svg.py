@@ -3066,6 +3066,7 @@ def polar_wedge_points(
     r1: float,
     steps: int = POLAR_BAR_SEGMENTS,
     corner_radius: float = 0.0,
+    wedge_gap: float = 0.0,
 ) -> list[tuple[float, float]]:
     """An annular sector as a closed polygon — the flattened twin of
     `_polar_wedge_path`, for the raster display list (no arc opcode).
@@ -3093,19 +3094,48 @@ def polar_wedge_points(
     a0, a1 = angles
 
     if corner_radius > 0.0 and inner > 0.0:
-        return _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, steps)
+        return _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, steps, wedge_gap)
+
+    # A constant ANGULAR pad makes the gap between neighbours `r · dtheta` wide,
+    # so it tapers to nothing at the hole and is widest at the rim — the seam
+    # between two pie slices visibly converges toward the centre. A constant
+    # gap in px needs an angular inset that grows as the radius shrinks; the
+    # two radial edges then become straight lines a fixed distance apart, which
+    # is what d3's padAngle/padRadius pair and every pie in the wild produce.
+    inset = _wedge_edge_inset(wedge_gap, a0, a1)
 
     def arc(radius: float, reverse: bool) -> list[tuple[float, float]]:
+        d = inset(radius)
+        start, end = (a1 - d, a0 + d) if reverse else (a0 + d, a1 - d)
         out = []
         for i in range(steps + 1):
-            t = i / steps
-            angle = a1 + (a0 - a1) * t if reverse else a0 + (a1 - a0) * t
+            angle = start + (end - start) * (i / steps)
             out.append((polar.cx + radius * math.cos(angle), polar.cy - radius * math.sin(angle)))
         return out
 
     if inner <= 0.0:
         return [(polar.cx, polar.cy), *arc(outer, False)]
     return [*arc(outer, False), *arc(inner, True)]
+
+
+def _wedge_edge_inset(wedge_gap: float, a0: float, a1: float):
+    """Per-radius angular inset that realises a constant px gap between wedges.
+
+    Half the gap is taken off each side, and `gap / (2r)` radians at radius `r`
+    is `gap / 2` px of arc — so neighbouring slices end up separated by the same
+    number of pixels from the hole to the rim. Clamped so a gap wider than the
+    slice collapses it rather than inverting the edges.
+    """
+    half = max(0.0, float(wedge_gap)) / 2.0
+    sign = 1.0 if a1 >= a0 else -1.0
+    span = abs(a1 - a0)
+
+    def inset(radius: float) -> float:
+        if half <= 0.0 or radius <= 1e-9:
+            return 0.0
+        return sign * min(half / radius, span / 2.0)
+
+    return inset
 
 
 def _rounded_wedge_points(
@@ -3116,6 +3146,7 @@ def _rounded_wedge_points(
     outer: float,
     corner_radius: float,
     steps: int,
+    wedge_gap: float = 0.0,
 ) -> list[tuple[float, float]]:
     """An annular sector with rounded corners, as a closed polygon.
 
@@ -3143,7 +3174,10 @@ def _rounded_wedge_points(
         dist = r_mid + lr
         if dist <= 1e-9:
             return 0.0
-        ha_px = sweep * 0.5 * dist
+        # Taking a constant number of px off the arc half-width at every
+        # radius is exactly the constant-width gap (see `_wedge_edge_inset`);
+        # the corner radius then clamps against the reduced width.
+        ha_px = max(sweep * 0.5 * dist - max(0.0, wedge_gap) / 2.0, 0.0)
         rad = min(corner_radius, hr, ha_px)
         over = abs(lr) - (hr - rad)
         if over <= 0.0:
@@ -3181,6 +3215,7 @@ def _polar_wedge_path(
     r0: float,
     r1: float,
     corner_radius: float = 0.0,
+    wedge_gap: float = 0.0,
 ) -> str:
     """An annular sector as an SVG path: outer arc, inner arc reversed, closed.
 
@@ -3206,7 +3241,9 @@ def _polar_wedge_path(
     if corner_radius > 0.0 and inner > 0.0:
         # Rounded corners are not circular arcs once rolled back out of the
         # unrolled frame, so the shared polygon is the honest shape here too.
-        pts = _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, POLAR_BAR_SEGMENTS)
+        pts = _rounded_wedge_points(
+            polar, a0, a1, inner, outer, corner_radius, POLAR_BAR_SEGMENTS, wedge_gap
+        )
         if len(pts) < 3:
             return ""
         head = f"M {_num(pts[0][0])} {_num(pts[0][1])}"
@@ -3237,15 +3274,21 @@ def _polar_wedge_path(
             return full_circle(outer, sweep)
         return f"{full_circle(outer, sweep)} {full_circle(inner, 1 - sweep)}"
 
-    ox0, oy0 = at(outer, a0)
-    ox1, oy1 = at(outer, a1)
+    # The gap is a constant number of PIXELS, so its angular cost grows as the
+    # radius shrinks (`_wedge_edge_inset`). Both arcs stay exact `A` commands —
+    # only their endpoints move inward — and the radial edges become straight
+    # lines a fixed distance apart, which `L` already draws.
+    inset = _wedge_edge_inset(wedge_gap, a0, a1)
+    d_out, d_in = inset(outer), inset(max(inner, 1e-9))
+    ox0, oy0 = at(outer, a0 + d_out)
+    ox1, oy1 = at(outer, a1 - d_out)
     if inner <= 0.0:
         return (
             f"M {_num(polar.cx)} {_num(polar.cy)} L {_num(ox0)} {_num(oy0)} "
             f"A {_num(outer)} {_num(outer)} 0 {large} {sweep} {_num(ox1)} {_num(oy1)} Z"
         )
-    ix1, iy1 = at(inner, a1)
-    ix0, iy0 = at(inner, a0)
+    ix1, iy1 = at(inner, a1 - d_in)
+    ix0, iy0 = at(inner, a0 + d_in)
     return (
         f"M {_num(ox0)} {_num(oy0)} "
         f"A {_num(outer)} {_num(outer)} 0 {large} {sweep} {_num(ox1)} {_num(oy1)} "
@@ -5306,6 +5349,7 @@ def _bar_marks(
                 float(min(v0[i], v1[i])),
                 float(max(v0[i], v1[i])),
                 float(np.max(radii[i])) if radii is not None and len(radii) else 0.0,
+                float(style.get("wedge_gap", 0.0) or 0.0),
             )
             if d:
                 out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
@@ -5367,6 +5411,7 @@ def _rect_marks(
                 float(min(y0v[i], y1v[i])),
                 float(max(y0v[i], y1v[i])),
                 float(np.max(radii[i])) if radii is not None and len(radii) else 0.0,
+                float(style.get("wedge_gap", 0.0) or 0.0),
             )
             if d:
                 out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')

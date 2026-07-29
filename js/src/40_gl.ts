@@ -1285,6 +1285,11 @@ in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke; in vec2 v_radius;
 // stage expands the strip by XY_POLAR_AA px (POLAR_WEDGE_GLSL) and this SDF
 // trims it back to the true annular sector, which also makes the outer arc
 // exactly round rather than chord-faceted.
+// u_wedgeGap is the gap between neighbouring wedges in device px. Subtracting
+// a CONSTANT number of px from the arc half-width at every radius keeps the
+// seam between two slices the same width from the hole to the rim; an angular
+// pad's gap is r*dtheta and tapers to nothing at the centre.
+uniform float u_wedgeGap;
 flat in vec2 v_polarRadii; flat in vec2 v_polarAngles;
 out vec4 outColor;
 ${GRAD_GLSL}
@@ -1347,7 +1352,7 @@ void main() {
       // wedge becomes a rectangle there, so the standard rounded-rect SDF
       // yields corners that follow the arc -- which is what corner_radius
       // means on a slice, and what every donut/progress-ring design uses.
-      float ha = sweep * 0.5 * dist;
+      float ha = max(sweep * 0.5 * dist - u_wedgeGap * 0.5, 0.0);
       float rad = clamp(v_t > 0.5 ? radius.x : radius.y, 0.0, min(hr, ha));
       vec2 q = vec2(abs(off * dist) - (ha - rad), abs(dist - rMid) - (hr - rad));
       d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - rad;

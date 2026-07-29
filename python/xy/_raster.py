@@ -2648,6 +2648,7 @@ def _emit_bars(
                 float(min(v0[i], v1[i])),
                 float(max(v0[i], v1[i])),
                 corner_radius=float(np.max(radii[i])) if len(radii) else 0.0,
+                wedge_gap=float(style.get("wedge_gap", 0.0) or 0.0),
             )
             if len(poly) < 3:
                 continue
@@ -2748,6 +2749,7 @@ def _emit_rects(
                 float(min(y0v[i], y1v[i])),
                 float(max(y0v[i], y1v[i])),
                 corner_radius=float(np.max(radii[i])) if len(radii) else 0.0,
+                wedge_gap=float(style.get("wedge_gap", 0.0) or 0.0),
             )
             if len(poly) < 3:
                 continue

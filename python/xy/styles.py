@@ -276,6 +276,7 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             "stroke-width",
             "stroke-opacity",
             "border-radius",
+            "wedge-gap",
         }
     elif kind in _FILL_KINDS:
         props |= {"fill", "fill-opacity"}
@@ -365,6 +366,12 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, "symbol", _validate.point_symbol(raw, f"{label}['marker-shape']"), prop, seen)
         elif prop == "border-radius":
             _set(out, "corner_radius", _px(raw, f"{label}['border-radius']"), prop, seen)
+        elif prop == "wedge-gap":
+            # Gap between neighbouring polar wedges, in px. Deliberately a
+            # LENGTH and not an angle: an angular pad's gap is `r · dtheta`
+            # wide, so it tapers to nothing at the hole (see
+            # `_wedge_edge_inset` in _svg.py). Ignored outside coords="polar".
+            _set(out, "wedge_gap", _px(raw, f"{label}['wedge-gap']"), prop, seen)
     return out
 
 

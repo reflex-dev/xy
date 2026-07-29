@@ -197,6 +197,22 @@ MARK_STYLE_PROPERTIES: tuple[MarkStyleProperty, ...] = (
         notes="Rect kinds only. `corner_radius=(tip, base)` rounds the two ends separately.",
     ),
     MarkStyleProperty(
+        id="wedge-gap",
+        vocabulary="xy",
+        compiles_to="wedge_gap",
+        support={"webgl": "full", "svg": "full", "native": "full"},
+        status="shipped",
+        notes=(
+            "Gap between neighbouring polar wedges, in px. Rect kinds under "
+            '`coords="polar"` only; ignored elsewhere. Deliberately a LENGTH '
+            "rather than an angle: an angular pad's seam is `r * dtheta` wide, "
+            "so it tapers to nothing at the hole and reads as uneven spacing. "
+            "The angular inset therefore grows as the radius shrinks, which is "
+            "the same construction as d3's padAngle/padRadius pair. An XY "
+            "vocabulary name: CSS has no gap between two arcs."
+        ),
+    ),
+    MarkStyleProperty(
         id="marker-shape",
         vocabulary="xy",
         compiles_to="symbol",
