@@ -235,8 +235,26 @@ impl<'a> Canvas<'a> {
         );
     }
 
-    #[inline]
+    #[inline(always)]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        // The polar-clip test must stay a one-byte discriminant check: this is
+        // the per-pixel hot path for every mark on every chart, and routing it
+        // through `apply_polar_clip(self.polar_clip, ..)` copied the ~40-byte
+        // `Option<PolarClip>` per pixel — a deterministic +17% on cartesian
+        // PNG export (CodSpeed test_png_export_line_pyplot, 34 -> 40.9 ms).
+        if self.polar_clip.is_some() {
+            self.blend_u8_polar_clipped(x, y, rgba);
+            return;
+        }
+        let o = (y * self.w + x) * self.channels();
+        blend_px(self.px, o, self.opaque, rgba);
+    }
+
+    /// Outlined polar-clip blend: only pixels painted while an annular-sector
+    /// clip is active (polar marks) ever take this call.
+    #[cold]
+    #[inline(never)]
+    fn blend_u8_polar_clipped(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
         let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
             return;
         };
@@ -346,8 +364,21 @@ impl Surface<'_> {
         self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
     }
 
-    #[inline]
+    #[inline(always)]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        // Same one-byte discriminant test as `Canvas::blend_u8`; see the
+        // comment there. The banded parallel painter runs this per pixel.
+        if self.polar_clip.is_some() {
+            self.blend_u8_polar_clipped(x, y, rgba);
+            return;
+        }
+        let o = ((y - self.y0) * self.w + x) * self.channels;
+        blend_px(self.px, o, self.opaque, rgba);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn blend_u8_polar_clipped(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
         let Some(rgba) = apply_polar_clip(self.polar_clip, x, y, rgba) else {
             return;
         };
