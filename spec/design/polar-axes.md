@@ -203,6 +203,20 @@ to a ~1400-device-px disc), the trimmed arc is exactly round rather than
 faceted. The raster's coverage-scanline polygon fill antialiases the same
 flattened wedge; SVG antialiases its real arcs natively.
 
+### Rounded corners
+
+`corner_radius` on a slice has no rectangle to hang off, and every donut,
+progress ring and gauge design in the wild asks for one. It is defined in the
+**unrolled** (arc, radial) frame: at each radius the wedge is a rectangle of
+half-height `hr` and half-width `sweep/2 · dist`, so the standard rounded-rect
+profile applies there and rolls back out to corners that follow the arc. The
+client evaluates that profile per fragment (the annular-sector SDF in
+`RECT_FS`); the exporters sample the same profile into a polygon
+(`_rounded_wedge_points`), which is why a rounded wedge ships as a polyline
+while a plain one keeps its exact `A` arcs — the rounded boundary is not a
+circular arc once rolled back, so a polyline is the honest shape rather than an
+approximation of one.
+
 An opt-in arc-interpolated line mode (matplotlib's behaviour) is a possible
 later flag. It is not in this increment, and the default does not change.
 
@@ -356,8 +370,8 @@ Each row lands as its own change and updates this table when it does.
 
 | Feature | Notes |
 |---|---|
-| Sector layout | `sector`/`thetamin`/`thetamax` limits AND the layout that should follow: a gauge drawn as a partial arc still gets a full-circle plot rect, so the unused portion is dead space. The disc should shrink to the sector's bounding box. |
-| Polar `rule` / `band` annotations | Point-anchored annotations (`text`, `label`, `marker`, `arrow`) project through the transform. A rule/band is genuinely different geometry on a disc — a θ rule is a spoke, an r rule is a ring, a band is an annulus or a sector — and still draws as a straight cartesian bar. |
+| Sector layout | Still the largest visible gap: a 240-degree gauge rebuilt from polar bars gets a full-circle plot rect, so ~40% of the canvas is dead space and the centre readout sits low. `sector`/`thetamin`/`thetamax` limits AND the layout that should follow: a gauge drawn as a partial arc still gets a full-circle plot rect, so the unused portion is dead space. The disc should shrink to the sector's bounding box. |
+| Polar `rule` / `band` annotations | Point-anchored annotations (`text`, `label`, `marker`, `arrow`) project through the transform in **all three** renderers — `_annotation_svg`/`annotation_label_placement` in the exporters, `_dataPxPoint` in the client. A rule/band is genuinely different geometry on a disc — a θ rule is a spoke, an r rule is a ring, a band is an annulus or a sector — and still draws as a straight cartesian bar. |
 | pyplot `projection="polar"` | Landed and corpus-bound. `subplot`, `add_subplot`, `axes`, and `subplots(subplot_kw=...)` route ordinary `plot`, `scatter`, `fill`, and `bar` calls into polar coordinates; `set_theta_zero_location`, `set_theta_direction`, `set_theta_offset`, `set_thetagrids`, `set_rlim`, `set_rticks`, and the r-limit accessors reach the built chart. |
 | Polar heatmap / contour | Beyond Plotly parity. Needs the fragment-stage inverse (§6). |
 | Partial sector (`thetamin`/`thetamax`) | Layout, clipping and tick trimming. |

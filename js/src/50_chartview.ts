@@ -685,6 +685,20 @@ export class ChartView {
     const reservedRight = this.size.w - p.x - p.w;
     const reservedBottom = this.size.h - p.y - p.h;
     const room = this._polarLabelRoom(xAxisSpec);
+    // An explicit `padding` states the box the author wants the plot to
+    // occupy — usually to reserve a band under the disc for a legend or
+    // caption. Reclaiming those gutters below would throw that away, so an
+    // authored box is only inset by the uniform label room. Mirrors the same
+    // early return in `_recut_polar_plot` (python/xy/_svg.py).
+    if (Array.isArray(this.spec.padding) && this.spec.padding.length === 4) {
+      const boxW = p.w - 2 * room;
+      const boxH = p.h - 2 * room;
+      if (boxW >= 40 && boxH >= 40) {
+        this.plot = { ...p, x: p.x + room, y: p.y + room, w: boxW, h: boxH };
+        this._topAxisRoom = (this._topAxisRoom || 0) + room;
+      }
+      return;
+    }
     const side = Math.max(room, reservedRight);
     // A radial-axis title still lives in the left gutter — a disc gives it no
     // natural home — and it is placed outward past the tick-label room, so a
@@ -5448,6 +5462,30 @@ export class ChartView {
 
   _dataPxY(value) {
     return this._dataPx("y", value);
+  }
+
+  // A point-anchored (theta, r) pair in canvas px. The separable _dataPxX /
+  // _dataPxY pair cannot express polar placement: it reads (0, 0) — the disc
+  // centre, at any angle — as the bottom-left corner, and strings a set of
+  // labels out in a horizontal row in theta order. Mirrors the `point()`
+  // helper in `_annotation_svg` and the `marker` branch of
+  // `annotation_label_placement` (python/xy/_svg.py), which the two exporters
+  // already share; without this the browser and the exports disagree about
+  // where every annotation on a polar chart belongs.
+  //
+  // Point-anchored kinds only. `rule` and `band` are genuinely different
+  // geometry on a disc (a theta rule is a spoke, an r rule is a ring) and stay
+  // deferred on the cartesian path, exactly as they do in the exporters.
+  _dataPxPoint(x, y, xAxisId = "x", yAxisId = "y") {
+    const geom = this._polarGeometry();
+    if (!geom) return [this._dataPx(xAxisId, x), this._dataPx(yAxisId, y)];
+    const angle = geom.zero + geom.dirUnit * Number(x);
+    const span = (geom.rHi - geom.rLo) || 1;
+    const rn = (this._axisCoord(this._axis(yAxisId), Number(y)) - geom.rLo) / span;
+    const radius = rn * geom.radius;
+    // Screen y grows downward, so the sine term subtracts — the same flip
+    // `_PolarProjection.__call__` makes and the GLSL twin does not.
+    return [geom.cx + radius * Math.cos(angle), geom.cy - radius * Math.sin(angle)];
   }
 
   _styleNumber(style, key, fallback) {

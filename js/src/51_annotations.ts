@@ -336,8 +336,7 @@ Object.assign(ChartView.prototype, {
         const sourceIndex = g._visMap ? g._visMap[index] : index;
         const x = this._decodeValue(g._cpu.x, g.xMeta, sourceIndex);
         const y = this._decodeValue(g._cpu.y, g.yMeta, sourceIndex);
-        const px = this._dataPx(g.xAxis, x);
-        const py = this._dataPx(g.yAxis, y);
+        const [px, py] = this._dataPxPoint(x, y, g.xAxis, g.yAxis);
         if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
         const sizeValue = g.sizeMode === 1 && g._cpu.size
           ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) *
@@ -641,17 +640,11 @@ Object.assign(ChartView.prototype, {
         ctx.stroke();
         ctx.restore();
       } else if (ann.kind === "arrow") {
-        this._drawArrowLine(
-          ctx,
-          this._dataPxX(Number(ann.x0)),
-          this._dataPxY(Number(ann.y0)),
-          this._dataPxX(Number(ann.x1)),
-          this._dataPxY(Number(ann.y1)),
-          style
-        );
+        const [arrowX0, arrowY0] = this._dataPxPoint(Number(ann.x0), Number(ann.y0));
+        const [arrowX1, arrowY1] = this._dataPxPoint(Number(ann.x1), Number(ann.y1));
+        this._drawArrowLine(ctx, arrowX0, arrowY0, arrowX1, arrowY1, style);
       } else if (ann.kind === "callout") {
-        const px = this._dataPxX(Number(ann.x));
-        const py = this._dataPxY(Number(ann.y));
+        const [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
         const resolved = this._resolvedAnnotationAnchors?.get(annotationIndex);
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
@@ -662,13 +655,8 @@ Object.assign(ChartView.prototype, {
         const labelY = resolved?.y ?? py + dy;
         this._drawArrowLine(ctx, labelX, labelY, px, py, style);
       } else if (ann.kind === "marker") {
-        this._drawAnnotationMarker(
-          ctx,
-          this._dataPxX(Number(ann.x)),
-          this._dataPxY(Number(ann.y)),
-          style,
-          ann
-        );
+        const [markerX, markerY] = this._dataPxPoint(Number(ann.x), Number(ann.y));
+        this._drawAnnotationMarker(ctx, markerX, markerY, style, ann);
       }
       ctx.restore();
     }
@@ -702,8 +690,7 @@ Object.assign(ChartView.prototype, {
           px = this._dataPxX(Number(ann.x));
           py = p.y + (1 - Number(ann.y)) * p.h;
         } else {
-          px = this._dataPxX(Number(ann.x));
-          py = this._dataPxY(Number(ann.y));
+          [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
         }
       } else if (ann.kind === "rule") {
         if (ann.axis === "x") {
@@ -722,10 +709,8 @@ Object.assign(ChartView.prototype, {
           py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
         }
       } else if (ann.kind === "arrow") {
-        const ax0 = this._dataPxX(Number(ann.x0));
-        const ay0 = this._dataPxY(Number(ann.y0));
-        const ax1 = this._dataPxX(Number(ann.x1));
-        const ay1 = this._dataPxY(Number(ann.y1));
+        const [ax0, ay0] = this._dataPxPoint(Number(ann.x0), Number(ann.y0));
+        const [ax1, ay1] = this._dataPxPoint(Number(ann.x1), Number(ann.y1));
         px = (ax0 + ax1) / 2;
         py = (ay0 + ay1) / 2;
         // Upward unit normal of the shaft: the label lifts along it (after
@@ -735,12 +720,8 @@ Object.assign(ChartView.prototype, {
           lift = [-(ay1 - ay0) / len, (ax1 - ax0) / len];
           if (lift[1] > 0) lift = [-lift[0], -lift[1]];
         }
-      } else if (ann.kind === "callout") {
-        px = this._dataPxX(Number(ann.x));
-        py = this._dataPxY(Number(ann.y));
-      } else if (ann.kind === "marker") {
-        px = this._dataPxX(Number(ann.x));
-        py = this._dataPxY(Number(ann.y));
+      } else if (ann.kind === "callout" || ann.kind === "marker") {
+        [px, py] = this._dataPxPoint(Number(ann.x), Number(ann.y));
       }
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {

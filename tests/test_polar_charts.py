@@ -11,12 +11,15 @@ from __future__ import annotations
 import math
 import re
 from itertools import pairwise
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import xy
 from xy._svg import _PolarProjection, layout
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _rose(n: int = 120):
@@ -907,3 +910,142 @@ def test_point_annotations_project_through_polar() -> None:
     assert m is not None, "the annotation was dropped"
     assert 180.0 <= float(m.group(1)) <= 220.0
     assert 180.0 <= float(m.group(2)) <= 225.0
+
+
+# -- customizability probe fixes (evilcharts ECharts pie blocks) ------------
+
+
+def test_authored_padding_survives_the_polar_recut() -> None:
+    """`padding=` is how a donut reserves a band for its legend or caption.
+
+    The recut used to symmetrise the cartesian gutters away and hand the whole
+    canvas to the disc, so an authored bottom band silently vanished while the
+    same padding on a cartesian chart was honoured.
+    """
+    theta, r = _rose()
+    marks = [xy.line(theta, r), xy.theta_axis(show=False), xy.r_axis(show=False)]
+    plain = xy.polar_chart(*marks, width=400, height=420)
+    padded = xy.polar_chart(*marks, width=400, height=420, padding=[10, 10, 140, 10])
+
+    bottoms = []
+    for chart in (plain, padded):
+        spec, _ = chart.figure().build_payload_split()
+        _w, _h, _c, plot = layout(spec)
+        project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+        bottoms.append(project.cy + project.radius)
+    assert bottoms[1] < bottoms[0] - 100, "authored bottom padding was reclaimed by the recut"
+    assert bottoms[1] <= 420 - 130
+
+
+def test_polar_wedge_corner_radius_reaches_every_renderer() -> None:
+    """`corner_radius` used to be accepted, shipped on the wire and ignored by
+    all three renderers — a silent approximation (§28). Rounding pulls the
+    corners in, so a rounded wedge covers strictly less area than a square one.
+    """
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection(
+        {"theta_unit": "degrees"}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400}
+    )
+    square = polar_wedge_points(project, 0.0, 90.0, 0.5, 1.0, steps=24)
+    rounded = polar_wedge_points(project, 0.0, 90.0, 0.5, 1.0, steps=24, corner_radius=14.0)
+    assert rounded and square
+
+    def area(poly: list[tuple[float, float]]) -> float:
+        total = 0.0
+        for (x0, y0), (x1, y1) in zip(poly, [*poly[1:], poly[0]], strict=True):
+            total += x0 * y1 - x1 * y0
+        return abs(total) / 2.0
+
+    assert area(rounded) < area(square), "corner_radius did not round the sector"
+    # Rounding removes area near the corners only — never more than a rough
+    # bound of four corner squares, or the profile is wrong rather than rounded.
+    assert area(square) - area(rounded) < 4 * 14.0 * 14.0
+
+
+def test_rounded_wedge_stays_within_the_square_wedge() -> None:
+    """Rounding must inset the boundary, never bulge past it."""
+    from xy._svg import polar_wedge_points
+
+    project = _PolarProjection(
+        {"theta_unit": "degrees"}, {"range": [0.0, 1.0]}, {"x": 0, "y": 0, "w": 400, "h": 400}
+    )
+    poly = polar_wedge_points(project, 0.0, 90.0, 0.5, 1.0, steps=24, corner_radius=14.0)
+    for px, py in poly:
+        radius = math.hypot(px - 200.0, py - 200.0)
+        assert 100.0 - 1e-6 <= radius <= 200.0 + 1e-6
+        angle = math.degrees(math.atan2(200.0 - py, px - 200.0))
+        assert -1e-6 <= angle <= 90.0 + 1e-6
+
+
+def test_svg_rounded_slice_differs_from_a_square_one() -> None:
+    def slice_path(corner_radius: float) -> str:
+        chart = xy.polar_chart(
+            xy.bar([45.0], [1.0], base=0.5, width=80.0, corner_radius=corner_radius),
+            xy.theta_axis(unit="degrees", show=False),
+            xy.r_axis(domain=(0.0, 1.0), show=False),
+            width=400,
+            height=400,
+        )
+        doc = chart.figure().to_image(format="svg").decode()
+        paths = re.findall(r'<path d="([^"]+)"', doc)
+        assert paths
+        return paths[0]
+
+    assert slice_path(0.0) != slice_path(14.0)
+    assert " A " in slice_path(0.0), "a plain wedge should keep its exact arcs"
+
+
+def test_raster_polar_wedge_honours_a_gradient_fill() -> None:
+    """The gradient reached the SVG (`url(#g)`) and the browser but the raster
+    branch painted flat, so the PNG disagreed with both.
+    """
+    from test_png_export import _decode_rgba
+
+    chart = xy.polar_chart(
+        xy.bar(
+            [180.0],
+            [1.0],
+            base=0.4,
+            width=340.0,
+            color="#7c3aed",
+            fill="linear-gradient(to top, #7c3aed, #34d399)",
+        ),
+        xy.theta_axis(unit="degrees", show=False),
+        xy.r_axis(domain=(0.0, 1.0), show=False),
+        width=320,
+        height=320,
+    )
+    fig = chart.figure()
+    assert "url(#" in fig.to_image(format="svg").decode()
+
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    spec, _ = fig.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    project = _PolarProjection(spec["x_axis"], spec["y_axis"], plot)
+    # Sample where the gradient actually varies: "to top" runs up the wedge's
+    # bounding box, so two points at the same radius but opposite ends of the
+    # vertical span must differ. A flat fill gives one colour at both.
+    swatches = []
+    for degrees in (90.0, 270.0):
+        px, py = (float(v) for v in project(degrees, 0.8))
+        swatches.append(tuple(int(v) for v in pixels[int(py), int(px), :3]))
+    assert swatches[0] != swatches[1], f"raster painted the wedge flat: {swatches}"
+
+
+def test_client_projects_point_annotations_through_polar() -> None:
+    """Source guard: the client annotation layer must not read (theta, r) with
+    the separable cartesian scales.
+
+    Every annotation in js/src/51_annotations.ts used to go through
+    `_dataPxX`/`_dataPxY`, so the browser strung a polar chart's labels out in
+    a horizontal row while both exporters placed them correctly — the exact
+    cross-renderer divergence this coordinate system is built to avoid. There
+    is no headless-JS harness for the DOM label layer, so the binding is a
+    source assertion plus the shared placement contract in polar-axes.md §9.
+    """
+    source = (ROOT / "js" / "src" / "51_annotations.ts").read_text(encoding="utf-8")
+    point_kinds = source.count("_dataPxPoint(")
+    assert point_kinds >= 6, "point-anchored annotations must use the joint polar projection"
+    # rule/band stay on the separable path on purpose (deferred geometry).
+    assert "_dataPxX(Number(ann.value))" in source

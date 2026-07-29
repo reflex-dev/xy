@@ -965,13 +965,13 @@ void main() {
     float side = float(gl_VertexID & 1);
     gl_Position = xyPolarWedge(th0, th1, r0C, r1C, t, side);
     v_t = side;
-    // Rounded corners and the stroke SDF are a rectangle contract; a sector
-    // has no axis-aligned half-extent, so they switch off rather than being
-    // approximated (v_half huge => "deep inside", cover = 1). Edge coverage
-    // comes from the annular-sector SDF in RECT_FS instead.
+    // The rectangle SDF is inert here (v_half huge => "deep inside"); RECT_FS
+    // runs the annular-sector SDF instead, which handles coverage, the stroke
+    // and corner_radius in the unrolled (arc, radial) frame. The radius rides
+    // through unchanged so a rounded slice is rounded in the browser too.
     v_half = vec2(1e6);
     v_local = vec2(0.0);
-    v_radius = vec2(-1.0, -1.0);
+    v_radius = a_radius;
     v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
     return;
   }
@@ -1062,13 +1062,12 @@ void main() {
     float side = float(gl_VertexID & 1);
     gl_Position = xyPolarWedge(thC - hw, thC + hw, r0C, r1C, t, side);
     v_t = side;
-    // Rounded corners and the stroke SDF are a rectangle contract; a sector has
-    // no axis-aligned half-extent, so they are switched off rather than
-    // approximated. v_half huge => the SDF reports "deep inside", cover = 1.
-    // Edge coverage comes from the annular-sector SDF in RECT_FS instead.
+    // The rectangle SDF is inert here (v_half huge => "deep inside"); RECT_FS
+    // runs the annular-sector SDF instead, which handles coverage, the stroke
+    // and corner_radius in the unrolled (arc, radial) frame.
     v_half = vec2(1e6);
     v_local = vec2(0.0);
-    v_radius = vec2(-1.0, -1.0);
+    v_radius = a_radius;
     v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
     return;
   }
@@ -1130,7 +1129,7 @@ void main() {
   }
   vec2 radius = v_radius.x >= 0.0 ? v_radius : u_radius;
   float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
-  if (radius.x > 0.0 || radius.y > 0.0 || strokeWidth > 0.0) {
+  if (u_coordMode != 1 && (radius.x > 0.0 || radius.y > 0.0 || strokeWidth > 0.0)) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
     // straight sides the SDF reduces to |local|-half independent of r, so
@@ -1151,24 +1150,42 @@ void main() {
     premult *= 1.0 - smoothstep(-aa, aa, d);
   }
   if (u_coordMode == 1) {
+    // Annular-sector SDF: signed px distance to the wedge boundary, negative
+    // inside. Everything the rectangle path gets from its own SDF — the AA
+    // fringe, the stroke ring and corner_radius -- comes from this one.
     vec2 rel = gl_FragCoord.xy - (u_polar.xy * 0.5 + 0.5) * u_res;
     float dist = length(rel);
-    // Signed px distance to the wedge boundary, positive inside. A fan from
-    // the centre has no inner edge, so r_lo = 0 contributes none — without
-    // the guard the apex pixel of a full disc dims for no reason.
-    float cover = min(
-      v_polarRadii.x > 0.0 ? dist - v_polarRadii.x : 1e6,
-      v_polarRadii.y - dist);
+    float rMid = (v_polarRadii.x + v_polarRadii.y) * 0.5;
+    float hr = (v_polarRadii.y - v_polarRadii.x) * 0.5;
     float sweep = abs(v_polarAngles.y - v_polarAngles.x);
-    if (sweep < 6.2831853 - 1e-4) {
-      // Angular distance via the offset from the sector's mid angle, wrapped
-      // to (-pi, pi]: symmetric at both edges and seam-safe. Scaled by the
-      // fragment's own radius to convert radians to px of arc.
+    float d;
+    if (sweep >= 6.2831853 - 1e-4) {
+      // A full turn has no angular edges to round or stroke: a plain annulus,
+      // or a disc when the inner radius is zero.
+      d = v_polarRadii.x > 0.0 ? abs(dist - rMid) - hr : dist - v_polarRadii.y;
+    } else {
+      // Angular offset from the sector's mid angle, wrapped to (-pi, pi]:
+      // symmetric at both edges and seam-safe.
       float mid = (v_polarAngles.x + v_polarAngles.y) * 0.5;
       float off = mod(atan(rel.y, rel.x) - mid + 3.14159265359, 6.28318530718) - 3.14159265359;
-      cover = min(cover, (sweep * 0.5 - abs(off)) * dist);
+      // Unrolled (arc, radial) frame in px at this fragment's own radius: the
+      // wedge becomes a rectangle there, so the standard rounded-rect SDF
+      // yields corners that follow the arc -- which is what corner_radius
+      // means on a slice, and what every donut/progress-ring design uses.
+      float ha = sweep * 0.5 * dist;
+      float rad = clamp(v_t > 0.5 ? radius.x : radius.y, 0.0, min(hr, ha));
+      vec2 q = vec2(abs(off * dist) - (ha - rad), abs(dist - rMid) - (hr - rad));
+      d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - rad;
     }
-    premult *= smoothstep(-0.75, 0.75, cover);
+    float aa = 0.75;
+    if (strokeWidth > 0.0) {
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : (u_strokeMode == 2 ? paint : u_stroke);
+      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+      vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+      float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
+      premult = mix(stroke, premult, inner);
+    }
+    premult *= 1.0 - smoothstep(-aa, aa, d);
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;

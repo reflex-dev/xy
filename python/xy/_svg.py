@@ -2416,6 +2416,24 @@ def _recut_polar_plot(
     reserved_bottom = height - plot["y"] - plot["h"]
 
     room = _polar_label_room(theta_axis)
+    authored_pad = spec.get("padding")
+    if isinstance(authored_pad, list) and len(authored_pad) == 4:
+        # An explicit `padding` states the box the author wants the plot to
+        # occupy — most often to reserve a band under the disc for a legend or
+        # caption, which is what every donut composition needs. Reclaiming the
+        # gutters below would throw that away (a chart authored with
+        # `padding=[0, 0, 140, 0]` came out with its disc filling the canvas,
+        # the reserved band gone). So an authored box is only inset by the
+        # uniform label room, and the disc centres in what is left.
+        left = plot["x"] + room
+        right = plot["x"] + plot["w"] - room
+        top = plot["y"] + room
+        bottom = plot["y"] + plot["h"] - room
+        box_w, box_h = right - left, bottom - top
+        if box_w >= 40.0 and box_h >= 40.0:
+            plot["x"], plot["y"], plot["w"], plot["h"] = left, top, box_w, box_h
+            plot["top_axis_room"] = plot["top_axis_room"] + room
+            return
     side = max(room, reserved_right)
     # A radial-axis title is still drawn in the left gutter — a disc gives it no
     # natural home — and `_axis_label_geometry` positions it outward from the
@@ -2816,6 +2834,7 @@ def polar_wedge_points(
     r0: float,
     r1: float,
     steps: int = POLAR_BAR_SEGMENTS,
+    corner_radius: float = 0.0,
 ) -> list[tuple[float, float]]:
     """An annular sector as a closed polygon — the flattened twin of
     `_polar_wedge_path`, for the raster display list (no arc opcode).
@@ -2833,6 +2852,9 @@ def polar_wedge_points(
     a0 = float(polar.angle(theta0))
     a1 = float(polar.angle(theta1))
 
+    if corner_radius > 0.0 and inner > 0.0:
+        return _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, steps)
+
     def arc(radius: float, reverse: bool) -> list[tuple[float, float]]:
         out = []
         for i in range(steps + 1):
@@ -2846,12 +2868,79 @@ def polar_wedge_points(
     return [*arc(outer, False), *arc(inner, True)]
 
 
+def _rounded_wedge_points(
+    polar: "_PolarProjection",
+    a0: float,
+    a1: float,
+    inner: float,
+    outer: float,
+    corner_radius: float,
+    steps: int,
+) -> list[tuple[float, float]]:
+    """An annular sector with rounded corners, as a closed polygon.
+
+    `corner_radius` on a slice is what every donut, progress ring and gauge
+    design in the wild asks for, and it has no rectangle to hang off. The
+    definition used here is the one the client's fragment SDF uses, so the
+    three renderers agree: unroll the wedge into an (arc, radial) frame — where
+    it *is* a rectangle, of half-height `hr` and half-width `sweep/2 · dist` at
+    each radius — round it there with the standard rounded-rect profile, and
+    roll it back. The corners then follow the arc instead of being chorded off.
+
+    Sampled rather than expressed as SVG arcs: the rounded profile is not a
+    circular arc once rolled back (its angular inset varies with radius), so a
+    polyline is the honest shape rather than an approximation of one. Plain
+    wedges keep their exact `A` arcs — this path is only taken when a radius is
+    actually asked for.
+    """
+    r_mid = (inner + outer) / 2.0
+    hr = (outer - inner) / 2.0
+    sweep = abs(a1 - a0)
+    mid = (a0 + a1) / 2.0
+    sign = 1.0 if a1 >= a0 else -1.0
+
+    def half_angle(lr: float) -> float:
+        dist = r_mid + lr
+        if dist <= 1e-9:
+            return 0.0
+        ha_px = sweep * 0.5 * dist
+        rad = min(corner_radius, hr, ha_px)
+        over = abs(lr) - (hr - rad)
+        if over <= 0.0:
+            half_px = ha_px
+        else:
+            half_px = (ha_px - rad) + math.sqrt(max(0.0, rad * rad - over * over))
+        return half_px / dist
+
+    def at(dist: float, angle: float) -> tuple[float, float]:
+        return polar.cx + dist * math.cos(angle), polar.cy - dist * math.sin(angle)
+
+    out: list[tuple[float, float]] = []
+    # Outer rim, then the trailing edge inward, then the inner rim back, then
+    # the leading edge outward. Each edge samples the rounded profile, so the
+    # corner arcs fall out of the same walk rather than being spliced in.
+    for i in range(steps + 1):
+        t = i / steps
+        out.append(at(outer, mid - sign * half_angle(hr) + sign * half_angle(hr) * 2.0 * t))
+    for i in range(1, steps + 1):
+        lr = hr - 2.0 * hr * (i / steps)
+        out.append(at(r_mid + lr, mid + sign * half_angle(lr)))
+    for i in range(1, steps + 1):
+        t = i / steps
+        out.append(at(inner, mid + sign * half_angle(-hr) - sign * half_angle(-hr) * 2.0 * t))
+    for i in range(1, steps):
+        lr = -hr + 2.0 * hr * (i / steps)
+        out.append(at(r_mid + lr, mid - sign * half_angle(lr)))
+    return out
+
+
 def _polar_wedge_path(
     polar: "_PolarProjection",
     theta0: float,
     theta1: float,
     r0: float,
     r1: float,
+    corner_radius: float = 0.0,
 ) -> str:
     """An annular sector as an SVG path: outer arc, inner arc reversed, closed.
 
@@ -2866,6 +2955,15 @@ def _polar_wedge_path(
         return ""
     a0 = float(polar.angle(theta0))
     a1 = float(polar.angle(theta1))
+    if corner_radius > 0.0 and inner > 0.0:
+        # Rounded corners are not circular arcs once rolled back out of the
+        # unrolled frame, so the shared polygon is the honest shape here too.
+        pts = _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, POLAR_BAR_SEGMENTS)
+        if len(pts) < 3:
+            return ""
+        head = f"M {_num(pts[0][0])} {_num(pts[0][1])}"
+        rest = " ".join(f"L {_num(x)} {_num(y)}" for x, y in pts[1:])
+        return f"{head} {rest} Z"
     # `sweep` is in SVG's screen sense: y grows downward, so a counterclockwise
     # data sweep draws as a clockwise-negative arc.
     sweep = 0 if a1 > a0 else 1
@@ -4812,6 +4910,7 @@ def _bar_marks(
                 float(pos[i]) + half,
                 float(min(v0[i], v1[i])),
                 float(max(v0[i], v1[i])),
+                float(np.max(radii[i])) if radii is not None and len(radii) else 0.0,
             )
             if d:
                 out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')
@@ -4872,6 +4971,7 @@ def _rect_marks(
                 float(x1v[i]),
                 float(min(y0v[i], y1v[i])),
                 float(max(y0v[i], y1v[i])),
+                float(np.max(radii[i])) if radii is not None and len(radii) else 0.0,
             )
             if d:
                 out.append(f'<path d="{d}" fill="{fills[i]}"{extras[i]}/>')

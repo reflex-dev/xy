@@ -2367,6 +2367,35 @@ def _bar_geom(
             cmd.stroke(poly, sw, stroke_c, closed=True)
 
 
+def _polar_wedge_fill(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+    fills: np.ndarray,
+) -> Callable[[list[tuple[float, float]], int], None]:
+    """Paint one flattened wedge, honoring a gradient `fill=` like the cartesian
+    path does.
+
+    The polar branches used to call `cmd.fill(poly, flat)` unconditionally, so a
+    gradient reached the SVG (`fill="url(#g3)"`) and the browser but came out
+    flat in the PNG — a three-way divergence with the raster the odd one out.
+    Per-item colors still win when there is no gradient, since each wedge in a
+    pie carries its own.
+    """
+    if isinstance(style.get("fill"), dict):
+        grad_only, _stroke_c, _sw = _fill_maker(cmd, style, color, plot)
+
+        def paint(poly: list[tuple[float, float]], index: int) -> None:
+            grad_only(poly)
+    else:
+
+        def paint(poly: list[tuple[float, float]], index: int) -> None:
+            cmd.fill(poly, tuple(int(value) for value in fills[index]))
+
+    return paint
+
+
 def _fill_maker(
     cmd: _Cmd,
     style: dict[str, Any],
@@ -2472,6 +2501,7 @@ def _emit_bars(
     if polar is not None:
         # Annular sectors, flattened: the display list has no arc opcode, so the
         # same wedge the SVG exporter draws with `A` ships as a polygon here.
+        paint = _polar_wedge_fill(cmd, style, color, plot, fills)
         for i in range(len(pos)):
             poly = polar_wedge_points(
                 polar,
@@ -2479,10 +2509,11 @@ def _emit_bars(
                 float(pos[i]) + half,
                 float(min(v0[i], v1[i])),
                 float(max(v0[i], v1[i])),
+                corner_radius=float(np.max(radii[i])) if len(radii) else 0.0,
             )
             if len(poly) < 3:
                 continue
-            cmd.fill(poly, tuple(int(v) for v in fills[i]))
+            paint(poly, i)
             if widths[i] > 0:
                 cmd.stroke(
                     [*poly, poly[0]],
@@ -2570,6 +2601,7 @@ def _emit_rects(
     if polar is not None:
         # Four edge columns are an annular sector, flattened (no arc opcode).
         # This is the path unequal-width slices — a pie or donut — take.
+        paint = _polar_wedge_fill(cmd, style, color, plot, fills)
         for i in range(len(x0v)):
             poly = polar_wedge_points(
                 polar,
@@ -2577,10 +2609,11 @@ def _emit_rects(
                 float(x1v[i]),
                 float(min(y0v[i], y1v[i])),
                 float(max(y0v[i], y1v[i])),
+                corner_radius=float(np.max(radii[i])) if len(radii) else 0.0,
             )
             if len(poly) < 3:
                 continue
-            cmd.fill(poly, tuple(int(v) for v in fills[i]))
+            paint(poly, i)
             if widths[i] > 0:
                 cmd.stroke([*poly, poly[0]], float(widths[i]), tuple(int(v) for v in strokes[i]))
         return
