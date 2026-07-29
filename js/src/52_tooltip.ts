@@ -192,15 +192,78 @@ Object.assign(ChartView.prototype, {
     return { label: fallback, customized: false };
   },
 
+  // The trace's own name, when it has one. The hover row carries `trace` (an
+  // id), never the label, so the default readout used to identify a mark only
+  // by its coordinates — on a pie that meant "x: 102.6, y: 0.94" for a slice
+  // whose whole identity is "Cloudpeak $13B". Every other library leads its
+  // tooltip with the series name; so does this one now.
+  _tooltipSeriesName(row) {
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    const trace = traces.find((t) => t && t.id === row.trace);
+    const name = trace && trace.name;
+    return typeof name === "string" && name.trim() ? name : null;
+  },
+
+  // Under polar the two channels are not x and y, and saying so is actively
+  // misleading: "x: 1.5708" on a radar names a spoke the chart labels "power".
+  // The angular value goes through the axis's own text function, so degrees
+  // keep their sign, radians read as pi-fractions, and an authored tick label
+  // wins — the same string the spoke itself carries.
+  _polarTooltipField(channel, value, kind) {
+    if (this.spec?.coords !== "polar") return null;
+    const axis = this._axis(channel === "x" ? "x" : "y") || {};
+    if (channel === "y") return { label: "r", value: fmtValue(value, kind) };
+    // Authored spoke labels first, matched with tolerance. `_axisTickText`
+    // compares tick values exactly, but the hovered angle arrives as decoded
+    // offset-encoded f32 (§4/§16) while the tick was authored in f64 — so a
+    // radar's pi/2 spoke missed its own label by ~1e-7 and fell back to
+    // "1.57". The tolerance is relative to the spacing, so it can never reach
+    // a neighbouring spoke.
+    const values = Array.isArray(axis.tick_values) ? axis.tick_values : null;
+    const texts = Array.isArray(axis.tick_labels) ? axis.tick_labels : null;
+    if (values && texts) {
+      let span = Infinity;
+      for (let i = 1; i < values.length; i++) {
+        span = Math.min(span, Math.abs(Number(values[i]) - Number(values[i - 1])));
+      }
+      const tol = Number.isFinite(span) ? span / 8 : 1e-6;
+      for (let i = 0; i < values.length && i < texts.length; i++) {
+        if (Math.abs(Number(values[i]) - Number(value)) <= tol) {
+          return { label: "θ", value: String(texts[i]) };
+        }
+      }
+    }
+    const step = this._axisTicks?.("x", 6)?.step ?? 1;
+    let text;
+    try {
+      text = this._axisTickText(axis, value, step);
+    } catch {
+      text = null;
+    }
+    return { label: "θ", value: text || fmtValue(value, kind) };
+  },
+
   _defaultTooltipItems(row, labels = {}, aliases = {}) {
     const items = [];
+    const seriesName = this._tooltipSeriesName(row);
+    if (seriesName) items.push({ kind: "title", value: seriesName });
     if (row.x !== undefined) {
-      const { label } = this._defaultTooltipLabel("x", "x", labels, aliases);
-      items.push({ kind: "field", label, value: fmtValue(row.x, row.x_kind) });
+      const polar = this._polarTooltipField("x", row.x, row.x_kind);
+      const { label, customized } = this._defaultTooltipLabel("x", "x", labels, aliases);
+      items.push({
+        kind: "field",
+        label: polar && !customized ? polar.label : label,
+        value: polar ? polar.value : fmtValue(row.x, row.x_kind),
+      });
     }
     if (row.y !== undefined) {
-      const { label } = this._defaultTooltipLabel("y", "y", labels, aliases);
-      items.push({ kind: "field", label, value: fmtValue(row.y, row.y_kind) });
+      const polar = this._polarTooltipField("y", row.y, row.y_kind);
+      const { label, customized } = this._defaultTooltipLabel("y", "y", labels, aliases);
+      items.push({
+        kind: "field",
+        label: polar && !customized ? polar.label : label,
+        value: fmtValue(row.y, row.y_kind),
+      });
     }
     if (row.color_value !== undefined) {
       const { label } = this._defaultTooltipLabel(
