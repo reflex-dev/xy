@@ -148,7 +148,11 @@ export function fmtAngle(v, unit, step = 1) {
   for (const den of [1, 2, 3, 4, 6, 8, 12]) {
     const scaled = frac * den;
     const nearest = Math.round(scaled);
-    if (nearest && Math.abs(scaled - nearest) < 1e-9) {
+    // 1e-6, not 1e-9: hover values arrive f32-decoded (§4/§16), so pi/2
+    // lands ~2e-8 off its f64 self and a 1e-9 gate showed "1.57" in the
+    // tooltip while the tick at the same spoke said "pi/2". No real tick sits
+    // within 1e-6 of a pi-fraction without being one.
+    if (nearest && Math.abs(scaled - nearest) < 1e-6) {
       const num = Math.abs(nearest) === 1 ? "" : String(Math.abs(nearest));
       const body = `${nearest < 0 ? "-" : ""}${num}\u03c0`;
       return den === 1 ? body : `${body}/${den}`;

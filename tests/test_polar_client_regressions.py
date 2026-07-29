@@ -479,3 +479,91 @@ setTimeout(() => {
         label="polar seam hover",
     )
     assert result == {"direct": True, "wrapped": True, "outside": False}
+
+
+def test_polar_tooltip_content_speaks_polar(tmp_path: Path) -> None:
+    """Tooltip *content* on polar charts — the review's coverage gap.
+
+    Three sub-cases through the client's own row -> items pipeline:
+    a named radians line must lead with its series name and print the angle as
+    a pi-fraction (hover values arrive f32-decoded, so the pi-fraction match
+    needs the loosened tolerance); a degrees bar must carry the degree sign;
+    a radar spoke must surface its authored category label, never a number.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    theta = [i * 2.0 * math.pi / 24.0 for i in range(24)]
+    r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
+    chart = xy.polar_chart(xy.line(theta, r, name="gain", animation=False), width=420, height=400)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const g = view.gpuTraces[0];
+    // Row for the vertex at theta = pi/2 (index 6 of 24), via the same
+    // pipeline a pointer hover uses.
+    const hit = { g, index: 6, trace: g.trace.id, synthetic: true };
+    const row = view._localRow(hit);
+    const items = view._tooltipItems(row);
+    document.body.setAttribute("data-xy-polar-tooltip", JSON.stringify(items));
+  } catch (error) {
+    document.body.setAttribute("data-xy-polar-tooltip-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    items = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_tooltip_line.html",
+        "data-xy-polar-tooltip",
+        label="polar tooltip content",
+    )
+    assert items[0] == {"kind": "title", "value": "gain"}
+    theta_item = next(i for i in items if i.get("label") == "θ")
+    assert theta_item["value"] == "π/2", items
+    assert any(i.get("label") == "r" for i in items)
+
+
+def test_polar_tooltip_degrees_and_radar_labels(tmp_path: Path) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    chart = xy.radar_chart(
+        ["speed", "power", "range", "agility"],
+        xy.area([0.9, 0.7, 0.5, 0.8], name="Model A"),
+        width=420,
+        height=400,
+    )
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const g = view.gpuTraces[0];
+    // Vertex 1 sits on the "power" spoke (pi/2 of a 4-category radar).
+    const row = view._localRow({ g, index: 1, trace: g.trace.id, synthetic: true });
+    const items = view._tooltipItems(row);
+    document.body.setAttribute("data-xy-radar-tooltip", JSON.stringify(items));
+  } catch (error) {
+    document.body.setAttribute("data-xy-radar-tooltip-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    items = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_tooltip_radar.html",
+        "data-xy-radar-tooltip",
+        label="radar tooltip content",
+    )
+    assert items[0] == {"kind": "title", "value": "Model A"}
+    theta_item = next(i for i in items if i.get("label") == "θ")
+    assert theta_item["value"] == "power", items

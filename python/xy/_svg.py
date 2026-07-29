@@ -792,7 +792,9 @@ def _fmt_angle(value: float, unit: str, step: float = 1.0) -> str:
     for denominator in (1, 2, 3, 4, 6, 8, 12):
         scaled = frac * denominator
         nearest = round(scaled)
-        if nearest and abs(scaled - nearest) < 1e-9:
+        # 1e-6, not 1e-9 — mirrors fmtAngle in js/src/30_ticks.ts: hover
+        # values arrive f32-decoded, and pi/2 misses its f64 self by ~2e-8.
+        if nearest and abs(scaled - nearest) < 1e-6:
             numerator = "" if abs(nearest) == 1 else str(abs(nearest))
             sign = "-" if nearest < 0 else ""
             body = f"{sign}{numerator}π"
