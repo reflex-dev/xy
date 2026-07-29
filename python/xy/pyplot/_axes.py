@@ -1125,6 +1125,9 @@ class Axes(PlotTypeMixin):
         self._aspect_bounds: Optional[tuple[float, float, float, float]] = None
         self._insets: list[tuple["Axes", tuple[float, float, float, float]]] = []
         self._insets_materialized = False
+        self._inset_parent: Optional["Axes"] = None
+        self._inset_bounds: Optional[tuple[float, float, float, float]] = None
+        self._inset_layout_base: Optional[tuple[float, float, float, float]] = None
         self._figure_rect: Optional[tuple[float, float, float, float]] = None
         # The originating gridspec span, when _figure_rect came from one —
         # subplots_adjust() re-resolves the rect instead of keeping it frozen.
@@ -5216,22 +5219,59 @@ class Axes(PlotTypeMixin):
     def inset_axes(
         self, bounds: tuple[float, float, float, float] | Sequence[float], **kwargs: Any
     ) -> "Axes":
-        """Add a child inset axes.
+        """Add an independently rendered child axes.
 
         ``bounds`` is ``(left, bottom, width, height)`` in parent-axes
-        fractions; ``sharex``/``sharey`` hints link the figure's axes. The
-        inset's contents are drawn into the parent when the chart
-        materializes.
+        fractions.  Matplotlib insets are full axes (and bounds outside
+        ``[0, 1]`` are commonly used for marginal plots), so convert the
+        rectangle to figure coordinates and let the normal free-form panel
+        compositor render it instead of projecting its artists into the
+        parent's data coordinates.
         """
-        inset = Axes(self.figure)
         parsed = tuple(float(value) for value in bounds)
-        if len(parsed) != 4:
+        if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
             raise ValueError("inset_axes bounds must be [left, bottom, width, height]")
-        self._insets.append((inset, parsed))
-        if kwargs.get("sharex") is not None:
-            self.figure._sharex = True
-        if kwargs.get("sharey") is not None:
-            self.figure._sharey = True
+
+        parent = self.get_position().bounds
+        left, bottom, width, height = parsed
+        figure_rect = (
+            parent[0] + left * parent[2],
+            parent[1] + bottom * parent[3],
+            width * parent[2],
+            height * parent[3],
+        )
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        inset = self.figure.add_axes(figure_rect, **kwargs)
+        inset._inset_parent = self
+        inset._inset_bounds = parsed
+        self.figure._share_subplot_axes(inset, sharex=sharex, sharey=sharey)
+        if self.figure._layout_options.get("engine") == "tight":
+            # Constrained layout must leave figure room for marginal axes
+            # whose parent-relative coordinates extend above/right (or below/
+            # left) of the main panel. Preserve the first solved parent box
+            # and fit the whole inset family inside that allocation.
+            if self._inset_layout_base is None:
+                self._inset_layout_base = self.get_position().bounds
+            family = [
+                child._inset_bounds
+                for child in self.figure.axes
+                if child._inset_parent is self and child._inset_bounds is not None
+            ]
+            min_x = min([0.0, *(item[0] for item in family)])
+            min_y = min([0.0, *(item[1] for item in family)])
+            max_x = max([1.0, *(item[0] + item[2] for item in family)])
+            max_y = max([1.0, *(item[1] + item[3] for item in family)])
+            base_x, base_y, base_w, base_h = self._inset_layout_base
+            fitted_w = base_w / (max_x - min_x)
+            fitted_h = base_h / (max_y - min_y)
+            self._figure_rect = (
+                base_x - min_x * fitted_w,
+                base_y - min_y * fitted_h,
+                fitted_w,
+                fitted_h,
+            )
+            self._invalidate()
         return inset
 
     def _materialize_insets(self) -> None:
