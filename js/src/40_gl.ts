@@ -656,8 +656,10 @@ void main() {
 // color and antialiased barycentric edge strokes.
 // Segments per ribbon edge. Must match _scene.RIBBON_STEPS: the raster
 // exporter flattens the same cubic at the same count, so the live chart and a
-// PNG disagree by strictly less than one segment.
-export const RIBBON_STEPS = 24;
+// PNG disagree by strictly less than one segment. 96 keeps the chord error
+// below a visible pixel on wide, high-contrast Sankey diagrams while remaining
+// cheap for the tens of links a flow diagram normally contains.
+export const RIBBON_STEPS = 96;
 
 // Flow band between two vertical spans (the ribbon geometry contract in
 // spec/api/chart-kind-contract.md). One instance per band, swept as a
@@ -676,6 +678,7 @@ uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_t0meta; uniform vec
 uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform int u_segments;
 out vec4 v_rgba;
+out float v_side;
 ${AXIS_GLSL}
 void main() {
   float X0 = xyMap(ax0, u_xmap, u_x0meta, u_xmode, u_xconstant);
@@ -699,15 +702,23 @@ void main() {
   // The gradient runs along the flow: each fragment mixes the two end colours
   // by its own progress across the band.
   v_rgba = mix(a_rgba, a_rgba2, t);
+  v_side = side;
 }`;
 
 export const RIBBON_FS = `#version 300 es
 precision highp float;
 uniform float u_opacity;
 in vec4 v_rgba;
+in float v_side;
 out vec4 outColor;
 void main() {
-  float alpha = v_rgba.a * u_opacity;
+  // Triangle edges are not multisampled reliably across browsers. Interpolate
+  // the band-side coordinate and use its screen-space derivative to soften the
+  // outermost pixel on both curved edges without changing the interior.
+  float edge = min(v_side, 1.0 - v_side);
+  float coverage = smoothstep(0.0, max(fwidth(v_side), 1e-5), edge);
+  float alpha = v_rgba.a * u_opacity * coverage;
+  if (alpha <= 0.001) discard;
   outColor = vec4(v_rgba.rgb * alpha, alpha);
 }`;
 

@@ -25,8 +25,9 @@ _BEZIER_STEPS = 16
 # Segments per ribbon edge. Fixed rather than view-adaptive: a flow diagram has
 # tens of links, so the ceiling is free, and a view-dependent count would have
 # to be recorded per §28 rather than chosen silently. The client sweeps the same
-# count so the live chart and the exports flatten identically.
-RIBBON_STEPS = 24
+# count so the live chart and the exports flatten identically. This resolution
+# keeps chord error below a visible pixel on wide, high-contrast diagrams.
+RIBBON_STEPS = 96
 
 
 def ribbon_edge(

@@ -70,6 +70,12 @@ export function renderStandalone(el, spec, arrayBuffer) {
   const column = (idx) => view._columnView(buffer, spec.columns[idx]);
   for (const g of view.gpuTraces) {
     if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
+      // Ribbon build retains its six specialized geometry columns directly in
+      // `_cpuRibbon`; it has no generic trace.x/trace.y wire fields. Trying to
+      // load those nonexistent fields aborts standalone hydration after the
+      // first paint and leaves hover without a usable ChartView.
+      if (g._cpuRibbon) continue;
+      if (!Number.isInteger(g.trace.x) || !Number.isInteger(g.trace.y)) continue;
       g._cpu = {
         x: column(g.trace.x),
         y: column(g.trace.y),

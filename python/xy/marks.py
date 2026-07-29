@@ -610,6 +610,14 @@ def sankey(
                 opacity=link_alpha,
                 style=style,
             )
+            self.traces[-1].tooltip_rows = [
+                {
+                    "source": layout.nodes[link.source].name,
+                    "target": layout.nodes[link.target].name,
+                    "value": float(link.value),
+                }
+                for link in layout.links
+            ]
         # The nodes: a ribbon whose two spans are equal is an axis-aligned
         # rectangle, so nodes need no second primitive.
         self.ribbon(
@@ -622,6 +630,9 @@ def sankey(
             color=node_css,
             opacity=1.0,
         )
+        self.traces[-1].tooltip_rows = [
+            {"node": node.name, "value": float(node.value)} for node in layout.nodes
+        ]
         if labels:
             last = max(node.layer for node in layout.nodes)
             for node in layout.nodes:

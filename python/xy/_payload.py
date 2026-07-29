@@ -845,8 +845,16 @@ class PayloadMixin(_Host):
             entry["color_target"] = channels.ship_color_channel(
                 t.color2_ch, sel_arg, pw.ship_scalar, pw.ship_u8
             )
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "ribbon tooltip rows must match ribbon geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            indices = range(len(t.tooltip_rows)) if sel_arg is None else (int(i) for i in sel_arg)
+            entry["tooltip_rows"] = [dict(t.tooltip_rows[i]) for i in indices]
         self._ship_trace_styles(entry, t, sel_arg, pw)
-        return self._transition_entry(entry, t, sel_arg)
+        return self._transition_entry(entry, t, pw, sel_arg)
 
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

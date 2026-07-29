@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 
@@ -142,8 +143,28 @@ def test_ribbon_autorange_covers_both_spans() -> None:
 
 
 def test_sankey_chart_builds_ribbon_traces_only() -> None:
-    spec, _ = xy.sankey_chart(LINKS, width=680, height=420).figure().build_payload_split()
+    chart = xy.sankey_chart(LINKS, width=680, height=420)
+    figure = chart.figure()
+    spec, _ = figure.build_payload_split()
     assert [t["kind"] for t in spec["traces"]] == ["ribbon", "ribbon"]
+    assert spec["traces"][0]["tooltip_rows"][0] == {
+        "source": "Inflow",
+        "target": "Equities",
+        "value": 78000.0,
+    }
+    assert spec["traces"][1]["tooltip_rows"][0] == {
+        "node": "Inflow",
+        "value": 148000.0,
+    }
+    exact_link = figure.pick(0, 0)
+    assert exact_link is not None
+    assert exact_link["source"] == "Inflow"
+    assert exact_link["target"] == "Equities"
+    assert exact_link["value"] == 78000.0
+    exact_node = figure.pick(1, 0)
+    assert exact_node is not None
+    assert exact_node["node"] == "Inflow"
+    assert exact_node["value"] == 148000.0
     assert spec["protocol"] == 11
 
 
@@ -218,3 +239,13 @@ def test_exporters_share_the_reference_flattening() -> None:
     assert tuple(lower[-1]) == pytest.approx((1.0, 0.6))
     for i in range(RIBBON_STEPS + 1):
         assert upper[i][0] == pytest.approx(lower[i][0], abs=1e-12)
+
+
+def test_live_ribbons_use_smooth_antialiased_edges() -> None:
+    """Wide, high-contrast flows must not expose polygon-strip corners."""
+    assert RIBBON_STEPS >= 96
+    root = Path(__file__).resolve().parents[1]
+    shader = (root / "js/src/40_gl.ts").read_text(encoding="utf-8")
+    assert "export const RIBBON_STEPS = 96" in shader
+    assert "fwidth(v_side)" in shader
+    assert "u_opacity * coverage" in shader

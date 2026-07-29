@@ -165,6 +165,7 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
         (
             GalleryItem("Stem", route="/charts/stem-plot/"),
             GalleryItem("Segments", route="/charts/segments/"),
+            GalleryItem("Sankey", route="/charts/sankey/"),
             GalleryItem("Triangle Mesh", route="/components/triangle-mesh/"),
         ),
     ),
@@ -245,6 +246,9 @@ _GALLERY_PREVIEW_ART = {
 """,
     "Segments": """
 <path d="M72 139L108 110M115 145L149 89M156 128L199 105M204 137L249 79" class="preview-line"/><circle cx="72" cy="139" r="3.5" class="preview-dot-soft"/><circle cx="108" cy="110" r="3.5" class="preview-dot"/><circle cx="115" cy="145" r="3.5" class="preview-dot-soft"/><circle cx="149" cy="89" r="3.5" class="preview-dot"/><circle cx="156" cy="128" r="3.5" class="preview-dot-soft"/><circle cx="199" cy="105" r="3.5" class="preview-dot"/><circle cx="204" cy="137" r="3.5" class="preview-dot-soft"/><circle cx="249" cy="79" r="3.5" class="preview-dot"/>
+""",
+    "Sankey": """
+<path d="M85 82C122 82 124 91 157 91V108C124 108 122 99 85 99Z" class="preview-fill"/><path d="M85 102C123 102 124 130 157 130V151C124 151 122 123 85 123Z" class="preview-fill-soft"/><path d="M174 92C207 92 208 76 239 76V97C208 97 207 113 174 113Z" class="preview-fill"/><path d="M174 118C207 118 208 125 239 125V148C208 148 207 141 174 141Z" class="preview-fill-soft"/><rect x="72" y="78" width="13" height="49" rx="3" class="preview-fill-strong"/><rect x="157" y="87" width="17" height="68" rx="3" class="preview-fill-strong"/><rect x="239" y="72" width="13" height="29" rx="3" class="preview-fill-strong"/><rect x="239" y="121" width="13" height="31" rx="3" class="preview-fill-strong"/>
 """,
     "Triangle Mesh": """
 <path d="M72 147L105 87L143 139L175 73L214 121L249 82L262 151H72Z" class="preview-fill"/><path d="M72 147L105 87L143 139L175 73L214 121L249 82L262 151M72 147L143 139L214 121L262 151M105 87L175 73L249 82M105 87L143 139L175 73L214 121L249 82" class="preview-line preview-line-soft"/>

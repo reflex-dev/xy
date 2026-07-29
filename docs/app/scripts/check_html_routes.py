@@ -12,6 +12,7 @@ BUILD_ROOT = CLIENT_ROOT / "docs" / "xy"
 ROUTES_ROOT = APP_ROOT / ".web" / "app" / "routes"
 LIVE_PREVIEW_MARKERS = ("python demo exec", "python demo-only exec")
 INLINE_SVG_PREVIEW_ROUTES = {"/overview/gallery/"}
+INLINE_SVG_PREVIEW_COUNT = 29
 XY_PAYLOAD_PATTERN = re.compile(r'["\'](?P<url>/docs/xy/xy/[a-f0-9]+\.xyf)["\']')
 XY_PAYLOAD_MAGIC = b"XYBF"
 LLMS_DIRECTIVE = "For AI agents: the complete XY documentation index is at"
@@ -80,8 +81,11 @@ def validate_inline_svg_gallery(page_route: str, module_path: Path) -> None:
     """Validate the code-native chart tiles in the compiled gallery route."""
     source = module_path.read_text(encoding="utf-8")
     preview_count = source.count('viewBox=\\"0 0 320 232\\"')
-    if preview_count != 28:
-        msg = f"Inline SVG gallery has {preview_count} previews, expected 28: {page_route}"
+    if preview_count != INLINE_SVG_PREVIEW_COUNT:
+        msg = (
+            f"Inline SVG gallery has {preview_count} previews, "
+            f"expected {INLINE_SVG_PREVIEW_COUNT}: {page_route}"
+        )
         raise RuntimeError(msg)
     for marker in ("gallery-preview-surface", "aspect-[320/232]", "shadow-large"):
         if marker not in source:

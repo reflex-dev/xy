@@ -70,6 +70,7 @@ DOCS_SECTIONS = (
             ("Uncertainty", "/charts/uncertainty/"),
             ("Stem", "/charts/stem-plot/"),
             ("Segments", "/charts/segments/"),
+            ("Sankey", "/charts/sankey/"),
         ),
     ),
     (

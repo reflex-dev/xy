@@ -63,6 +63,11 @@ class Trace:
     # column store because they are identity rather than numeric geometry.
     animation: Optional[dict[str, Any]] = None
     transition_keys: Optional[Any] = None
+    # Small, JSON-safe semantic rows for marks whose geometry columns are not
+    # meaningful readouts. Sankey uses these to describe a ribbon as
+    # source/target/value and a node as node/value instead of exposing the six
+    # internal placement coordinates in hover tooltips.
+    tooltip_rows: Optional[list[dict[str, Any]]] = None
     # Direct, final-unit instance attributes (alpha override, opacity, widths,
     # symbols, corner radii).  Constants stay in ``style`` and cost no buffer.
     style_channels: dict[str, StyleChannel] = field(default_factory=dict)

@@ -61,6 +61,9 @@ Object.assign(ChartView.prototype, {
       if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
+    } else if (g._cpuRibbon && Array.isArray(g.tooltipRows)) {
+      const semantic = g.tooltipRows[hit.index];
+      if (semantic && typeof semantic === "object") Object.assign(row, semantic);
     } else if (g._cpuRect) {
       const r = g._cpuRect;
       const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
@@ -194,6 +197,28 @@ Object.assign(ChartView.prototype, {
 
   _defaultTooltipItems(row, labels = {}, aliases = {}) {
     const items = [];
+    if (row.source !== undefined && row.target !== undefined) {
+      items.push({ kind: "title", value: `${String(row.source)} → ${String(row.target)}` });
+      if (row.value !== undefined) {
+        items.push({
+          kind: "field",
+          label: typeof (labels as any).value === "string" ? (labels as any).value : "Flow",
+          value: fmtValue(row.value, row.value_kind),
+        });
+      }
+      return items;
+    }
+    if (row.node !== undefined) {
+      items.push({ kind: "title", value: String(row.node) });
+      if (row.value !== undefined) {
+        items.push({
+          kind: "field",
+          label: typeof (labels as any).value === "string" ? (labels as any).value : "Total flow",
+          value: fmtValue(row.value, row.value_kind),
+        });
+      }
+      return items;
+    }
     if (row.x !== undefined) {
       const { label } = this._defaultTooltipLabel("x", "x", labels, aliases);
       items.push({ kind: "field", label, value: fmtValue(row.x, row.x_kind) });
@@ -308,8 +333,10 @@ Object.assign(ChartView.prototype, {
     const yAxis = g.yAxis || "y";
     let x = row.x;
     let y = row.y;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      // Category rows carry labels, so derive their numeric anchor from the pick.
+    if (g._cpuRibbon || !Number.isFinite(x) || !Number.isFinite(y)) {
+      // Sankey rows describe a whole ribbon/node rather than a single data
+      // point, so their anchor always follows the pick. Category rows also
+      // carry labels instead of numeric coordinates and use the same fallback.
       const rect = this.canvas.getBoundingClientRect();
       [x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
     }

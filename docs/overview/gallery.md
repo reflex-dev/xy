@@ -40,7 +40,8 @@ Looking for a specific family?
   [hexbin](/docs/xy/charts/hexbin/), and [contour](/docs/xy/charts/contour-plot/)
 - [Uncertainty](/docs/xy/charts/uncertainty/) for error bars and bands
 - Specialized: [stem](/docs/xy/charts/stem-plot/),
-  [segments](/docs/xy/charts/segments/), and
+  [segments](/docs/xy/charts/segments/),
+  [Sankey](/docs/xy/charts/sankey/), and
   [triangle mesh](/docs/xy/components/triangle-mesh/)
 - [Annotations](/docs/xy/components/annotations/) for rules, bands, labels, arrows,
   callouts, and threshold zones

@@ -3861,6 +3861,7 @@ export class ChartView {
     g.colorTarget = t.color_target
       ? parseColor(this.root, t.color_target.color, g.color)
       : null;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
   }
 
   _drawRibbons(g, xm, ym) {
@@ -6569,8 +6570,15 @@ export class ChartView {
     const id = hit.trace * 1e9 + hit.index;
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
-      // Anchored tooltips do not need a per-pointermove DOM rebuild.
-      if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      // Point tooltips stay attached to their data point. Sankey ribbons and
+      // nodes cover an area instead, so keep their tooltip at the pointer as
+      // it travels through the same picked shape.
+      if (hit.g && hit.g._cpuRibbon) {
+        this._setTooltipAnchor(hit, this._lastRow, e.clientX, e.clientY);
+        this._repositionTooltip();
+      } else if (!this._tooltipAnchor) {
+        this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      }
       return;
     }
     this._hoverId = id;

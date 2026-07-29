@@ -79,6 +79,7 @@ implements it without reading the other three.
 | `x`, `y` | **target** span, lower and upper edge — y values in the `x`/`y` slots, which is why `_range_columns` needs a ribbon branch | y |
 | `color` | channel record for the **source** end | |
 | `color_target` | channel record for the **target** end; absent means flat, painted with `color` | |
+| `tooltip_rows` | optional per-band semantic objects; Sankey links carry `source`, `target`, `value`, while node bands carry `node`, `value` | |
 
 **The curve.** A cubic in *data space* with both control points at the
 horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y — d3's
@@ -91,8 +92,8 @@ lower edge: (x1, x)  C (xm, x)  (xm, y0) -> (x0, y0)
 closed path: M x0,y1  C…  L x1,x  C…  Z
 ```
 
-The raster flattens each edge at 24 steps; the client sweeps a triangle strip of
-the same 24 segments. Both consume the same Python reference,
+The raster flattens each edge at 96 steps; the client sweeps a triangle strip of
+the same 96 segments. Both consume the same Python reference,
 `_scene.ribbon_polygon`, so a divergence is a test failure rather than a
 rendering difference.
 
@@ -106,7 +107,10 @@ stays cheap in every output format.
 **Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
 `gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the
 cursor's data x and testing vertical containment, so tooltips work and box or
-lasso selection is correctly absent rather than present and wrong.
+lasso selection is correctly absent rather than present and wrong. When
+`tooltip_rows` is present, the client and kernel exact-pick path preserve those
+semantic fields so a Sankey tooltip describes the flow or node rather than its
+internal placement coordinates.
 
 #### Shared-geometry marks: the hexbin centers-only contract
 

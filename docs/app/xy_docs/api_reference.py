@@ -51,7 +51,12 @@ CHART_FACTORY_GROUPS = (
     ("Uncertainty", (xy.error_band_chart, xy.errorbar_chart)),
     (
         "Specialized",
-        (xy.stem_chart, xy.segments_chart, xy.triangle_mesh_chart),
+        (
+            xy.stem_chart,
+            xy.segments_chart,
+            xy.sankey_chart,
+            xy.triangle_mesh_chart,
+        ),
     ),
     ("Annotations", (xy.chart,)),
     ("Facets and Layers", (xy.chart, xy.facet_chart)),
@@ -79,6 +84,7 @@ MARKS = (
     xy.stairs,
     xy.stem,
     xy.segments,
+    xy.sankey,
     xy.triangle_mesh,
 )
 
