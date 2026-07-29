@@ -856,7 +856,41 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 f"found {unsupported_annotations}. Point-anchored text, label, marker, "
                 "arrow, and callout annotations remain supported."
             )
+        # One angular and one radial axis, no more. A secondary axis binds and
+        # validates exactly like a Cartesian one, but the polar transform reads
+        # only the primary pair, so the result is the failure this method exists
+        # to prevent: an overlapping secondary range draws *pixel-identical* to
+        # the primary, inviting the reader to decode it against a tick ladder it
+        # does not belong to, while a disjoint one culls the series away
+        # entirely — and either way the axis still gets its Cartesian spine and
+        # title drawn in the gutter of a disc. Refuse instead.
+        extra_axes = sorted(
+            (
+                set(self.axis_options)
+                | {t.x_axis for t in self.traces}
+                | {t.y_axis for t in self.traces}
+            )
+            - {"x", "y"}
+        )
+        if extra_axes:
+            raise ValueError(
+                "coords='polar' supports a single angular ('x') and radial ('y') "
+                f"axis; found {extra_axes}. See spec/design/polar-axes.md."
+            )
         theta = self.axis_options.get("x", {})
+        # A non-linear *angle* has no coherent projection, and the two renderers
+        # never agreed on one: the client scales theta before projecting it
+        # while the static exporters ignore the scale outright (their SVG is
+        # byte-identical across linear/log/symlog), so the same figure points a
+        # datum at opposite sides of the disc depending on where it is drawn.
+        # The spec offers a scale row for r only; a log radial axis stays valid.
+        theta_scale = theta.get("type")
+        if theta_scale is not None and theta_scale != "linear":
+            raise ValueError(
+                f"coords='polar' does not support a {theta_scale!r} angular axis; "
+                "the angle must be linear. A log or symlog *radial* axis "
+                "(r_axis) is supported. See spec/design/polar-axes.md."
+            )
         sector = theta.get("sector")
         if sector is not None:
             unit = theta.get("theta_unit") or "radians"

@@ -626,3 +626,59 @@ setTimeout(() => {
     assert items[0] == {"kind": "title", "value": "Model A"}
     theta_item = next(i for i in items if i.get("label") == "θ")
     assert theta_item["value"] == "power", items
+
+
+def test_client_keeps_explicit_theta_ticks_across_the_seam(tmp_path: Path) -> None:
+    """The client mirror of the seam-crossing tick window (_svg.py
+    `_tick_window_filter`). `_axisTicks` trimmed authored angular ticks with a
+    linear `v >= a && v <= b`, so a sector spanning 0/turn silently dropped
+    every spoke on the far side of the seam while marks at those same angles
+    still drew — the renderers must agree on what a sector contains."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    chart = xy.polar_chart(
+        xy.line([310.0, 350.0, 30.0, 50.0], [1.0, 2.0, 3.0, 2.0]),
+        xy.theta_axis(
+            unit="degrees",
+            sector=(300.0, 420.0),
+            tick_values=[300.0, 330.0, 0.0, 30.0, 60.0],
+        ),
+        width=420,
+        height=420,
+    )
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const seam = view._axisTicks("x", 6).ticks.slice();
+    // A non-seam sector must still reject what lies outside it, and a
+    // Cartesian axis must not wrap at all.
+    const axis = view._axis("x");
+    const realSector = axis.sector;
+    axis.sector = [0, 180];
+    axis.tick_values = [0, 45, 90, 200, -10];
+    const bounded = view._axisTicks("x", 6).ticks.slice();
+    axis.sector = realSector;
+    const radial = view._axisTicks("y", 6).ticks.slice();
+    document.body.setAttribute(
+      "data-xy-seam-ticks", JSON.stringify({ seam, bounded, radialCount: radial.length }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-seam-ticks-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_seam_ticks.html",
+        "data-xy-seam-ticks",
+        label="polar seam ticks",
+    )
+    assert result["seam"] == [300.0, 330.0, 0.0, 30.0, 60.0]
+    assert result["bounded"] == [0.0, 45.0, 90.0]
+    assert result["radialCount"] > 0

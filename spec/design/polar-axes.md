@@ -32,6 +32,7 @@ organize by primitive, not by chart name.
 | θ direction | `"counterclockwise"` (default) or `"clockwise"` | Math convention default; compass work sets `"N"` + `"clockwise"`. |
 | θ sector | one full turn by default, or finite increasing `(start, end)` | At most 2π radians / 360 degrees. `theta_axis(domain=...)` is a compatibility alias when `sector=` is omitted. |
 | θ grid shape | `"circular"` (default) or `"linear"` | Linear joins the angular spokes into polygonal radial rings. |
+| θ scale | linear only | A non-linear angle has no coherent projection; `type_="log"`/`"symlog"` on the angular axis is rejected at payload build. |
 | r scale | linear, log, or symlog | Radius normalization happens in scale-coordinate space. |
 | r range | `[r_lo, r_hi]` | Linear/symlog autorange retains the centre-origin default; log autorange starts at its positive minimum. |
 | inner shape | `hole ∈ [0, 1)` or a data-space `r_origin` | Mutually exclusive authored controls. An omitted origin resolves to visible `r_lo`. |
@@ -446,7 +447,7 @@ The Plotly-parity and axis-depth increments are shipped:
 | Feature | Shipped contract |
 |---|---|
 | Polar heatmap / contour | Heatmap uses the browser fragment-stage inverse and the shared static inverse raster; contour uses allowlisted projected segments. |
-| Sector layout | `theta_axis(sector=...)` (or compatibility `domain=...`) controls clipping, tick trimming, chrome, and a sector-bounding-box layout. Pyplot `set_thetamin`/`set_thetamax` use degrees. |
+| Sector layout | `theta_axis(sector=...)` (or compatibility `domain=...`) controls clipping, tick trimming, chrome, and a sector-bounding-box layout. Pyplot `set_thetamin`/`set_thetamax` use degrees. Tick trimming is **modular**, matching mark culling: a sector spanning the 0/turn seam (`(300, 420)`, or the compass-natural `(-30, 30)`) keeps the authored ticks on the far side of the seam, because a data point at that same angle plots inside the sector. |
 | Hole / r-origin | `r_axis(hole=...)` and `r_axis(origin=...)` implement the §3 scale-coordinate formula and inverse; authored together they fail validation. |
 | Categorical θ axis | Category-index coordinates stay on the wire and are mapped evenly across the full turn or authored sector. |
 | Log / symlog radial scale | Radius normalization, inverse hit testing, chrome, and static export operate in scale-coordinate space; log autorange remains strictly positive. |
@@ -459,6 +460,8 @@ The remaining work stays explicitly disabled or direct-only:
 | Deferred feature | Notes |
 |---|---|
 | Polar `rule` / `band` annotations | Point-anchored annotations (`text`, `label`, `marker`, `arrow`, `callout`) project jointly through the transform in all three renderers (`_dataPxPoint` in the client). A rule/band is genuinely different geometry on a disc — a θ rule is a spoke, an r rule is a ring, and a band is an annulus or sector — so payload build rejects them rather than drawing a Cartesian bar. |
+| Secondary θ / r axes | A polar figure carries exactly one angular and one radial axis. A second axis bound and validated like a Cartesian one while the transform read only the primary pair, so an overlapping secondary range drew *pixel-identical* to the primary and a disjoint one was culled away — with a straight Cartesian spine still drawn in the gutter of a disc. Payload build rejects any axis id outside `{"x", "y"}` under `coords="polar"`. |
+| Non-linear θ scale | The angle must be linear. `theta_axis(type_="log"/"symlog")` was accepted and honoured by exactly one renderer — the client scaled θ before projecting while the static exporters ignored the scale outright — so one figure pointed the same datum at opposite sides of the disc depending on where it was drawn. A log or symlog **radial** scale is supported (§3) and unaffected. |
 | Polar LOD | §7. Exit criterion for `scatterpolargl`-scale claims. Point traces remain direct and capped. |
 | Polar facets / animation | Untouched by this increment; no support claim is made. |
 | Angular navigation / sector selection | Authored sector limits ship; interactive θ pan, sector zoom, annulus/sector selection, and rectangular box select remain disabled per §8. |

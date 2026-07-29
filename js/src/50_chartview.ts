@@ -1083,6 +1083,14 @@ export class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
+  // One full turn in the axis's own angular unit, or 0 when the axis is not a
+  // continuous angular one — mirrors _tick_window_filter in _svg.py.
+  _polarAngularTurn(axisId): number {
+    const axis = this._axis(axisId);
+    if (!axis || !axis.theta_unit || axis.kind === "category") return 0;
+    return axis.theta_unit === "degrees" ? 360 : 2 * Math.PI;
+  }
+
   _axisTicks(axisId, target): any {
     const axis = this._axis(axisId);
     let [lo, hi] = this._axisRange(axisId);
@@ -1097,7 +1105,17 @@ export class ChartView {
     }
     if (Array.isArray(axis.tick_values)) {
       const a = Math.min(lo, hi), b = Math.max(lo, hi);
-      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
+      // An angular window can cross the 0/turn seam (sector 300..420, or the
+      // compass-natural -30..30). The plain range test drops every tick spelled
+      // on the far side of the seam while a data point at that same angle still
+      // plots inside the sector, because mark culling is modular. Match it —
+      // mirrored by _tick_window_filter in _svg.py.
+      const turn = this._polarAngularTurn(axisId);
+      const span = b - a;
+      const inside = turn
+        ? (v) => ((v - a) % turn + turn) % turn <= span + turn * 1e-9
+        : (v) => v >= a && v <= b;
+      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && inside(v));
       return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
     }
     // Placed after the authored-tick_values return so explicit ticks still

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import xy
-from xy._svg import _PolarProjection, layout
+from xy._svg import _PolarProjection, axis_ticks, layout, minor_axis_ticks
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -1297,3 +1297,88 @@ def test_radar_spokes_follow_the_authored_angular_unit(axis_kwargs, turn) -> Non
     mark = next(c for c in chart.children if getattr(c, "kind", None) in ("area", "line"))
     # Evenly spaced across the turn, closed back at a full turn.
     assert list(mark.x) == pytest.approx([turn * i / 4.0 for i in range(5)])
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        (
+            "secondary radial",
+            lambda: xy.polar_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]),
+                xy.line([0.0, 1.0, 2.0], [2.0, 4.0, 6.0], y_axis="y2"),
+                xy.r_axis(id="y2", domain=(0.0, 8.0)),
+            ),
+        ),
+        (
+            "secondary angular",
+            lambda: xy.polar_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]),
+                xy.line([0.0, 1.0, 2.0], [2.0, 4.0, 6.0], x_axis="x2"),
+                xy.x_axis(id="x2"),
+            ),
+        ),
+    ],
+)
+def test_polar_refuses_a_secondary_axis(label, build) -> None:
+    """A second axis bound and validated like a Cartesian one, then every
+    renderer read only the primary pair. Overlapping ranges drew the secondary
+    series *pixel-identical* to the primary — inviting the reader to decode it
+    against a tick ladder it does not belong to — and a disjoint range culled
+    it away entirely, while the axis still got a straight Cartesian spine in
+    the gutter of a disc. A plausible wrong picture is worse than an error."""
+    with pytest.raises(ValueError, match="single angular"):
+        build().figure().build_payload_split()
+
+
+@pytest.mark.parametrize("scale", ["log", "symlog"])
+def test_polar_refuses_a_non_linear_angular_axis(scale) -> None:
+    """A non-linear angle was accepted, serialized, and then honoured by
+    exactly one renderer: the client scaled theta before projecting while the
+    static exporters ignored the scale outright, so one figure pointed the same
+    datum at opposite sides of the disc depending on where it was drawn."""
+    chart = xy.polar_chart(xy.line([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]), xy.theta_axis(type_=scale))
+    with pytest.raises(ValueError, match="angular axis"):
+        chart.figure().build_payload_split()
+
+    # A log *radial* axis stays supported — only the angle must be linear.
+    xy.polar_chart(
+        xy.line([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]), xy.r_axis(type_="log")
+    ).figure().build_payload_split()
+
+
+@pytest.mark.parametrize(
+    ("sector", "requested", "expected"),
+    [
+        ((300.0, 420.0), [300.0, 330.0, 0.0, 30.0, 60.0], [300.0, 330.0, 0.0, 30.0, 60.0]),
+        ((-30.0, 30.0), [330.0, 340.0, 350.0, 0.0, 10.0, 20.0, 30.0], None),
+        # A sector that does not cross the seam must still drop what is outside.
+        ((0.0, 180.0), [0.0, 45.0, 90.0, 200.0, -10.0], [0.0, 45.0, 90.0]),
+    ],
+)
+def test_seam_crossing_sector_keeps_its_explicit_theta_ticks(sector, requested, expected) -> None:
+    """Tick trimming was linear while mark culling is modular, so a sector
+    spanning the 0/turn seam threw away every tick authored on the far side of
+    it: a *data point* at theta = 20 plotted inside sector (-30, 30) while a
+    *tick* at 20 silently vanished."""
+    axis = {
+        "range": sector,
+        "sector": sector,
+        "theta_unit": "degrees",
+        "kind": "linear",
+        "tick_values": requested,
+        "minor_tick_values": [315.0, 15.0, 45.0],
+    }
+    ticks, _labelled, _step = axis_ticks(axis, 400.0, True)
+    assert ticks == pytest.approx(expected if expected is not None else requested)
+    if sector == (300.0, 420.0):
+        # Minor ticks trim through the same window, and were dropped too.
+        assert minor_axis_ticks(axis) == pytest.approx([315.0, 15.0, 45.0])
+
+
+def test_cartesian_tick_trimming_is_unchanged_by_the_modular_window() -> None:
+    """The modular window is angular-only: a Cartesian axis must still reject
+    values outside its range rather than wrap them into it."""
+    axis = {"range": (0.0, 10.0), "kind": "linear", "tick_values": [-1.0, 0.0, 5.0, 10.0, 11.0]}
+    ticks, _labelled, _step = axis_ticks(axis, 400.0, True)
+    assert ticks == pytest.approx([0.0, 5.0, 10.0])
