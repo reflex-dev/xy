@@ -542,8 +542,10 @@ def test_a_dpr_change_stays_synchronous() -> None:
     """`render_smoke_nonumpy.py`'s `dprw` probe calls `_onDprChange()` and reads
     `dpr`/`canvas.width`/`chrome.width` on the next line: a DPR change with no
     container resize has no later event to piggyback on. Deferring it into
-    `_queueResize` broke that contract and saved nothing — the ResizeObserver's
-    queued pass already early-returns when width, height and dpr are unchanged.
+    `_queueResize` would read a stale `dpr` there, and it saved nothing anyway —
+    the ResizeObserver's queued pass already early-returns when width, height
+    and dpr are all unchanged, so the redundant second frame it was meant to
+    avoid does not exist.
     """
     assert "this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio" in CHARTVIEW
     assert (

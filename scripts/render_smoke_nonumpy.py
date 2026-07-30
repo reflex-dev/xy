@@ -1329,7 +1329,16 @@ try{{
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            # This probe is the widest one in the tree — a single page that
+            # exercises every mark family, LOD drill-in, picking, selection,
+            # the modebar, context-loss recovery and the DPR watch — and it
+            # SOFTWARE-rasterizes all of it through SwiftShader. On a GitHub
+            # runner it measured 98 s against the 120 s it used to allow, so a
+            # slightly slower runner timed the whole job out with nothing
+            # broken. Sized for headroom instead: a real hang still fails,
+            # 22 s of jitter no longer does. `append_stream_smoke.py` already
+            # allows 180 s for a far smaller page.
+            timeout=300,
         )
     m = re.search(r"<title>([^<]*)</title>", out.stdout)
     title = m.group(1) if m else "(none)"
