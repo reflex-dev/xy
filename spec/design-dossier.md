@@ -1208,9 +1208,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   `nodejs=22.*` — loose pins, because exact conda build strings are
   arch-specific and retired by conda-forge rebuilds) plus the scientific stack
   the example notebooks import (matplotlib, pandas, scipy, scikit-learn,
-  seaborn, h5py, requests). The interpreter is deliberately unpinned: the wheel
-  is ABI-agnostic (py3-none, ctypes C ABI), so repo2docker's frozen base
-  interpreter serves it without churning the preinstalled Jupyter stack.
+  seaborn, h5py, requests). The interpreter carries a loose version-only pin
+  (`python=3.13.*`): repo2docker's default kernel env resolves to Python 3.10
+  (observed 3.10.19 on mybinder and in CI), below the package's
+  `requires-python >=3.11`, so without the pin the pip install fails at
+  metadata.
   `.binder/postBuild` installs the checkout with `XY_REQUIRE_CARGO=1`, making a
   missing native core fail during image construction rather than later at
   notebook import; if the source build breaks, the fallback is

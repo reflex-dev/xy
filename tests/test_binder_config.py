@@ -37,10 +37,15 @@ def test_environment_provisions_toolchain_and_notebook_stack() -> None:
     # retired by conda-forge rebuilds — they rot into an unsolvable image.
     assert not any(spec.count("=") > 1 for spec in dependencies)
 
-    # repo2docker's frozen base environment owns the interpreter; the wheel is
-    # ABI-agnostic (py3-none, ctypes C ABI), so re-pinning python or pip only
-    # forces a downgrade that churns the preinstalled Jupyter stack.
-    assert not {"python", "pip"} & names
+    # repo2docker's default kernel env is Python 3.10, below xy's
+    # requires-python floor — the interpreter must be pinned, loosely, to a
+    # version the package supports. pip stays unpinned.
+    python_specs = [spec for spec in dependencies if spec.split("=", 1)[0] == "python"]
+    assert len(python_specs) == 1
+    version = python_specs[0].split("=", 1)[1]
+    major, minor = version.rstrip(".*").split(".")[:2]
+    assert (int(major), int(minor)) >= (3, 11)
+    assert "pip" not in names
 
 
 def test_post_build_requires_the_native_core() -> None:

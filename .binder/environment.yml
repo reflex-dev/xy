@@ -8,10 +8,11 @@ dependencies:
   # rebuilds retire them, which would quietly make this file unsolvable.
   - rust=1.88.*
   - nodejs=22.*
-  # No python/pip pin: the wheel is ABI-agnostic (py3-none, ctypes C ABI), so
-  # repo2docker's stock interpreter serves it as-is, and pinning below the
-  # frozen base environment would force mamba to downgrade the interpreter
-  # and churn the whole preinstalled Jupyter stack.
+  # repo2docker's default kernel env resolves to Python 3.10 (observed
+  # 3.10.19 on mybinder and in CI), below xy's requires-python >=3.11, which
+  # kills the pip install at metadata. Pin the interpreter loosely — version
+  # only, never a build string. pip stays unpinned.
+  - python=3.13.*
   #
   # The scientific stack imported across examples/**/*.ipynb — installing the
   # checkout itself brings only numpy + anywidget.
