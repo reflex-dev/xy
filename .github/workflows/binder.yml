@@ -1,0 +1,56 @@
+name: Binder
+
+# Nothing else in CI builds a Binder image, so this is the only check with
+# real signal on `.binder/`: it catches unsolvable conda specs and a broken
+# postBuild outright, where the unit test can only assert file structure.
+# Scoped to `.binder/` changes because the build compiles the native core and
+# render client from source inside the image (several minutes, uncached).
+# pyproject.toml and hatch_build.py are included because the image build
+# consumes their contracts directly: requires-python must stay satisfiable by
+# environment.yml's interpreter pin, and the hatch hook is what honors
+# XY_REQUIRE_CARGO. Wider source changes (src/, js/) are already gated by the
+# wheel-building CI jobs and don't warrant this build's cost per PR.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".binder/**"
+      - ".github/workflows/binder.yml"
+      - "pyproject.toml"
+      - "hatch_build.py"
+  pull_request:
+    paths:
+      - ".binder/**"
+      - ".github/workflows/binder.yml"
+      - "pyproject.toml"
+      - "hatch_build.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binder-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repo2docker:
+    name: repo2docker builds the Binder image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived from
+          # the latest `v*` tag during the in-image source install.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      # Build the image exactly as mybinder.org would — conda solve of
+      # .binder/environment.yml, then the postBuild source build of the
+      # native core and render client — without launching it. The tool is
+      # pinned so the check stays deterministic across PRs; bump it
+      # deliberately when mybinder's deployment moves.
+      - name: Build the Binder image (no launch)
+        run: uvx --from jupyter-repo2docker==2026.4.0 jupyter-repo2docker --no-run --image-name xy-binder-ci .

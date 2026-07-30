@@ -132,6 +132,91 @@ def test_sub_delivers_spec_and_binary_columns(_fresh_registry):
     run(main())
 
 
+def test_sub_over_attachment_limit_ships_single_blob(_fresh_registry):
+    """socket.io-parser's browser Decoder defaults to `maxAttachments: 10` and
+    closes the WHOLE shared websocket ("too many attachments" -> "parse
+    error") on any binary packet exceeding it — which then reconnect-loops
+    the app. Buffer-heavy figures must fall back to the joined single-blob
+    payload, which the wrapper's `toSpans` handles via `buffer_layout`."""
+
+    async def main():
+        xs = np.linspace(0.0, 1.0, 64)
+        figure = xy.scatter_chart(
+            *[xy.scatter(xs, xs * k, color=xs, size=xs) for k in (1.0, 2.0, 3.0)],
+            width=640,
+            height=400,
+        ).figure()
+        _, raw = figure.build_payload_split(640)
+        assert len(raw) > 10, "premise: this figure must exceed the parser cap"
+        token = registry.register(figure)
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            payload = await collector.next(collector.payloads)
+            await client.disconnect()
+        assert payload["fig"] == token
+        assert payload["spec"].get("buffer_layout") != "split"
+        assert len(payload["buffers"]) == 1
+
+    run(main())
+
+
+def test_broadcast_over_attachment_limit_answers_err_not_msg(_fresh_registry):
+    """`broadcast_message` (the `reflex_xy.append` push path) goes to a room:
+    one packet over the parser's attachment cap would close every subscriber's
+    shared websocket at once. Over the cap it must fail loud with an `err`
+    envelope, never emit the unparseable `msg`."""
+
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, namespace):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            await collector.next(collector.payloads)
+            await namespace.broadcast_message(token, {"kind": "append"}, [b"\x00" * 4] * 11)
+            error = await collector.next(collector.errors)
+            await client.disconnect()
+        assert error["fig"] == token
+        assert "attachment" in error["error"]
+        assert collector.messages.empty()
+
+    run(main())
+
+
+def test_msg_reply_over_attachment_limit_answers_err_not_msg(_fresh_registry, monkeypatch):
+    """The `on_msg` reply guard: channel replies are bounded by construction,
+    so a reply over the parser's attachment cap is a contract violation — the
+    client must get an `err` envelope, never a `msg` whose packet the browser
+    parser would reject (closing the shared websocket)."""
+
+    from reflex_xy import namespace as namespace_module
+
+    def oversized_reply(figure, message, buffers):
+        return {"kind": "pick"}, [b"\x00" * 4] * 11
+
+    monkeypatch.setattr(namespace_module, "handle_message", oversized_reply)
+
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            await collector.next(collector.payloads)
+            await client.emit(
+                "msg", {"fig": token, "m": {"kind": "pick"}, "mid": "m1"}, namespace="/_xy"
+            )
+            error = await collector.next(collector.errors)
+            await client.disconnect()
+        assert error["fig"] == token
+        assert "attachment" in error["error"]
+        assert collector.messages.empty()
+
+    run(main())
+
+
 def test_msg_round_trip_pick_and_select(_fresh_registry):
     async def main():
         token = registry.register(make_figure(16))

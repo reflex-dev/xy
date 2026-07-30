@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+# Binder installs this checkout, not a published platform wheel. Require the
+# source build to compile the native core so a missing toolchain fails the image
+# build instead of leaving an install that only fails when a notebook imports it.
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+export XY_REQUIRE_CARGO=1
+
+# The trailing packages are the scientific stack imported across
+# examples/**/*.ipynb (the checkout brings only numpy + anywidget); they ride
+# pip's wheels instead of conda on purpose — see environment.yml. pysam and
+# gwosc back only the real_world genomics/LIGO notebooks but ship wheels, so
+# provisioning them here is cheaper than a per-notebook %pip cell.
+python -m pip install --no-cache-dir . matplotlib pandas scipy scikit-learn seaborn h5py requests pysam gwosc
+
+# The wheel now owns both generated artifacts. Do not retain build-only
+# caches in the launched notebook image: the checkout's generated
+# directories, cargo's crate downloads, and npm's package cache.
+rm -rf node_modules target "${CARGO_HOME:-$HOME/.cargo}/registry" "$HOME/.npm"

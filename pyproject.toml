@@ -37,6 +37,9 @@ dev = [
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
     "starlette>=0.36",
+    # Parses .binder/environment.yml in tests/test_binder_config.py so the
+    # Binder contract is asserted on structure, not string transcription.
+    "pyyaml>=6",
 ]
 # CodSpeed's pytest plugin is intentionally separate from the normal dev
 # environment: it is useful for performance runs, but is not needed for unit
