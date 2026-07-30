@@ -33,6 +33,7 @@ from ._artists import (
     BarContainer,
     Legend,
     Line2D,
+    Patch,
     PathCollection,
     PolyCollection,
     Text,
@@ -5598,8 +5599,9 @@ class Axes(PlotTypeMixin):
         StepPatch-likes (with ``get_data()``) route to `stairs`. Every other
         patch is flattened to data-space rings via ``Path.to_polygons``, so
         rotation and curvature survive; each ring fills with the patch's own
-        face color and draws its edge as line segments. Unsupported patch
-        types raise.
+        face color and draws its edge as line segments. The returned handle
+        owns every mark the patch produced, so removing it takes the outline
+        with the fill. Unsupported patch types raise.
         """
         if hasattr(patch, "get_data"):
             data = patch.get_data()
@@ -5660,7 +5662,7 @@ class Axes(PlotTypeMixin):
                     },
                 )
             )
-        return Artist(self, entries[0])
+        return Patch(self, entries[0], entries[1:])
 
     def add_image(self, image: Any) -> AxesImage:
         """Add an AxesImage-like artist by resampling it through `imshow`.

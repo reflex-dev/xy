@@ -20,6 +20,9 @@ which covers user-visible releases across the whole package.
 - Outlines take the patch's own line width instead of a fixed one point.
   Degenerate rings with no triangulation, such as a zero-height `Rectangle`,
   draw their edge and skip the fill rather than raising.
+- `add_patch` returns a `Patch` handle rather than a bare `Artist`. It owns the
+  outline marks alongside the fill, so `remove()` and `set_zorder()` move the
+  whole patch instead of only its body.
 
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 

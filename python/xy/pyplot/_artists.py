@@ -940,6 +940,30 @@ class StepPatch(Artist):
         )
 
 
+class Patch(Artist):
+    """Handle for ``add_patch`` output, owning the outline marks beside the fill."""
+
+    def __init__(
+        self,
+        axes: Any,
+        entry: dict[str, Any],
+        outline_entries: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(axes, entry)
+        self._outline_entries = list(outline_entries or [])
+
+    def remove(self) -> None:
+        for entry in self._outline_entries:
+            self._axes._remove_entry(entry)
+        self._outline_entries.clear()
+        super().remove()
+
+    def set_zorder(self, level: float) -> None:
+        for entry in self._outline_entries:
+            entry["_zorder"] = float(level)
+        super().set_zorder(level)
+
+
 class StemContainer:
     """Small tuple-compatible analogue of matplotlib's StemContainer."""
 
