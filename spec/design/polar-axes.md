@@ -77,6 +77,16 @@ A radius outside the visible interval is culled for points and line vertices,
 and clamped for fills and annular sectors (§8). That is the only place a
 radius's sign changes what is drawn rather than where.
 
+**A bar's orientation is fixed under polar.** A polar bar is an annular sector:
+its position column is the ANGLE and its value column is the RADIUS, so
+`orientation="horizontal"` — which swaps those roles on a Cartesian axes — names
+nothing a disc can draw. Every renderer reads the position column as theta
+regardless, so a horizontal polar bar came out transposed rather than rotated.
+It is refused at the mark boundary (`marks.py::_bar_like`) rather than
+approximated, for the same reason as the inert axis keywords: a plausible wrong
+picture is worse than an error (§28). Cartesian `barh` is unaffected, and a
+descending bar — `base` above its value — is still legal and still draws inward.
+
 ## 3. The transform (normative)
 
 Given θ and r in data space, an authored angular sector `[θ_lo, θ_hi]`, a
