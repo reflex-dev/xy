@@ -959,6 +959,17 @@ def _bar_like(
         raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
+    if orientation == "horizontal" and getattr(self, "coords", "cartesian") == "polar":
+        # A polar bar is an annular sector: the position column is the ANGLE and
+        # the value column is the RADIUS. "Horizontal" swaps those roles, which
+        # a disc has no meaning for — the renderers all read `pos` as theta
+        # regardless, so the bar came out transposed rather than rotated.
+        # Refuse it rather than draw a plausible wrong picture (§28).
+        raise ValueError(
+            f"coords='polar' does not support {kind} orientation='horizontal'; "
+            "a polar bar's position is its angle and its value is its radius, "
+            "so the orientation is fixed. See spec/design/polar-axes.md."
+        )
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
     # Zero is legal and draws nothing, like the library-wide `line_width=0` rule.

@@ -103,7 +103,7 @@ be below `r_hi` and no greater than `r_lo`; on a log scale it must also be
 positive. An origin below `r_lo` makes the visible lower ring an annulus, while
 `hole` assigns that ring the explicit display-space fraction `h`.
 
-Five properties this pins down, each of which has matching coverage:
+Eight properties this pins down, each of which has matching coverage:
 
 - **The circle is round in a non-square rect.** `R` uses `min(w, h_px)`, and the
   circle is centred in the rect rather than stretched to fill it.
