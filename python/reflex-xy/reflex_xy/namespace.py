@@ -73,7 +73,12 @@ def _build_wire_payload(
     """Split-buffer payload, unless it would exceed the attachment limit."""
     spec, raw = figure.build_payload_split(px)
     if len(raw) <= _MAX_WIRE_ATTACHMENTS:
-        return spec, list(raw)
+        return spec, raw
+    # Rebuild joined rather than concatenating `raw`: the split spec addresses
+    # columns by `buf` index and carries `buffer_layout: "split"`, which the
+    # client rejects for a one-buffer packet. Running the emitters twice is
+    # safe — they only assign shipped_sel/drill state, and the caller holds
+    # the figure lock across both builds.
     spec, blob = figure.build_payload(px)
     return spec, [blob]
 
