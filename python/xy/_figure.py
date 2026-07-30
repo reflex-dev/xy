@@ -1451,13 +1451,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # edge. Zero is not a meaningful radial origin for an instant, so a
             # time radius keeps the ordinary padded extent — the same reasoning
             # that already exempts a negative floor below.
+            # A singleton instant is the worst case of it, and the early return
+            # above carries the matching guard.
             if self._axis_kind(axis_id) == "time":
-                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
-            if self._axis_kind(axis_id) == "time":
-                # Zero is the Unix epoch, not a centre. Pinning a time radius
-                # there spanned the disc from 1970 to the data and parked every
-                # ring at the rim; a singleton instant was the worst case. Time
-                # keeps the ordinary padded window, like the cartesian axis.
                 return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
             if scale == "log":
                 out_lo = lo
