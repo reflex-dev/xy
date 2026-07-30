@@ -185,6 +185,38 @@ def test_broadcast_over_attachment_limit_answers_err_not_msg(_fresh_registry):
     run(main())
 
 
+def test_msg_reply_over_attachment_limit_answers_err_not_msg(_fresh_registry, monkeypatch):
+    """The `on_msg` reply guard: channel replies are bounded by construction,
+    so a reply over the parser's attachment cap is a contract violation — the
+    client must get an `err` envelope, never a `msg` whose packet the browser
+    parser would reject (closing the shared websocket)."""
+
+    from reflex_xy import namespace as namespace_module
+
+    def oversized_reply(figure, message, buffers):
+        return {"kind": "pick"}, [b"\x00" * 4] * 11
+
+    monkeypatch.setattr(namespace_module, "handle_message", oversized_reply)
+
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
+            await collector.next(collector.payloads)
+            await client.emit(
+                "msg", {"fig": token, "m": {"kind": "pick"}, "mid": "m1"}, namespace="/_xy"
+            )
+            error = await collector.next(collector.errors)
+            await client.disconnect()
+        assert error["fig"] == token
+        assert "attachment" in error["error"]
+        assert collector.messages.empty()
+
+    run(main())
+
+
 def test_msg_round_trip_pick_and_select(_fresh_registry):
     async def main():
         token = registry.register(make_figure(16))

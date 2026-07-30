@@ -132,7 +132,8 @@ the reply path and the room-wide push path (`broadcast_message`, the
 `reflex_xy.append` fan-out, where one oversized packet would close every
 subscriber's connection at once). Regression:
 `tests/reflex_adapter/test_socket_data_plane.py::`
-`test_sub_over_attachment_limit_ships_single_blob` and
+`test_sub_over_attachment_limit_ships_single_blob`,
+`::test_msg_reply_over_attachment_limit_answers_err_not_msg`, and
 `::test_broadcast_over_attachment_limit_answers_err_not_msg`.
 
 The envelope is below; the `m` payload it carries is specified field by field
