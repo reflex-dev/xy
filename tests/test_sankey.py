@@ -79,6 +79,31 @@ def test_cycles_are_refused_by_name() -> None:
         compute_layout([("a", "b", 1.0), ("b", "a", 1.0)])
 
 
+def test_cycle_refusal_names_only_the_cycle_members() -> None:
+    """Kahn's leftover set includes everything *downstream* of a cycle; the
+    refusal must not send the user off to remove an innocent node."""
+    links = [("a", "b", 1.0), ("b", "a", 1.0), ("b", "c", 1.0), ("c", "d", 1.0)]
+    with pytest.raises(ValueError, match=r"cycle through \['a', 'b'\]") as excinfo:
+        compute_layout(links)
+    assert "'c'" not in str(excinfo.value) and "'d'" not in str(excinfo.value)
+
+
+def test_cycle_refusal_names_every_cycle_but_no_bridge() -> None:
+    """Two disjoint cycles joined by an acyclic bridge: both cycles are named,
+    the bridge node is not — it lies between cycles, not on one."""
+    links = [
+        ("a", "b", 1.0),
+        ("b", "a", 1.0),
+        ("b", "x", 1.0),  # bridge into the second cycle
+        ("x", "c", 1.0),
+        ("c", "d", 1.0),
+        ("d", "c", 1.0),
+    ]
+    with pytest.raises(ValueError, match=r"cycle through \['a', 'b', 'c', 'd'\]") as excinfo:
+        compute_layout(links)
+    assert "'x'" not in str(excinfo.value)
+
+
 def test_right_alignment_hangs_every_node_by_its_distance_to_a_sink() -> None:
     # Two disjoint chains of different length: the short one starts late under
     # `right`, is stretched by its sink under `justify`, and stays at the far
@@ -204,6 +229,97 @@ def test_sankey_chart_builds_ribbon_traces_only() -> None:
     assert spec["protocol"] == 11
 
 
+# -- resolved paints and per-trace styles ------------------------------------
+
+
+def test_numeric_ribbon_color_resolves_to_direct_rgba_at_the_factory() -> None:
+    """The ribbon program has no LUT path (`a_rgba2` occupies the style
+    attribute slot), so numeric encodings must reach the wire as resolved
+    RGBA — sampled through the same LUT chain the exporters apply — or the
+    live chart silently paints the constant fallback."""
+    import numpy as np
+
+    from xy import channels
+    from xy._svg import _lut
+
+    values = np.array([0.0, 5.0, 10.0])
+    f = Figure(width=300, height=200)
+    f.ribbon(
+        [0.1] * 3,
+        [0.9] * 3,
+        [0.0, 0.3, 0.6],
+        [0.1, 0.4, 0.7],
+        [0.0, 0.3, 0.6],
+        [0.1, 0.4, 0.7],
+        color=values,
+        colormap="viridis",
+    )
+    ch = f.traces[-1].color_ch
+    assert ch is not None and ch.mode == "direct_rgba" and ch.rgba is not None
+    expected = _lut("viridis", channels.normalize_to_unit(values, (0.0, 10.0))) / 255.0
+    assert np.allclose(ch.rgba[:, :3], expected, atol=1e-12)
+    assert (ch.rgba[:, 3] == 1.0).all()
+    spec, _ = f.build_payload_split()
+    assert spec["traces"][0]["color"]["mode"] == "direct_rgba"
+
+
+def test_categorical_ribbon_color_resolves_through_the_shared_palette() -> None:
+    import numpy as np
+
+    from xy import channels
+    from xy.config import DEFAULT_PALETTE
+
+    f = Figure(width=300, height=200)
+    f.ribbon(
+        [0.1] * 3,
+        [0.9] * 3,
+        [0.0, 0.3, 0.6],
+        [0.1, 0.4, 0.7],
+        [0.0, 0.3, 0.6],
+        [0.1, 0.4, 0.7],
+        color=["alpha", "beta", "alpha"],
+    )
+    ch = f.traces[-1].color_ch
+    assert ch is not None and ch.mode == "direct_rgba" and ch.rgba is not None
+    table = channels.palette_rows_rgba8(list(DEFAULT_PALETTE), len(DEFAULT_PALETTE))
+    expected = table.astype(np.float64)[[0, 1, 0]] / 255.0
+    assert np.allclose(ch.rgba, expected, atol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"opacity": [0.5, 0.6]}, "ribbon opacity is per-trace"),
+        ({"stroke": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]}, "ribbon stroke is per-trace"),
+        ({"stroke_width": [1.0, 2.0]}, "ribbon stroke_width is per-trace"),
+    ],
+)
+def test_per_band_ribbon_styles_are_refused_by_name(kwargs: dict, message: str) -> None:
+    """Per-band style arrays are refused rather than shipped: the client
+    cannot bind them (the ribbon geometry contract), and a channel one
+    renderer drops silently is a parity break, not a capability. Per-band
+    alpha rides the RGBA colour rows instead."""
+    f = Figure(width=300, height=200)
+    with pytest.raises(ValueError, match=message):
+        f.ribbon(
+            [0.1, 0.1],
+            [0.9, 0.9],
+            [0.0, 0.5],
+            [0.2, 0.7],
+            [0.1, 0.6],
+            [0.3, 0.8],
+            color="#7c3aed",
+            **kwargs,
+        )
+    assert not f.traces, "a refused ribbon must roll back cleanly"
+
+
+def test_sankey_link_opacity_failure_names_the_argument() -> None:
+    f = Figure(width=300, height=200)
+    with pytest.raises(ValueError, match=r"sankey link_opacity .* got 'dim'"):
+        f.sankey([("a", "b", 1.0)], link_opacity="dim")
+
+
 # -- golden geometry ---------------------------------------------------------
 
 
@@ -263,6 +379,48 @@ def test_raster_ink_lands_on_the_reference_polygon() -> None:
     assert off_band >= 128, "ink on the straight chord: the cubic was not drawn"
 
 
+def test_raster_ribbon_curves_in_axis_transformed_space_on_log_axes() -> None:
+    """The ribbon cubic is normative in axis-transformed space (the contract):
+    the raster must transform the six endpoints first and flatten the cubic
+    they define — matching SVG's exact pixel-space `C` and the client's
+    clip-space sweep — never flatten in data space and map each vertex, which
+    bows a visibly different curve on a log axis."""
+    from test_png_export import _decode_rgba
+
+    f = Figure(width=400, height=300)
+    f.set_axis("x", domain=(0.0, 1.0), tick_label_strategy="none")
+    f.set_axis("y", type_="log", domain=(1.0, 1000.0), tick_label_strategy="none")
+    f.ribbon([0.05], [0.95], [1.0], [10.0], [100.0], [1000.0], color="#000000", opacity=1.0)
+    pixels = _decode_rgba(f.to_image(format="png", scale=1))
+
+    from xy._svg import _Scale, layout
+
+    spec, _ = f.build_payload_split()
+    _w, _h, _c, plot = layout(spec)
+    sx = _Scale(spec["x_axis"], plot["x"], plot["x"] + plot["w"])
+    sy = _Scale(spec["y_axis"], plot["y"] + plot["h"], plot["y"])
+    # The reference polygon built from the MAPPED endpoints, as the contract
+    # and both other renderers define the curve.
+    poly = ribbon_polygon(
+        float(sx(0.05)),
+        float(sx(0.95)),
+        float(sy(1.0)),
+        float(sy(10.0)),
+        float(sy(100.0)),
+        float(sy(1000.0)),
+    )
+    mid = poly[RIBBON_STEPS // 2]  # upper edge, mid-flow, already in pixels
+    inside = pixels[int(mid[1]) + 3, int(mid[0]), 0]
+    assert inside < 128, "no ink inside the transformed-space cubic's upper edge"
+
+    # A data-space cubic evaluated at mid-flow sits at (10 + 1000)/2 = 505,
+    # log10 = 2.70 — well above the transformed-space midpoint log10 = 2.0
+    # (y = 100). Ink there means the raster flattened before transforming.
+    data_space_mid_y = float(sy((10.0 + 1000.0) / 2.0))
+    off_band = pixels[int(data_space_mid_y) - 3, int(mid[0]), 0]
+    assert off_band >= 128, "ink on the data-space curve: endpoints were not mapped first"
+
+
 def test_exporters_share_the_reference_flattening() -> None:
     """`ribbon_polygon` is the single geometry source; its ends must be exactly
     the four corners and its width exact at every step."""
@@ -293,6 +451,17 @@ def test_live_ribbons_use_smooth_antialiased_edges() -> None:
     assert "u_strokeOpacity" in ribbon_fs
     assert "fwidth(v_t)" in ribbon_fs, "the end faces must join the outline distance"
     assert "u_strokeMode == 1 ? v_rgba0" in ribbon_fs, "match-fill outline missing"
+
+
+def test_ribbon_hover_solves_in_axis_transformed_space() -> None:
+    """The CPU containment test must bisect the same transformed-space cubic
+    the shader sweeps (ribbon geometry contract): hit-testing raw data values
+    selects the wrong band on log/symlog axes."""
+    root = Path(__file__).resolve().parents[1]
+    view = (root / "js/src/50_chartview.ts").read_text(encoding="utf-8")
+    hover = view.split("_ribbonHover(g, dataX, dataY)", 1)[1].split("_buildMeshMark", 1)[0]
+    assert "this._axisCoord(xAxis" in hover, "pointer/endpoint x must be transformed"
+    assert "this._axisCoord(yAxis" in hover, "pointer/endpoint y must be transformed"
 
 
 def test_svg_ribbon_interpolates_endpoint_alpha_per_stop() -> None:
@@ -372,32 +541,44 @@ def test_ribbon_stroke_defaults_to_each_bands_own_colour_in_svg() -> None:
 
 def test_ribbon_raster_outline_matches_each_bands_own_colour() -> None:
     """The PNG outline follows the band paint too, so an implicit outline is
-    the same colour in both exporters rather than one arbitrary fallback."""
+    the same colour in both exporters rather than one arbitrary fallback.
+
+    Compared against an otherwise identical `stroke_width=0` render so the
+    assertion sees *only* outline ink: a whole-image hue scan is satisfied by
+    the fills alone and would keep passing with every outline painted one
+    shared fallback colour."""
+    import numpy as np
+
     from test_png_export import _decode_rgba
 
-    f = Figure(width=420, height=320)
-    f.set_axis("x", domain=(0.0, 1.0), tick_label_strategy="none")
-    f.set_axis("y", domain=(0.0, 1.0), tick_label_strategy="none")
-    # Two flat bands, well separated, each a saturated primary: the outline
-    # pixels must carry the band's own hue, not a shared blue-gray.
-    f.ribbon(
-        [0.1, 0.1],
-        [0.9, 0.9],
-        [0.05, 0.6],
-        [0.3, 0.85],
-        [0.05, 0.6],
-        [0.3, 0.85],
-        color=["#ff0000", "#00ff00"],
-        stroke_width=3.0,
-        opacity=1.0,
-    )
-    pixels = _decode_rgba(f.to_image(format="png", scale=1))
-    reds = pixels[:, :, 0].astype(int)
-    greens = pixels[:, :, 1].astype(int)
-    # A red-dominant and a green-dominant band both present means each band's
-    # own paint reached its outline; a shared fallback would tint one of them.
-    assert ((reds > 180) & (greens < 90)).any(), "no red band ink"
-    assert ((greens > 180) & (reds < 90)).any(), "no green band ink"
+    def render(stroke_width: float) -> np.ndarray:
+        f = Figure(width=420, height=320)
+        f.set_axis("x", domain=(0.0, 1.0), tick_label_strategy="none")
+        f.set_axis("y", domain=(0.0, 1.0), tick_label_strategy="none")
+        # Two flat bands, well separated, each a saturated primary: the
+        # outline pixels must carry the band's own hue, not a shared blue-gray.
+        f.ribbon(
+            [0.1, 0.1],
+            [0.9, 0.9],
+            [0.05, 0.6],
+            [0.3, 0.85],
+            [0.05, 0.6],
+            [0.3, 0.85],
+            color=["#ff0000", "#00ff00"],
+            stroke_width=stroke_width,
+            opacity=1.0,
+        )
+        return _decode_rgba(f.to_image(format="png", scale=1)).astype(int)
+
+    outlined = render(3.0)
+    changed = (outlined != render(0.0)).any(axis=2)
+    assert changed.any(), "a 3px outline must change some pixels"
+    reds, greens = outlined[:, :, 0], outlined[:, :, 1]
+    # The outline straddles the band edge, so its outer half lands on fresh
+    # background pixels in each band's own hue; a shared fallback would leave
+    # one hue missing from the changed set.
+    assert (changed & (reds > 180) & (greens < 90)).any(), "no red outline ink"
+    assert (changed & (greens > 180) & (reds < 90)).any(), "no green outline ink"
 
 
 def test_ribbon_style_stroke_compiles_to_the_outline_not_the_fill() -> None:

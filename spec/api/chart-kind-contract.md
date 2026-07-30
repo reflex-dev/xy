@@ -77,14 +77,24 @@ implements it without reading the other three.
 | `x1` | target face x | x |
 | `y0`, `y1` | source span, lower and upper edge | y |
 | `x`, `y` | **target** span, lower and upper edge — y values in the `x`/`y` slots, which is why `_range_columns` needs a ribbon branch | y |
-| `color` | channel record for the **source** end | |
-| `color_target` | channel record for the **target** end; absent means flat, painted with `color` | |
+| `color` | channel record for the **source** end — always **resolved paint** (`constant` or `direct_rgba`): numeric encodings are sampled through the shared exporter LUT at the factory (`channels.resolve_direct_rgba`), because the ribbon program's `a_rgba2` shares its attribute slot with `a_style` and has no cval/LUT path, and a small-N direct-tier mark makes CPU sampling free | |
+| `color_target` | channel record for the **target** end, same resolved-paint rule; absent means flat, painted with `color` | |
 | `tooltip_rows` | optional per-band semantic objects; Sankey links carry `source`, `target`, `value`, while node bands carry `node`, `value`. The values are deliberately JSON scalars: these are small-N semantic readouts (labels and one flow value per band), not geometry that scales with data, which is what §29's raw-buffer rule exists for | |
 
-**The curve.** A cubic in *data space* with both control points at the
-horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y — d3's
-`curveBumpX`. The band therefore leaves and arrives horizontally, and its width
-is measured vertically the whole way across. Exact under affine axes.
+**The curve.** A cubic in *axis-transformed space* with both control points at
+the horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y —
+d3's `curveBumpX`, which d3-sankey and ECharts likewise evaluate on
+already-scaled coordinates. The band therefore leaves and arrives horizontally
+on screen, and its width is measured vertically the whole way across.
+Transformed space, not data space, because only that choice lets all three
+renderers draw literally the same curve on every axis type: an SVG `C` is
+necessarily a cubic in pixel space and the client sweeps one in clip space —
+both affine images of transformed space, where cubics are invariant — while a
+data-space cubic on a log axis is a shape neither can represent exactly. The
+raster therefore transforms the six endpoint values *first* and flattens the
+cubic they define, never the reverse. Under affine axes the two orders
+coincide, so this distinction is invisible on the linear 0..1 axes a Sankey
+actually uses. CPU hover bisects the same transformed-space cubic.
 
 ```
 upper edge: (x0, y1) C (xm, y1) (xm, y)  -> (x1, y)
@@ -119,6 +129,14 @@ one colour per band, so the client must not ramp an outline the exporters
 cannot. The alpha stack is the stroke paint's own alpha × `opacity` ×
 `stroke_opacity`, as for every other stroked mark. `stroke-dasharray` is
 **not** in the ribbon property set.
+
+`opacity`, `stroke` and `stroke_width` are **per-trace scalars**; the factory
+refuses arrays rather than shipping channels one renderer would drop. The
+ribbon program cannot bind the per-instance style attribute (`a_rgba2`
+occupies its slot), and a capability the live chart cannot draw must be
+absent everywhere, not exporter-only. Nothing is lost: per-band *alpha* rides
+the RGBA rows of `color`/`color_target` — which every renderer interpolates
+along the band — and the implicit match-fill outline is already per-band.
 
 **Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
 `gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the

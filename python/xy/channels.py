@@ -995,6 +995,40 @@ def ship_channels(
     return color_spec, size_spec
 
 
+def resolve_direct_rgba(cc: ColorChannel) -> ColorChannel:
+    """Sample a LUT-encoded color channel down to per-item RGBA, CPU-side.
+
+    For marks that ship **resolved paints only**. The ribbon program binds two
+    per-instance RGBA attributes (one per band end) and has no LUT path —
+    `a_rgba2` shares its attribute slot with `a_style`, so the cval/LUT route
+    physically cannot coexist with the two-ended gradient. Resolving here keeps
+    the numeric `color=` encodings of the mark signature working and makes the
+    renderers agree by construction: continuous values run through the same
+    `normalize_to_unit` + `_svg._lut` chain the static exporters apply to the
+    shipped buffer, and categorical codes index the same `palette_rows_rgba8`
+    table, so the resolved bytes match what the exporters computed for
+    themselves before this existed. Only sensible on small-N direct-tier marks,
+    where four bytes per item is noise.
+    """
+    if cc.mode == "continuous":
+        from ._svg import _lut  # circular at module scope: _svg reaches back here
+
+        if cc.values is None or cc.domain is None:
+            raise ValueError("continuous color channel missing values or domain")
+        rgba = np.empty((len(cc.values), 4), dtype=np.float64)
+        rgba[:, :3] = _lut(cc.colormap, normalize_to_unit(cc.values, cc.domain)) / 255.0
+        rgba[:, 3] = 1.0
+        return ColorChannel(mode="direct_rgba", rgba=rgba)
+    if cc.mode == "categorical":
+        if cc.codes is None:
+            raise ValueError("categorical color channel missing codes")
+        palette = list(cc.palette or config.DEFAULT_PALETTE)
+        table = palette_rows_rgba8(palette, len(palette)).astype(np.float64) / 255.0
+        codes = np.asarray(cc.codes, dtype=np.int64)
+        return ColorChannel(mode="direct_rgba", rgba=table[codes % len(table)])
+    return cc
+
+
 def ship_color_channel(
     cc: ColorChannel,
     sel: Any,

@@ -665,10 +665,13 @@ export const RIBBON_STEPS = 96;
 // spec/api/chart-kind-contract.md). One instance per band, swept as a
 // triangle strip of 2*(RIBBON_STEPS+1) vertices; both edges are the
 // curveBumpX cubic — control points at the horizontal midpoint, each holding
-// its own end's y — evaluated in clip space, which equals the exporters'
-// data-space evaluation under affine axes. The six mesh attribute slots are
-// reused with the ribbon column meaning: ay0/ay1 = source span, ax2/ay2 =
-// target span.
+// its own end's y — evaluated in clip space. The contract makes the cubic
+// normative in axis-transformed space, and clip space is an affine image of
+// it, so this sweep, the SVG exporter's pixel-space `C`, and the raster's
+// transformed-endpoint flattening are the same curve on every axis type
+// (cubics are affine-invariant). The six mesh attribute slots are reused
+// with the ribbon column meaning: ay0/ay1 = source span, ax2/ay2 = target
+// span.
 export const RIBBON_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
 in vec4 a_rgba; in vec4 a_rgba2;

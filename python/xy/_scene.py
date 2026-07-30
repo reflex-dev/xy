@@ -33,13 +33,16 @@ RIBBON_STEPS = 96
 def ribbon_edge(
     x0: float, x1: float, ya: float, yb: float, steps: int = RIBBON_STEPS
 ) -> np.ndarray:
-    """One edge of a flow band, in data space.
+    """One edge of a flow band, in the caller's coordinate space.
 
     The cubic of the ribbon contract: both control points sit at the horizontal
     midpoint and hold their own end's y, so the edge leaves and arrives
-    horizontally (d3's `curveBumpX`). Returned flattened because the raster
-    display list has no curve opcode; the SVG exporter rebuilds the exact `C`
-    from the same four numbers.
+    horizontally (d3's `curveBumpX`). The function is pure arithmetic with no
+    opinion about units — but the contract makes the curve normative in
+    **axis-transformed space**, so exporters pass mapped endpoints rather than
+    mapping the flattened result (the two orders differ on log/symlog axes).
+    Returned flattened because the raster display list has no curve opcode; the
+    SVG exporter rebuilds the exact `C` from the same four numbers.
     """
     t = np.linspace(0.0, 1.0, steps + 1)
     u = 1.0 - t
@@ -58,7 +61,7 @@ def ribbon_polygon(
     dst_hi: float,
     steps: int = RIBBON_STEPS,
 ) -> np.ndarray:
-    """A whole flow band as one closed polygon in data space.
+    """A whole flow band as one closed polygon, in the caller's space.
 
     One polygon, not two triangles or a mesh: the seam-free fill paths in both
     exporters require a single uniform-alpha shape, and a gradient across a

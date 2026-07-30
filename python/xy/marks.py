@@ -430,6 +430,12 @@ def ribbon(
     composition: each band carries a colour at *each* end and the gradient runs
     along the flow, which no existing mark can express (see the ribbon geometry
     contract in spec/api/chart-kind-contract.md).
+
+    `color`/`color_target` take a CSS colour, per-band colours (RGBA rows carry
+    per-band alpha), or numeric values sampled through `colormap`; every
+    encoding resolves to concrete per-band paint before shipping. `opacity`,
+    `stroke` and `stroke_width` are per-trace scalars — per-band styling rides
+    the colour channels, nowhere else.
     """
     css = styles.compile_mark_style("ribbon", style)
     color = css.get("color", color)
@@ -452,33 +458,46 @@ def ribbon(
     if len(lengths) != 1:
         raise ValueError(f"ribbon columns must be the same length; got {sorted(lengths)}")
     n = int(arrays[0].size)
-    style_channels: dict[str, channels.StyleChannel] = {}
-    opacity_value = _direct_style(
-        opacity,
-        n,
-        "ribbon opacity",
-        style_channels,
-        "opacity",
-        default=1.0,
-        minimum=0.0,
-        maximum=1.0,
+    # Ribbon styles are per-trace scalars, refused as arrays rather than
+    # silently flattened: the ribbon program's a_rgba2 shares its attribute
+    # slot with a_style, so the standard per-instance style route cannot
+    # coexist with the two-ended gradient, and a capability one renderer
+    # cannot draw is absent everywhere (parity is identity). Per-band alpha
+    # is not lost — RGBA rows in `color`/`color_target` carry it, and every
+    # renderer interpolates all four channels along the band.
+    opacity_constant, opacity_channel = channels.resolve_style_channel(
+        opacity, n, "ribbon opacity", minimum=0.0, maximum=1.0
     )
+    if opacity_channel is not None:
+        raise ValueError(
+            "ribbon opacity is per-trace; put per-band alpha in the color "
+            "arrays instead (RGBA rows interpolate along each band)"
+        )
+    opacity_value = 1.0 if opacity_constant is None else float(opacity_constant)
     stroke_value, stroke_ch = _stroke_channel(stroke, n, "ribbon stroke")
-    stroke_width_value = _direct_style(
-        stroke_width,
-        n,
-        "ribbon stroke_width",
-        style_channels,
-        "stroke_width",
-        default=0.0,
-        minimum=0.0,
+    if stroke_ch is not None:
+        raise ValueError(
+            "ribbon stroke is per-trace; omit it to outline each band with "
+            "its own fill color (edgecolors='face')"
+        )
+    width_constant, width_channel = channels.resolve_style_channel(
+        stroke_width, n, "ribbon stroke_width", minimum=0.0
     )
-    color_ch = channels.resolve_color(
-        color,
-        n,
-        colormap=colormap,
-        default_constant=self.next_series_color,
-        palette=self.palette,
+    if width_channel is not None:
+        raise ValueError("ribbon stroke_width is per-trace")
+    stroke_width_value = 0.0 if width_constant is None else float(width_constant)
+    # Ribbon ships resolved paints only (constant or direct RGBA): numeric
+    # `color=` encodings are sampled through the shared exporter LUT here,
+    # once, instead of teaching the two-ended ribbon program a cval path it
+    # has no attribute slot for (ribbon geometry contract).
+    color_ch = channels.resolve_direct_rgba(
+        channels.resolve_color(
+            color,
+            n,
+            colormap=colormap,
+            default_constant=self.next_series_color,
+            palette=self.palette,
+        )
     )
     # No target colour means a flat band. Resolving one anyway would ship a
     # second buffer and turn every plain ribbon into a two-stop gradient in
@@ -486,12 +505,14 @@ def ribbon(
     color2_ch = (
         None
         if color_target is None
-        else channels.resolve_color(
-            color_target,
-            n,
-            colormap=colormap,
-            default_constant=self.next_series_color,
-            palette=self.palette,
+        else channels.resolve_direct_rgba(
+            channels.resolve_color(
+                color_target,
+                n,
+                colormap=colormap,
+                default_constant=self.next_series_color,
+                palette=self.palette,
+            )
         )
     )
     checkpoint = self._checkpoint()
@@ -520,8 +541,6 @@ def ribbon(
                 style=style_dict,
                 color_ch=color_ch,
                 color2_ch=color2_ch,
-                stroke_ch=stroke_ch,
-                style_channels=style_channels,
                 count=n,
             )
         )
@@ -590,7 +609,12 @@ def sankey(
     else:
         node_css = [self.palette_color(i) for i in range(n_nodes)]
 
-    link_alpha = float(link_opacity)
+    try:
+        link_alpha = float(link_opacity)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"sankey link_opacity must be a number in (0, 1], got {link_opacity!r}"
+        ) from None
     if not 0.0 < link_alpha <= 1.0:
         raise ValueError("sankey link_opacity must be in (0, 1]")
 

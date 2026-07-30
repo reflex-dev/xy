@@ -3927,15 +3927,27 @@ export class ChartView {
   _ribbonHover(g, dataX, dataY) {
     const cpu = g._cpuRibbon;
     if (!cpu) return null;
+    // The cubic is normative in axis-transformed space (ribbon geometry
+    // contract), so the pointer and every decoded endpoint go through the
+    // same transform the shader's xyMap applies — solving in raw data space
+    // would hit-test a curve the band does not follow on log/symlog axes.
+    // On linear axes the transform is the identity. A masked-log NaN endpoint
+    // fails every comparison and skips the band, matching the renderers.
+    const xAxis = this._axis(g.xAxis);
+    const yAxis = this._axis(g.yAxis);
+    const pointerX = this._axisCoord(xAxis, dataX);
+    const pointerY = this._axisCoord(yAxis, dataY);
     // _decodeValue already returns data space; decoding twice put every
     // containment test in a coordinate system nothing else uses.
     const val = (slot, index) => this._decodeValue(cpu[slot], g[slot + "Meta"], index);
+    const xVal = (slot, index) => this._axisCoord(xAxis, val(slot, index));
+    const yVal = (slot, index) => this._axisCoord(yAxis, val(slot, index));
     for (let index = 0; index < g.n; index++) {
-      const x0 = val("x0", index);
-      const x1 = val("x1", index);
+      const x0 = xVal("x0", index);
+      const x1 = xVal("x1", index);
       const lo0 = Math.min(x0, x1);
       const hi0 = Math.max(x0, x1);
-      if (dataX < lo0 || dataX > hi0 || hi0 === lo0) continue;
+      if (!(pointerX >= lo0 && pointerX <= hi0) || hi0 === lo0) continue;
       // x(t) is monotone between the faces (control points at the midpoint),
       // so 24 bisection steps pin t to ~1e-7 of the span.
       let a = 0.0;
@@ -3948,14 +3960,14 @@ export class ChartView {
       const rising = x1 >= x0;
       for (let step = 0; step < 24; step++) {
         const mid = (a + b) / 2;
-        if ((xAt(mid) < dataX) === rising) a = mid; else b = mid;
+        if ((xAt(mid) < pointerX) === rising) a = mid; else b = mid;
       }
       const t = (a + b) / 2;
       const w0 = (1 - t) ** 3 + 3 * (1 - t) ** 2 * t;
       const w1 = 1 - w0;
-      const edgeLo = w0 * val("y0", index) + w1 * val("t0", index);
-      const edgeHi = w0 * val("y1", index) + w1 * val("t1", index);
-      if (dataY >= Math.min(edgeLo, edgeHi) && dataY <= Math.max(edgeLo, edgeHi)) {
+      const edgeLo = w0 * yVal("y0", index) + w1 * yVal("t0", index);
+      const edgeHi = w0 * yVal("y1", index) + w1 * yVal("t1", index);
+      if (pointerY >= Math.min(edgeLo, edgeHi) && pointerY <= Math.max(edgeLo, edgeHi)) {
         return { trace: g.trace.id, index, g, dist: 0, synthetic: true };
       }
     }
@@ -6753,6 +6765,7 @@ export class ChartView {
     this._deleteBuffers(g, [
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
       "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
+      "t0Buf", "t1Buf", "rgbaBuf", "rgba2Buf", "styleBuf", "strokeBuf",
       "posBuf", "value1Buf", "value0Buf",
       "_transitionPrevXBuf", "_transitionPrevYBuf",
       "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",

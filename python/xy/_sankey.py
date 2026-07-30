@@ -32,6 +32,7 @@ it), in five passes:
 from __future__ import annotations
 
 import math
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -88,16 +89,74 @@ def _resolve_nodes(
     """
     if nodes is not None:
         names = [str(n) for n in nodes]
-        duplicates = sorted({n for n in names if names.count(n) > 1})
+        duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
         if duplicates:
             raise ValueError(f"sankey nodes must be unique; repeated: {duplicates}")
     else:
         names = []
+        seen: set[str] = set()
         for source, target, _value in links:
             for endpoint in (str(source), str(target)):
-                if endpoint not in names:
+                if endpoint not in seen:
+                    seen.add(endpoint)
                     names.append(endpoint)
     return names, {name: i for i, name in enumerate(names)}
+
+
+def _cyclic_nodes(nodes: list[SankeyNode], links: list[SankeyLink]) -> list[str]:
+    """Names of the nodes that actually lie on a cycle.
+
+    Tarjan's strongly connected components, iteratively: a node is cyclic iff
+    its component has more than one member (self-links are refused earlier).
+    Kahn's leftover set would also blame everything *downstream* of a cycle,
+    sending the user off to remove nodes that were never part of the problem.
+    Only runs to build the refusal message, so clarity beats constant factors.
+    """
+    order = [-1] * len(nodes)
+    low = [0] * len(nodes)
+    on_stack = [False] * len(nodes)
+    stack: list[int] = []
+    count = 0
+    cyclic: list[str] = []
+    for root in range(len(nodes)):
+        if order[root] != -1:
+            continue
+        work: list[tuple[int, int]] = [(root, 0)]
+        while work:
+            current, edge = work.pop()
+            if edge == 0:
+                order[current] = low[current] = count
+                count += 1
+                stack.append(current)
+                on_stack[current] = True
+            descended = False
+            outgoing = nodes[current].outgoing
+            while edge < len(outgoing):
+                child = links[outgoing[edge]].target
+                edge += 1
+                if order[child] == -1:
+                    work.append((current, edge))
+                    work.append((child, 0))
+                    descended = True
+                    break
+                if on_stack[child]:
+                    low[current] = min(low[current], order[child])
+            if descended:
+                continue
+            if low[current] == order[current]:
+                component: list[int] = []
+                while True:
+                    member = stack.pop()
+                    on_stack[member] = False
+                    component.append(member)
+                    if member == current:
+                        break
+                if len(component) > 1:
+                    cyclic.extend(nodes[member].name for member in component)
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[current])
+    return sorted(cyclic)
 
 
 def _assign_layers(nodes: list[SankeyNode], links: list[SankeyLink]) -> int:
@@ -111,10 +170,10 @@ def _assign_layers(nodes: list[SankeyNode], links: list[SankeyLink]) -> int:
     indegree = [0] * len(nodes)
     for link in links:
         indegree[link.target] += 1
-    queue = [n.index for n in nodes if indegree[n.index] == 0]
+    queue = deque(n.index for n in nodes if indegree[n.index] == 0)
     placed = 0
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         placed += 1
         for link_index in nodes[current].outgoing:
             link = links[link_index]
@@ -123,7 +182,7 @@ def _assign_layers(nodes: list[SankeyNode], links: list[SankeyLink]) -> int:
             if indegree[link.target] == 0:
                 queue.append(link.target)
     if placed != len(nodes):
-        stuck = sorted(nodes[i].name for i in range(len(nodes)) if indegree[i] > 0)
+        stuck = _cyclic_nodes(nodes, links)
         raise ValueError(
             f"sankey links form a cycle through {stuck}; a Sankey flows left to right, "
             "so every link must point to a later stage. Break the cycle or aggregate "
@@ -139,9 +198,9 @@ def _heights(nodes: list[SankeyNode], links: list[SankeyLink]) -> list[int]:
     """
     outdegree = [len(node.outgoing) for node in nodes]
     height = [0] * len(nodes)
-    queue = [n.index for n in nodes if outdegree[n.index] == 0]
+    queue = deque(n.index for n in nodes if outdegree[n.index] == 0)
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         for link_index in nodes[current].incoming:
             link = links[link_index]
             height[link.source] = max(height[link.source], height[current] + 1)

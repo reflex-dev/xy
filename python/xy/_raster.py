@@ -2074,8 +2074,14 @@ def _emit_ribbon(
 
     Geometry comes from `_scene.ribbon_polygon` — the same reference the SVG
     exporter's cubics and the golden test consume — so the two static outputs
-    cannot drift. `cmd.grad` takes an arbitrary two-point gradient vector, which
-    is what lets the ramp follow the flow rather than an axis.
+    cannot drift. The polygon is built from the **axis-mapped** endpoints, not
+    mapped after flattening: the ribbon cubic is normative in transformed space
+    (ribbon geometry contract), which is the only curve the SVG exporter's
+    exact pixel-space `C` and the client's clip-space sweep can both draw —
+    flattening in data space and mapping each vertex bows a different curve on
+    log/symlog axes. Under affine axes the two orders are the same curve.
+    `cmd.grad` takes an arbitrary two-point gradient vector, which is what lets
+    the ramp follow the flow rather than an axis.
     """
     x0v = _column(blob, cols[t["x0"]])
     x1v = _column(blob, cols[t["x1"]])
@@ -2120,19 +2126,13 @@ def _emit_ribbon(
     )
 
     for i in range(n):
-        poly_data = _scene.ribbon_polygon(
-            float(x0v[i]),
-            float(x1v[i]),
-            float(slo[i]),
-            float(shi[i]),
-            float(tlo[i]),
-            float(thi[i]),
-        )
-        px = sx(poly_data[:, 0])
-        py = sy(poly_data[:, 1])
-        if not (np.all(np.isfinite(px)) and np.all(np.isfinite(py))):
+        px0, px1 = float(sx(x0v[i])), float(sx(x1v[i]))
+        py_slo, py_shi = float(sy(slo[i])), float(sy(shi[i]))
+        py_tlo, py_thi = float(sy(tlo[i])), float(sy(thi[i]))
+        if not all(math.isfinite(v) for v in (px0, px1, py_slo, py_shi, py_tlo, py_thi)):
             continue
-        poly = list(zip(px.tolist(), py.tolist(), strict=True))
+        poly_data = _scene.ribbon_polygon(px0, px1, py_slo, py_shi, py_tlo, py_thi)
+        poly = list(zip(poly_data[:, 0].tolist(), poly_data[:, 1].tolist(), strict=True))
         # effective_rgba already folded the trace opacity into the alpha.
         a = tuple(int(v) for v in fills[i])
         b = tuple(int(v) for v in fills2[i])
@@ -2143,9 +2143,8 @@ def _emit_ribbon(
         else:
             # Gradient vector spans the two faces horizontally; the y term is
             # irrelevant because the ramp is purely along the flow.
-            gx0, gx1 = float(sx(x0v[i])), float(sx(x1v[i]))
-            gy = float(py[0])
-            cmd.grad(poly, (gx0, gy), (gx1, gy), [(0.0, a), (1.0, b)])
+            gy = float(poly_data[0, 1])
+            cmd.grad(poly, (px0, gy), (px1, gy), [(0.0, a), (1.0, b)])
         edge_c = (
             stroke_c
             if stroke_c is not None
