@@ -18,6 +18,14 @@ in the README).
   `set/get_thetamin`, `set/get_thetamax`, and radial
   `set/get_rorigin`. Generic segment/mesh marks, polar rule/band annotations,
   LOD, facets/animation, and angular navigation/selection remain deferred.
+- CodSpeed coverage for the polar coordinate system
+  (`benchmarks/test_codspeed_polar.py`, a new `polar_coordinate_system` benchmark
+  category): payload prep for a polar line, a wind rose and a pie, plus SVG,
+  native-PNG and polar-heatmap export. The polar increment previously moved no
+  benchmark at all, so the wedge-flattening cost and the polar payload path were
+  invisible to CI. The collected row count is now gated against
+  `spec/benchmarks/methodology.md` §8, so a renamed or deleted benchmark cannot
+  silently leave a stale row in the CodSpeed dashboard.
 
 ### Fixed
 - Repeated data updates no longer leak GPU buffers. Trace teardown walked a

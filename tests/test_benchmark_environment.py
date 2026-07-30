@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -348,11 +349,71 @@ def test_context_governor_reserves_pending_restores() -> None:
 
 
 def test_triangle_mesh_resource_cleanup_deletes_every_coordinate_buffer() -> None:
+    # The buffer names moved out of `_destroyTraceResources` into the shared
+    # `TRACE_GPU_BUFFERS` list (js/src/00_header.ts) that all three teardown paths
+    # read, so assert against the list and that the teardown really uses it.
+    # `tests/test_trace_buffer_lifecycle.py` pins the list against every buffer
+    # any build path creates; this row keeps the triangle-mesh six explicit.
+    header = (ROOT / "js" / "src" / "00_header.ts").read_text(encoding="utf-8")
+    listed = header.split("export const TRACE_GPU_BUFFERS = [", 1)[1].split("];", 1)[0]
+    for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):
+        assert f'"{name}"' in listed
+
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
     cleanup = client[client.index("_destroyTraceResources(g, texSeen)") :]
     cleanup = cleanup[: cleanup.index("_destroyGlResources()")]
-    for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):
-        assert f'"{name}"' in cleanup
+    assert "this._deleteBuffers(g, TRACE_GPU_BUFFERS);" in cleanup
+
+
+def _codspeed_row_count() -> int:
+    """CodSpeed rows the workflow's glob collects, counting parametrized expansion.
+
+    Parsed rather than imported: the benchmark modules assert a native backend at
+    import time, and this only needs their shape.
+    """
+    total = 0
+    for path in sorted((ROOT / "benchmarks").glob("test_codspeed_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+                continue
+            rows = 1
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or len(decorator.args) != 2:
+                    continue
+                target = decorator.func
+                name = (
+                    target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                )
+                if name != "parametrize":
+                    continue
+                argvalues = decorator.args[1]
+                assert isinstance(argvalues, (ast.List, ast.Tuple)), (
+                    f"{path.name}::{node.name} parametrizes with a non-literal argvalues; "
+                    "the row count can no longer be counted statically"
+                )
+                rows *= len(argvalues.elts)
+            total += rows
+    return total
+
+
+def test_codspeed_row_count_matches_the_methodology_spec() -> None:
+    """A benchmark cannot be added or removed without saying so in the spec.
+
+    A row that is renamed or deleted silently stays in CodSpeed's stored
+    baseline, where the dashboard keeps reporting it as "skipped, using the
+    baseline result" — indistinguishable from a flaky measurement rather than a
+    row that no longer exists. Deleting a benchmark is fine; deleting one without
+    updating §8 (and archiving the stale row in the dashboard) is not.
+    """
+    methodology = (ROOT / "spec/benchmarks/methodology.md").read_text(encoding="utf-8")
+    declared = re.search(r"for \*\*(\d+) rows\*\* total", methodology)
+    assert declared is not None, "spec/benchmarks/methodology.md §8 no longer states a row count"
+    assert _codspeed_row_count() == int(declared.group(1)), (
+        "CodSpeed row count drifted from spec/benchmarks/methodology.md §8. Update the "
+        "count and the module list there, and archive any deleted row in the CodSpeed "
+        "dashboard so it stops being reported as skipped."
+    )
 
 
 def test_benchmark_categories_track_core_hardening_metrics() -> None:

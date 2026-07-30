@@ -127,6 +127,15 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points.",
     },
     {
+        "id": "polar_coordinate_system",
+        "name": "Polar coordinate system",
+        "why": "Radar, wind rose, pie/donut and gauge views are a whole chart family, and a polar wedge is the most expensive mark in the engine — one annular sector per bar instead of one quad.",
+        "metrics": "payload-prep time, wedge flattening cost, SVG/PNG export latency, inverse-raster latency",
+        "harness": "benchmarks/test_codspeed_polar.py",
+        "status": "tracked",
+        "goal": "Keep polar payload prep bounded by composition size rather than observation count, and keep wedge subdivision proportional to each wedge's own angular span.",
+    },
+    {
         "id": "static_export",
         "name": "Static export",
         "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",
