@@ -3933,8 +3933,8 @@ export class ChartView {
     // would hit-test a curve the band does not follow on log/symlog axes.
     // On linear axes the transform is the identity. A masked-log NaN endpoint
     // fails every comparison and skips the band, matching the renderers.
-    const xAxis = this._axis(g.xAxis);
-    const yAxis = this._axis(g.yAxis);
+    const xAxis = { ...this._axis(g.xAxis), constant: this._axisConstant(g.xAxis) };
+    const yAxis = { ...this._axis(g.yAxis), constant: this._axisConstant(g.yAxis) };
     const pointerX = this._axisCoord(xAxis, dataX);
     const pointerY = this._axisCoord(yAxis, dataY);
     // _decodeValue already returns data space; decoding twice put every

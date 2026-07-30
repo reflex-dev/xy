@@ -417,7 +417,7 @@ def test_raster_ribbon_curves_in_axis_transformed_space_on_log_axes() -> None:
     # log10 = 2.70 — well above the transformed-space midpoint log10 = 2.0
     # (y = 100). Ink there means the raster flattened before transforming.
     data_space_mid_y = float(sy((10.0 + 1000.0) / 2.0))
-    off_band = pixels[int(data_space_mid_y) - 3, int(mid[0]), 0]
+    off_band = pixels[int(data_space_mid_y) + 3, int(mid[0]), 0]
     assert off_band >= 128, "ink on the data-space curve: endpoints were not mapped first"
 
 
@@ -462,6 +462,16 @@ def test_ribbon_hover_solves_in_axis_transformed_space() -> None:
     hover = view.split("_ribbonHover(g, dataX, dataY)", 1)[1].split("_buildMeshMark", 1)[0]
     assert "this._axisCoord(xAxis" in hover, "pointer/endpoint x must be transformed"
     assert "this._axisCoord(yAxis" in hover, "pointer/endpoint y must be transformed"
+
+
+def test_ribbon_hover_uses_the_renderers_sanitized_symlog_constant() -> None:
+    """Malformed wire input must not make hover solve a different curve than
+    the shader, which clamps a non-positive symlog constant to one."""
+    root = Path(__file__).resolve().parents[1]
+    view = (root / "js/src/50_chartview.ts").read_text(encoding="utf-8")
+    hover = view.split("_ribbonHover(g, dataX, dataY)", 1)[1].split("_buildMeshMark", 1)[0]
+    assert "constant: this._axisConstant(g.xAxis)" in hover
+    assert "constant: this._axisConstant(g.yAxis)" in hover
 
 
 def test_svg_ribbon_interpolates_endpoint_alpha_per_stop() -> None:
