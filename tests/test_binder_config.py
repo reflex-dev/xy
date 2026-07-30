@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import yaml
+import pytest
+
+# Dev-group-only dependency: the python-floor CI job installs the bare
+# package + pytest, so these config tests skip there and run everywhere the
+# dev environment exists.
+yaml = pytest.importorskip("yaml")
 
 ROOT = Path(__file__).resolve().parents[1]
 BINDER = ROOT / ".binder"
@@ -19,6 +24,8 @@ NOTEBOOK_STACK = {
     "seaborn",
     "h5py",
     "requests",
+    "pysam",
+    "gwosc",
 }
 
 
@@ -29,10 +36,13 @@ def test_environment_provisions_toolchain_and_notebook_stack() -> None:
     assert all(isinstance(spec, str) for spec in dependencies)
     names = {spec.split("=", 1)[0] for spec in dependencies}
 
-    # The source build in postBuild needs cargo and node; everything else
-    # rides pip's manylinux wheels in postBuild (smaller solve, and mamba
-    # extraction on mybinder builder nodes has proven flaky).
-    assert {"rust", "nodejs"} <= names
+    # The source build in postBuild needs cargo and node at the versions the
+    # dossier's Binder contract names; everything else rides pip's manylinux
+    # wheels in postBuild (smaller solve, and mamba extraction on mybinder
+    # builder nodes has proven flaky).
+    specs = dict(spec.split("=", 1) for spec in dependencies if "=" in spec)
+    assert specs.get("rust") == "1.88.*"
+    assert specs.get("nodejs") == "22.*"
     assert not names - {"rust", "nodejs", "python"}
 
     # Exact conda build strings (name=version=build) are arch-specific and

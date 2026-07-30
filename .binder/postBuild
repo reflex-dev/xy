@@ -9,11 +9,12 @@ export XY_REQUIRE_CARGO=1
 
 # The trailing packages are the scientific stack imported across
 # examples/**/*.ipynb (the checkout brings only numpy + anywidget); they ride
-# pip's manylinux wheels instead of conda on purpose — see environment.yml.
-# pysam (bioconda-only) and gwosc are scoped out: each backs a single
-# specialist notebook under examples/real_world/; `%pip install` in-notebook.
-python -m pip install --no-cache-dir . matplotlib pandas scipy scikit-learn seaborn h5py requests
+# pip's wheels instead of conda on purpose — see environment.yml. pysam and
+# gwosc back only the real_world genomics/LIGO notebooks but ship wheels, so
+# provisioning them here is cheaper than a per-notebook %pip cell.
+python -m pip install --no-cache-dir . matplotlib pandas scipy scikit-learn seaborn h5py requests pysam gwosc
 
-# The wheel now owns both generated artifacts. Do not retain build-only caches
-# in the launched notebook image.
-rm -rf node_modules target
+# The wheel now owns both generated artifacts. Do not retain build-only
+# caches in the launched notebook image: the checkout's generated
+# directories, cargo's crate downloads, and npm's package cache.
+rm -rf node_modules target "${CARGO_HOME:-$HOME/.cargo}/registry" "$HOME/.npm"

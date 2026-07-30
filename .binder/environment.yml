@@ -14,7 +14,8 @@ dependencies:
   # only, never a build string. pip stays unpinned.
   - python=3.13.*
   # Conda deliberately carries nothing else. The scientific stack the example
-  # notebooks import is pip-installed in postBuild from manylinux wheels:
-  # keeping ~200 conda packages out of the solve makes the build faster and
-  # sidesteps observed mamba extraction flakes on mybinder builder nodes
+  # notebooks import (including pysam and gwosc for the real_world series) is
+  # pip-installed in postBuild from wheels: keeping ~200 conda packages out
+  # of the solve makes the build faster and sidesteps observed mamba
+  # extraction flakes on mybinder builder nodes
   # ("Cannot find a valid extracted directory cache").
