@@ -1,0 +1,9 @@
+channels:
+  - conda-forge
+dependencies:
+  # Keep Binder on a released Python version covered by XY's test matrix rather
+  # than inheriting repo2docker's newest stock interpreter.
+  - python=3.13
+  - nodejs=22
+  - rust=1.88
+  - pip

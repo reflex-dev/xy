@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euxo pipefail
+
+# Binder installs this checkout, not a published platform wheel. Require the
+# source build to compile the native core so a missing toolchain fails the image
+# build instead of leaving an install that only fails when a notebook imports it.
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+export XY_REQUIRE_CARGO=1
+python -m pip install --no-cache-dir .
+
+# The wheel now owns both generated artifacts. Do not retain build-only caches
+# in the launched notebook image.
+rm -rf node_modules target

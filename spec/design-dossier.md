@@ -1200,6 +1200,14 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   build — importing the compute layer raises a clear, actionable ImportError naming
   the supported platforms, never a silent degrade. Published platform wheels require
   the native core and fail the build if it is absent.
+- **Binder builds are source builds, not wheel installs.** The repository's
+  `.binder/environment.yml` provisions Python, Rust, and Node, and
+  `.binder/postBuild` installs the checkout with `XY_REQUIRE_CARGO=1`. This keeps
+  hosted examples on the browsed commit while making a missing native core fail
+  during image construction rather than later at notebook import. Playwright's
+  browser download is disabled for this build-only Node install, and the Cargo and
+  npm build caches are removed after the wheel has captured the native core and
+  render client.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
   (native core + JS client + assets), CI-enforced like every other number.
 - **Import-time budget**: `import xy` does no heavy work (< 200 ms); NumPy and
