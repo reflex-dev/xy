@@ -3861,6 +3861,11 @@ export class ChartView {
     g.colorTarget = t.color_target
       ? parseColor(this.root, t.color_target.color, g.color)
       : null;
+    // Outline paint (ribbon geometry contract): an omitted stroke colour
+    // falls back to the band colour, matching both static exporters.
+    const style = t.style || {};
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, g.color) : null;
+    g.strokeWidth = Number(style.stroke_width) || 0;
     g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
   }
 
@@ -3878,8 +3883,19 @@ export class ChartView {
     this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_t0", g.t0Meta, g.yAxis);
     this._setAxisUniforms(prog, "u_t1", g.t1Meta, g.yAxis);
+    // RIBBON_VS reads the SHARED mode/constant uniforms (the RECT_VS design);
+    // the per-column _setAxisUniforms calls above only cover the *meta pairs,
+    // so without these four writes log/symlog axes silently render as linear.
+    gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
+    gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform1i(u("u_segments"), RIBBON_STEPS);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const stroke = g.stroke || g.color;
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
     // A flat band must mix toward ITS OWN colour, so a per-band source buffer
     // with no target buffer binds the source buffer to both attributes —
     // mixing toward the constant fallback painted every node's right edge

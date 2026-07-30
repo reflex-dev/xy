@@ -1348,7 +1348,7 @@ class _Svg:
         return f"url(#{gid})"
 
     def gradient_vector(
-        self, x0: float, y0: float, x1: float, y1: float, stops: list[tuple[float, str]]
+        self, x0: float, y0: float, x1: float, y1: float, stops: list[tuple[float, str, float]]
     ) -> str:
         """Register a two-point <linearGradient> in user space; returns url(#id).
 
@@ -1356,7 +1356,10 @@ class _Svg:
         the right vocabulary for a bar or an area but cannot express a ribbon's
         gradient — that one runs along the flow, from one face to the other, and
         every band in a diagram has its own. Hence an explicit endpoint pair.
-        `userSpaceOnUse` is already in the PDF converter's allowlist, so this
+        Each stop is ``(offset, color, opacity)``: per-stop opacity is how the
+        alpha channel interpolates along the vector, exactly as the raster's
+        RGBA stops and the client's `mix` do. `userSpaceOnUse` and
+        `stop-opacity` are both in the PDF converter's allowlist, so this
         survives PDF export unchanged.
         """
         gid = self.uid("g")
@@ -1365,9 +1368,10 @@ class _Svg:
             f'x2="{_num(x1)}" y2="{_num(y1)}"'
         )
         parts = []
-        for offset, color in stops:
+        for offset, color, opacity in stops:
             escaped = escape(color, {chr(34): "&quot;"})
-            parts.append(f'<stop offset="{_num(offset * 100)}%" stop-color="{escaped}"/>')
+            alpha = f' stop-opacity="{_num(opacity)}"' if opacity < 1 else ""
+            parts.append(f'<stop offset="{_num(offset * 100)}%" stop-color="{escaped}"{alpha}/>')
         self.defs.append(f'<linearGradient id="{gid}" {units}>{"".join(parts)}</linearGradient>')
         return f"url(#{gid})"
 
@@ -3975,6 +3979,7 @@ def _ribbon_marks(
         fills2 = fills
     stroke_css = style.get("stroke")
     stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_op = _stroke_opacity(style)
 
     def rgb(paint: Any) -> str:
         return f"rgb({round(paint[0] * 255)},{round(paint[1] * 255)},{round(paint[2] * 255)})"
@@ -3996,21 +4001,35 @@ def _ribbon_marks(
             f"C {_num(mid)} {_num(y_tlo)} {_num(mid)} {_num(y_slo)} {_num(px0)} {_num(y_slo)} Z"
         )
         a, b = fills[i], fills2[i]
-        same = all(abs(float(a[k]) - float(b[k])) < 1e-9 for k in range(3))
-        if same:
-            paint = f'fill="{rgb(a)}"'
-        else:
-            ramp = svg.gradient_vector(px0, 0.0, px1, 0.0, [(0.0, rgb(a)), (1.0, rgb(b))])
-            paint = f'fill="{ramp}"'
+        rgb_same = all(abs(float(a[k]) - float(b[k])) < 1e-9 for k in range(3))
         # effective_rgba already folded the trace opacity into the channel
         # alpha; folding _fill_opacity in again squared it (0.4 -> 0.16).
-        alpha = float(a[3])
-        attrs = paint + (f' fill-opacity="{_num(alpha)}"' if alpha < 1 else "")
-        if stroke_width > 0 and stroke_css:
+        alpha_a, alpha_b = float(a[3]), float(b[3])
+        alpha_same = abs(alpha_a - alpha_b) < 1e-9
+        if rgb_same and alpha_same:
+            paint = f'fill="{rgb(a)}"'
+            attrs = paint + (f' fill-opacity="{_num(alpha_a)}"' if alpha_a < 1 else "")
+        elif alpha_same:
+            ramp = svg.gradient_vector(px0, 0.0, px1, 0.0, [(0.0, rgb(a), 1.0), (1.0, rgb(b), 1.0)])
+            attrs = f'fill="{ramp}"' + (f' fill-opacity="{_num(alpha_a)}"' if alpha_a < 1 else "")
+        else:
+            # Differing endpoint alphas ride per-stop stop-opacity so the
+            # alpha channel interpolates along the flow like the RGB channels
+            # (the raster and the client already do); a path-level
+            # fill-opacity would flatten both ends to the source's alpha.
+            ramp = svg.gradient_vector(
+                px0, 0.0, px1, 0.0, [(0.0, rgb(a), alpha_a), (1.0, rgb(b), alpha_b)]
+            )
+            attrs = f'fill="{ramp}"'
+        if stroke_width > 0:
+            # No explicit stroke colour falls back to the trace colour, the
+            # same rule the raster's _emit_ribbon and the area outline follow.
             attrs += (
                 f' stroke="{escape(_css(stroke_css, fallback))}" '
                 f'stroke-width="{_num(stroke_width)}" '
             )
+            if stroke_op < 1:
+                attrs += f'stroke-opacity="{_num(stroke_op)}" '
         out.append(f'<path d="{d}" {attrs}/>')
     return "".join(out)
 

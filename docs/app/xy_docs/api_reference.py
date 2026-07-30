@@ -84,6 +84,7 @@ MARKS = (
     xy.stairs,
     xy.stem,
     xy.segments,
+    xy.ribbon,
     xy.sankey,
     xy.triangle_mesh,
 )

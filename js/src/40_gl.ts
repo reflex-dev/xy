@@ -708,6 +708,7 @@ void main() {
 export const RIBBON_FS = `#version 300 es
 precision highp float;
 uniform float u_opacity;
+uniform vec4 u_stroke; uniform float u_strokeWidth; uniform float u_strokeOpacity;
 in vec4 v_rgba;
 in float v_side;
 out vec4 outColor;
@@ -715,11 +716,23 @@ void main() {
   // Triangle edges are not multisampled reliably across browsers. Interpolate
   // the band-side coordinate and use its screen-space derivative to soften the
   // outermost pixel on both curved edges without changing the interior.
+  float w = max(fwidth(v_side), 1e-5);
   float edge = min(v_side, 1.0 - v_side);
-  float coverage = smoothstep(0.0, max(fwidth(v_side), 1e-5), edge);
+  float coverage = smoothstep(0.0, w, edge);
   float alpha = v_rgba.a * u_opacity * coverage;
-  if (alpha <= 0.001) discard;
-  outColor = vec4(v_rgba.rgb * alpha, alpha);
+  vec4 premult = vec4(v_rgba.rgb * alpha, alpha);
+  if (u_strokeWidth > 0.0) {
+    // Outline as an inset border along the two curved edges: edge/w is the
+    // distance to the nearer edge in device pixels (RECT_FS's SDF trick).
+    // The exporters stroke the closed path; the short end faces abut node
+    // bands in a Sankey, so that is where the recorded divergence lives.
+    float strokeAlpha = u_stroke.a * u_strokeOpacity * coverage;
+    vec4 stroke = vec4(u_stroke.rgb * strokeAlpha, strokeAlpha);
+    float inner = smoothstep(u_strokeWidth - 0.75, u_strokeWidth + 0.75, edge / w);
+    premult = mix(stroke, premult, inner);
+  }
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
 }`;
 
 export const MESH_VS = `#version 300 es

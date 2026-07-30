@@ -2101,7 +2101,11 @@ def _emit_ribbon(
     else:
         fills2 = fills
     stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
-    stroke_c = _parse_color(_css(style.get("stroke"), color)) if stroke_width > 0 else None
+    # Outline alpha folds opacity * stroke_opacity, the same stack every other
+    # stroked mark applies and the SVG writer's stroke-opacity mirrors.
+    stroke_c = (
+        _rgba(style.get("stroke"), color, _stroke_opacity(style)) if stroke_width > 0 else None
+    )
 
     for i in range(n):
         poly_data = _scene.ribbon_polygon(
@@ -2120,7 +2124,9 @@ def _emit_ribbon(
         # effective_rgba already folded the trace opacity into the alpha.
         a = tuple(int(v) for v in fills[i])
         b = tuple(int(v) for v in fills2[i])
-        if a[:3] == b[:3]:
+        # Flat only when all FOUR channels agree: ends differing in alpha
+        # alone still ramp, and cmd.grad's RGBA stops interpolate it.
+        if a == b:
             cmd.fill(poly, a)
         else:
             # Gradient vector spans the two faces horizontally; the y term is

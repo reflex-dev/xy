@@ -242,7 +242,17 @@ def row_dict(fig: "Figure", t: "Trace", idx: int) -> dict[str, Any]:
             if np.isfinite(val):
                 out["color_value"] = val
         return out
-    out: dict[str, Any] = {
+    if t.tooltip_rows is not None and idx < len(t.tooltip_rows):
+        # Semantic rows replace the coordinate projection outright: for these
+        # marks the x/y slots hold internal placement coordinates (a ribbon's
+        # target span), and the contract promises the pick describes the flow
+        # or node, never its placement.
+        out: dict[str, Any] = {"trace": t.id, "index": idx}
+        for key, value in t.tooltip_rows[idx].items():
+            if key not in out:
+                out[key] = _json_scalar(value)
+        return out
+    out = {
         "trace": t.id,
         "index": idx,
         "x": _json_scalar(float(t.x.values[idx])),
@@ -260,10 +270,6 @@ def row_dict(fig: "Figure", t: "Trace", idx: int) -> dict[str, Any]:
     sc = t.size_ch
     if sc and sc.mode == "continuous" and sc.values is not None:
         out["size_value"] = _json_scalar(float(sc.values[idx]))
-    if t.tooltip_rows is not None and idx < len(t.tooltip_rows):
-        for key, value in t.tooltip_rows[idx].items():
-            if key not in out:
-                out[key] = _json_scalar(value)
     return out
 
 

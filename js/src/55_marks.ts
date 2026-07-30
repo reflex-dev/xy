@@ -184,6 +184,13 @@ export const MARK_KINDS = {
     retainCpu: true,
     refreshColor: (view, g) => {
       if (g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+      // Both ends of the gradient and the outline are theme-resolved CSS, so
+      // all three go stale together on a light/dark flip, not just the source.
+      if (g.trace.color_target) {
+        g.colorTarget = parseColor(view.root, g.trace.color_target.color, g.color);
+      }
+      const style = g.trace.style || {};
+      if (style.stroke) g.stroke = parseColor(view.root, style.stroke, g.color);
     },
   },
   error_band: AREA_MARK,

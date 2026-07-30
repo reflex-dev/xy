@@ -79,7 +79,7 @@ implements it without reading the other three.
 | `x`, `y` | **target** span, lower and upper edge — y values in the `x`/`y` slots, which is why `_range_columns` needs a ribbon branch | y |
 | `color` | channel record for the **source** end | |
 | `color_target` | channel record for the **target** end; absent means flat, painted with `color` | |
-| `tooltip_rows` | optional per-band semantic objects; Sankey links carry `source`, `target`, `value`, while node bands carry `node`, `value` | |
+| `tooltip_rows` | optional per-band semantic objects; Sankey links carry `source`, `target`, `value`, while node bands carry `node`, `value`. The values are deliberately JSON scalars: these are small-N semantic readouts (labels and one flow value per band), not geometry that scales with data, which is what §29's raw-buffer rule exists for | |
 
 **The curve.** A cubic in *data space* with both control points at the
 horizontal midpoint `xm = (x0 + x1) / 2`, each holding its own end's y — d3's
@@ -100,9 +100,22 @@ rendering difference.
 **Paint.** The gradient runs along the **flow axis**, from `x0` to `x1` — not
 along a value axis, which is what separates a ribbon from every other filled
 mark and is why `style.fill` gradients are rejected on it (per-end colour is a
-channel, not per-trace style). When the two ends resolve to the same colour the
-renderers must emit a flat fill, not a two-stop gradient, so a plain Sankey
+channel, not per-trace style). The interpolation covers all **four** channels:
+ends that differ only in alpha still ramp (SVG rides per-stop `stop-opacity`,
+already in the PDF allowlist; the raster's gradient stops are RGBA; the client
+mixes RGBA per fragment). Only when the two ends resolve to the same RGBA do
+the renderers emit a flat fill, not a two-stop gradient, so a plain Sankey
 stays cheap in every output format.
+
+**Outline.** `style.stroke` / `stroke-width` / `stroke-opacity` draw an
+outline over the band. An omitted stroke colour falls back to the trace
+colour (the area-outline rule), and the alpha stack is the stroke colour's own
+alpha × `opacity` × `stroke_opacity`, as for every other stroked mark. The
+static exporters stroke the closed path; the client draws the outline as an
+inset border along the two curved edges (the RECT_FS device-pixel trick), so
+the short end faces are the one recorded divergence — in a Sankey they abut
+the node bands and are invisible. `stroke-dasharray` is **not** in the ribbon
+property set.
 
 **Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
 `gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the

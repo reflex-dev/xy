@@ -16,7 +16,7 @@ which is sometimes deliberate, and the notes say which.
 - **10** mark style properties across **21** mark kinds, drawn by all three renderers.
 - **29** stable chrome slots, CSS- and Tailwind-addressable in the browser; **10** of them reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag.
 - **1** shipped extension point.
-- **1** known default divergence between renderers, listed below rather than left to be discovered.
+- **2** known default divergence between renderers, listed below rather than left to be discovered.
 
 ## Mark style properties
 
@@ -129,6 +129,7 @@ until someone diffs two exports. Listed here for that reason.
 | what | webgl | svg | native | visible when | tracked by |
 |---|---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle | no style property selects a join; the default is the whole contract |
+| A ribbon outline at the band's two vertical end faces | absent (the outline is an inset border along the curved edges) | stroked (the closed path includes the end faces) | stroked (the closed path includes the end faces) | stroke on a bare ribbon whose ends do not abut node bands | the ribbon geometry contract's Outline clause |
 
 ## Regenerating
 

@@ -66,12 +66,12 @@ Node names default to their first-appearance order in `links`. When you need
 stable ordering independent of the input rows, pass every name through
 `nodes=`:
 
-```python
+~~~python
 chart = xy.sankey_chart(
     links,
     nodes=["Inflow", "Equities", "Bonds", "Cash", "Growth", "Income", "Reserve"],
 )
-```
+~~~
 
 The `colors` sequence follows that same node order and must contain exactly one
 CSS color per node.
@@ -302,9 +302,11 @@ the larger of total inflow and total outflow, so a node remains large enough
 for every ribbon attached to it.
 
 `align="justify"` places terminal nodes on the final layer. The other supported
-alignments are `"left"`, `"right"`, and `"center"`. Alternating barycenter
-sweeps reduce crossings; increase `iterations` for a denser graph when the
-extra layout work improves the result.
+alignments are `"left"`, `"right"`, and `"center"`: left keeps each node in the
+earliest layer its links allow, right hangs each node by its distance to a
+sink, and center moves nodes without incoming links next to their first
+target. Alternating barycenter sweeps reduce crossings; increase `iterations`
+for a denser graph when the extra layout work improves the result.
 
 ## Sankey Options
 
@@ -331,12 +333,12 @@ curved band geometry used for rendering. Link tooltips show
 **source → target** with the flow value; node tooltips show the node name and
 its total flow. Sankey diagrams also export through the standard chart methods:
 
-```python
+~~~python
 investment_sankey.to_html("allocation.html")
 investment_sankey.to_png("allocation.png")
 investment_sankey.to_svg("allocation.svg")
 investment_sankey.to_pdf("allocation.pdf")
-```
+~~~
 
 GPU picking, ribbon hover highlighting, automatic legend swatches for
 two-color ribbons, cycle breaking, and Sankey-specific level of detail are not

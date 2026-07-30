@@ -360,12 +360,12 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, target, paint, prop, seen)
         elif prop == "stroke":
             target = "line_color" if kind == "area" else "color"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | {"box"}:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | {"box"}:
                 target = "stroke"
             _set(out, target, _paint(raw, f"{label}['stroke']"), prop, seen)
         elif prop == "stroke-width":
             target = "line_width" if kind in _AREA_KINDS else "width"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | {"box"}:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | {"box"}:
                 target = "stroke_width"
             _set(out, target, _px(raw, f"{label}['stroke-width']"), prop, seen)
         elif prop == "stroke-dasharray":

@@ -132,13 +132,49 @@ def _assign_layers(nodes: list[SankeyNode], links: list[SankeyLink]) -> int:
     return max((n.layer for n in nodes), default=0) + 1
 
 
+def _heights(nodes: list[SankeyNode], links: list[SankeyLink]) -> list[int]:
+    """Longest path from each node to a sink — `_assign_layers` mirrored.
+
+    Runs after the cycle refusal, so the reverse Kahn sweep always drains.
+    """
+    outdegree = [len(node.outgoing) for node in nodes]
+    height = [0] * len(nodes)
+    queue = [n.index for n in nodes if outdegree[n.index] == 0]
+    while queue:
+        current = queue.pop(0)
+        for link_index in nodes[current].incoming:
+            link = links[link_index]
+            height[link.source] = max(height[link.source], height[current] + 1)
+            outdegree[link.source] -= 1
+            if outdegree[link.source] == 0:
+                queue.append(link.source)
+    return height
+
+
 def _align(nodes: list[SankeyNode], links: list[SankeyLink], layers: int, alignment: str) -> None:
-    """Push sinks rightward for the flush right edge `justify` implies."""
-    if alignment != "justify" or layers < 2:
+    """Re-layer nodes per the requested alignment (d3-sankey's four).
+
+    `left` keeps the longest-path layering as assigned. `justify` pushes sinks
+    to the last layer for a flush right edge. `right` hangs every node by its
+    distance to a sink, so sources start late instead of early. `center` keeps
+    sinks in place but moves source-only nodes just left of their nearest
+    target, so an isolated late branch does not open at the far left.
+    """
+    if alignment == "left" or layers < 2:
         return
-    for node in nodes:
-        if not node.outgoing:
-            node.layer = layers - 1
+    if alignment == "justify":
+        for node in nodes:
+            if not node.outgoing:
+                node.layer = layers - 1
+    elif alignment == "right":
+        height = _heights(nodes, links)
+        for node in nodes:
+            node.layer = layers - 1 - height[node.index]
+    elif alignment == "center":
+        for node in nodes:
+            if not node.incoming and node.outgoing:
+                nearest = min(nodes[links[i].target].layer for i in node.outgoing)
+                node.layer = max(nearest - 1, 0)
 
 
 def _order_layers(
@@ -206,9 +242,19 @@ def _place(
     whole point of a Sankey: area is comparable.
     """
     spans = []
-    for column in columns:
+    for layer, column in enumerate(columns):
         if not column:
             continue
+        room = 1.0 - node_padding * (len(column) - 1)
+        if room <= 0.0:
+            # A negative room would flip the shared scale and draw every span
+            # inverted; zero room collapses the whole diagram to nothing.
+            # Refused by name rather than drawn wrong (§28).
+            raise ValueError(
+                f"sankey node_padding {node_padding:g} leaves no room for nodes: "
+                f"layer {layer} holds {len(column)} of them, so node_padding must "
+                f"stay below {1.0 / (len(column) - 1):g}"
+            )
         total = sum(nodes[i].value for i in column)
         spans.append((total, len(column)))
     if not spans:

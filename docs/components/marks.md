@@ -20,6 +20,7 @@ components:
   - xy.stairs
   - xy.stem
   - xy.segments
+  - xy.ribbon
   - xy.sankey
   - xy.triangle_mesh
 ---
@@ -81,7 +82,7 @@ built.
 | Density and grids | `hexbin`, `heatmap`, `contour` |
 | Uncertainty | `errorbar`, `error_band` |
 | Explicit geometry | `stem`, `segments`, `triangle_mesh` |
-| Directed flows | `sankey` |
+| Directed flows | `ribbon`, `sankey` |
 
 The [Chart Gallery](/docs/xy/overview/gallery/) explains expected data shapes and
 family-specific choices.
