@@ -29,9 +29,11 @@ def test_environment_provisions_toolchain_and_notebook_stack() -> None:
     assert all(isinstance(spec, str) for spec in dependencies)
     names = {spec.split("=", 1)[0] for spec in dependencies}
 
-    # The source build in postBuild needs cargo and node.
+    # The source build in postBuild needs cargo and node; everything else
+    # rides pip's manylinux wheels in postBuild (smaller solve, and mamba
+    # extraction on mybinder builder nodes has proven flaky).
     assert {"rust", "nodejs"} <= names
-    assert names >= NOTEBOOK_STACK
+    assert not names - {"rust", "nodejs", "python"}
 
     # Exact conda build strings (name=version=build) are arch-specific and
     # retired by conda-forge rebuilds — they rot into an unsolvable image.
@@ -60,7 +62,14 @@ def test_post_build_requires_the_native_core() -> None:
     # build instead of launching a half-provisioned notebook server.
     assert lines[0] == "set -euxo pipefail"
 
-    install_index = lines.index("python -m pip install --no-cache-dir .")
+    install_line = next(line for line in lines if line.startswith("python -m pip install"))
+    install_index = lines.index(install_line)
+    install_args = install_line.split()
+
+    # The checkout itself, plus the notebook stack from manylinux wheels.
+    assert "--no-cache-dir" in install_args
+    assert "." in install_args
+    assert set(install_args) >= NOTEBOOK_STACK
 
     # The point of the source install: a missing cargo must fail the image
     # build, never ship a coreless wheel (the hatch hook honors this flag).

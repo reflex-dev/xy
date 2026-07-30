@@ -13,16 +13,8 @@ dependencies:
   # kills the pip install at metadata. Pin the interpreter loosely — version
   # only, never a build string. pip stays unpinned.
   - python=3.13.*
-  #
-  # The scientific stack imported across examples/**/*.ipynb — installing the
-  # checkout itself brings only numpy + anywidget.
-  - matplotlib
-  - pandas
-  - scipy
-  - scikit-learn
-  - seaborn
-  - h5py
-  - requests
-  # Deliberately not provisioned: pysam (bioconda-only) and gwosc, each used
-  # by single specialist notebooks under examples/real_world/; run
-  # `%pip install pysam gwosc` in-notebook when needed.
+  # Conda deliberately carries nothing else. The scientific stack the example
+  # notebooks import is pip-installed in postBuild from manylinux wheels:
+  # keeping ~200 conda packages out of the solve makes the build faster and
+  # sidesteps observed mamba extraction flakes on mybinder builder nodes
+  # ("Cannot find a valid extracted directory cache").
