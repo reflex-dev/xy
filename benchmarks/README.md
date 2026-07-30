@@ -382,6 +382,20 @@ production split transport. Run `bench_animation.py` for real-Chrome
 previous+next scene bound; browser clocks and GPU work do not belong in
 CodSpeed simulation.
 
+`test_codspeed_polar.py` attributes the polar coordinate system, which shipped
+without a CodSpeed row of its own: three payload rows for the shapes with
+materially different validation and emit paths (a 100k polar line, a 16-sector /
+50k-observation wind rose, a 24-slice pie whose unequal widths take the four-edge
+column path), and three export rows. SVG draws real `A` arcs and needs no
+subdivision count, so it is the control for the native-PNG row, which flattens
+every wedge at `config.polar_bar_segments(span, turn)` vertices — six segments
+for a 22.5-degree sector rather than the full-turn 96, so a regression back to a
+flat count appears as an arc-flattening step change. The last row is a polar
+heatmap's bounded screen-space inverse raster, which has no Cartesian twin.
+Browser wedge vertex counts, GPU buffer lifetime, and radial-zoom frame pacing
+are wall-clock/WebGL measurements and stay in `bench_interaction.py` and the
+polar smokes.
+
 `test_codspeed_selection.py` covers the backend handlers the client's gesture
 messages resolve to: hover pick readout with a categorical channel, zone-pruned
 and full-scan box select at 1M points, and the cross-filter

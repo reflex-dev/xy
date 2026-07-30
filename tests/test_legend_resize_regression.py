@@ -318,12 +318,19 @@ _ATOMIC_RESIZE_PROBE = """
     const compactNodes = [...view._colorbar.querySelectorAll(
       '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
     )];
+    const visibleTickText = (nodes) => nodes
+      .filter((node) => !node.hidden && node.dataset.xySlot === "colorbar_tick")
+      .map((node) => node.textContent);
     const compactState = {
       plotWidth: view.plot.w,
       colorbarWidth: view._colorbar.getBoundingClientRect().width,
       compact: view._colorbar.dataset.xyCompact,
       hiddenChrome: compactNodes.filter((node) => node.hidden).length,
       chromeCount: compactNodes.length,
+      visibleTicks: visibleTickText(compactNodes),
+      titleHidden: compactNodes
+        .filter((node) => node.dataset.xySlot === "colorbar_title")
+        .every((node) => node.hidden),
     };
 
     view._resize(760, 500);
@@ -555,9 +562,17 @@ def test_narrow_fluid_resize_stays_painted_and_preserves_plot_space() -> None:
     assert payload["compactState"]["plotWidth"] >= 280, payload
     assert payload["compactState"]["colorbarWidth"] == pytest.approx(18, abs=1), payload
     assert payload["compactState"]["compact"] == "true", payload
-    assert payload["compactState"]["hiddenChrome"] == payload["compactState"]["chromeCount"], (
-        payload
-    )
+    # The compact form keeps the two EXTREME tick labels, stacked above and below
+    # the gradient, and drops the interior ladder plus the rotated title. Hiding
+    # every one of them — the previous contract this line asserted — left a colour
+    # ramp with no numbers on it, which is unreadable rather than condensed. The
+    # width and plot-space assertions above are what keep the fix free: restacking
+    # the endpoints costs no side gutter, so the collapse still hands the plot the
+    # room it was collapsing for.
+    assert payload["compactState"]["visibleTicks"] == ["0", "1"], payload
+    assert payload["compactState"]["titleHidden"] is True, payload
+    hidden = payload["compactState"]["hiddenChrome"]
+    assert hidden == payload["compactState"]["chromeCount"] - 2, payload
     assert payload["restoredState"] == {"compact": "false", "hiddenChrome": 0}, payload
 
 

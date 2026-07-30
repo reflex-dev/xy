@@ -6436,6 +6436,8 @@ def pie_chart(
         colors: One CSS colour per slice. Defaults to the palette cycle.
         corner_radius: Rounded slice corners, in px.
         show_values: Include the value in the slice's name (legend + tooltip).
+            Dropped for a slice whose value renders identically to its share —
+            percentage-shaped input would otherwise print the same number twice.
         show_percent: Include the share in the slice's name (legend + tooltip).
         **props: Any `polar_chart` keyword (`width`, `height`, `title`, …).
     """
@@ -6460,6 +6462,20 @@ def pie_chart(
             f"pie_chart colors must have one entry per slice ({len(names)}); got {len(colors)}"
         )
 
+    # Never print the same number twice. Percentage-shaped input — values that
+    # already sum to 100, which is how most pie data arrives — made the two
+    # defaults collide: `[40, 30, 20, 10]` rendered "Direct  40  (40%)", so the
+    # legend read as repeated text and the doubled label was what overflowed the
+    # box. The share keeps the unit, so it is the one that survives.
+    #
+    # Decided once for the whole pie rather than per slice: a mixed legend, where
+    # one row carries a bare value and the next does not, is harder to read than
+    # either consistent choice. Zero slices are excluded because they draw no
+    # wedge and get no row.
+    values_are_shares = show_percent and all(
+        f"{value:g}" == f"{value / total * 100:.0f}" for value in amounts if value > 0.0
+    )
+
     slices: list[Component] = []
     cursor = 0.0
     for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
@@ -6473,7 +6489,7 @@ def pie_chart(
         if span <= 0.0:
             continue
         display = label
-        if show_values:
+        if show_values and not values_are_shares:
             display += f"  {value:g}"
         if show_percent:
             display += f"  ({value / total * 100:.0f}%)"

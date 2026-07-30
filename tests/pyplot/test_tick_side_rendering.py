@@ -122,7 +122,10 @@ def test_tick_sides_bump_wire_protocol_and_client_in_lockstep() -> None:
     assert spec["x_axis"]["tick_sides"] == ["bottom", "top"]
     assert spec["protocol"] == PROTOCOL_VERSION == 12
     assert f"PROTOCOL = {PROTOCOL_VERSION};" in header
-    assert 'import { PROTOCOL, xyByteSpan } from "./00_header";' in client
+    # The point is that the client reads PROTOCOL from the header, not the exact
+    # spelling of the import list — which grows whenever the header gains another
+    # shared constant (it now also exports TRACE_GPU_BUFFERS).
+    assert "PROTOCOL" in client.split(' from "./00_header";', 1)[0]
     assert "spec.protocol !== PROTOCOL" in client
 
 

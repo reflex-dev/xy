@@ -18,6 +18,14 @@ in the README).
   `set/get_thetamin`, `set/get_thetamax`, and radial
   `set/get_rorigin`. Generic segment/mesh marks, polar rule/band annotations,
   LOD, facets/animation, and angular navigation/selection remain deferred.
+- CodSpeed coverage for the polar coordinate system
+  (`benchmarks/test_codspeed_polar.py`, a new `polar_coordinate_system` benchmark
+  category): payload prep for a polar line, a wind rose and a pie, plus SVG,
+  native-PNG and polar-heatmap export. The polar increment previously moved no
+  benchmark at all, so the wedge-flattening cost and the polar payload path were
+  invisible to CI. The collected row count is now gated against
+  `spec/benchmarks/methodology.md` §8, so a renamed or deleted benchmark cannot
+  silently leave a stale row in the CodSpeed dashboard.
 
 ### Fixed
 - Repeated data updates no longer leak GPU buffers. Trace teardown walked a
@@ -36,11 +44,17 @@ in the README).
 - A polar figure with a legend reserves a gutter for it and places it there,
   instead of overlaying the disc. A default `upper right` legend covered a wind
   rose's north-east sectors and its outer radial tick label; a disc inscribed in
-  its rect has no free corner to overlay. Compact widths take a band beneath the
-  disc instead. An authored `anchor` or four-tuple `padding` still wins.
-- Compact vertical colorbars keep their two extreme tick labels and their title.
-  Collapsing them hid every number and the scale name, leaving an unlabelled
-  gradient; only the interior tick ladder and the text-free minor ticks drop now.
+  its rect has no free corner to overlay. The gutter is 22% of the canvas width,
+  clamped to 120-200 px — derived from the canvas so all three renderers reserve
+  the identical box, and wide enough to hold an ordinary row rather than
+  ellipsize it. Compact widths take a 64 px band beneath the disc instead. An
+  authored `anchor` or four-tuple `padding` still wins.
+- Compact vertical colorbars keep their two extreme tick labels, restacked above
+  and below the gradient. Collapsing them hid every number, leaving an unlabelled
+  gradient; only the interior ladder, the rotated title and the text-free minor
+  ticks drop now, and the box's own `title`/ARIA text still names the scale.
+  Stacking is what makes it free: a side gutter wide enough for `0.25` would cost
+  36 px of the plot width the compact collapse exists to protect.
 - A time-valued radial axis autoranges from its data instead of from epoch zero,
   which had squeezed every modern instant into a hairline ring at the rim. An
   explicit `r_axis(margin=)` restores the outer pad it used to discard.
@@ -55,10 +69,27 @@ in the README).
   when the transition ends.
 - A device-pixel-ratio change (browser zoom, or a window moving between displays)
   now rescales the per-instance stroke widths and corner radii that are baked in
-  device pixels, and coalesces into a single resize frame instead of laying out
-  and painting twice.
+  device pixels, so authored strokes and wedge corners keep their intended size
+  across a zoom. The DPR handler stays synchronous: a DPR change with no container
+  resize has no later event to piggyback on. A trace whose CPU style/radius mirror
+  no longer spans every row on the GPU — which is what a streaming tail append
+  leaves behind — is skipped rather than repaired in place, so the existing
+  append-time rebuild still does the renormalizing for it.
 - `xy.pie_chart` appears in the generated chart-factory API reference alongside
   the other polar compositions.
+- A legend row too wide for its box wraps instead of growing a horizontal
+  scrollbar. The box is capped at `--xy-legend-max-width`, but its grid columns
+  were `max-content` and refused to shrink, so an over-wide row overflowed and
+  `overflow:auto` answered sideways — hiding the label it was meant to show.
+  Columns are now `minmax(0, max-content)` and the inline axis never scrolls.
+  Vertical scrolling is unchanged, and rows carry their full name in
+  `title`/ARIA for the ones the height cap clips.
+- `xy.pie_chart` no longer prints the same number twice. Values that already sum
+  to 100 — how most pie data arrives — made `show_values` and `show_percent`
+  collide, so `[40, 30, 20, 10]` rendered `Direct  40  (40%)`: a legend row that
+  reads as repeated text, and long enough to overflow the box. The share keeps
+  the unit and the bare value is dropped, decided once for the whole pie so rows
+  stay uniform.
 
 ### Changed
 - Polar wedge subdivision is span-proportional: `segments(span) =

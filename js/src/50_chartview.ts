@@ -67,13 +67,28 @@ const THETA_ZERO = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
 // plot because data rarely reaches a corner; a disc inscribed in its rect leaves
 // no corner at all, so an inside legend lands on the marks — an `upper right` box
 // covered a wind rose's whole north-east quadrant and the outer radial label
-// under it. Mirrored by _POLAR_LEGEND_ROOM / _POLAR_LEGEND_BAND in
-// python/xy/_svg.py; fixed rather than measured so all three renderers reserve
-// the same box regardless of their font metrics.
-const POLAR_LEGEND_ROOM = 96;
-// Compact widths take a band under the disc instead: a 96 px side gutter out of a
-// 380 px phone canvas leaves a disc too small to read, while vertical room is the
-// one thing a phone viewport has.
+// under it.
+//
+// A FRACTION OF THE CANVAS, clamped, rather than a measurement of the label set:
+// every renderer knows the canvas width to the pixel, so all three reserve the
+// identical box, while a measured reservation would drift with each renderer's
+// font metrics (system-ui here, DejaVu in the exporters). A flat constant was
+// tried first and is the wrong shape — 96 px ellipsized `Partner  (30%)`, an
+// ordinary pie slice's default name, while being a fifth of a phone canvas and a
+// fifteenth of a wide one. A label still wider than the gutter ellipsizes with
+// its full text in `title`/ARIA.
+// Mirrored by `_polar_legend_room` in python/xy/_svg.py.
+const POLAR_LEGEND_ROOM_FRACTION = 0.22;
+const POLAR_LEGEND_ROOM_MIN = 120;
+const POLAR_LEGEND_ROOM_MAX = 200;
+
+// `Math.floor`, not `Math.round`: Python and JavaScript disagree about half-way
+// cases, and the two must land on the same integer pixel.
+function xyPolarLegendRoom(width) {
+  const scaled = Math.floor(Number(width) * POLAR_LEGEND_ROOM_FRACTION);
+  return Math.min(POLAR_LEGEND_ROOM_MAX, Math.max(POLAR_LEGEND_ROOM_MIN, scaled));
+}
+
 const POLAR_LEGEND_BAND = 64;
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
@@ -135,14 +150,17 @@ function xyTextAdvance(text, fontSize) {
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
-// Room beside a compact vertical colorbar for its two endpoint tick labels, and
-// for its rotated title. The compact form used to hide every tick and the title
-// outright, which left an unlabelled gradient — a colour ramp with no numbers on
-// it says nothing at all, so it is not a smaller version of the chrome, it is
-// the absence of it. Two numbers and the scale name are what make the ramp
-// readable; interior ticks are what a narrow chart can actually afford to drop.
-const COMPACT_COLORBAR_TICK_ROOM = 30;
-const COMPACT_COLORBAR_TITLE_ROOM = 14;
+// A compact vertical colorbar keeps its two EXTREME tick labels, stacked above
+// and below the gradient rather than beside it. Hiding every tick left an
+// unlabelled gradient — a colour ramp with no numbers on it says nothing at all,
+// so the compact form was not a smaller version of the chrome but the absence of
+// it. Stacking is what makes the fix free: a side gutter wide enough for `0.25`
+// cost 36 px of plot width, which is the very thing the compact collapse exists
+// to protect, while two centred labels overflow the 18 px bar by ~4 px a side and
+// fit inside the gap that is already reserved. Interior ticks and the rotated
+// title are what a phone-width chart genuinely cannot afford; the title stays
+// readable through the box's own `title`/ARIA text.
+const COMPACT_COLORBAR_LABEL_GAP = 3;
 let XY_A11Y_ID = 0;
 // Legend hover emphasis (interaction spec §9): opacity kept by non-hovered series on
 // the marks canvas, and by non-hovered rows in the legend box itself.
@@ -634,8 +652,7 @@ export class ChartView {
       ? axesColorbar
         ? 44 + (colorbar.label ? 18 : 0)
         : (this._compactVerticalColorbar
-          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
-            + (colorbar.label ? COMPACT_COLORBAR_TITLE_ROOM : 0)
+          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
           : 62 + automaticColorbarGap + (colorbar.label ? 18 : 0))
       : 0;
     const colorbarBottomRoom = horizontalColorbar
@@ -761,7 +778,10 @@ export class ChartView {
     if (!hasRows) return null;
     if (compact) return { side: "bottom", room: POLAR_LEGEND_BAND };
     const loc = String(options.loc || "upper right");
-    return { side: loc.includes("left") ? "left" : "right", room: POLAR_LEGEND_ROOM };
+    return {
+      side: loc.includes("left") ? "left" : "right",
+      room: xyPolarLegendRoom(this.size.w),
+    };
   }
 
   // Re-cut the plot rect for a disc. Mirrors `_recut_polar_plot` in
@@ -1699,14 +1719,15 @@ export class ChartView {
     const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this._onDprChange = () => {
       if (this._destroyed) return;
-      // Queued, not immediate. Browser zoom changes devicePixelRatio *and* the
-      // container's CSS size, so this fired a synchronous full resize+paint and
-      // the ResizeObserver then queued a second one for the same gesture: two
-      // layouts and two frames for one zoom. `_queueResize` coalesces both into
-      // the single rAF that already serves resizes; it re-reads
-      // devicePixelRatio, and `measure` re-reads the container for fluid
-      // charts so the queued pass sees the post-zoom box.
-      this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);
+      // Synchronous on purpose, and pinned that way: `render_smoke_nonumpy.py`'s
+      // `dprw` probe calls this and reads `dpr`/`canvas.width`/`chrome.width` on
+      // the very next line, because a DPR change with no container resize has no
+      // later event to piggyback on. Deferring it into `_queueResize` broke that
+      // contract, and the redundant second frame it was meant to save does not
+      // exist: the ResizeObserver's queued pass early-returns when width, height
+      // and dpr are all unchanged, and when the CSS size *did* change too, the
+      // second pass is doing real work at a new size.
+      this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio
       this._armDprWatch();
     };
     mq.addEventListener?.("change", this._onDprChange, { once: true });
@@ -2173,6 +2194,19 @@ export class ChartView {
       if (!record) return;
       const previous = Number(record._styleDpr);
       if (!(previous > 0) || previous === dpr) return;
+      // Repair in place ONLY while the CPU mirrors still cover every row the
+      // GPU holds. The streaming-append fast path extends styleBuf with a tail
+      // `bufferSubData` and advances `n` without growing `_cpuStyle`
+      // (54_kernel.ts), so after an append the mirror is short: re-uploading it
+      // would shrink the store out from under the appended rows, and scaling it
+      // would leave that tail at the old dpr either way. Leave `_styleDpr`
+      // stale instead — the append guard then refuses the fast path and its
+      // rebuild renormalizes every row at the current dpr, which is the
+      // fallback that case has always relied on.
+      const rows = Number(record.n);
+      if (!(rows > 0)) return;
+      if (record._cpuStyle && record._cpuStyle.length !== rows * 4) return;
+      if (record._cpuRadius && record._cpuRadius.length !== rows * 2) return;
       const factor = dpr / previous;
       // Widths ride component 2 of the canonical style row; the other three
       // components (opacity, artist alpha, symbol) are dpr-independent.
@@ -2582,9 +2616,18 @@ export class ChartView {
     const handleTextPad = Number.isFinite(Number(options.handletextpad))
       ? Math.max(0, Number(options.handletextpad))
       : 0.8;
+    // `minmax(0, max-content)`, not bare `max-content`: the box is capped at
+    // `--xy-legend-max-width`, and a column that refuses to shrink below its
+    // content made a long row overflow horizontally — a legend with a horizontal
+    // SCROLLBAR, which hides the label it is meant to be showing. Shrinkable
+    // columns let a long label WRAP inside its column instead, so the inline axis
+    // never needs to scroll and the text stays whole; the block axis still
+    // scrolls, which is the browser legend's advantage over the static
+    // exporters, which can only ellipsize. Row `title`/ARIA carries the full
+    // name either way, for the rows the block-axis cap does clip.
     lg.style.cssText = "position:absolute;" +
-      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "column-gap:2em;row-gap:.5em;overflow:auto;";
+      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},minmax(0,max-content));` +
+      "column-gap:2em;row-gap:.5em;overflow-x:hidden;overflow-y:auto;";
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
@@ -2732,6 +2775,17 @@ export class ChartView {
       label.textContent = it.name;
       this._applySlot(label, "legend_label");
       row.appendChild(label);
+      // A row too wide for the capped box ellipsizes (the `legend_item` /
+      // `legend_label` rules in 20_theme.ts) rather than pushing a horizontal
+      // scrollbar onto the legend. Only the LABEL clips: the swatch is
+      // `flex:none` and keeps `overflow:visible`, so an authored oversized
+      // marker still draws outside its 18x14 box. Same full-text-in-title/ARIA
+      // rule categorical tick labels use, so nothing an ellipsis hides becomes
+      // unreachable.
+      if (it.name) {
+        row.title = String(it.name);
+        row.setAttribute("aria-label", String(it.name));
+      }
       // Hover emphasis (interaction spec §9): rows backed by live traces dim the rest
       // of the chart while hovered. Manually-added Legend artists carry no
       // trace linkage, so extra_legends rows stay inert.
@@ -3379,7 +3433,9 @@ export class ChartView {
       const raw = tickValues[tickIndex];
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
-      const tick = document.createElement("span");
+      // `any` because the node carries the stashed beside-the-bar cssText below
+      // (same reason as the legend box's `lg`).
+      const tick: any = document.createElement("span");
       tick.textContent =
         hasExplicitTicks &&
           Array.isArray(cb.tick_labels) &&
@@ -3399,6 +3455,9 @@ export class ChartView {
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${barThickness + 2}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${barThickness + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      // The compact form restacks the two endpoints above/below the gradient, so
+      // keep the beside-the-bar placement to restore when the container widens.
+      tick._xyBesideCss = tick.style.cssText;
       this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
     }
@@ -3426,15 +3485,9 @@ export class ChartView {
     if (cb.label) {
       const label = document.createElement("span");
       label.textContent = String(cb.label);
-      // The vertical title sits outside the tick column. On a compact width that
-      // column holds two short endpoint labels instead of a full ladder, so the
-      // title moves in to match (`_positionColorbar` re-sets this on resize).
-      const titleGap = this._compactVerticalColorbar
-        ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
-        : barThickness + 40;
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${barThickness + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${titleGap}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+        : `position:absolute;left:${barThickness + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
@@ -3474,41 +3527,47 @@ export class ChartView {
       : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
       ? axesPlacement ? this.plot.w : barWidth
-      : axesPlacement
-        ? this.plot.w + 44
-        : compactVertical
-          ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
-            + (cb.label ? COMPACT_COLORBAR_TITLE_ROOM : 0)
-          : 66) + "px";
+      : axesPlacement ? this.plot.w + 44 : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
     this._colorbar.style.height = (horizontal
       ? axesPlacement ? this.plot.h + 24 : 50
       : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
-    // Compact keeps the two EXTREME ticks and the title; only the interior
-    // ladder is dropped. Hiding all of them left a bare gradient with no numbers
-    // and no scale name, which is unreadable rather than merely condensed.
+    // Compact keeps the two EXTREME tick labels — hiding all of them left a bare
+    // gradient with no numbers on it — and restacks them above and below the
+    // gradient. Beside the bar they would need a gutter wide enough for `0.25`,
+    // which costs 36 px of the plot width the compact collapse exists to protect;
+    // centred on an 18 px bar they overflow ~4 px a side into the gap already
+    // reserved. The interior ladder still drops, and so does the rotated title:
+    // at phone width it has nowhere to go, and the box's own `title`/ARIA text
+    // already names the scale and its range.
     const ticks = [...this._colorbar.querySelectorAll('[data-xy-slot="colorbar_tick"]')];
     const fractions = ticks.map((node) => Number(node.dataset.xyColorbarFraction));
     const lowest = Math.min(...fractions);
     const highest = Math.max(...fractions);
-    ticks.forEach((node, index) => {
+    for (const [index, node] of ticks.entries()) {
       const fraction = fractions[index];
-      node.hidden = compactVertical
-        && Number.isFinite(fraction)
-        && fraction !== lowest
-        && fraction !== highest;
-    });
-    for (const node of this._colorbar.querySelectorAll('[data-xy-slot="colorbar_title"]')) {
-      node.hidden = false;
-      if (!horizontal) {
-        node.style.left = (compactVertical
-          ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
-          : (axesPlacement ? this.plot.w : COLORBAR_THICKNESS) + 40) + "px";
+      const endpoint = !Number.isFinite(fraction) || fraction === lowest || fraction === highest;
+      node.hidden = compactVertical && !endpoint;
+      if (horizontal || !node._xyBesideCss) continue;
+      if (!compactVertical || !endpoint) {
+        node.style.cssText = node._xyBesideCss;
+        continue;
       }
+      // Above the top of the gradient for the maximum, below the bottom for the
+      // minimum, both centred on the bar.
+      const above = fraction === highest;
+      const offset = COMPACT_COLORBAR_LABEL_GAP;
+      node.style.cssText =
+        "position:absolute;left:50%;white-space:nowrap;" +
+        (above
+          ? `top:-${offset}px;transform:translate(-50%,-100%);`
+          : `top:calc(100% + ${offset}px);transform:translateX(-50%);`);
     }
-    // Minor ticks stay off in the compact form: they carry no text, so they add
-    // ink without adding a reading.
-    for (const node of this._colorbar.querySelectorAll("[data-xy-colorbar-minor]")) {
+    // The rotated title and the text-free minor ticks are ink a phone-width chart
+    // cannot spend; `box.title` keeps the scale name reachable.
+    for (const node of this._colorbar.querySelectorAll(
+      '[data-xy-slot="colorbar_title"], [data-xy-colorbar-minor]'
+    )) {
       node.hidden = compactVertical;
     }
   }

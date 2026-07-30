@@ -369,6 +369,40 @@ def test_client_caps_the_title_box_at_the_measured_wrap_width() -> None:
     assert "function xyWrapLines(lines, advance, maxWidth)" in CHARTVIEW
 
 
+# -- legend overflow --------------------------------------------------------
+
+
+def test_a_long_legend_row_wraps_instead_of_scrolling_sideways() -> None:
+    """A pie legend grew a horizontal scrollbar, hiding the label it was showing.
+
+    The box is capped at `--xy-legend-max-width`, but its grid columns were
+    `max-content` — they refused to shrink — so an over-wide row overflowed and
+    `overflow:auto` answered with a sideways scrollbar. Shrinkable columns let the
+    label wrap inside its column instead, so nothing needs to scroll sideways and
+    no text is dropped. Block-axis scrolling stays: it is what the browser legend
+    has over the static exporters, which can only ellipsize.
+
+    The row deliberately stays a BLOCK, not a flex line. A flex container
+    blockifies its children's computed `display`, which would turn an author's
+    `inline-flex` swatch utility into `flex`
+    (`test_tailwind_root_customization.py`), and a nowrap label removes the very
+    wrapping that keeps a narrow chart's legend scrollable rather than clipped
+    (`test_legend_resize_regression.py`). The swatch keeps aligning through the
+    `vertical-align` it already carries.
+    """
+    # Columns that can shrink, and no horizontal scroll axis.
+    assert "minmax(0,max-content)" in CHARTVIEW
+    assert "overflow-x:hidden;overflow-y:auto;" in CHARTVIEW
+    theme = (ROOT / "js/src/20_theme.ts").read_text(encoding="utf-8")
+    assert 'data-xy-slot="legend_item"]){' not in theme
+    assert 'data-xy-slot="legend_label"]){' not in theme
+    assert 'data-xy-slot="legend_swatch"]){display:inline-block;width:' in theme
+    # Clipping must never make text unreachable: same full-text-in-title/ARIA
+    # rule the categorical tick labels use.
+    assert "row.title = String(it.name);" in CHARTVIEW
+    assert 'row.setAttribute("aria-label", String(it.name));' in CHARTVIEW
+
+
 # -- polar legend gutter ----------------------------------------------------
 
 
@@ -380,7 +414,7 @@ def test_a_polar_legend_gets_a_gutter_beside_the_disc() -> None:
     # The box is outside the plot rect, on the right, and the disc no longer
     # reaches into it.
     assert plot["legend_box_x"] >= plot["x"] + plot["w"]
-    assert plot["legend_box_w"] == pytest.approx(_svg._POLAR_LEGEND_ROOM)
+    assert plot["legend_box_w"] == pytest.approx(_svg._polar_legend_room(720))
 
 
 def test_a_compact_polar_legend_takes_a_band_under_the_disc() -> None:
@@ -437,7 +471,9 @@ def test_a_cartesian_legend_still_overlays_its_plot() -> None:
 
 def test_client_legend_places_in_the_reserved_box() -> None:
     assert "_polarLegendReserve(compact)" in CHARTVIEW
-    assert "const POLAR_LEGEND_ROOM = 96;" in CHARTVIEW
+    assert "function xyPolarLegendRoom(width)" in CHARTVIEW
+    assert "const POLAR_LEGEND_ROOM_FRACTION = 0.22;" in CHARTVIEW
+    assert "room: xyPolarLegendRoom(this.size.w)," in CHARTVIEW
     assert "const POLAR_LEGEND_BAND = 64;" in CHARTVIEW
     # Placement and the responsive max-width both read the legend box, and an
     # authored anchor still resolves against the plot.
@@ -448,25 +484,29 @@ def test_client_legend_places_in_the_reserved_box() -> None:
 # -- compact colorbar -------------------------------------------------------
 
 
-def test_compact_colorbars_keep_their_endpoints_and_title() -> None:
-    """Hiding every tick and the title left a gradient with no numbers on it."""
-    # Interior ticks drop; the two extremes and the title do not.
-    assert "node.hidden = compactVertical\n        && Number.isFinite(fraction)" in CHARTVIEW
-    assert "&& fraction !== lowest" in CHARTVIEW
-    assert "&& fraction !== highest;" in CHARTVIEW
+def test_compact_colorbars_keep_their_endpoint_labels() -> None:
+    """Hiding every tick left a gradient with no numbers on it.
+
+    The two extremes survive, restacked above and below the gradient. Beside the
+    bar they would need a gutter wide enough for `0.25`, which costs 36 px of the
+    plot width the compact collapse exists to protect; centred on the 18 px bar
+    they fit in the gap already reserved, so the fix is free.
+    """
     assert (
-        "for (const node of this._colorbar.querySelectorAll('[data-xy-slot=\"colorbar_title\"]')) {"
-        in CHARTVIEW
+        "const endpoint = !Number.isFinite(fraction) "
+        "|| fraction === lowest || fraction === highest;" in CHARTVIEW
     )
-    assert "node.hidden = false;" in CHARTVIEW
-    # Text-free minor ticks stay hidden: ink without a reading.
-    assert 'querySelectorAll("[data-xy-colorbar-minor]")' in CHARTVIEW
-
-
-def test_compact_colorbar_room_covers_the_labels_it_keeps() -> None:
-    assert "const COMPACT_COLORBAR_TICK_ROOM = 30;" in CHARTVIEW
-    assert "const COMPACT_COLORBAR_TITLE_ROOM = 14;" in CHARTVIEW
-    assert "COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM" in CHARTVIEW
+    assert "node.hidden = compactVertical && !endpoint;" in CHARTVIEW
+    # Restacked, and the beside-the-bar placement is restored on the way out.
+    assert "tick._xyBesideCss = tick.style.cssText;" in CHARTVIEW
+    assert "node.style.cssText = node._xyBesideCss;" in CHARTVIEW
+    assert "const COMPACT_COLORBAR_LABEL_GAP = 3;" in CHARTVIEW
+    # The reservation is unchanged, which is what keeps the plot space the
+    # collapse was collapsing for.
+    assert "COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8" in CHARTVIEW
+    # The rotated title and the text-free minor ticks are what a phone cannot
+    # spend; `box.title` keeps the scale name reachable.
+    assert "'[data-xy-slot=\"colorbar_title\"], [data-xy-colorbar-minor]'" in CHARTVIEW
 
 
 # -- dpr-baked buffers and animation cadence --------------------------------
@@ -481,11 +521,36 @@ def test_a_dpr_change_rescales_the_buffers_baked_in_device_pixels() -> None:
     assert "this._rescaleDprBakedBuffers();\n    this._layout();" in CHARTVIEW
 
 
-def test_a_dpr_change_coalesces_into_one_resize_frame() -> None:
-    """Browser zoom changes dpr AND the container box, so a synchronous resize
-    plus the ResizeObserver's queued one laid out and painted twice."""
-    assert "this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);" in CHARTVIEW
-    assert "this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio" not in CHARTVIEW
+def test_the_dpr_rescale_defers_to_the_append_rebuild_on_a_short_mirror() -> None:
+    """The rescale re-uploads whole buffers from `_cpuStyle`/`_cpuRadius`, but the
+    streaming-append fast path extends `styleBuf` with a tail `bufferSubData` and
+    advances `n` without growing those mirrors (54_kernel.ts). Re-uploading a short
+    mirror would shrink the store out from under the appended rows, and scaling it
+    would leave that tail at the old dpr regardless. Leaving `_styleDpr` stale
+    hands the repair back to the append guard's rebuild — the fallback
+    `scripts/append_stream_smoke.py` asserts via `dprChangeRebuilds`.
+    """
+    assert "const rows = Number(record.n);" in CHARTVIEW
+    assert "if (record._cpuStyle && record._cpuStyle.length !== rows * 4) return;" in CHARTVIEW
+    assert "if (record._cpuRadius && record._cpuRadius.length !== rows * 2) return;" in CHARTVIEW
+    # The guard the fallback runs through must stay in place.
+    kernel = (ROOT / "js/src/54_kernel.ts").read_text(encoding="utf-8")
+    assert "if (g.styleBuf && g._styleDpr !== this.dpr) return false;" in kernel
+
+
+def test_a_dpr_change_stays_synchronous() -> None:
+    """`render_smoke_nonumpy.py`'s `dprw` probe calls `_onDprChange()` and reads
+    `dpr`/`canvas.width`/`chrome.width` on the next line: a DPR change with no
+    container resize has no later event to piggyback on. Deferring it into
+    `_queueResize` would read a stale `dpr` there, and it saved nothing anyway —
+    the ResizeObserver's queued pass already early-returns when width, height
+    and dpr are all unchanged, so the redundant second frame it was meant to
+    avoid does not exist.
+    """
+    assert "this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio" in CHARTVIEW
+    assert (
+        "this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);" not in CHARTVIEW
+    )
 
 
 def test_data_animations_throttle_the_label_dom_rebuild() -> None:

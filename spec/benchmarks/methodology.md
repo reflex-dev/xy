@@ -235,11 +235,22 @@ and tier discipline applies to them rather than a threshold.
 wall time, so browser, install, and cross-library process benchmarks stay out of
 it — those live in `benchmark-refresh.yml`, and the workflow says so inline.
 
-The glob collects five modules — `test_codspeed_animation.py`,
-`test_codspeed_kernels.py`, `test_codspeed_pyplot.py`,
-`test_codspeed_selection.py`, and `test_codspeed_transport.py` — for 102 rows
-total. These are trend-tracked in CodSpeed, not gated: none of them feed
+The glob collects six modules — `test_codspeed_animation.py`,
+`test_codspeed_kernels.py`, `test_codspeed_polar.py`,
+`test_codspeed_pyplot.py`, `test_codspeed_selection.py`, and
+`test_codspeed_transport.py` — for **109 rows** total, counting parametrized
+expansion. These are trend-tracked in CodSpeed, not gated: none of them feed
 `scripts/check_regressions.py`, whose three inputs are §7's.
+
+That count is a hard gate, not prose:
+`tests/test_benchmark_environment.py::test_codspeed_row_count_matches_the_methodology_spec`
+collects the modules by AST and fails when the two disagree. It exists because a
+benchmark that is renamed or deleted without a note here leaves a **stale row in
+CodSpeed's stored baseline** — the dashboard keeps reporting it as "skipped, using
+the baseline result", which reads like a flaky measurement rather than a row that
+no longer exists. Removing one is allowed; removing one silently is not. Stale
+rows already in the dashboard have to be archived there by hand; this gate stops
+new ones appearing.
 
 **`benchmarks/test_codspeed_pyplot.py` — 14 rows, seven paired arms.** Each pair
 expresses one chart twice over the same input arrays: once through the
@@ -299,6 +310,27 @@ The module collects first alphabetically, so it carries its own native-backend
 assertion and lazy-import warmup fixture. Browser `updatePayload` time,
 animation-frame pacing, heap delta, and the previous+next scene bound stay in
 `bench_animation.py`.
+
+**`benchmarks/test_codspeed_polar.py` — 6 rows.** Attribution for the polar
+coordinate system, which shipped without any CodSpeed row: the report read "103
+untouched benchmarks" for a change that rewrote wedge geometry in three
+renderers, and a performance cliff at ~50k polar bars was consequently found by
+hand rather than by CI. Three payload rows cover the shapes with materially
+different validation and emit paths — a 100k-point polar line, a 16-sector /
+50k-observation wind rose (Python-side binning plus stacked wedges), and a
+24-slice pie (unequal widths, so the four-edge column path rather than the
+compact scalar-width one). Two export rows bracket the arc-flattening term over
+the same rose: SVG draws real `A` arcs and needs no subdivision count, so it is
+the control, while native PNG flattens every wedge through `polar_wedge_points`
+at `config.polar_bar_segments(span, turn)` vertices — six segments for a
+22.5-degree sector rather than the full-turn 96, so a regression back to a flat
+count lands here as an arc-flattening step change instead of a bug report. The
+sixth row is a polar heatmap's bounded screen-space inverse raster, which has no
+Cartesian twin. The payload rows assert bounds, not sizes: the rose's bytes must
+stay bounded by sector and band count rather than observation count, so a row
+cannot get cheaper by shipping a different chart. Browser wedge vertex counts,
+GPU buffer lifetime, and radial-zoom frame pacing are wall-clock/WebGL
+measurements and stay in `bench_interaction.py` and the polar smokes.
 
 **`benchmarks/test_codspeed_selection.py` — 4 rows.** The backend
 interaction/selection handlers the client's gesture messages resolve to
