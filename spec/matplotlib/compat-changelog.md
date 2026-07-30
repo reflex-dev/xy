@@ -40,14 +40,23 @@ which covers user-visible releases across the whole package.
   `polygon_triangles`' 10,000-vertex cap — draws its outline and raises a
   `RuntimeWarning` naming the reason. Matplotlib fills both, so abstaining
   silently would leave a hollow patch that looks like a deliberate style.
+- An artist-level `transform=` on the patch rides along when it is a
+  data-space affine — `Rectangle(..., transform=Affine2D().rotate_deg(45))`
+  keeps its rotation, and `transform=ax.transData` is accepted as the no-op
+  it is. `transform=ax.transAxes`/`transFigure` raise `NotImplementedError`
+  like every other data artist, since baked fractions go silently stale on
+  the next limit change.
 - Holes are not implemented. A patch whose path has nested rings, such as a
   compound `PathPatch` of a square inside a square or a full-circle `Wedge`
   with a `width`, draws its outlines and skips the fill rather than painting
   the hole solid. `polygon_triangles` takes one simple polygon, so filling
   every ring would paint 116 for a square-with-hole whose true area is 84.
-  Rings that merely sit beside each other still fill, and an annular *sector*
-  fills correctly because Matplotlib returns it as one ring that traces out
-  along the outer arc and back along the inner one.
+  Nesting means every vertex of one ring inside another: rings that merely
+  overlap fill ring-by-ring (their union, where Matplotlib's even-odd rule
+  leaves the intersection unpainted), rings that sit beside each other still
+  fill, and an annular *sector* fills correctly because Matplotlib returns it
+  as one ring that traces out along the outer arc and back along the inner
+  one.
 - `add_patch` returns a `Patch` handle rather than a bare `Artist`. It owns the
   outline marks alongside the fill, so `remove()`, `set_zorder()`,
   `set_visible()`, `set_alpha()`, `set_color()` and `set_transform()` move the

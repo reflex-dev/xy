@@ -1173,12 +1173,47 @@ def _refine_at_pixel_scale(path: Any, transform: Any, rings: list[Any], pixels: 
     return [np.asarray(ring, dtype=np.float64) / scale + corner for ring in enlarged.to_polygons()]
 
 
+def _patch_placement(patch: Any) -> tuple[Any, Any]:
+    """(transform to flatten through, xy transform to apply after) for a patch.
+
+    Matplotlib's `Patch.get_transform` composes `get_patch_transform` with the
+    artist-level transform, so `Rectangle(..., transform=Affine2D().rotate_deg(45))`
+    carries its rotation there and flattening through `get_patch_transform`
+    alone would silently drop it. When an artist transform has been set and
+    matplotlib can compose it, the composite is the transform to flatten
+    through. xy's own transform objects will not compose inside matplotlib
+    (`TypeError`); of those, `ax.transData` is the identity so the patch
+    transform alone is already right, a data-space affine comes back as the
+    second element to apply to the flattened rings — exact, since an affine
+    maps polygons to polygons — and axes/figure fractions are rejected the
+    way `_transform_points` rejects them for every other data artist: baked
+    fractions go silently stale on the next limit change.
+    """
+    patch_transform = patch.get_patch_transform()
+    if not getattr(patch, "is_transform_set", lambda: False)():
+        return patch_transform, None
+    try:
+        return patch.get_transform(), None
+    except TypeError:
+        artist_transform = getattr(patch, "_transform", None)
+    if getattr(artist_transform, "coordinate_space", "data") in {
+        "axes_fraction",
+        "figure_fraction",
+    }:
+        raise not_implemented(
+            "data artists with transform=transAxes/transFigure",
+            "affine data transforms composed with ax.transData",
+        )
+    return patch_transform, artist_transform
+
+
 def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
     """Data-space rings of a patch, curves flattened and its transform applied.
 
     ``Path.to_polygons`` applies the patch transform and resolves curves into
     straight segments, so a rotated Rectangle, a Circle, and a Wedge all come
-    back as real geometry rather than as cubic-Bézier control points. `pixels` is
+    back as real geometry rather than as cubic-Bézier control points. An
+    artist-level `transform=` rides along per `_patch_placement`. `pixels` is
     the output size the flattening is resolved for — see
     `_refine_at_pixel_scale`, which is why it is not resolved in data units.
     Ducks without a path fall back to raw vertices, which drop curvature and
@@ -1187,17 +1222,20 @@ def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
     get_path = getattr(patch, "get_path", None)
     get_transform = getattr(patch, "get_patch_transform", None)
     rings: list[Any] = []
+    after = None
     if get_path is not None and get_transform is not None:
         path = get_path()
         to_polygons = getattr(path, "to_polygons", None)
         if to_polygons is not None:
-            transform = get_transform()
+            transform, after = _patch_placement(patch)
             rings = list(to_polygons(transform))
             if rings:
                 # A duck path that cannot be rebuilt from vertices and codes
                 # keeps its data-space flattening rather than losing geometry.
                 with suppress(AttributeError, TypeError, ValueError):
                     rings = list(_refine_at_pixel_scale(path, transform, rings, pixels))
+            if after is not None:
+                rings = [np.asarray(after.transform(ring), dtype=np.float64) for ring in rings]
     if not rings:
         if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
             x0, y0 = float(patch.get_x()), float(patch.get_y())
@@ -1211,26 +1249,31 @@ def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
 
 
 def _rings_are_nested(outline: list[np.ndarray]) -> bool:
-    """True when one ring sits inside another, so the patch's path has holes.
+    """True when one ring sits wholly inside another, so the path has holes.
 
     `kernels.polygon_triangles` takes one simple polygon, so a hole would have
     to be painted solid. Callers abstain from filling instead.
+
+    Containment is every vertex inside, not the first one: rings that merely
+    overlap put some vertices in and some out, and a first-vertex test would
+    call them nested and hollow the whole patch. Overlapping rings fill
+    ring-by-ring instead — their union, where the even-odd rule would leave
+    the intersection unpainted, which errs on the side of painting what each
+    ring alone would have painted.
     """
     from xy import kernels
 
     if len(outline) < 2:
         return False
-    first_row = np.zeros(1, dtype=np.uint32)
     for index, ring in enumerate(outline):
         if not len(ring):
             continue
+        rows = np.arange(len(ring), dtype=np.uint32)
         for other in outline[:index] + outline[index + 1 :]:
             if len(other) < 3:
                 continue
-            inside = kernels.polygon_select(
-                ring[:1, 0], ring[:1, 1], first_row, other[:, 0], other[:, 1]
-            )
-            if len(inside):
+            inside = kernels.polygon_select(ring[:, 0], ring[:, 1], rows, other[:, 0], other[:, 1])
+            if len(inside) == len(ring):
                 return True
     return False
 

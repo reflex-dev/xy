@@ -120,7 +120,12 @@ rather than an exact analytic curve. Matplotlib's renderers flatten in display
 space at draw time; xy builds patch geometry when the patch is added, before
 the view is known, so it flattens as though the patch filled the figure — the
 finest resolution the patch could need, which holds the error near 1e-4 of the
-patch's own size whatever units it is drawn in. Two cases `add_patch` declines
+patch's own size whatever units it is drawn in. That resolution is fixed at
+the figure size in effect when the patch is added: enlarging the figure or
+its DPI afterwards, or zooming deep into a curve, reuses the tessellation
+rather than re-flattening. Rings of one compound path that overlap without
+nesting fill ring-by-ring — their union, where Matplotlib's even-odd rule
+leaves the intersection unpainted. Two cases `add_patch` declines
 rather than approximates: a patch whose path has nested rings draws its
 outlines and skips the fill, since hole support is not implemented and filling
 every ring would paint the hole solid; and a ring that is self-intersecting or

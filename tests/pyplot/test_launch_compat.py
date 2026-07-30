@@ -503,6 +503,56 @@ def test_transforming_a_filled_patch_moves_its_outline_too() -> None:
     assert np.asarray(edges[0]["args"][0]).min() == pytest.approx(10.0)
 
 
+def test_patch_artist_transform_rides_along() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+    from matplotlib.transforms import Affine2D
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", transform=Affine2D().rotate_deg(90)))
+    meshes, _edges = _patch_marks(ax)
+    xs = np.concatenate([np.asarray(meshes[0]["args"][index]) for index in (0, 2, 4)])
+    ys = np.concatenate([np.asarray(meshes[0]["args"][index]) for index in (1, 3, 5)])
+    # Flattening through get_patch_transform alone drops the artist-level
+    # transform and leaves the rectangle axis-aligned at x in 0..2.
+    assert xs.min() == pytest.approx(-1.0)
+    assert xs.max() == pytest.approx(0.0, abs=1e-9)
+    assert ys.max() == pytest.approx(2.0)
+    assert _mesh_area(meshes[0]) == pytest.approx(2.0)
+
+
+def test_patch_transform_transdata_is_accepted_and_transaxes_rejected() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", transform=ax.transData))
+    meshes, _edges = _patch_marks(ax)
+    assert _mesh_area(meshes[0]) == pytest.approx(2.0)
+    # Baked axes fractions go silently stale on the next limit change, so
+    # this rejects like _transform_points does for every other data artist.
+    with pytest.raises(NotImplementedError, match="transAxes"):
+        ax.add_patch(Rectangle((0.1, 0.1), 0.5, 0.5, transform=ax.transAxes))
+
+
+def test_partially_overlapping_rings_fill_instead_of_hollowing() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+
+    left = [(0, 0), (2, 0), (2, 2), (0, 2), (0, 0)]
+    right = [(1, 1), (3, 1), (3, 3), (1, 3), (1, 1)]
+    codes = ([Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY]) * 2
+    _fig, ax = plt.subplots()
+    ax.add_patch(PathPatch(Path(left + right, codes), facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    # The right ring's first vertex sits inside the left ring, but the rings
+    # only overlap. A first-vertex containment test called them nested and
+    # hollowed the whole patch; overlap fills ring-by-ring instead.
+    assert len(meshes) == 2
+    assert sum(_mesh_area(mesh) for mesh in meshes) == pytest.approx(8.0)
+
+
 def test_ring_past_the_triangulator_cap_says_so_instead_of_dropping_the_fill() -> None:
     pytest.importorskip("matplotlib")
     from matplotlib.patches import Polygon
