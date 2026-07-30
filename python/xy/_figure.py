@@ -1172,7 +1172,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if scale == "log" and configured_margin is not None:
             transformed_lo, transformed_hi = np.log10((lo, hi))
             pad = (transformed_hi - transformed_lo) * margin
-            out_lo = 10.0 ** (transformed_lo - pad)
+            # A wide domain can drive the padded exponent past the smallest
+            # representable double, leaving a log axis with a non-positive
+            # lower bound. Floor it the same way the default-margin branch
+            # does, without the ``lo / 10.0`` clamp that would override an
+            # authored margin.
+            out_lo = max(10.0 ** (transformed_lo - pad), np.nextafter(0.0, 1.0))
             out_hi = 10.0 ** (transformed_hi + pad)
         else:
             pad = (hi - lo) * margin

@@ -1689,6 +1689,15 @@ def test_log_autorange_uses_positive_zone_stats():
     assert hi >= 100.0
 
 
+def test_log_explicit_margin_keeps_lower_bound_positive():
+    """An authored margin must not pad the lower bound down to zero."""
+    fig = Figure().scatter(np.array([0.0, 1.0]), np.array([1e-300, 1e10]))
+    fig.set_axis("y", type_="log", margin=0.1)
+    lo, hi = fig.y_range()
+    assert lo > 0.0
+    assert hi > lo
+
+
 def test_memory_report_accounts_for_bytes():
     n = 100_000
     x = np.arange(n, dtype=np.float64)
