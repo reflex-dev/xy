@@ -115,11 +115,16 @@ width with a fixed corner radius per box style (5 px for `round`, 8 px for
 against Matplotlib 3.11.1 at 10 pt, `round` is 4.17 px there against 5 px
 here — errorbar limit flags rendered as one-sided bars without
 Matplotlib's caret arrows, and `add_patch` geometry flattened through
-`Path.to_polygons`, which resolves a curved patch into the same straight
-segments Matplotlib's renderers use rather than an exact analytic curve. A
-patch whose path has nested rings is the one case `add_patch` declines rather
-than approximates: hole support is not implemented, so it draws its outlines
-and skips the fill instead of painting the hole solid.
+`Path.to_polygons`, which resolves a curved patch into straight segments
+rather than an exact analytic curve. Matplotlib's renderers flatten in display
+space at draw time; xy builds patch geometry when the patch is added, before
+the view is known, so it flattens as though the patch filled the figure — the
+finest resolution the patch could need, which holds the error near 1e-4 of the
+patch's own size whatever units it is drawn in. Two cases `add_patch` declines
+rather than approximates: a patch whose path has nested rings draws its
+outlines and skips the fill, since hole support is not implemented and filling
+every ring would paint the hole solid; and a ring that is self-intersecting or
+past the triangulator's 10,000-vertex cap draws its outline and warns.
 
 ## Sharp edges
 

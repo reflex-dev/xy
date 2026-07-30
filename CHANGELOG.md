@@ -24,15 +24,25 @@ in the README).
   rotation and curvature. Patches now fill in their own face color, and their
   geometry comes from `Path.to_polygons` with the patch transform applied, so
   `Rectangle(angle=...)` keeps its rotation and `Circle`/`Ellipse`/`Wedge` use
-  the curve rather than its Bezier control points. Unfilled patches stay
+  the curve rather than its Bezier control points. The curve is flattened at
+  the figure's pixel size rather than in data units, so a `Circle(radius=1)`
+  is as round as the same circle drawn as `radius=1000`. Unfilled patches stay
   edge-only, the axes color cycle is untouched, and a degenerate patch draws
   its edge instead of raising. A patch whose path has nested rings draws its
   outlines and skips the fill, since hole triangulation is not implemented and
-  filling every ring would paint the hole solid.
+  filling every ring would paint the hole solid. A ring that has a body but no
+  triangulation, self-intersecting or past the triangulator's vertex cap,
+  draws its outline and warns rather than going quietly hollow.
 - Patch outlines were stroked at a fixed one pixel that ignored both the
   patch's line width and the figure DPI. They now use the patch's own
   `linewidth`, converted from Matplotlib points into output pixels like every
-  other stroke in the shim.
+  other stroke in the shim, and a patch whose edge paints nothing — the
+  Matplotlib default on a filled patch — no longer emits an invisible outline
+  mark per ring.
+- The handle `add_patch` returns now owns every mark the patch produced, so
+  `remove`, `set_zorder`, `set_visible`, `set_alpha`, `set_color` and
+  `set_transform` move the whole patch. Previously they reached only the fill,
+  and a hidden patch still drew its outline.
 
 ## [0.0.4] - 2026-07-27
 

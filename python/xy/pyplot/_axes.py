@@ -56,7 +56,7 @@ from ._fmt import parse_fmt
 from ._markers import marker_render_spec
 from ._mathtext import mathtext_italic_ranges, mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
-from ._rc import RcParams, rcParams
+from ._rc import RcParams, rc_figsize_px, rcParams
 from ._ticker import (
     AsinhLocator,
     AutoLocator,
@@ -1130,20 +1130,74 @@ def _without_repeats(ring: np.ndarray) -> np.ndarray:
     return ring[np.r_[True, np.hypot(*(ring[1:] - ring[:-1]).T) > span * 1e-12]]
 
 
-def _patch_outline(patch: Any) -> list[np.ndarray]:
+def _refine_at_pixel_scale(path: Any, transform: Any, rings: list[Any], pixels: float) -> Any:
+    """Re-flatten `path` as though the patch spanned `pixels` output pixels.
+
+    ``to_polygons`` subdivides a Bezier until it is flat in the coordinates it
+    is handed, so flattening straight through the patch transform takes its
+    tessellation from the *numeric magnitude* of the data. `Circle(radius=1)`
+    comes back as sixteen segments whose alternate vertices overshoot the true
+    radius by 2.5%, while the identical circle drawn as `radius=1000` comes
+    back smooth. Matplotlib never shows this, because its renderers flatten in
+    display space, after the full data-to-pixel transform.
+
+    xy builds geometry when the patch is added, before the view is known, so
+    there is no true pixel transform to use here. Flattening as though the
+    patch filled the figure is the finest resolution it could ever need, and
+    undoing the scale afterwards leaves data-space rings whose accuracy no
+    longer depends on the units the caller happened to plot in.
+
+    The patch transform is applied to the control points rather than composed
+    onto a scale transform, because the shim never imports matplotlib. That is
+    exact: an affine maps a Bezier's control points to the control points of
+    the mapped curve, and patch transforms are affine.
+
+    Scaling is done about the patch's own corner rather than the origin. A
+    round trip through `* scale` and `/ scale` costs relative precision, and
+    a small patch at a large offset has little to spare: a 1e-4 rectangle at
+    x = 1e9 loses eight times more area to the round trip when the offset
+    rides along than when only the patch's own extent is scaled.
+    """
+    finite = [np.asarray(ring, dtype=np.float64) for ring in rings]
+    finite = [ring for ring in finite if ring.ndim == 2 and len(ring) and np.isfinite(ring).all()]
+    if not finite:
+        return rings
+    stacked = np.concatenate(finite)
+    corner = stacked.min(axis=0)
+    span = float(np.hypot(*(stacked.max(axis=0) - corner)))
+    scale = pixels / span if span > 0.0 else 0.0
+    if not np.isfinite(scale) or scale <= 0.0:
+        return rings
+    placed = np.asarray(transform.transform(path.vertices), dtype=np.float64)
+    enlarged = type(path)((placed - corner) * scale, path.codes)
+    return [np.asarray(ring, dtype=np.float64) / scale + corner for ring in enlarged.to_polygons()]
+
+
+def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
     """Data-space rings of a patch, curves flattened and its transform applied.
 
-    ``Path.to_polygons`` is what matplotlib's own renderers use, so a rotated
-    Rectangle, a Circle, and a Wedge all come back as real geometry. Ducks
-    without it fall back to raw vertices, which drop curvature and rotation.
+    ``Path.to_polygons`` applies the patch transform and resolves curves into
+    straight segments, so a rotated Rectangle, a Circle, and a Wedge all come
+    back as real geometry rather than as Bezier control points. `pixels` is
+    the output size the flattening is resolved for — see
+    `_refine_at_pixel_scale`, which is why it is not resolved in data units.
+    Ducks without a path fall back to raw vertices, which drop curvature and
+    rotation.
     """
     get_path = getattr(patch, "get_path", None)
     get_transform = getattr(patch, "get_patch_transform", None)
     rings: list[Any] = []
     if get_path is not None and get_transform is not None:
-        to_polygons = getattr(get_path(), "to_polygons", None)
+        path = get_path()
+        to_polygons = getattr(path, "to_polygons", None)
         if to_polygons is not None:
-            rings = list(to_polygons(get_transform()))
+            transform = get_transform()
+            rings = list(to_polygons(transform))
+            if rings:
+                # A duck path that cannot be rebuilt from vertices and codes
+                # keeps its data-space flattening rather than losing geometry.
+                with suppress(AttributeError, TypeError, ValueError):
+                    rings = list(_refine_at_pixel_scale(path, transform, rings, pixels))
     if not rings:
         if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
             x0, y0 = float(patch.get_x()), float(patch.get_y())
@@ -1181,16 +1235,31 @@ def _rings_are_nested(outline: list[np.ndarray]) -> bool:
     return False
 
 
-def _patch_fill_color(patch: Any) -> Any:
-    """The patch's own face color, or None when it asks not to be filled."""
-    if not getattr(patch, "get_fill", lambda: True)():
-        return None
-    color = getattr(patch, "get_facecolor", lambda: None)()
+def _opaque_or_none(color: Any) -> Any:
+    """`color` unless it paints nothing — a "none" name or a zero alpha."""
     if color is None or str(color).lower() == "none":
         return None
     if isinstance(color, (tuple, list, np.ndarray)) and len(color) == 4 and not float(color[3]):
         return None
     return color
+
+
+def _patch_fill_color(patch: Any) -> Any:
+    """The patch's own face color, or None when it asks not to be filled."""
+    if not getattr(patch, "get_fill", lambda: True)():
+        return None
+    return _opaque_or_none(getattr(patch, "get_facecolor", lambda: None)())
+
+
+def _patch_edge_color(patch: Any) -> Any:
+    """The patch's own edge color, or None when its outline paints nothing.
+
+    Matplotlib leaves `edgecolor` as `"none"` on a filled patch unless the
+    caller asks for one, so the common `Rectangle(facecolor=...)` has no
+    visible outline at all. Emitting one anyway costs a mark per ring that
+    can never be seen.
+    """
+    return _opaque_or_none(getattr(patch, "get_edgecolor", lambda: "#000000")())
 
 
 class Axes(PlotTypeMixin):
@@ -5654,11 +5723,12 @@ class Axes(PlotTypeMixin):
         StepPatch-likes (with ``get_data()``) route to `stairs`. Every other
         patch is flattened to data-space rings via ``Path.to_polygons``, so
         rotation and curvature survive; each ring fills with the patch's own
-        face color and draws its edge as line segments. A path whose rings
-        nest, meaning holes, draws its outline and skips the fill rather than
-        painting the hole solid. The returned handle owns every mark the patch
-        produced, so removing it takes the outline with the fill. Unsupported
-        patch types raise.
+        face color, and rings draw their edge as line segments when the patch
+        has a visible one. A path whose rings nest, meaning holes, draws its
+        outline and skips the fill rather than painting the hole solid. The
+        returned handle owns every mark the patch produced, so removing or
+        hiding it moves the outline with the fill. Unsupported patch types
+        raise.
         """
         if hasattr(patch, "get_data"):
             data = patch.get_data()
@@ -5681,21 +5751,42 @@ class Axes(PlotTypeMixin):
             )
         from xy import kernels
 
-        outline = _patch_outline(patch)
+        canvas = rc_figsize_px(self.figure._figsize, self.figure._dpi)
+        outline = _patch_outline(patch, pixels=float(max(canvas)))
         face = _patch_fill_color(patch)
-        edge = getattr(patch, "get_edgecolor", lambda: "#000000")()
+        edge = _patch_edge_color(patch)
         width = float(getattr(patch, "get_linewidth", lambda: 1.0)()) * self._point_scale()
         entries: list[dict[str, Any]] = []
         if face is not None and not _rings_are_nested(outline):
             for ring in outline:
                 xv, yv = ring[:, 0], ring[:, 1]
-                if len(xv) > 2 and np.allclose((xv[0], yv[0]), (xv[-1], yv[-1])):
-                    xv, yv = xv[:-1], yv[:-1]
+                # Non-finite vertices have no triangulation, as in `Axes.fill`.
+                finite = np.isfinite(xv) & np.isfinite(yv)
+                xv, yv = xv[finite], yv[finite]
+                if len(xv) > 2:
+                    # Closing-vertex test at the ring's own scale, like
+                    # `_without_repeats`: `np.allclose` scales with coordinate
+                    # magnitude and would swallow a real 5,000-unit closing
+                    # edge on a duck-path ring drawn at x = 1e9.
+                    span = float(np.hypot(np.ptp(xv), np.ptp(yv)))
+                    if np.hypot(xv[0] - xv[-1], yv[0] - yv[-1]) <= span * 1e-12:
+                        xv, yv = xv[:-1], yv[:-1]
+                if len(xv) < 3:
+                    # Degenerate, such as a zero-height Rectangle. It has no
+                    # body to fill; the outline pass below still draws it.
+                    continue
                 try:
                     topology = kernels.polygon_triangles(xv, yv)
-                except ValueError:
-                    # A zero-area or self-intersecting ring has no triangulation;
-                    # the outline pass below still draws it.
+                except ValueError as error:
+                    # Self-intersecting, or past the triangulator's vertex cap.
+                    # Matplotlib fills both, so say so rather than shipping a
+                    # hollow patch that looks deliberate.
+                    warnings.warn(
+                        f"add_patch could not fill a {len(xv)}-vertex ring ({error}); "
+                        "drawing its outline only",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
                     continue
                 x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(xv, yv, topology)
                 entries.append(
@@ -5708,17 +5799,22 @@ class Axes(PlotTypeMixin):
                         },
                     )
                 )
-        for ring in outline:
-            entries.append(
-                self._add(
-                    "@mark",
-                    {
-                        "factory": "segments",
-                        "args": (ring[:-1, 0], ring[:-1, 1], ring[1:, 0], ring[1:, 1]),
-                        "kwargs": {"color": resolve_color(edge), "width": width},
-                    },
+        # An invisible outline is worth emitting only when nothing else was:
+        # the handle needs one entry to stand on, and a patch that drew no
+        # body should still occupy its place in the spec.
+        if (edge is not None and width > 0.0) or not entries:
+            stroke = resolve_color(edge if edge is not None else "none")
+            for ring in outline:
+                entries.append(
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": (ring[:-1, 0], ring[:-1, 1], ring[1:, 0], ring[1:, 1]),
+                            "kwargs": {"color": stroke, "width": width},
+                        },
+                    )
                 )
-            )
         return Patch(self, entries[0], entries[1:])
 
     def add_image(self, image: Any) -> AxesImage:
