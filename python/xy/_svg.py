@@ -3822,17 +3822,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     clip_id = svg.uid("clip")
     # A polar legend lives in its own gutter OUTSIDE the plot rect, so the shared
     # clip has to cover the union of the two boxes or the legend is clipped away
-    # entirely. Union, not replacement: the same id still bounds in-plot chrome.
-    clip_x0, clip_y0 = plot["x"], plot["y"]
-    clip_x1, clip_y1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
-    if "legend_box_w" in plot:
-        clip_x0 = min(clip_x0, plot["legend_box_x"])
-        clip_y0 = min(clip_y0, plot["legend_box_y"])
-        clip_x1 = max(clip_x1, plot["legend_box_x"] + plot["legend_box_w"])
-        clip_y1 = max(clip_y1, plot["legend_box_y"] + plot["legend_box_h"])
+    # entirely (`legend_clip_rect`, shared with the raster exporter).
+    clip_x, clip_y, clip_w, clip_h = legend_clip_rect(plot)
     svg.defs.append(
-        f'<clipPath id="{clip_id}"><rect x="{_num(clip_x0)}" y="{_num(clip_y0)}" '
-        f'width="{_num(clip_x1 - clip_x0)}" height="{_num(clip_y1 - clip_y0)}"/></clipPath>'
+        f'<clipPath id="{clip_id}"><rect x="{_num(clip_x)}" y="{_num(clip_y)}" '
+        f'width="{_num(clip_w)}" height="{_num(clip_h)}"/></clipPath>'
     )
     # Marks clip to the disc under polar so nothing bleeds into the corners the
     # outer ring does not cover. This is a SECOND id: `clip_id` also bounds
@@ -6198,6 +6192,24 @@ def legend_items(traces: list[dict], palette: Sequence[str] = DEFAULT_PALETTE) -
             item["style"] = style
             items.append(item)
     return items
+
+
+def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
+    """Rect that bounds a static legend: the plot, union any polar gutter.
+
+    A polar legend lives in a `legend_box_*` gutter OUTSIDE the plot rect
+    (`_recut_polar_plot`), so clipping a legend to the plot rect alone erases it
+    entirely. Union, not replacement: the same rect still bounds in-plot chrome.
+    Shared so the SVG clipPath and the raster clip command cannot drift.
+    """
+    x0, y0 = float(plot["x"]), float(plot["y"])
+    x1, y1 = x0 + float(plot["w"]), y0 + float(plot["h"])
+    if "legend_box_w" in plot:
+        x0 = min(x0, float(plot["legend_box_x"]))
+        y0 = min(y0, float(plot["legend_box_y"]))
+        x1 = max(x1, float(plot["legend_box_x"]) + float(plot["legend_box_w"]))
+        y1 = max(y1, float(plot["legend_box_y"]) + float(plot["legend_box_h"]))
+    return x0, y0, x1 - x0, y1 - y0
 
 
 def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:

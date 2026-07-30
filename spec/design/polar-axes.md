@@ -145,7 +145,12 @@ Five properties this pins down, each of which has matching coverage:
   should occupy, and remains the way to hand-reserve a caption band), and nothing
   is reserved for a figure whose angular axis is `tick_label_strategy="none"` —
   that early return skips the whole recut, and it is the donut/gauge case whose
-  chrome the author has already taken over.
+  chrome the author has already taken over. Both static exporters bound their
+  legend so an oversized one ellipsizes instead of escaping the file, and that
+  bound is `legend_clip_rect` — the plot rect **unioned** with the gutter, shared
+  so the SVG `clipPath` and the raster clip command cannot drift. Clipping to the
+  plot rect alone is not a smaller legend but no legend: the gutter is outside it
+  by construction, so the whole box falls away.
 - **A title reserves the lines it will wrap into.** `_title_wrap_width` — the
   canvas minus the *authored/default* horizontal gutters, mirrored by
   `_titleWrapWidth` in the client — is resolved before the title band, and both

@@ -69,6 +69,7 @@ from ._svg import (
     axis_ticks,
     hexbin_ring,
     layout,
+    legend_clip_rect,
     legend_items,
     legend_options_with_slot,
     minor_axis_ticks,
@@ -1538,12 +1539,16 @@ def render_raster(
     # must not lift the clip off its non-anchored siblings. The clip is a
     # stateful raster command, so only emit it on a transition — an
     # all-anchored or all-unanchored figure yields the same stream as before.
+    # The clip is the plot rect unioned with any polar legend gutter, which sits
+    # outside it — the plot rect alone erased a polar legend. Shared with the
+    # SVG clipPath via `legend_clip_rect`.
+    lx, ly, lw, lh = legend_clip_rect(plot)
     clipped_to_plot = False
     for items, options in legends:
         want_clip = not options.get("anchor")
         if want_clip != clipped_to_plot:
             if want_clip:
-                cmd.clip(px0, py0, plot["w"], plot["h"])
+                cmd.clip(lx, ly, lw, lh)
             else:
                 cmd.clip(0, 0, width, height)
             clipped_to_plot = want_clip

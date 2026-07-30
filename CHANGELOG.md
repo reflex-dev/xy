@@ -48,7 +48,11 @@ in the README).
   clamped to 120-200 px — derived from the canvas so all three renderers reserve
   the identical box, and wide enough to hold an ordinary row rather than
   ellipsize it. Compact widths take a 64 px band beneath the disc instead. An
-  authored `anchor` or four-tuple `padding` still wins.
+  authored `anchor` or four-tuple `padding` still wins. Both static exporters
+  bound the legend to the plot rect unioned with that gutter (`legend_clip_rect`,
+  shared so they cannot drift): the raster bounded it to the plot rect alone,
+  which is outside the gutter by construction, so a native PNG of any polar
+  figure lost its legend entirely while the SVG kept one.
 - Compact vertical colorbars keep their two extreme tick labels, restacked above
   and below the gradient. Collapsing them hid every number, leaving an unlabelled
   gradient; only the interior ladder, the rotated title and the text-free minor

@@ -434,6 +434,59 @@ def test_the_static_legend_places_itself_in_the_polar_gutter() -> None:
     assert placed["x"] >= plot["x"] + plot["w"], "the legend must clear the disc"
 
 
+def test_the_legend_clip_covers_the_polar_gutter() -> None:
+    """Bounding a legend to the plot rect erases one that sits beside the disc.
+
+    Both exporters clip their legend so an oversized one ellipsizes instead of
+    escaping the file, and both read this rect — the raster kept clipping to the
+    plot alone and dropped every polar legend from the PNG while the SVG kept
+    its own.
+    """
+    spec, _blob = _wind_rose(width=720, height=520).figure().build_payload()
+    _w, _h, _compact, plot = layout(spec)
+    x, y, w, h = _svg.legend_clip_rect(plot)
+    assert (x, y) == (plot["x"], plot["y"])
+    assert x + w >= plot["legend_box_x"] + plot["legend_box_w"]
+    assert y + h >= plot["legend_box_y"] + plot["legend_box_h"]
+    # Union, not replacement: in-plot chrome is still bounded by the plot rect.
+    assert w >= plot["w"] and h >= plot["h"]
+
+
+def test_a_cartesian_legend_clip_is_still_the_plot_rect() -> None:
+    spec, _blob = (
+        xy.line_chart(xy.line([0.0, 1.0], [0.0, 1.0], name="a"), xy.legend())
+        .figure()
+        .build_payload()
+    )
+    _w, _h, _compact, plot = layout(spec)
+    assert _svg.legend_clip_rect(plot) == (plot["x"], plot["y"], plot["w"], plot["h"])
+
+
+def test_the_native_png_carries_the_polar_legend() -> None:
+    """The pixels, not just the rect: the swatch has to survive the clip."""
+    from test_png_export import _decode_rgba
+
+    chart = xy.polar_chart(
+        xy.scatter([45.0], [1.0], color="#0f766e", size=12.0, name="one"),
+        width=520,
+        height=520,
+    )
+    figure = chart.figure()
+    spec, _blob = figure.build_payload()
+    _w, _h, _compact, plot = layout(spec)
+    assert "legend_box_w" in plot
+    # scale=1 so PNG pixels are in the same units as the layout rect.
+    pixels = _decode_rgba(figure.to_image(format="png", scale=1))
+    box = pixels[
+        int(plot["legend_box_y"]) : int(plot["legend_box_y"] + plot["legend_box_h"]),
+        int(plot["legend_box_x"]) : int(plot["legend_box_x"] + plot["legend_box_w"]),
+        :3,
+    ]
+    target = np.array([0x0F, 0x76, 0x6E], dtype=np.int16)
+    swatch = np.all(np.abs(box.astype(np.int16) - target) <= 24, axis=2)
+    assert int(swatch.sum()) >= 10, "the raster clipped the polar legend swatch away"
+
+
 def test_an_authored_anchor_reserves_no_polar_gutter() -> None:
     """An anchor is an explicit plot-relative placement the author owns;
     relocating it would be the same class of bug as ignoring a keyword."""
