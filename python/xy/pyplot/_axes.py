@@ -1107,8 +1107,8 @@ def _without_repeats(ring: np.ndarray) -> np.ndarray:
 
     Matplotlib repeats a vertex inside its full-circle paths, and the
     triangulator rejects any polygon carrying a duplicate. That repeat is not
-    bit-exact, so the test needs a tolerance, but it has to scale with the
-    ring rather than with coordinate magnitude. `np.isclose` scales with
+    bit-exact, so the comparison needs a tolerance, but it has to scale with
+    the ring rather than with coordinate magnitude. `np.isclose` scales with
     magnitude and so treats vertices 10,000 units apart as one at x = 1e9,
     erasing a patch drawn on genomic or epoch-millisecond axes.
 

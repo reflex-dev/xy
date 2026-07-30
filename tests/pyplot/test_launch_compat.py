@@ -370,9 +370,10 @@ def test_patch_with_a_non_finite_coordinate_keeps_its_vertices(bad: float) -> No
     _fig, ax = plt.subplots()
     ax.add_patch(Rectangle((0, 0), bad, 1.0, fill=False))
     _meshes, edges = _patch_marks(ax)
-    # An infinite span makes every gap read as a duplicate and empties the
-    # ring; a NaN span makes every comparison false and leaves it alone. The
-    # two take opposite branches, so both belong here.
+    # The tolerance is a fraction of the ring's span, and none of these three
+    # yield a usable one. They share a single guard, so what this pins is that
+    # its predicate catches all three: an isnan check would let the infinities
+    # through, an isinf check would let the NaN through.
     assert len(edges[0]["args"][0]) == 4
 
 
