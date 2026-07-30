@@ -84,10 +84,14 @@ _FORWARDED_AXIS_COMPONENTS = {
     xy.r_axis: xy.y_axis,
 }
 # `theta_axis`/`r_axis` forward `**props` to the Cartesian axis vocabulary, but
-# they refuse the keywords no polar renderer implements. Documenting the
-# forwarded signature verbatim would re-advertise exactly those options — the
-# trap the refusal exists to close — so they are dropped from the table.
-_REFUSED_POLAR_AXIS_PARAMETERS = frozenset(_POLAR_INERT_AXIS_KEYWORDS)
+# they refuse the keywords no polar renderer implements. Angular `reverse` is
+# also rejected at figure build in favor of `direction`; radial `reverse`
+# remains supported. Documenting the forwarded signatures verbatim would
+# re-advertise exactly those traps, so they are dropped from the relevant table.
+_REFUSED_POLAR_AXIS_PARAMETERS = {
+    xy.theta_axis: frozenset({*_POLAR_INERT_AXIS_KEYWORDS, "reverse"}),
+    xy.r_axis: frozenset(_POLAR_INERT_AXIS_KEYWORDS),
+}
 
 MARKS = (
     xy.line,
@@ -253,7 +257,7 @@ def _documented_parameters(
             parameter
             for parameter in inspect.signature(forwarded_axis).parameters.values()
             if parameter.name not in existing_names
-            and parameter.name not in _REFUSED_POLAR_AXIS_PARAMETERS
+            and parameter.name not in _REFUSED_POLAR_AXIS_PARAMETERS[component]
             and parameter.kind is not inspect.Parameter.VAR_KEYWORD
         )
         documented: list[tuple[inspect.Parameter, Mapping[str, str]]] = []

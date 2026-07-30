@@ -176,7 +176,7 @@ Eight properties this pins down, each of which has matching coverage:
 The Cartesian pipeline is two independent 1-D maps. On the client
 (`AXIS_GLSL` in `js/src/40_gl.ts`):
 
-```
+```text
 xyDecode(encoded, meta)   →  undo §16 offset encoding, back to data space
 xyAxisCoord(...)          →  apply the scale (log / symlog / linear)
 · map.x + map.y           →  affine to clip space

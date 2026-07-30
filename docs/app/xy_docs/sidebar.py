@@ -62,7 +62,8 @@ CHART_FAMILY_SIDEBAR_SECTIONS = (
         _chart_gallery_routes["Uncertainty"],
         "shapes",
         tuple(
-            (title, _chart_gallery_routes[title]) for title in ("Uncertainty", "Stem", "Segments")
+            (title, _chart_gallery_routes[title])
+            for title in ("Uncertainty", "Stem", "Segments", "Sankey")
         ),
     ),
 )

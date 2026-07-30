@@ -296,9 +296,9 @@ next, no dates implied:
 - **Categorical distributions:** strip, swarm, beeswarm, boxen, rug
 - **Regression diagnostics:** trendline, residual, QQ, PP
 - **Scatter matrix and joint plots:** SPLOM, pair grid, marginal histograms
-- **Pie / donut:** available through `xy.pyplot` and unequal-width core polar
-  bars today; a dedicated `xy.pie_chart(xy.pie(...))` convenience and automatic
-  labels remain
+- **Pie / donut:** `xy.pie_chart(labels, values, hole=...)` ships over
+  unequal-width core polar bars, with Matplotlib-shaped helpers in `xy.pyplot`;
+  nested donuts and variable-radius composition remain
 - **Candlestick / OHLC and finance overlays:** SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
 - **Waterfall and funnel**
 - **Treemap, sunburst, and icicle**

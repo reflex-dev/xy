@@ -1,6 +1,8 @@
 ---
 title: Pie and Donut Charts in Python
 description: Build polished pie, donut, progress-ring, and gauge blocks in Python with xy and Reflex.
+components:
+  - xy.pie_chart
 ---
 
 # Pie and Donut Charts in Python
@@ -8,7 +10,9 @@ description: Build polished pie, donut, progress-ring, and gauge blocks in Pytho
 A pie chart maps each share to an angular span. A donut uses the same sectors
 with a positive inner radius, leaving room for a total, status, or supporting
 label. In XY, both are compositions of unequal-width bars inside
-`polar_bar_chart()`.
+`polar_bar_chart()`. For the standard composition, use
+`xy.pie_chart(labels, values, hole=...)`; the examples below use the lower-level
+bars directly to demonstrate custom sector geometry and dashboard layouts.
 
 The first example keeps the chart intentionally small. The examples after it
 combine XY's exportable sector geometry with ordinary Reflex layout for center
