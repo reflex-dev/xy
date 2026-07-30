@@ -12,9 +12,79 @@ from reflex_site_shared.docs import (
 
 from xy_docs.config import DOCS_SECTIONS
 
+POLAR_DOCS_ROUTE = "/charts/polar-chart/"
+RADAR_DOCS_ROUTE = "/charts/radar-chart/"
+RADIAL_BAR_DOCS_ROUTE = "/charts/radial-bar-chart/"
+PIE_DOCS_ROUTE = "/charts/pie-chart/"
+WIND_ROSE_DOCS_ROUTE = "/charts/wind-rose/"
+POLAR_DOCS_ROUTES = (
+    ("Overview", POLAR_DOCS_ROUTE),
+    ("Radar", RADAR_DOCS_ROUTE),
+    ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+    ("Pie & Donut", PIE_DOCS_ROUTE),
+    ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+)
+_chart_gallery = DOCS_SECTIONS[3]
+_chart_gallery_routes = dict(_chart_gallery[3])
+CHART_GALLERY_SIDEBAR_LINK = (
+    "Overview",
+    _chart_gallery[1],
+    _chart_gallery[2],
+    (),
+)
+CHART_FAMILY_SIDEBAR_SECTIONS = (
+    (
+        "Core Charts",
+        _chart_gallery_routes["Line"],
+        "chart-line",
+        tuple(
+            (title, _chart_gallery_routes[title])
+            for title in ("Line", "Area, Step & Stairs", "Scatter", "Bar and Column")
+        ),
+    ),
+    (
+        "Distributions",
+        _chart_gallery_routes["Histogram"],
+        "chart-bar-stacked",
+        tuple(
+            (title, _chart_gallery_routes[title])
+            for title in ("Histogram", "Box Plot", "Violin Plot", "ECDF")
+        ),
+    ),
+    (
+        "Density & Fields",
+        _chart_gallery_routes["Heatmap"],
+        "grid-3x3",
+        tuple((title, _chart_gallery_routes[title]) for title in ("Heatmap", "Hexbin", "Contour")),
+    ),
+    (
+        "Specialized",
+        _chart_gallery_routes["Uncertainty"],
+        "shapes",
+        tuple(
+            (title, _chart_gallery_routes[title]) for title in ("Uncertainty", "Stem", "Segments")
+        ),
+    ),
+)
+POLAR_SIDEBAR_SECTION = (
+    "Polar Charts",
+    POLAR_DOCS_ROUTE,
+    "radar",
+    POLAR_DOCS_ROUTES,
+)
+
 SIDEBAR_SECTION_GROUPS = (
     ("Learning", "/", (*DOCS_SECTIONS[:3], DOCS_SECTIONS[7])),
-    ("Examples", "/overview/gallery/", DOCS_SECTIONS[3:5]),
+    (
+        "Charts",
+        "/overview/gallery/",
+        (
+            CHART_GALLERY_SIDEBAR_LINK,
+            *CHART_FAMILY_SIDEBAR_SECTIONS,
+            POLAR_SIDEBAR_SECTION,
+            DOCS_SECTIONS[4],
+        ),
+    ),
     ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
 )
 
@@ -114,6 +184,8 @@ def _section_items(
     url: rx.vars.StringVar[str],
 ) -> tuple[rx.Component, ...]:
     """Render one sidebar section as a group or a set of direct links."""
+    if not leaves:
+        return (_top_level_link(title, landing_route, icon, url),)
     section_leaves = _section_leaves(landing_route, leaves)
     if title == "Integrations":
         return tuple(
@@ -132,16 +204,31 @@ def _section_items(
             *(_leaf(leaf_title, leaf_route, url) for leaf_title, leaf_route in section_leaves),
             icon=icon,
             open_=(
-                (url == "/") | url.startswith("/overview/")
+                (url == "/")
+                | (url.startswith("/overview/") & (url != CHART_GALLERY_SIDEBAR_LINK[1]))
                 if landing_route == "/"
                 else (
-                    (url == landing_route) | url.startswith("/charts/")
-                    if title == "Chart Gallery"
+                    _matches_route(
+                        url,
+                        tuple(route for _leaf_title, route in section_leaves),
+                    )
+                    if landing_route.startswith("/charts/")
                     else url.startswith(landing_route)
                 )
             ),
         ),
     )
+
+
+def _matches_route(
+    url: rx.vars.StringVar[str],
+    routes: tuple[str, ...],
+) -> rx.Var[bool]:
+    """Return a reactive condition matching one of the exact routes."""
+    matched = url == routes[0]
+    for route in routes[1:]:
+        matched = matched | (url == route)
+    return matched
 
 
 @rx.memo
@@ -224,8 +311,17 @@ def xy_docs_sidebar(route: str) -> rx.Component:
 
 
 __all__ = [
+    "CHART_FAMILY_SIDEBAR_SECTIONS",
+    "CHART_GALLERY_SIDEBAR_LINK",
     "INTEGRATION_LINK_ICONS",
+    "PIE_DOCS_ROUTE",
+    "POLAR_DOCS_ROUTE",
+    "POLAR_DOCS_ROUTES",
+    "POLAR_SIDEBAR_SECTION",
+    "RADAR_DOCS_ROUTE",
+    "RADIAL_BAR_DOCS_ROUTE",
     "SIDEBAR_SECTION_GROUPS",
+    "WIND_ROSE_DOCS_ROUTE",
     "xy_docs_sidebar",
     "xy_docs_sidebar_comp",
 ]

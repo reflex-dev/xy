@@ -127,6 +127,12 @@ the pan *gesture* would leave its position reachable through zoom: a zoom-in /
 zoom-out chain at two cursor positions is an exact pan. Exclusion from pan
 therefore means containment, not gesture removal.
 
+Polar radial zoom is the deliberate exception to cursor anchoring: it always
+uses anchor `0`, preserving `r_min` and scaling only `r_max`. An interior radial
+anchor would lift the minimum and turn an ordinary disc zoom into an annulus.
+Theta pan/zoom, box gestures, selection, brush, and crosshair are disabled for
+polar; see `spec/design/polar-axes.md` §8.
+
 An axis is **contained** when zoom navigation can change it but pan cannot:
 `navigation` and `zoom` are enabled, the axis is in `zoom_axes`, and either
 `pan` is off or the axis is outside `pan_axes`. A contained axis's window can
@@ -278,7 +284,7 @@ renderer reads anywhere in `js/src/`.
 | **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.ts:117`) | `brush`, `select`, `_pickable` |
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
 | Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
-| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault`. The active drag tool never disables it — box-zoom and select tools are drag-only — except `none`, which releases the wheel to the page | `navigation`, `zoom`, and `wheel_zoom` |
+| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault`. Polar instead scales only `r_max` about fixed `r_min`. The active drag tool never disables it — box-zoom and select tools are drag-only — except `none`, which releases the wheel to the page | `navigation`, `zoom`, and `wheel_zoom` |
 | Double click in `pan` or `zoom` mode | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Double click in `select` / `select-lasso` / `select-x` / `select-y` mode | Clear the active selection and, for lasso, its editable polygon; no-op when no selection exists | active selection |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |

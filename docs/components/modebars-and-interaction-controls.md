@@ -23,6 +23,14 @@ Back and Next view-history controls live at the top of the zoom menu. They
 disable automatically at the ends of the history, remain open while stepping
 through views, and a new navigation after going Back clears the forward stack.
 
+Polar charts use a narrower control contract: hover, radial wheel/button zoom,
+reset, and export remain available. Radial zoom scales `r_max` about a fixed
+`r_min` while preserving an authored `hole` or `origin`. Authored angular
+sectors render normally, but Pan/theta rotation, interactive sector zoom, box
+zoom, selection, brushing, and crosshairs do not yet have polar semantics and
+stay disabled even when a general interaction flag is enabled. The polar
+modebar therefore omits the Pan button.
+
 ### The default toolbar
 
 Every interactive chart gets the modebar for free — hover over the top-right

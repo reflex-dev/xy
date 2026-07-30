@@ -80,8 +80,8 @@ def validate_inline_svg_gallery(page_route: str, module_path: Path) -> None:
     """Validate the code-native chart tiles in the compiled gallery route."""
     source = module_path.read_text(encoding="utf-8")
     preview_count = source.count('viewBox=\\"0 0 320 232\\"')
-    if preview_count != 28:
-        msg = f"Inline SVG gallery has {preview_count} previews, expected 28: {page_route}"
+    if preview_count != 33:
+        msg = f"Inline SVG gallery has {preview_count} previews, expected 33: {page_route}"
         raise RuntimeError(msg)
     for marker in ("gallery-preview-surface", "aspect-[320/232]", "shadow-large"):
         if marker not in source:

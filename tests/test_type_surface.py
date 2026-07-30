@@ -50,9 +50,20 @@ ANNOTATION_FACTORIES = (
     "y_band",
     "text",
 )
+AXIS_FACTORIES = (
+    "x_axis",
+    "y_axis",
+    "theta_axis",
+    "r_axis",
+)
 CHART_FACTORIES = (
     "chart",
     "scatter_chart",
+    "polar_chart",
+    "radar_chart",
+    "polar_bar_chart",
+    "pie_chart",
+    "wind_rose",
     "line_chart",
     "area_chart",
     "histogram_chart",
@@ -242,8 +253,7 @@ def test_public_factories_are_typed_root_exports() -> None:
     for name in (
         *MARK_FACTORIES,
         *ANNOTATION_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
         *CHROME_FACTORIES,
         *CHART_FACTORIES,
     ):
@@ -261,8 +271,7 @@ def test_composition_alpha_contract_is_explicitly_exported() -> None:
         *ANNOTATION_FACTORIES,
         *CHART_FACTORIES,
         *CHROME_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
     }
 
     for name in sorted(contract):
@@ -280,8 +289,7 @@ def test_public_component_factories_have_typed_signatures() -> None:
     expected_returns = {
         **{name: components.Mark for name in MARK_FACTORIES},
         **{name: components.Annotation for name in ANNOTATION_FACTORIES},
-        "x_axis": components.Axis,
-        "y_axis": components.Axis,
+        **{name: components.Axis for name in AXIS_FACTORIES},
         "legend": components.Legend,
         "tooltip": components.Tooltip,
         "colorbar": components.Colorbar,
@@ -349,11 +357,19 @@ def test_annotation_factory_kinds_are_registered_with_typed_appliers() -> None:
 
 
 def test_chart_factories_construct_named_lazy_charts() -> None:
+    # One table, so a factory that needs arguments cannot be registered as
+    # requiring them without also being exempted from the empty-children check.
+    required_arguments: dict[str, tuple[Any, ...]] = {
+        "radar_chart": (["a", "b", "c"],),
+        "wind_rose": ([0.0], [1.0]),
+        "pie_chart": (["a", "b"], [1.0, 2.0]),
+    }
     for name in CHART_FACTORIES:
-        chart = getattr(components, name)()
+        chart = getattr(components, name)(*required_arguments.get(name, ()))
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        assert chart.children == ()
+        if name not in required_arguments:
+            assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None
 

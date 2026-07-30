@@ -18,6 +18,7 @@ from reflex_site_shared.components.docs_api import (
 )
 
 import xy
+from xy.components import _POLAR_INERT_AXIS_KEYWORDS
 
 COMPONENT_API_METADATA_KEY = "components"
 API_REFERENCE_HEADING = "API Reference"
@@ -73,6 +74,15 @@ CHART_FACTORY_GROUPS = (
 _CHART_FACTORY_COMPONENTS = frozenset(
     factory for _group_name, factories in CHART_FACTORY_GROUPS for factory in factories
 )
+_FORWARDED_AXIS_COMPONENTS = {
+    xy.theta_axis: xy.x_axis,
+    xy.r_axis: xy.y_axis,
+}
+# `theta_axis`/`r_axis` forward `**props` to the Cartesian axis vocabulary, but
+# they refuse the keywords no polar renderer implements. Documenting the
+# forwarded signature verbatim would re-advertise exactly those options — the
+# trap the refusal exists to close — so they are dropped from the table.
+_REFUSED_POLAR_AXIS_PARAMETERS = frozenset(_POLAR_INERT_AXIS_KEYWORDS)
 
 MARKS = (
     xy.line,
@@ -99,6 +109,8 @@ MARKS = (
 AXES_AND_ANNOTATIONS = (
     xy.x_axis,
     xy.y_axis,
+    xy.theta_axis,
+    xy.r_axis,
     xy.vline,
     xy.hline,
     xy.x_band,
@@ -220,8 +232,34 @@ def _documented_parameters(
     component: Callable[..., Any],
     descriptions: Mapping[str, str],
 ) -> tuple[tuple[inspect.Parameter, Mapping[str, str]], ...]:
-    """Expand chart-factory ``**props`` into the shared Chart constructor API."""
+    """Expand forwarded chart and polar-axis keyword arguments."""
     parameters = tuple(inspect.signature(component).parameters.values())
+    if forwarded_axis := _FORWARDED_AXIS_COMPONENTS.get(component):
+        forwarded_descriptions = _parameter_descriptions(inspect.getdoc(forwarded_axis) or "")
+        merged_descriptions = {**forwarded_descriptions, **descriptions}
+        existing_names = {
+            parameter.name
+            for parameter in parameters
+            if parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        }
+        forwarded_parameters = tuple(
+            parameter
+            for parameter in inspect.signature(forwarded_axis).parameters.values()
+            if parameter.name not in existing_names
+            and parameter.name not in _REFUSED_POLAR_AXIS_PARAMETERS
+            and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        )
+        documented: list[tuple[inspect.Parameter, Mapping[str, str]]] = []
+        for parameter in parameters:
+            if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+                documented.extend(
+                    (forwarded_parameter, merged_descriptions)
+                    for forwarded_parameter in forwarded_parameters
+                )
+                continue
+            documented.append((parameter, merged_descriptions))
+        return tuple(documented)
+
     if component not in _CHART_FACTORY_COMPONENTS:
         return tuple((parameter, descriptions) for parameter in parameters)
 

@@ -296,7 +296,9 @@ next, no dates implied:
 - **Categorical distributions:** strip, swarm, beeswarm, boxen, rug
 - **Regression diagnostics:** trendline, residual, QQ, PP
 - **Scatter matrix and joint plots:** SPLOM, pair grid, marginal histograms
-- **Pie / donut:** in `xy.pyplot` today, promoting to `xy.pie_chart(xy.pie(...))`
+- **Pie / donut:** `xy.pie_chart(labels, values)` ships in the composition API
+  alongside `xy.pyplot` and unequal-width core polar bars; nested donuts and
+  variable-radius composition remain
 - **Candlestick / OHLC and finance overlays:** SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
 - **Waterfall and funnel**
 - **Treemap, sunburst, and icicle**

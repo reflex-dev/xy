@@ -53,6 +53,13 @@ font, and WebGL fidelity for any format except SVG. Native exports never
 install or launch a browser; when Chromium is requested but not found, the
 error names `XY_BROWSER` and the supported browsers.
 
+Polar line/area/bar geometry, heatmaps, contours, error bars, partial sectors,
+holes/origins, log/symlog radius, polygonal grids, and point-anchored
+annotations share one projection across the browser, SVG, and native raster
+paths. Polar heatmaps are inverse-sampled at the requested output resolution
+and embedded as bounded raster layers in SVG/PDF; contour lines and chart
+chrome remain vector.
+
 ### Background policy
 
 `background` accepts `"auto"` (each renderer's default backdrop: opaque white
@@ -112,8 +119,11 @@ chart.to_html("chart.html")
 ~~~
 
 HTML export is self-contained: it includes the chart spec, binary data, and
-bundled render client. It keeps zoom, pan, hover, selection, and built-in chart
-chrome and does not need a browser or network connection at export time.
+bundled render client. It keeps the interactions supported by that chart and
+coordinate system—zoom, pan, hover, and selection on ordinary Cartesian
+charts, with the narrower radial-zoom/hover/reset contract on polar charts—and
+built-in chart chrome. It does not need a browser or network connection at
+export time.
 
 Pass `custom_css=` to include author CSS for chrome classes and tokens in the
 exported document. Standalone HTML uses inline scripts and styles by design;

@@ -156,6 +156,8 @@ table.
 
 ## Related Charts
 
+- [Polar charts](/docs/xy/charts/polar-chart/#map-a-polar-field) — project a
+  regular theta/r field and its contour isolines through a polar axis.
 - [Heatmaps](/docs/xy/charts/heatmap/) — color every grid cell instead of
   drawing bands.
 - [Hexbin plots](/docs/xy/charts/hexbin/) — build a density field from scattered

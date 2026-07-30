@@ -8,15 +8,23 @@ components:
 # Tooltips in Python
 
 XY shows a built-in hover tooltip by default. With no tooltip component it
-reports the available x/y values and encoded color or size values. Add
-`tooltip()` to choose fields, give source columns readable labels, format
-values, supply a title template, hide the tooltip, or register
-framework-rendered content.
+leads with the hovered series name when one is available, then reports the
+available x/y values and encoded color or size values. Polar charts label the
+radial row `r` and drop the numeric angle, which is layout rather than data.
+Add `tooltip()` to choose fields, give source columns
+readable labels, format values, supply a title template, hide the tooltip, or
+register framework-rendered content.
 
 ## Default Hover Tooltip
 
 With a bare `xy.tooltip()` (or none at all), hovering a point reports its x and
-y values without any further configuration.
+y values without any further configuration. A named mark uses its series name
+as the tooltip title. On a polar chart the readout reports the values — series
+name, radial value, and any color or size encoding — and leaves the numeric
+angle out, since the cursor is already sitting on it. An authored spoke label
+survives, so a radar category reads `power` rather than a number, and
+`labels={"x": ...}` opts the angle back in formatted through the theta axis.
+Explicit `title=` and `fields=` continue to control a customized readout.
 
 ~~~python demo exec
 import reflex_xy

@@ -46,6 +46,19 @@ Viewport DOM events are always available. Add ``on_view_change`` to a live
 notebook or Reflex adapter when Python needs the semantic range events; there
 is no separate transport configuration flag.
 
+### Polar interaction boundary
+
+Polar charts keep hover, radial wheel/modebar zoom, and reset. Radial zoom
+changes the maximum radius while holding the minimum fixed, so zooming a disc
+does not unexpectedly create a hole and an authored `hole` or `origin` remains
+stable. Authored sectors are supported, but theta rotation/panning, interactive
+sector zoom, box zoom, selection, brushing, and crosshairs are disabled until
+those gestures have polar-native geometry. Polar charts do not expose the Pan
+button, and interaction flags cannot opt one into an unsupported gesture.
+
+See the [polar chart guide](/docs/xy/charts/polar-chart/#hover-and-zoom) for the
+complete coordinate-system boundary.
+
 ## Handle chart events in Reflex
 
 Core chart containers accept `on_hover`, `on_click`, `on_brush`, `on_select`,
