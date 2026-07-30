@@ -118,6 +118,19 @@ def _mesh_area(entry: dict) -> float:
     return float(np.sum(np.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))) / 2.0)
 
 
+def _shortest_relative_edge(entry: dict) -> float:
+    """The outline's shortest segment as a fraction of its bounding diagonal.
+
+    Scale-free, so it pins "no duplicate vertices survived" without pinning
+    how many vertices Matplotlib's tessellation happens to emit. A duplicate
+    left in place shows up here around 1e-16, real geometry above 1e-3.
+    """
+    x0, y0, x1, y1 = (np.asarray(values, dtype=np.float64) for values in entry["args"])
+    xs, ys = np.concatenate((x0, x1)), np.concatenate((y0, y1))
+    span = float(np.hypot(np.ptp(xs), np.ptp(ys)))
+    return float(np.min(np.hypot(x1 - x0, y1 - y0)) / span)
+
+
 def _patch_marks(ax: plt.Axes) -> tuple[list[dict], list[dict]]:
     meshes = [entry for entry in ax._entries if entry.get("factory") == "triangle_mesh"]
     edges = [entry for entry in ax._entries if entry.get("factory") == "segments"]
@@ -304,9 +317,49 @@ def test_full_annulus_draws_both_outlines_without_raising() -> None:
     meshes, edges = _patch_marks(ax)
     assert meshes == []
     assert len(edges) == 2
-    # Matplotlib repeats a vertex in its full-circle path; dropping only the
-    # trailing one left a duplicate that the triangulator rejected in silence.
-    assert all(len(edge["args"][0]) == 32 for edge in edges)
+    # Matplotlib repeats a vertex in its full-circle path. Leaving it in place
+    # made the triangulator reject the ring, and the failure was swallowed, so
+    # this asserts the repeat is gone rather than that we drew nothing.
+    assert all(_shortest_relative_edge(edge) > 1e-6 for edge in edges)
+
+
+def test_patch_at_genomic_coordinates_keeps_every_vertex() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((1e9, 0.0), 5000.0, 10.0, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    # A magnitude-relative duplicate test collapses this to three vertices and
+    # zero area, because 1e-5 of 1e9 is 10,000 data units.
+    assert len(edges[0]["args"][0]) == 4
+    assert _mesh_area(meshes[0]) == pytest.approx(50000.0)
+
+
+def test_full_disc_wedge_fills_despite_its_repeated_vertex() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Wedge
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Wedge((0, 0), 1.0, 0.0, 360.0, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    # The repeat is not bit-exact, so an exact-equality dedupe leaves it in
+    # place and the triangulator rejects the whole disc.
+    assert len(meshes) == 1
+    assert _mesh_area(meshes[0]) == pytest.approx(np.pi, rel=1e-3)
+    assert _shortest_relative_edge(edges[0]) > 1e-6
+
+
+def test_tightly_spaced_but_distinct_vertices_survive() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Polygon
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Polygon([[0, 0], [1e-9, 0], [1, 0], [1, 1], [0, 1]], facecolor="tab:blue"))
+    _meshes, edges = _patch_marks(ax)
+    # A 1e-9 edge on a unit-span ring is real geometry, not floating-point
+    # noise, and np.isclose's 1e-8 absolute floor would swallow it.
+    assert len(edges[0]["args"][0]) == 5
 
 
 def test_patch_without_a_path_or_rectangle_getters_raises() -> None:
