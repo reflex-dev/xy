@@ -217,6 +217,98 @@ def test_adding_a_filled_patch_does_not_advance_the_color_cycle() -> None:
     assert polygon._entry["kwargs"]["color"] == "#1f77b4"
 
 
+def test_patch_outline_width_converts_points_to_pixels() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    widths = []
+    for dpi in (72, 200):
+        _fig, ax = plt.subplots(dpi=dpi)
+        ax.add_patch(Rectangle((0, 0), 2, 1, fill=False, linewidth=5))
+        widths.append(ax._entries[-1]["kwargs"]["width"])
+    assert widths == pytest.approx([5.0, 5.0 * 200 / 72])
+
+
+def test_patch_outline_stroke_thickens_with_dpi_in_the_png(tmp_path) -> None:
+    pytest.importorskip("matplotlib")
+    image_module = pytest.importorskip("PIL.Image")
+    from matplotlib.patches import Rectangle
+
+    def stroke_runs(dpi: int) -> list[int]:
+        fig, ax = plt.subplots(figsize=(4, 4), dpi=dpi)
+        ax.add_patch(Rectangle((2, 4), 6, 2, fill=False, edgecolor="#ff0000", linewidth=5))
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        path = tmp_path / f"stroke_{dpi}.png"
+        fig.savefig(str(path))
+        pixels = np.asarray(image_module.open(path).convert("RGB"))
+        red = (pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 100) & (pixels[:, :, 2] < 100)
+        column = red[:, pixels.shape[1] // 2]
+        edges = np.flatnonzero(np.diff(np.r_[False, column, False].astype(np.int8)))
+        return (edges[1::2] - edges[0::2]).tolist()
+
+    assert stroke_runs(72) == [5, 5]
+    assert stroke_runs(200) == [13, 13]
+
+
+def test_patch_with_nested_rings_abstains_from_filling_the_hole() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+
+    square = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+    hole = [(3, 3), (3, 7), (7, 7), (7, 3), (3, 3)]
+    codes = ([Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY]) * 2
+    _fig, ax = plt.subplots()
+    ax.add_patch(PathPatch(Path(square + hole, codes), facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    # Filling both rings would paint 116 for a true area of 84.
+    assert meshes == []
+    assert len(edges) == 2
+
+
+def test_patch_with_disjoint_rings_still_fills_both() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+
+    left = [(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)]
+    right = [(3, 0), (4, 0), (4, 1), (3, 1), (3, 0)]
+    codes = ([Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY]) * 2
+    _fig, ax = plt.subplots()
+    ax.add_patch(PathPatch(Path(left + right, codes), facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    assert len(meshes) == 2
+    assert sum(_mesh_area(mesh) for mesh in meshes) == pytest.approx(2.0)
+
+
+def test_annular_sector_fills_as_one_ring() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Wedge
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Wedge((0, 0), 1.0, 0.0, 90.0, width=0.4, facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    # An annular sector traces out along one arc and back along the other, so
+    # it is a single simple ring rather than a hole.
+    assert len(meshes) == 1
+    assert _mesh_area(meshes[0]) == pytest.approx(np.pi * (1.0**2 - 0.6**2) / 4.0, rel=1e-2)
+
+
+def test_full_annulus_draws_both_outlines_without_raising() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Wedge
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Wedge((0, 0), 1.0, 0.0, 360.0, width=0.4, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    assert meshes == []
+    assert len(edges) == 2
+    # Matplotlib repeats a vertex in its full-circle path; dropping only the
+    # trailing one left a duplicate that the triangulator rejected in silence.
+    assert all(len(edge["args"][0]) == 32 for edge in edges)
+
+
 def test_patch_without_a_path_or_rectangle_getters_raises() -> None:
     _fig, ax = plt.subplots()
     with pytest.raises(TypeError, match="unsupported patch"):
