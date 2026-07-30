@@ -798,7 +798,12 @@ export class ChartView {
   // python/xy/_svg.py — including the ceiling, past which a pathological label
   // truncates instead of shrinking the disc away.
   _polarLabelRoom(axis) {
-    const labels = axis && axis.tick_labels;
+    // A category axis carries its authored names in `categories` and usually
+    // has no `tick_labels` at all (`_axisTicks` hands the categories straight
+    // to `categoryTicks`), so measuring only `tick_labels` fell back to the
+    // uniform default and long names spilled over the disc.
+    const labels = (axis && axis.tick_labels)
+      || (axis && axis.kind === "category" ? axis.categories : null);
     if (!Array.isArray(labels) || !labels.length) return POLAR_LABEL_ROOM;
     const size = this._axisStyleNumber(axis, "tick_label_size", 11);
     let widest = 0;
@@ -812,7 +817,12 @@ export class ChartView {
   _recutPolarPlot(compact = false) {
     if (this.spec?.coords !== "polar") return;
     const xAxisSpec = this._axis("x") || {};
-    if (this._axisTickLabelStrategy(xAxisSpec) === "none") return;
+    // Hiding the angular tick labels removes the LABEL inset, not the legend
+    // gutter. Returning here skipped `_polarLegendReserve` outright, and since
+    // `_layout` clears `_legendRect` just before this call, legend sizing and
+    // positioning then fell back to `this.plot` and drew the legend on top of
+    // the marks. Track it and skip only the inset.
+    const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";
     // A legend gutter comes off the canvas edge FIRST, before the disc is fitted
     // to what remains, so the disc never occupies the gutter and the legend
     // never occupies the disc. Mirrors the same block in `_recut_polar_plot`.
@@ -841,7 +851,7 @@ export class ChartView {
     const reservedTop = p.y;
     const reservedRight = canvasW - p.x - p.w;
     const reservedBottom = canvasH - p.y - p.h;
-    const room = this._polarLabelRoom(xAxisSpec);
+    const room = labelsHidden ? 0 : this._polarLabelRoom(xAxisSpec);
     // An explicit `padding` states the box the author wants the plot to
     // occupy — usually to reserve a band under the disc for a legend or
     // caption. Reclaiming those gutters below would throw that away, so an

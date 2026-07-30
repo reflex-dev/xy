@@ -2730,7 +2730,13 @@ def _polar_label_room(theta_axis: dict[str, Any]) -> float:
     Mirrored by `polarLabelRoom` in js/src/50_chartview.ts.
     """
     room = _POLAR_LABEL_ROOM
+    # A category axis carries its authored names in `categories` and usually has
+    # no `tick_labels` at all (`axis_ticks` hands the categories straight to
+    # `_category_ticks`), so measuring only `tick_labels` fell back to the
+    # uniform default and long names spilled over the disc.
     labels = theta_axis.get("tick_labels")
+    if not labels and theta_axis.get("kind") == "category":
+        labels = theta_axis.get("categories")
     if not labels:
         return room
     size = _axis_tick_font_size(theta_axis)
@@ -2773,8 +2779,12 @@ def _recut_polar_plot(
     of on top of it. `_legend_layout` places and bounds itself in that box.
     """
     theta_axis = spec.get("x_axis") or {}
-    if theta_axis.get("tick_label_strategy") == "none":
-        return
+    # Hiding the angular tick labels removes the LABEL inset, not the legend
+    # gutter. Returning here skipped `_polar_legend_reserve` outright, so the
+    # legend fell back to the plain plot rect and drew on top of the marks —
+    # and the disc kept the cartesian gutters it should have given back. Track
+    # it and skip only the inset.
+    labels_hidden = theta_axis.get("tick_label_strategy") == "none"
     # The legend gutter is taken off the canvas edge FIRST, before the disc is
     # fitted to what is left, so the disc never occupies the gutter and the
     # legend never occupies the disc. Recorded as four floats rather than a
@@ -2802,7 +2812,7 @@ def _recut_polar_plot(
     reserved_right = width - plot["x"] - plot["w"]
     reserved_bottom = height - plot["y"] - plot["h"]
 
-    room = _polar_label_room(theta_axis)
+    room = 0.0 if labels_hidden else _polar_label_room(theta_axis)
     authored_pad = spec.get("padding")
     if isinstance(authored_pad, list) and len(authored_pad) == 4:
         # An explicit `padding` states the box the author wants the plot to

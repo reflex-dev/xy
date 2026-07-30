@@ -611,3 +611,52 @@ def test_data_animations_throttle_the_label_dom_rebuild() -> None:
     assert "const labelCadenceMs = (this._viewAnim || this._dataAnim) ? 80 : 0;" in CHARTVIEW
     # And the settled labels always land when the transition ends.
     assert "this._lastLabelDraw = null;" in animation
+
+
+def test_categorical_theta_labels_widen_the_disc_gutter() -> None:
+    """A category axis carries its names in `categories`, not `tick_labels`.
+
+    `_polar_label_room` measured only `tick_labels`, so a categorical angular
+    axis fell back to the uniform default and long names spilled over the disc.
+    `radar_chart` hid this because it authors `tick_labels` explicitly.
+    """
+    names = ["EAST-NORTH-EAST", "SOUTH-SOUTH-WEST", "WEST-NORTH-WEST", "NORTH-NORTH-EAST"]
+    chart = xy.polar_bar_chart(xy.bar(names, [3.0, 5.0, 2.0, 4.0]), width=460, height=440)
+    spec, _blob = chart.figure().build_payload_split()
+    theta_axis = spec["x_axis"]
+    assert theta_axis["kind"] == "category"
+    assert theta_axis.get("tick_labels") is None, "guard: names must ride `categories`"
+    assert _svg._polar_label_room(theta_axis) > _svg._POLAR_LABEL_ROOM
+
+    # And the client measures the same source.
+    assert 'axis.kind === "category" ? axis.categories : null' in CHARTVIEW
+
+
+def test_hiding_angular_labels_keeps_the_legend_gutter() -> None:
+    """`tick_label_strategy="none"` removes the LABEL inset, not the recut.
+
+    The early return skipped `_polar_legend_reserve` outright, so the legend
+    fell back to the plain plot rect and drew over the marks — and the disc
+    kept the cartesian gutters it should have given back.
+    """
+    theta = np.linspace(0.0, 2.0 * math.pi, 60)
+    chart = xy.polar_chart(
+        xy.line(theta, np.ones(60), name="series one"),
+        xy.theta_axis(tick_label_strategy="none"),
+        width=460,
+        height=420,
+    )
+    spec, _blob = chart.figure().build_payload_split()
+    _w, _h, _compact, plot = _svg.layout(spec)
+    assert "legend_box_w" in plot, "legend gutter was dropped with the label inset"
+    assert plot["legend_box_w"] > 0
+
+    # The recut still ran: the cartesian left gutter is given back.
+    cartesian = xy.line_chart(xy.line(theta, np.ones(60)), width=460, height=420)
+    cart_spec, _ = cartesian.figure().build_payload_split()
+    _cw, _ch, _cc, cart_plot = _svg.layout(cart_spec)
+    assert plot["x"] < cart_plot["x"]
+
+    # The client tracks the same flag rather than returning early.
+    assert 'const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";' in CHARTVIEW
+    assert "labelsHidden ? 0 : this._polarLabelRoom(xAxisSpec)" in CHARTVIEW
