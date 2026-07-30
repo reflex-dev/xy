@@ -660,3 +660,24 @@ def test_hiding_angular_labels_keeps_the_legend_gutter() -> None:
     # The client tracks the same flag rather than returning early.
     assert 'const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";' in CHARTVIEW
     assert "labelsHidden ? 0 : this._polarLabelRoom(xAxisSpec)" in CHARTVIEW
+
+
+def test_horizontal_bars_are_refused_under_polar() -> None:
+    """A polar bar's position IS its angle and its value IS its radius.
+
+    `orientation="horizontal"` swaps those roles, which a disc has no meaning
+    for — every renderer reads `pos` as theta regardless, so the bar came out
+    transposed rather than rotated. `POLAR_MARK_KINDS` admits `bar`, so nothing
+    else was catching it.
+    """
+    angles = np.arange(4.0)
+    values = np.arange(1.0, 5.0)
+    with pytest.raises(ValueError, match="does not support bar orientation='horizontal'"):
+        xy.polar_bar_chart(xy.bar(angles, values, orientation="horizontal")).figure()
+
+    # Vertical polar bars and cartesian horizontal bars are both untouched.
+    spec, _blob = xy.polar_bar_chart(xy.bar(angles, values)).figure().build_payload_split()
+    assert spec["traces"][0]["bar"]["orientation"] == "vertical"
+    cartesian = xy.bar_chart(xy.bar(["a", "b"], [1.0, 2.0], orientation="horizontal"))
+    cart_spec, _ = cartesian.figure().build_payload_split()
+    assert cart_spec["traces"][0]["bar"]["orientation"] == "horizontal"
