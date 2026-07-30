@@ -1106,11 +1106,25 @@ def _without_repeats(ring: np.ndarray) -> np.ndarray:
     """A ring with consecutive duplicate vertices dropped, closing vertex kept.
 
     Matplotlib repeats a vertex inside its full-circle paths, and the
-    triangulator rejects any polygon carrying a duplicate.
+    triangulator rejects any polygon carrying a duplicate. That repeat is not
+    bit-exact, so the test needs a tolerance, but it has to scale with the
+    ring rather than with coordinate magnitude. `np.isclose` scales with
+    magnitude and so treats vertices 10,000 units apart as one at x = 1e9,
+    erasing a patch drawn on genomic or epoch-millisecond axes.
+
+    Measured against Matplotlib 3.11.1 as a fraction of the ring's
+    bounding-box diagonal, repeats sit at 9e-17 while the smallest real edge
+    across the shapes we flatten sits at 2e-3. A threshold of 1e-12 of the
+    span is ten thousand times above the noise and a billion times below the
+    smallest real edge.
     """
     if len(ring) < 2:
         return ring
-    return ring[np.r_[True, ~np.all(np.isclose(ring[1:], ring[:-1]), axis=1)]]
+    span = float(np.hypot(*(ring.max(axis=0) - ring.min(axis=0))))
+    gaps = np.hypot(*(ring[1:] - ring[:-1]).T)
+    # Negated so a non-finite gap or span keeps the vertex. The triangulator
+    # rejects the ring on its own terms rather than us silently emptying it.
+    return ring[np.r_[True, ~(gaps <= span * 1e-12)]]
 
 
 def _patch_outline(patch: Any) -> list[np.ndarray]:
