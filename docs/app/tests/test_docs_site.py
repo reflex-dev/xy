@@ -32,7 +32,6 @@ from reflex_docgen.markdown import (
     TextBlock,
     parse_document,
 )
-from reflex_site_shared.constants import DISCORD_URL
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
 from rxconfig import config
@@ -2043,7 +2042,7 @@ def test_xy_sidebar_opens_only_the_current_chart_family(
     )
 
 
-def test_xy_navbar_uses_xy_links_forum_github_and_the_official_drawer() -> None:
+def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     """Keep the XY navbar focused while retaining its mobile drawer trigger."""
     component = xy_docs_navbar()
     assert isinstance(component, MemoComponent)
@@ -2061,10 +2060,8 @@ def test_xy_navbar_uses_xy_links_forum_github_and_the_official_drawer() -> None:
     assert 'variant:"ghost"},"Framework"' not in rendered
     assert 'variant:"ghost"},"Cloud"' not in rendered
     assert 'variant:"ghost"},"XY"' not in rendered
-    assert DISCORD_URL in rendered
-    assert "Forum" in rendered
+    assert "Forum" not in rendered
     assert "Discord Community" not in rendered
-    assert "Open the Reflex community forum" in rendered
     assert 'variant:"primary"' in rendered
     assert "View XY on GitHub -" not in rendered
     assert rendered.count("View XY on GitHub") == 2

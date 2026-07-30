@@ -5,7 +5,7 @@ import reflex_components_internal as ui
 from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.components.inkeep import inkeep
 from reflex_site_shared.components.marketing_button import button
-from reflex_site_shared.constants import DISCORD_URL, REFLEX_ASSETS_CDN
+from reflex_site_shared.constants import REFLEX_ASSETS_CDN
 from reflex_site_shared.views.hosting_banner import HostingBannerState
 from reflex_site_shared.views.sidebar import navbar_sidebar_button
 
@@ -80,26 +80,6 @@ def _menu_item(label: str, href: str) -> rx.Component:
     )
 
 
-def _forum_button() -> rx.Component:
-    """Render the external Reflex community forum link."""
-    label = "Open the Reflex community forum"
-    return rx.el.elements.a(
-        button(
-            get_icon(icon="discord_navbar", class_name="size-4 shrink-0"),
-            "Forum",
-            custom_attrs={"aria-label": label},
-            size="sm",
-            variant="primary",
-            native_button=False,
-            class_name="whitespace-nowrap",
-        ),
-        href=DISCORD_URL,
-        target="_blank",
-        rel="noopener noreferrer",
-        aria_label=label,
-    )
-
-
 def _github_button() -> rx.Component:
     """Render the external XY repository link."""
     label = "View XY on GitHub"
@@ -109,7 +89,7 @@ def _github_button() -> rx.Component:
             "GitHub",
             custom_attrs={"aria-label": label},
             size="sm",
-            variant="ghost",
+            variant="primary",
             native_button=False,
             class_name="whitespace-nowrap",
         ),
@@ -139,15 +119,9 @@ def _navigation_menu() -> rx.Component:
                 custom_attrs={"role": "menuitem"},
             ),
             ui.navigation_menu.item(
-                _forum_button(),
-                unstyled=True,
-                class_name="hidden md:flex",
-                custom_attrs={"role": "menuitem"},
-            ),
-            ui.navigation_menu.item(
                 _github_button(),
                 unstyled=True,
-                class_name="hidden lg:flex",
+                class_name="hidden md:flex",
                 custom_attrs={"role": "menuitem"},
             ),
             ui.navigation_menu.item(
