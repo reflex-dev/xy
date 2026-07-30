@@ -2502,7 +2502,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         n_buckets,
         start,
         end,
-        par_threads(end - start),
+        par_threads_above(end - start, PAR_THRESHOLD_COMPUTE),
     )
 }
 
@@ -3174,22 +3174,29 @@ fn bin_2d_count_f32_scalar(
     }
 }
 
-/// Row-scan kernels fan out across cores only past this size, where thread
+/// Row-scan kernels fan out across cores only past these sizes, where thread
 /// spawn + merge cost is well amortized. Threading stays inside the call —
-/// the ABI remains synchronous (engine doc E5).
+/// the ABI remains synchronous (engine doc E5). Compute-bound scans cross over
+/// earlier: at ~2.5–3 ns/row serial, M4 and uniform histogram amortize a
+/// fan-out from ~128k rows, the same crossover zone maps use.
 const PAR_THRESHOLD: usize = 1 << 19;
+const PAR_THRESHOLD_COMPUTE: usize = 1 << 17;
 
 fn par_threads(n: usize) -> usize {
+    par_threads_above(n, PAR_THRESHOLD)
+}
+
+fn par_threads_above(n: usize, threshold: usize) -> usize {
     static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
         return 1;
     }
     let cores = std::thread::available_parallelism().map_or(1, |p| p.get());
-    par_threads_for(n, cores)
+    par_threads_above_for(n, threshold, cores)
 }
 
-fn par_threads_for(n: usize, cores: usize) -> usize {
-    if n >= PAR_THRESHOLD {
+fn par_threads_above_for(n: usize, threshold: usize, cores: usize) -> usize {
+    if n >= threshold {
         cores.clamp(1, MAX_ROW_THREADS)
     } else {
         1
@@ -4596,7 +4603,13 @@ pub fn stratified_sample_mask<T: Copy + Sync + Into<u64>>(
 pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
     assert!(x1_gt_x0(lo, hi));
     assert!(!out.is_empty());
-    histogram_uniform_impl(data, lo, hi, par_threads(data.len()), out)
+    histogram_uniform_impl(
+        data,
+        lo,
+        hi,
+        par_threads_above(data.len(), PAR_THRESHOLD_COMPUTE),
+        out,
+    )
 }
 
 /// Per-bin u64 counting shared by the serial and parallel paths. Stays scalar
@@ -6854,9 +6867,29 @@ mod tests {
         // shape): per-thread grids + merge dwarf the scan — stay serial.
         assert_eq!(bin_2d_threads(1 << 20, 1 << 20), 1);
         assert_eq!(bin_2d_threads(2_100_000, 2048 * 2048), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD - 1, 64), 1);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 64), MAX_ROW_THREADS);
-        assert_eq!(par_threads_for(PAR_THRESHOLD, 1), 1);
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD - 1, PAR_THRESHOLD, 64),
+            1
+        );
+        assert_eq!(
+            par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 64),
+            MAX_ROW_THREADS
+        );
+        assert_eq!(par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 1), 1);
+    }
+
+    #[test]
+    fn par_thread_gates_route_by_cost_class() {
+        const { assert!(PAR_THRESHOLD_COMPUTE < PAR_THRESHOLD) }
+        let t_c = PAR_THRESHOLD_COMPUTE;
+        for cores in [1, 4, 20, 64] {
+            let cap = cores.clamp(1, MAX_ROW_THREADS);
+            // Compute-bound kernels fan out from 128k rows.
+            assert_eq!(par_threads_above_for(t_c - 1, t_c, cores), 1);
+            assert_eq!(par_threads_above_for(t_c, t_c, cores), cap);
+            // ...and stay serial in the band the general gate still reserves.
+            assert_eq!(par_threads_above_for(t_c, PAR_THRESHOLD, cores), 1);
+        }
     }
 
     #[test]

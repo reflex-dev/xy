@@ -739,7 +739,10 @@ comparison—not a same-render-target speedup claim.
 
 > The kernel microbench numbers above predate the kernel-parallelization pass:
 > `bin_2d`, `histogram`, `m4`, `range_indices`, and `normalize` now fan out
-> across cores above 512k rows. Zone maps have no merge traffic and use an
+> across cores at per-cost-class gates: compute-bound scans (`m4`,
+> `histogram`) from 128k rows, general scans (`bin_2d`, `range_indices`,
+> `normalize`, min/max, sortedness) from 512k. Zone maps have no merge
+> traffic and use an
 > earlier, chunk-aware crossover: two complete 65,536-row chunks, with workers
 > capped by the number of chunks. All paths are bitwise-deterministic; see
 > `src/kernels.rs`.
