@@ -116,7 +116,10 @@ against Matplotlib 3.11.1 at 10 pt, `round` is 4.17 px there against 5 px
 here — errorbar limit flags rendered as one-sided bars without
 Matplotlib's caret arrows, and `add_patch` geometry flattened through
 `Path.to_polygons`, which resolves a curved patch into the same straight
-segments Matplotlib's renderers use rather than an exact analytic curve.
+segments Matplotlib's renderers use rather than an exact analytic curve. A
+patch whose path has nested rings is the one case `add_patch` declines rather
+than approximates: hole support is not implemented, so it draws its outlines
+and skips the fill instead of painting the hole solid.
 
 ## Sharp edges
 

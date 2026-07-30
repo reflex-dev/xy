@@ -26,7 +26,13 @@ in the README).
   `Rectangle(angle=...)` keeps its rotation and `Circle`/`Ellipse`/`Wedge` use
   the curve rather than its Bezier control points. Unfilled patches stay
   edge-only, the axes color cycle is untouched, and a degenerate patch draws
-  its edge instead of raising.
+  its edge instead of raising. A patch whose path has nested rings draws its
+  outlines and skips the fill, since hole triangulation is not implemented and
+  filling every ring would paint the hole solid.
+- Patch outlines were stroked at a fixed one pixel that ignored both the
+  patch's line width and the figure DPI. They now use the patch's own
+  `linewidth`, converted from Matplotlib points into output pixels like every
+  other stroke in the shim.
 
 ## [0.0.4] - 2026-07-27
 

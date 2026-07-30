@@ -1102,6 +1102,17 @@ def _cached_axis(which: str, props: dict) -> Any:
     return made
 
 
+def _without_repeats(ring: np.ndarray) -> np.ndarray:
+    """A ring with consecutive duplicate vertices dropped, closing vertex kept.
+
+    Matplotlib repeats a vertex inside its full-circle paths, and the
+    triangulator rejects any polygon carrying a duplicate.
+    """
+    if len(ring) < 2:
+        return ring
+    return ring[np.r_[True, ~np.all(np.isclose(ring[1:], ring[:-1]), axis=1)]]
+
+
 def _patch_outline(patch: Any) -> list[np.ndarray]:
     """Data-space rings of a patch, curves flattened and its transform applied.
 
@@ -1111,19 +1122,46 @@ def _patch_outline(patch: Any) -> list[np.ndarray]:
     """
     get_path = getattr(patch, "get_path", None)
     get_transform = getattr(patch, "get_patch_transform", None)
+    rings: list[Any] = []
     if get_path is not None and get_transform is not None:
         to_polygons = getattr(get_path(), "to_polygons", None)
         if to_polygons is not None:
-            rings = to_polygons(get_transform())
-            if len(rings):
-                return [np.asarray(ring, dtype=np.float64) for ring in rings]
-    if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
-        x0, y0 = float(patch.get_x()), float(patch.get_y())
-        x1, y1 = x0 + float(patch.get_width()), y0 + float(patch.get_height())
-        return [np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])]
-    if get_path is not None:
-        return [np.asarray(get_path().vertices, dtype=np.float64)]
-    raise TypeError(f"unsupported patch {type(patch).__name__}")
+            rings = list(to_polygons(get_transform()))
+    if not rings:
+        if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
+            x0, y0 = float(patch.get_x()), float(patch.get_y())
+            x1, y1 = x0 + float(patch.get_width()), y0 + float(patch.get_height())
+            rings = [[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]
+        elif get_path is not None:
+            rings = [get_path().vertices]
+        else:
+            raise TypeError(f"unsupported patch {type(patch).__name__}")
+    return [_without_repeats(np.asarray(ring, dtype=np.float64)) for ring in rings]
+
+
+def _rings_are_nested(outline: list[np.ndarray]) -> bool:
+    """True when one ring sits inside another, so the patch's path has holes.
+
+    `kernels.polygon_triangles` takes one simple polygon, so a hole would have
+    to be painted solid. Callers abstain from filling instead.
+    """
+    from xy import kernels
+
+    if len(outline) < 2:
+        return False
+    first_row = np.zeros(1, dtype=np.uint32)
+    for index, ring in enumerate(outline):
+        if not len(ring):
+            continue
+        for other in outline[:index] + outline[index + 1 :]:
+            if len(other) < 3:
+                continue
+            inside = kernels.polygon_select(
+                ring[:1, 0], ring[:1, 1], first_row, other[:, 0], other[:, 1]
+            )
+            if len(inside):
+                return True
+    return False
 
 
 def _patch_fill_color(patch: Any) -> Any:
@@ -5599,9 +5637,11 @@ class Axes(PlotTypeMixin):
         StepPatch-likes (with ``get_data()``) route to `stairs`. Every other
         patch is flattened to data-space rings via ``Path.to_polygons``, so
         rotation and curvature survive; each ring fills with the patch's own
-        face color and draws its edge as line segments. The returned handle
-        owns every mark the patch produced, so removing it takes the outline
-        with the fill. Unsupported patch types raise.
+        face color and draws its edge as line segments. A path whose rings
+        nest, meaning holes, draws its outline and skips the fill rather than
+        painting the hole solid. The returned handle owns every mark the patch
+        produced, so removing it takes the outline with the fill. Unsupported
+        patch types raise.
         """
         if hasattr(patch, "get_data"):
             data = patch.get_data()
@@ -5627,9 +5667,9 @@ class Axes(PlotTypeMixin):
         outline = _patch_outline(patch)
         face = _patch_fill_color(patch)
         edge = getattr(patch, "get_edgecolor", lambda: "#000000")()
-        width = float(getattr(patch, "get_linewidth", lambda: 1.0)())
+        width = float(getattr(patch, "get_linewidth", lambda: 1.0)()) * self._point_scale()
         entries: list[dict[str, Any]] = []
-        if face is not None:
+        if face is not None and not _rings_are_nested(outline):
             for ring in outline:
                 xv, yv = ring[:, 0], ring[:, 1]
                 if len(xv) > 2 and np.allclose((xv[0], yv[0]), (xv[-1], yv[-1])):

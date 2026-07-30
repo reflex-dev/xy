@@ -17,9 +17,19 @@ which covers user-visible releases across the whole package.
   keeps its rotation, and curved patches use the curve rather than its Bezier
   control points: `Circle(radius=1)` covers 3.139 rather than 3.251, and
   `Ellipse(width=2, height=1, angle=20)` covers 1.570 rather than 3.251.
-- Outlines take the patch's own line width instead of a fixed one point.
-  Degenerate rings with no triangulation, such as a zero-height `Rectangle`,
-  draw their edge and skip the fill rather than raising.
+- Outlines take the patch's own line width, converted from Matplotlib points
+  into output pixels like every other stroke in the shim, instead of a fixed
+  one pixel that did not move with figure DPI. Degenerate rings with no
+  triangulation, such as a zero-height `Rectangle`, draw their edge and skip
+  the fill rather than raising.
+- Holes are not implemented. A patch whose path has nested rings, such as a
+  compound `PathPatch` of a square inside a square or a full-circle `Wedge`
+  with a `width`, draws its outlines and skips the fill rather than painting
+  the hole solid. `polygon_triangles` takes one simple polygon, so filling
+  every ring would paint 116 for a square-with-hole whose true area is 84.
+  Rings that merely sit beside each other still fill, and an annular *sector*
+  fills correctly because Matplotlib returns it as one ring that traces out
+  along the outer arc and back along the inner one.
 - `add_patch` returns a `Patch` handle rather than a bare `Artist`. It owns the
   outline marks alongside the fill, so `remove()` and `set_zorder()` move the
   whole patch instead of only its body.
