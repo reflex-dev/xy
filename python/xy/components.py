@@ -6588,6 +6588,22 @@ def wind_rose(
             edges[-1] = math.ceil(top / unit) * unit
     else:
         edges = np.unique(np.asarray(speed_bins, dtype=float).reshape(-1))
+        # The default path rounds its top edge UP precisely so it covers the
+        # fastest observation; authored edges are taken as given, so anything
+        # above the last one fell in no band at all — `speed_bins=[10, 20]`
+        # counted 2 of 3 observations when one blew at 25 and the rose
+        # under-reported its own input with no warning. Every observation must
+        # land in a band.
+        if edges.size and not np.all(np.isfinite(edges)):
+            raise ValueError("wind_rose speed_bins edges must all be finite")
+        if edges.size:
+            fastest = float(magnitudes.max())
+            if edges[-1] < fastest:
+                raise ValueError(
+                    f"wind_rose speed_bins top edge {edges[-1]:g} is below the "
+                    f"fastest observation {fastest:g}, which would drop it from "
+                    "every band. Raise the last edge to cover the data."
+                )
     if edges.size == 0:
         raise ValueError("wind_rose speed_bins must contain at least one edge")
 

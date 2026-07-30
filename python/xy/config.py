@@ -83,7 +83,12 @@ def polar_bar_segments(span: float, turn: float) -> int:
     AUTHORED angular width, not a view-dependent choice, so all three renderers
     reach the same count for the same figure at any zoom or export size.
     """
-    if not (turn > 0.0):
+    # An unmeasurable span falls back to the full-turn count, exactly as the JS
+    # mirror does: under-subdividing a wide wedge is a visible facet, and paying
+    # for one is not. Without the finite check `math.ceil` raised ValueError on
+    # NaN and OverflowError on infinity, so the two renderers disagreed about
+    # what a degenerate wedge costs — one drew it, the other crashed.
+    if not (turn > 0.0) or not math.isfinite(span):
         return POLAR_BAR_SEGMENTS
     fraction = abs(float(span)) / float(turn)
     scaled = math.ceil(POLAR_BAR_SEGMENTS * fraction)

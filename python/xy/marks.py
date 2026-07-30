@@ -934,7 +934,14 @@ def line(
     checkpoint = self._checkpoint()
     try:
         xc, yc = self._ingest_xy(x, y, "line")
-        if not kernels.is_sorted(xc.values):
+        # Polar keeps the caller's sequence. Theta is the order marks are
+        # JOINED in, not a domain to be scanned: sorting it redrew a path that
+        # crosses the 0/turn seam (350 -> 10) or doubles back as an
+        # ascending-angle fan instead of the authored track. Safe because polar
+        # forces tier="direct" (config.py: "M4 decimation buckets on a
+        # monotonic screen-x column, which a spiral is not"), so the sorted
+        # precondition the sort exists to satisfy never applies here.
+        if self.coords != "polar" and not kernels.is_sorted(xc.values):
             # LOD contract (§28): line x must be sorted; the engine sorts once
             # at ingest, and says so. The predicate is NaN-safe on purpose:
             # a NaN fails its pairs, so a NaN-carrying x cannot skip the sort
@@ -1022,7 +1029,7 @@ def area(
         )
         if len(bc) != len(xc):
             raise ValueError(f"area base must have length {len(xc)}, got {len(bc)}")
-        if not kernels.is_sorted(xc.values):
+        if self.coords != "polar" and not kernels.is_sorted(xc.values):
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
@@ -1099,7 +1106,7 @@ def error_band(
         uc = self.store.ingest(self._as_1d_float(upper, "error_band upper"))
         if len(uc) != len(xc):
             raise ValueError(f"error_band upper must have length {len(xc)}, got {len(uc)}")
-        if not kernels.is_sorted(xc.values):
+        if self.coords != "polar" and not kernels.is_sorted(xc.values):
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             lc = self.store.ingest(lc.values[order])

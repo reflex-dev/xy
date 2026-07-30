@@ -400,11 +400,11 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "wheel", (e) => {
       // The drag tool never disables the wheel (box-zoom/select drags are
-      // drag-only tools) — except `none` CHOSEN by the user, the modebar's
-      // escape hatch that releases page scroll for embedded charts. A chart
-      // whose resolved default is `none` because no drag tool applies (polar)
-      // keeps its wheel gesture.
-      if (this.dragMode === "none" && this._dragModeUserSet) return;
+      // drag-only tools) — except `none` REQUESTED, the escape hatch that
+      // releases page scroll for embedded charts. A chart whose resolved
+      // default is `none` because no drag tool applies (polar) keeps its
+      // wheel gesture.
+      if (this.dragMode === "none" && this._dragModeNoneRequested()) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       if (!this._interactionFlag("wheel_zoom", true)) return;
@@ -421,12 +421,12 @@ Object.assign(ChartView.prototype, {
         clearSelectionOnDoubleClick();
         return;
       }
-      // Same distinction as the wheel handler above: `none` CHOSEN by the
-      // user releases every navigation gesture, but a chart whose resolved
+      // Same distinction as the wheel handler above: `none` REQUESTED
+      // releases every navigation gesture, but a chart whose resolved
       // default is `none` because no drag tool applies (polar) keeps its
       // documented double-click reset — several pie/gauge/wind-rose examples
       // hide the modebar, which otherwise left no reset path at all.
-      if (this.dragMode === "none" && this._dragModeUserSet) return;
+      if (this.dragMode === "none" && this._dragModeNoneRequested()) return;
       if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("double_click_reset", true)) return;
       this._resetView(true, "reset");
@@ -1780,6 +1780,19 @@ Object.assign(ChartView.prototype, {
       return;
     }
     this._clampModebar();
+  },
+
+
+  // Did anyone ASK for `none`, as opposed to `none` being all that is left?
+  // The modebar records intent through _setDragMode(userInitiated), but the
+  // declarative spelling — interaction_config(default_drag_action="none"), the
+  // documented escape hatch for embedded pages — never routes through it, so a
+  // gate that checked only the flag kept wheel-zooming and swallowed page
+  // scroll on exactly the charts that opted out. Polar still resolves to
+  // `none` without requesting it, and keeps its gestures.
+  _dragModeNoneRequested() {
+    return Boolean(this._dragModeUserSet)
+      || this.interaction?.default_drag_action === "none";
   },
 
   _setDragMode(mode, { userInitiated = true } = {}) {

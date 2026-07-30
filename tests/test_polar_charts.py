@@ -1659,3 +1659,84 @@ def test_get_theta_offset_matches_matplotlibs_zero_to_two_pi_mapping() -> None:
     for location, radians in expected.items():
         ax.set_theta_zero_location(location)
         assert ax.get_theta_offset() == pytest.approx(radians), location
+
+
+def test_polar_paths_keep_the_authored_angular_order() -> None:
+    """Theta is the order marks are JOINED in, not a domain to be scanned, but
+    `Figure.line`/`area` sorted x at ingest for the M4 precondition. A track
+    crossing the 0/turn seam (350 -> 10) or doubling back was redrawn as an
+    ascending-angle fan. Safe to skip because polar forces tier="direct"."""
+
+    def wire_order(chart, which="x"):
+        spec, blob = chart.figure().build_payload_split()
+        column = spec["columns"][spec["traces"][0][which]]
+        raw = np.frombuffer(
+            blob[column["buf"]],
+            dtype=np.float32,
+            count=column["len"],
+            offset=column["byte_offset"],
+        )
+        return [round(float(v), 3) for v in raw / (column["scale"] or 1.0) + column["offset"]]
+
+    theta = [350.0, 10.0, 30.0, 5.0]
+    radius = [1.0, 2.0, 3.0, 4.0]
+    for mark in (xy.line, xy.area):
+        chart = xy.polar_chart(mark(theta, radius), xy.theta_axis(unit="degrees"))
+        assert wire_order(chart) == theta, mark.__name__
+        assert wire_order(chart, "y") == radius, mark.__name__
+
+    # Cartesian keeps its sort — the LOD contract still needs it there.
+    assert wire_order(xy.line_chart(xy.line(theta, radius))) == sorted(theta)
+
+
+def test_wind_rose_refuses_bins_that_would_drop_an_observation() -> None:
+    """The default path rounds its top edge up so it covers the fastest
+    observation; authored edges were taken as given, so `speed_bins=[10, 20]`
+    counted 2 of 3 observations when one blew at 25 — the rose under-reported
+    its own input silently."""
+    with pytest.raises(ValueError, match="below the fastest observation"):
+        xy.wind_rose([10.0, 10.0, 10.0], [5.0, 15.0, 25.0], speed_bins=[10.0, 20.0])
+    with pytest.raises(ValueError, match="must all be finite"):
+        xy.wind_rose([10.0], [5.0], speed_bins=[10.0, float("inf")])
+
+    # Edges that do cover the data still work, and count every observation.
+    chart = xy.wind_rose([10.0, 10.0, 10.0], [5.0, 15.0, 25.0], speed_bins=[10.0, 20.0, 30.0])
+    counted = sum(
+        float(np.nansum(np.asarray(child.y, dtype=float)))
+        for child in chart.children
+        if getattr(child, "y", None) is not None
+    )
+    assert counted == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("span", [float("nan"), float("inf"), -float("inf")])
+def test_polar_bar_segments_matches_the_client_on_a_degenerate_span(span) -> None:
+    """The JS mirror guards `!Number.isFinite(span)` and falls back to the
+    full-turn count; Python only guarded `turn > 0`, so `math.ceil` raised
+    ValueError on NaN and OverflowError on infinity — the two renderers
+    disagreed about what a degenerate wedge costs, one drawing it and the other
+    crashing."""
+    from xy.config import POLAR_BAR_SEGMENTS, polar_bar_segments
+
+    result = polar_bar_segments(span, 360.0)
+    assert result == POLAR_BAR_SEGMENTS
+    assert isinstance(result, int)
+
+
+def test_every_polar_public_name_is_typed_for_static_analysis() -> None:
+    """The lazy `__getattr__` surface makes `from xy import polar_chart` resolve
+    to `Any` unless the name is also in the TYPE_CHECKING import block, which
+    silently drops signatures, completion and argument checking."""
+    source = (ROOT / "python/xy/__init__.py").read_text()
+    start = source.index("    from .components import (")
+    block = source[start : source.index(")", start)]
+    for name in (
+        "pie_chart",
+        "polar_bar_chart",
+        "polar_chart",
+        "r_axis",
+        "radar_chart",
+        "theta_axis",
+        "wind_rose",
+    ):
+        assert f"        {name},\n" in block, name
