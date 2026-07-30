@@ -93,6 +93,20 @@ class Artist:
     def _touch(self) -> None:
         self._axes._invalidate()
 
+    def _companion_entries(self) -> list[dict[str, Any]]:
+        """Extra spec entries this one handle stands for, beside ``_entry``.
+
+        Matplotlib artists that xy has to emit as several marks (a patch's
+        fill and its outline) hang the rest here, so the mutations that mean
+        "the whole artist" — visibility, alpha, color, transform, zorder,
+        removal — move all of them rather than only the first.
+        """
+        return []
+
+    def _owned_entries(self) -> list[dict[str, Any]]:
+        companions = [e for e in self._companion_entries() if e is not self._entry]
+        return [self._entry, *companions]
+
     def remove(self) -> None:
         self._axes._remove_entry(self._entry)
         self._axes._unregister_artist(self)
@@ -107,7 +121,8 @@ class Artist:
     def set_alpha(self, alpha: float) -> None:
         self._visible_opacity = float(alpha)
         if self._visible:
-            self._entry["kwargs"]["opacity"] = float(alpha)
+            for entry in self._owned_entries():
+                entry["kwargs"]["opacity"] = float(alpha)
         self._touch()
 
     def get_alpha(self) -> Any:
@@ -122,7 +137,8 @@ class Artist:
         if not visible:
             self._visible_opacity = float(self._entry["kwargs"].get("opacity", 1.0))
         self._visible = visible
-        self._entry["kwargs"]["opacity"] = self._visible_opacity if visible else 0.0
+        for entry in self._owned_entries():
+            entry["kwargs"]["opacity"] = self._visible_opacity if visible else 0.0
         self._touch()
 
     def get_visible(self) -> bool:
@@ -178,10 +194,15 @@ class Artist:
             made = np.asarray(transform.transform(old_inverse.transform(points)), dtype=float)
             return made[:, 0].reshape(xa.shape), made[:, 1].reshape(ya.shape)
 
-        if "x" in self._entry and "y" in self._entry:
-            self._entry["x"], self._entry["y"] = convert(self._entry["x"], self._entry["y"])
-        elif self._entry.get("kind") == "@mark":
-            factory = self._entry.get("factory")
+        def move(entry: dict[str, Any]) -> None:
+            if "x" in entry and "y" in entry:
+                entry["x"], entry["y"] = convert(entry["x"], entry["y"])
+                return
+            if entry.get("kind") != "@mark":
+                raise NotImplementedError(
+                    f"{type(self).__name__} transform is not supported for this geometry"
+                )
+            factory = entry.get("factory")
             pairs = {
                 "segments": ((0, 1), (2, 3)),
                 "triangle_mesh": ((0, 1), (2, 3), (4, 5)),
@@ -193,14 +214,15 @@ class Artist:
                 raise NotImplementedError(
                     f"{type(self).__name__} transform is not supported for {factory!r} geometry"
                 )
-            args = list(self._entry["args"])
+            args = list(entry["args"])
             for x_index, y_index in pairs:
                 args[x_index], args[y_index] = convert(args[x_index], args[y_index])
-            self._entry["args"] = tuple(args)
-        else:
-            raise NotImplementedError(
-                f"{type(self).__name__} transform is not supported for this geometry"
-            )
+            entry["args"] = tuple(args)
+
+        move(self._entry)
+        for companion in self._companion_entries():
+            if companion is not self._entry:
+                move(companion)
         for marker_entry in self._marker_entries():
             if marker_entry is not self._entry:
                 marker_entry["x"], marker_entry["y"] = convert(marker_entry["x"], marker_entry["y"])
@@ -222,7 +244,10 @@ class Artist:
         return self._rasterized
 
     def set_color(self, color: Any) -> None:
-        self._entry["kwargs"]["color"] = resolve_color(color)
+        # Matplotlib's Patch.set_color paints face and edge alike, so a handle
+        # standing for both moves both.
+        for entry in self._owned_entries():
+            entry["kwargs"]["color"] = resolve_color(color)
         self._touch()
 
     def get_color(self) -> Any:
@@ -938,6 +963,39 @@ class StepPatch(Artist):
             self._entry.get("edges"),
             self._entry["kwargs"].get("base", self._entry.get("baseline", 0.0)),
         )
+
+
+class Patch(Artist):
+    """Handle for ``add_patch`` output, owning the outline marks beside the fill.
+
+    A patch can reach the spec as several marks — one fill per ring and one
+    outline per ring — so every mutation that means "the whole patch" runs
+    over `_companion_entries` rather than over `_entry` alone. Without that,
+    `set_visible(False)` would hide the body and leave the outline drawn.
+    """
+
+    def __init__(
+        self,
+        axes: Any,
+        entry: dict[str, Any],
+        outline_entries: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(axes, entry)
+        self._outline_entries = list(outline_entries or [])
+
+    def _companion_entries(self) -> list[dict[str, Any]]:
+        return self._outline_entries
+
+    def remove(self) -> None:
+        for entry in self._outline_entries:
+            self._axes._remove_entry(entry)
+        self._outline_entries.clear()
+        super().remove()
+
+    def set_zorder(self, level: float) -> None:
+        for entry in self._outline_entries:
+            entry["_zorder"] = float(level)
+        super().set_zorder(level)
 
 
 class StemContainer:

@@ -4,6 +4,65 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Patch bodies and geometry — 2026-07-30 (Matplotlib 3.11.1 reference)
+
+- `xy.pyplot.Axes.add_patch` now fills a patch instead of drawing only its
+  outline. Each ring gets a triangle mesh in the patch's own face color, with
+  triangle joins marked as a single fill so browser, PNG, and SVG output
+  suppress internal seams. Patches that report `fill=False`, a `"none"` face
+  color, or a fully transparent one stay edge-only, and the patch never
+  advances the axes color cycle.
+- Patch geometry now comes from `Path.to_polygons`, with the patch transform
+  applied. `Rectangle(angle=...)` keeps its rotation, and curved patches use
+  the curve rather than its cubic Bézier control points: at the default figure size
+  `Circle(radius=1)` covers 3.141 rather than 3.251, and
+  `Ellipse(width=2, height=1, angle=20)` covers 1.570 rather than 3.251.
+- The flattening is resolved at the figure's pixel size rather than in data
+  units. `to_polygons` subdivides until the curve is flat in whatever
+  coordinates it is handed, so flattening straight through the patch transform
+  would take its tessellation from the numeric magnitude of the data:
+  `Circle(radius=1)` came back as sixteen segments overshooting the true
+  radius by 2.5%, while the same circle drawn as `radius=1000` came back
+  smooth. Matplotlib does not have this problem, because its renderers flatten
+  in display space, after the full data-to-pixel transform. xy builds geometry
+  when the patch is added, before the view is known, so it flattens as though
+  the patch filled the figure — the finest resolution it could need — which
+  holds the radial error near 1e-4 at every coordinate scale.
+- Outlines take the patch's own line width, converted from Matplotlib points
+  into output pixels like every other stroke in the shim, instead of a fixed
+  one pixel that did not move with figure DPI. A patch whose edge paints
+  nothing — `edgecolor="none"`, which is Matplotlib's default on a filled
+  patch, a fully transparent one, or `linewidth=0` — emits no outline mark at
+  all, unless it drew no body either. Degenerate rings with no triangulation,
+  such as a zero-height `Rectangle`, draw their edge and skip the fill rather
+  than raising.
+- A ring that has a body but no triangulation — self-intersecting, or past
+  `polygon_triangles`' 10,000-vertex cap — draws its outline and raises a
+  `RuntimeWarning` naming the reason. Matplotlib fills both, so abstaining
+  silently would leave a hollow patch that looks like a deliberate style.
+- An artist-level `transform=` on the patch rides along when it is a
+  data-space affine — `Rectangle(..., transform=Affine2D().rotate_deg(45))`
+  keeps its rotation, and `transform=ax.transData` is accepted as the no-op
+  it is. `transform=ax.transAxes`/`transFigure` raise `NotImplementedError`
+  like every other data artist, since baked fractions go silently stale on
+  the next limit change.
+- Holes are not implemented. A patch whose path has nested rings, such as a
+  compound `PathPatch` of a square inside a square or a full-circle `Wedge`
+  with a `width`, draws its outlines and skips the fill rather than painting
+  the hole solid. `polygon_triangles` takes one simple polygon, so filling
+  every ring would paint 116 for a square-with-hole whose true area is 84.
+  Nesting means every vertex of one ring inside another: rings that merely
+  overlap fill ring-by-ring (their union, where Matplotlib's even-odd rule
+  leaves the intersection unpainted), rings that sit beside each other still
+  fill, and an annular *sector* fills correctly because Matplotlib returns it
+  as one ring that traces out along the outer arc and back along the inner
+  one.
+- `add_patch` returns a `Patch` handle rather than a bare `Artist`. It owns the
+  outline marks alongside the fill, so `remove()`, `set_zorder()`,
+  `set_visible()`, `set_alpha()`, `set_color()` and `set_transform()` move the
+  whole patch instead of only its body. `set_color` paints edge and face
+  alike, as `matplotlib.patches.Patch.set_color` does.
+
 ## Polar projection depth — 2026-07-28 (Matplotlib 3.11.1 reference)
 
 - Polar heatmap/image and contour now use the core polar grid/segment paths,

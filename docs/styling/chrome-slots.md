@@ -334,11 +334,7 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
-<<<<<<< HEAD
 | `styles={slot: {...}}` | yes, all 29 slots | text subset, 9 slots | text subset, 9 slots |
-=======
-| `styles={slot: {...}}` | yes, all 29 slots | dropped | dropped |
->>>>>>> origin/main
 | `class_names={slot: "..."}` | yes, all 29 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
