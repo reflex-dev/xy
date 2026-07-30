@@ -98,11 +98,12 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 
 ## Outside 2-D chart-method compatibility
 
-3-D and arbitrary custom projections, `FuncAnimation`, arbitrary third-party
-Artist graphs, non-affine transform graphs, and blitting are not part of this
-2-D chart-method target. Bounded shim-owned `Axes` Artist views, children,
-containers, removal, affine data transforms, coordinate spaces, polar axes,
-and linked secondary axes are supported.
+Three-dimensional, ternary, geographic, and custom projections,
+`FuncAnimation`, arbitrary third-party Artist graphs, non-affine transform
+graphs, and blitting are not part of this 2-D chart-method target. Polar is the
+supported non-Cartesian projection with the boundary above. Bounded shim-owned
+`Axes` Artist views, children, containers, removal, affine data transforms,
+coordinate spaces, and linked secondary axes are supported.
 
 Unknown keyword arguments on supported calls raise `TypeError` naming the
 offending keyword. Known material options that the native marks cannot honor

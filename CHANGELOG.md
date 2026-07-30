@@ -28,6 +28,14 @@ in the README).
   silently leave a stale row in the CodSpeed dashboard.
 
 ### Fixed
+- Polar customization now stays consistent across the browser, SVG, and native
+  raster renderers: point-anchored annotations use the joint `(theta, r)`
+  projection, explicit chart padding survives the polar layout pass, gradient
+  fills reach native raster wedges, and annular sectors honor rounded corners
+  and strokes.
+- `radar_chart(fill=False)` now renders area children as styled outlines,
+  translating their line color, width, opacity, curve, and dash props instead
+  of passing incompatible area props to the line renderer.
 - Repeated data updates no longer leak GPU buffers. Trace teardown walked a
   hand-kept list of geometry buffer names, so every rebuilt trace — each
   state-driven update, each append that could not patch in place, each animated
@@ -96,6 +104,16 @@ in the README).
   stay uniform.
 
 ### Changed
+- Default tooltips now lead with the hovered series name, and the radial row of
+  a polar readout is labelled `r` rather than presented as a Cartesian `y`. The
+  numeric angle row is gone from polar readouts: on most polar charts the angle
+  is where layout put the mark and the cursor is already on it, so it answered a
+  question nobody asked. Two things survive because they are not numeric angles
+  — an authored spoke label (a radar category reads `power`) and any row named
+  explicitly through `labels={"x": ...}`, which opts the angle back in formatted
+  through the theta axis's own text function. Compositions whose bearing *is*
+  data say so themselves: a wind rose band still reads its direction, and a pie
+  slice reads its category and value.
 - Polar wedge subdivision is span-proportional: `segments(span) =
   clamp(ceil(96 · |span| / turn), 2, 96)` in every renderer, over the *authored*
   angular width. Sagitta is quadratic in the per-segment angle, so this holds the

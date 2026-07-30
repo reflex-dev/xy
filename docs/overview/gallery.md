@@ -6,9 +6,9 @@ description: Browse every chart type and visual pattern available in XY.
 # Chart Gallery
 
 Start with the visual result you need. Every public chart type is represented
-below, grouped to match the Chart Gallery navigation. Each tile opens a focused
-family page with guidance on when to use the chart, a live example, its expected
-data shape, common variants, and the options that matter most.
+below, grouped by visual family. Each tile opens a focused family page with
+guidance on when to use the chart, a live example, its expected data shape,
+common variants, and the options that matter most.
 
 ~~~python exec
 from xy_docs.gallery import chart_gallery_grid
@@ -39,6 +39,12 @@ Looking for a specific family?
 - Density and grids: [heatmap](/docs/xy/charts/heatmap/),
   [hexbin](/docs/xy/charts/hexbin/), and [contour](/docs/xy/charts/contour-plot/)
 - [Uncertainty](/docs/xy/charts/uncertainty/) for error bars and bands
+- Polar families: [polar charts](/docs/xy/charts/polar-chart/) for measured
+  angles and radii, [radar charts](/docs/xy/charts/radar-chart/) for category
+  comparisons, [radial bars](/docs/xy/charts/radial-bar-chart/) for annular
+  sectors, [pie and donut charts](/docs/xy/charts/pie-chart/) for share,
+  progress-ring, and gauge blocks, and
+  [wind roses](/docs/xy/charts/wind-rose/) for directional distributions
 - Specialized: [stem](/docs/xy/charts/stem-plot/),
   [segments](/docs/xy/charts/segments/),
   [Sankey](/docs/xy/charts/sankey/), and

@@ -70,15 +70,25 @@ from xy_docs.markdown import (
 )
 from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
+    CHART_FAMILY_SIDEBAR_SECTIONS,
+    CHART_GALLERY_SIDEBAR_LINK,
     INTEGRATION_LINK_ICONS,
+    PIE_DOCS_ROUTE,
+    POLAR_DOCS_ROUTE,
+    POLAR_DOCS_ROUTES,
+    POLAR_SIDEBAR_SECTION,
+    RADAR_DOCS_ROUTE,
+    RADIAL_BAR_DOCS_ROUTE,
     SIDEBAR_SECTION_GROUPS,
+    WIND_ROSE_DOCS_ROUTE,
+    _section_items,
     xy_docs_sidebar,
     xy_docs_sidebar_comp,
 )
 from xy_docs.xy_docs import _CHART_STYLE, _DOCS_ROUTES, app
 
 import xy
-from xy.components import _MARK_APPLIERS
+from xy.components import _MARK_APPLIERS, _POLAR_INERT_AXIS_KEYWORDS
 
 SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
 DOCS_APP_ROOT = Path(__file__).resolve().parent.parent
@@ -255,8 +265,29 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
     styling_leaves = next(
         leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Styling"
     )
+    chart_gallery_leaves = next(
+        leaves for title, _route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
+    )
     assert ("Animations", "/styling/animations/") in styling_leaves
     assert ("Chrome Slots", "/styling/chrome-slots/") in styling_leaves
+    assert tuple(
+        leaf
+        for leaf in chart_gallery_leaves
+        if leaf[1]
+        in {
+            PIE_DOCS_ROUTE,
+            POLAR_DOCS_ROUTE,
+            RADAR_DOCS_ROUTE,
+            RADIAL_BAR_DOCS_ROUTE,
+            WIND_ROSE_DOCS_ROUTE,
+        }
+    ) == (
+        ("Polar", POLAR_DOCS_ROUTE),
+        ("Radar", RADAR_DOCS_ROUTE),
+        ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+        ("Pie & Donut", PIE_DOCS_ROUTE),
+        ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+    )
     assert "/styling/chrome-slots/" not in DOCS_REDIRECTS
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
@@ -339,6 +370,20 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
     assert "Legend and colorbar replacements remain framework-owned siblings" in " ".join(
         content.split()
     )
+
+
+def test_tooltip_docs_cover_named_series_and_polar_coordinates() -> None:
+    """Keep the default tooltip readout aligned with the client renderer."""
+    content = " ".join((DOCS_ROOT / "components/tooltips.md").read_text(encoding="utf-8").split())
+
+    for requirement in (
+        "hovered series name",
+        "label the radial row `r`",
+        "drop the numeric angle",
+        "An authored spoke label",
+        'labels={"x": ...}',
+    ):
+        assert requirement in content
 
 
 def test_styling_docs_cover_every_public_dom_slot() -> None:
@@ -1206,18 +1251,18 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 15
+    assert len(chart_section) == 20
     assert "XYChart" not in rendered
-    assert rendered.count("dangerouslySetInnerHTML") == 29
+    assert rendered.count("dangerouslySetInnerHTML") == 34
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
-    assert rendered.count("2xl:grid-cols-3") == 8
-    assert rendered.count("aspect-[320/232]") == 29
-    assert rendered.count("shadow-large") == 29
-    assert rendered.count("transition-bg") == 29
+    assert rendered.count("2xl:grid-cols-3") == 9
+    assert rendered.count("aspect-[320/232]") == 34
+    assert rendered.count("shadow-large") == 34
+    assert rendered.count("transition-bg") == 34
     assert "--gallery-preview-surface: #fff" in rendered
     assert "--gallery-preview-fill: #efeaff" in rendered
     assert "--gallery-preview-soft: #dccfff" in rendered
@@ -1228,7 +1273,7 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     assert "object-contain" not in rendered
     assert "object-center" not in rendered
     assert "xy-tailwind-bridge" not in rendered
-    assert rendered.count("size:14") == 29
+    assert rendered.count("size:14") == 34
     assert "size:6" not in rendered
     for chart_type in (
         "Line",
@@ -1236,6 +1281,11 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
         "Step",
         "Stairs",
         "Scatter",
+        "Polar",
+        "Radar",
+        "Radial Bar",
+        "Pie & Donut",
+        "Wind Rose",
         "Bar",
         "Column",
         "Histogram",
@@ -1294,7 +1344,7 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
         for item in group.items
     }
 
-    assert len(previews) == 29
+    assert len(previews) == 34
     for svg in previews.values():
         assert 'viewBox="0 0 320 232"' in svg
         assert '<rect x="52" y="62" width="216" height="108" rx="12"' in svg
@@ -1317,6 +1367,50 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
     ):
         assert scatter_tone in previews["Scatter"]
         assert rendered.count(f"#xy-chart-gallery .{scatter_tone} {{") == 1
+
+
+def test_polar_gallery_previews_share_a_safe_visual_frame() -> None:
+    """Keep every polar preview centered, equally scaled, and clear of its clip."""
+    polar_previews = {
+        title: _gallery_preview_svg(title)
+        for title in ("Polar", "Radar", "Radial Bar", "Pie & Donut", "Wind Rose")
+    }
+
+    for svg in polar_previews.values():
+        assert '<g class="preview-polar-art" data-preview-radius="48">' in svg
+
+    assert "M160 68L205.7 101.2L188.2 154.8" in polar_previews["Radar"]
+    assert 'r="55"' not in polar_previews["Radial Bar"]
+    assert "M164.8 61.2" not in polar_previews["Radial Bar"]
+    assert "M144.5 174" not in polar_previews["Radial Bar"]
+    assert (
+        '<g class="preview-radial-bars" data-bar-count="12" data-inner-radius="13">'
+        in polar_previews["Radial Bar"]
+    )
+    assert polar_previews["Radial Bar"].count("A13 13 0 0 0") == 12
+    assert "M160 116L" not in polar_previews["Radial Bar"]
+    assert "preview-fill-soft" not in polar_previews["Radial Bar"]
+
+    pie = polar_previews["Pie & Donut"]
+    assert '<g class="preview-donut-segments" data-segment-count="4" data-inner-radius="27">' in pie
+    assert pie.count('class="preview-fill-strong"') == 2
+    assert 'class="preview-fill-soft"' in pie
+    assert 'class="preview-fill"' in pie
+    assert "M146 112H174M151 122H169" in pie
+
+    wind_rose = polar_previews["Wind Rose"]
+    assert (
+        '<g class="preview-wind-bands" data-direction-count="8" data-band-count="3">' in wind_rose
+    )
+    assert wind_rose.count("M160 116L") == 8
+    assert "M160 68V164M112 116H208" in wind_rose
+    assert wind_rose.count("<path ") == 4
+    for band, fill_class in (
+        ("low", "preview-fill"),
+        ("medium", "preview-fill-soft"),
+        ("high", "preview-fill-strong"),
+    ):
+        assert f'class="{fill_class}" data-speed-band="{band}"' in wind_rose
 
 
 def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> None:
@@ -1362,6 +1456,11 @@ def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> No
     # mark's live demo.
     standalone_chart_marks = {
         "/charts/line-chart/": "xy.line(",
+        "/charts/polar-chart/": "xy.polar_chart(",
+        "/charts/radar-chart/": "xy.radar_chart(",
+        "/charts/radial-bar-chart/": "xy.polar_bar_chart(",
+        "/charts/pie-chart/": "xy.polar_bar_chart(",
+        "/charts/wind-rose/": "xy.wind_rose(",
         "/charts/bar-chart/": "xy.bar(",
         "/charts/histogram/": "xy.histogram(",
         "/charts/ecdf/": "xy.ecdf(",
@@ -1410,7 +1509,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     titles = {item.title for group in _GALLERY_GROUPS for item in group.items}
     section_titles = [group.title for group in _GALLERY_GROUPS]
 
-    assert len(titles) == 29
+    assert len(titles) == 34
     assert section_titles[:3] == [
         "Line and Area",
         "Distributions",
@@ -1422,6 +1521,23 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         ("Bar + Column", "/charts/bar-chart/"),
         ("Scatter", "/charts/scatter/"),
     ]
+    polar_group = _GALLERY_GROUPS[5]
+    assert polar_group.title == "Polar Charts"
+    assert polar_group.route == "/charts/polar-chart/"
+    assert [(item.title, item.route) for item in polar_group.items] == [
+        ("Polar", None),
+        ("Radar", "/charts/radar-chart/"),
+        ("Radial Bar", "/charts/radial-bar-chart/"),
+        ("Pie & Donut", "/charts/pie-chart/"),
+        ("Wind Rose", "/charts/wind-rose/"),
+    ]
+    specialized_group = _GALLERY_GROUPS[6]
+    assert specialized_group.title == "Specialized"
+    assert [(item.title, item.route) for item in specialized_group.items] == [
+        ("Stem", "/charts/stem-plot/"),
+        ("Segments", "/charts/segments/"),
+        ("Triangle Mesh", "/components/triangle-mesh/"),
+    ]
     assert {"Step + Stairs", "Bar + Column"} <= titles
     assert {"Step", "Stairs", "Bar", "Column"}.isdisjoint(titles)
     assert {
@@ -1430,12 +1546,155 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         "Hexbin",
         "Heatmap",
         "Contour",
+        "Polar",
+        "Radar",
+        "Radial Bar",
+        "Pie & Donut",
+        "Wind Rose",
         "Error Band",
         "Error Bar",
         "Sankey",
         "Facet Chart",
         "Layered Marks",
     } <= titles
+
+
+def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
+    """Keep the public guide aligned with the runtime's polar-specific seams."""
+    polar = (DOCS_ROOT / "charts" / "polar-chart.md").read_text(encoding="utf-8")
+    radar = (DOCS_ROOT / "charts" / "radar-chart.md").read_text(encoding="utf-8")
+    radial_bar = (DOCS_ROOT / "charts" / "radial-bar-chart.md").read_text(encoding="utf-8")
+    pie = (DOCS_ROOT / "charts" / "pie-chart.md").read_text(encoding="utf-8")
+    wind_rose = (DOCS_ROOT / "charts" / "wind-rose.md").read_text(encoding="utf-8")
+    matplotlib = (DOCS_ROOT / "integrations" / "matplotlib.md").read_text(encoding="utf-8")
+    annotations = (DOCS_ROOT / "components" / "annotations.md").read_text(encoding="utf-8")
+    limitations = (DOCS_ROOT / "api-reference" / "limitations-and-alpha-status.md").read_text(
+        encoding="utf-8"
+    )
+
+    for fragment in (
+        "radial maximum while keeping the radial",
+        "authored fractional degree",
+        "splits a line into visible runs",
+        "`line`, `scatter`, and `area` are limited to",
+        "Heatmap/contour grids are not rejected",
+        "`sector=(start, end)`",
+        '`grid_shape="linear"`',
+        "`hole` and `origin` are mutually exclusive",
+        "def polar_field_demo():",
+        "def polar_uncertainty_demo():",
+        'plt.subplots(subplot_kw={"projection": "polar"})',
+        'ax.set_thetagrids([0, 90, 180, 270], ["N", "E", "S", "W"])',
+        "it is not a direct `plt.subplots(polar=True)` argument",
+        "radial area against `r=0`",
+        "`set_thetamin()`/`set_thetamax()`",
+        "`set_rorigin()`/`get_rorigin()`",
+        "reactivating an existing",
+        "Explicit `padding=(top, right, bottom, left)`",
+    ):
+        assert fragment in polar or fragment in matplotlib
+
+    for fragment in (
+        "def radar_demo():",
+        "def radar_outline_demo():",
+        "fill=False",
+        "the outline inherits",
+        "`line_color` is omitted",
+        "Supply at least three categories",
+        "Column-name strings are not resolved",
+        'grid_shape="linear"',
+    ):
+        assert fragment in radar
+
+    for fragment in (
+        "same-length sequence",
+        "complete annulus",
+        "def radial_bar_demo():",
+        "def allocation_overview_demo():",
+        "def training_summary_demo():",
+        "def cache_tiers_demo():",
+        "RADIAL_DATA",
+        "ALLOCATION_DATA",
+        "TRAINING_METRICS",
+        "CACHE_TIERS",
+        "chart_examples_layout_marker",
+        "`corner_radius`",
+        "`stroke_width`",
+        "linear-gradient(to top",
+        "`padding=(top, right, bottom, left)`",
+        "sector=(-120.0, 120.0)",
+    ):
+        assert fragment in radial_bar
+    assert radial_bar.count("~~~python demo exec") == 4
+    assert radial_bar.index("## Basic Radial Bar Chart") < radial_bar.index(
+        "## Allocation Overview"
+    )
+    assert radial_bar.count("xy.modebar(show=False),") == 4
+    assert 'xy.legend(loc="right")' in radial_bar
+    assert '("Direct", 0, 6, "#5b3cc4")' in radial_bar
+
+    for fragment in (
+        "def basic_pie_demo():",
+        "def market_share_demo():",
+        "def progress_rings_demo():",
+        "def revenue_mix_demo():",
+        "def reliability_score_demo():",
+        "MARKET_SERIES",
+        "PROGRESS_STATS",
+        "REVENUE_SERIES",
+        "RELIABILITY_BANDS",
+        "xy.polar_bar_chart(",
+        "background-colored stroke",
+        "corner_radius=12",
+        "GAUGE_SPAN = 240.0",
+        "browser/static exports remain available",
+    ):
+        assert fragment in pie
+    assert pie.count("~~~python demo exec") == 5
+    assert pie.index("## Basic Pie Chart") < pie.index("## Market Share")
+    assert "PIE_DATA = [" in pie
+    assert 'PURPLE_SHADES = ["#6e56cf"' in pie
+    assert 'xy.legend(loc="left")' in pie
+    assert pie.count("xy.modebar(show=False),") == 5
+    assert "def donut_demo():" not in radial_bar
+
+    for fragment in (
+        "def wind_rose_demo():",
+        "`sectors=` controls",
+        "`speed_bins` is omitted",
+        "Directions are compass bearings in degrees",
+    ):
+        assert fragment in wind_rose
+
+    polar_guides = "\n".join((polar, radar, radial_bar, pie, wind_rose))
+    assert "projection surface is scaffolded but not wired end to end" not in polar_guides
+    assert "Downsample very large polar datasets" not in polar_guides
+    assert "is not yet routed through the polar constructor" not in matplotlib
+    assert "customization is not yet preserved" not in polar_guides
+    for stale_fragment in (
+        "it does not create or clip the chart",
+        "`set_thetamin()` and `set_thetamax()` also remain unsupported",
+        "Polar heatmaps, contours, error bars, histograms",
+        "General categorical θ axes, partial sectors",
+        "Partial-sector layouts are not implemented",
+        "validated log-r semantics",
+        "Each polar trace is limited to 200,000 points",
+    ):
+        assert stale_fragment not in polar_guides
+        assert stale_fragment not in matplotlib
+
+    annotation_guides = "\n".join((polar, annotations, limitations))
+    for fragment in ("`text`", "`label`", "`marker`", "`arrow`", "`callout`"):
+        assert fragment in annotation_guides
+    assert "Polar rules and bands remain deferred" in annotation_guides
+    for stale_fragment in (
+        "not yet consistent across the browser",
+        "Polar point annotations are not yet consistent",
+        "Polar annotation projection is still renderer-specific",
+        "Do not rely on point annotations",
+        "The annotation exception above",
+    ):
+        assert stale_fragment not in annotation_guides
 
 
 def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
@@ -1520,17 +1779,17 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     module_path = tmp_path / "route.jsx"
     preview = 'viewBox=\\"0 0 320 232\\"'
     module_path.write_text(
-        preview * 29 + "gallery-preview-surface aspect-[320/232] shadow-large",
+        preview * 34 + "gallery-preview-surface aspect-[320/232] shadow-large",
         encoding="utf-8",
     )
 
     check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
     module_path.write_text(
-        preview * 28 + "gallery-preview-surface aspect-[320/232] shadow-large",
+        preview * 33 + "gallery-preview-surface aspect-[320/232] shadow-large",
         encoding="utf-8",
     )
-    with pytest.raises(RuntimeError, match="28 previews, expected 29"):
+    with pytest.raises(RuntimeError, match="33 previews, expected 34"):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 
@@ -1625,30 +1884,48 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     ]
     expected_leaf_count = sum(
         len(leaves) + int(not any(route == landing_route for _title, route in leaves))
-        for title, landing_route, _icon, leaves in DOCS_SECTIONS
-        if title != "Integrations"
+        for title, landing_route, _icon, leaves in grouped_sections
+        if title != "Integrations" and leaves
     )
-    accordion_count = len(DOCS_SECTIONS) - 1
+    accordion_count = sum(
+        title != "Integrations" and bool(leaves)
+        for title, _landing_route, _icon, leaves in grouped_sections
+    )
+    direct_link_count = len(INTEGRATION_LINK_ICONS) + 1
     assert rendered.count('jsx("details"') == accordion_count
     assert rendered.count('jsx("summary"') == accordion_count
     assert rendered.count("group/details") == accordion_count
     assert rendered.count("guideMarginClass") == expected_leaf_count
-    assert rendered.count(
-        "absolute left-0 top-1/2 -z-10 h-8 w-full -translate-y-1/2 rounded-lg bg-secondary-3"
-    ) == len(INTEGRATION_LINK_ICONS)
-    assert rendered.count(
-        "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
-        "justify-start text-secondary-11 transition-colors "
-        "group-hover:text-primary-10 dark:group-hover:text-primary-9 "
-        "xl:max-w-[14rem]"
-    ) == len(INTEGRATION_LINK_ICONS)
-    assert rendered.count("group relative block h-8 w-full no-underline") == len(
-        INTEGRATION_LINK_ICONS
+    assert (
+        rendered.count(
+            "absolute left-0 top-1/2 -z-10 h-8 w-full -translate-y-1/2 rounded-lg bg-secondary-3"
+        )
+        == direct_link_count
     )
-    assert sorted(section[0] for section in grouped_sections) == sorted(
-        section[0] for section in DOCS_SECTIONS
+    assert (
+        rendered.count(
+            "ml-[2.5rem] flex h-8 w-[calc(100%-2.5rem)] items-center "
+            "justify-start text-secondary-11 transition-colors "
+            "group-hover:text-primary-10 dark:group-hover:text-primary-9 "
+            "xl:max-w-[14rem]"
+        )
+        == direct_link_count
     )
+    assert rendered.count("group relative block h-8 w-full no-underline") == direct_link_count
+    assert len(grouped_sections) == len(DOCS_SECTIONS) + 5
+    sidebar_section_titles = [section[0] for section in grouped_sections]
+    assert set(sidebar_section_titles) == {
+        *(section[0] for section in DOCS_SECTIONS if section[0] != "Chart Gallery"),
+        "Core Charts",
+        "Distributions",
+        "Density & Fields",
+        "Specialized",
+        "Polar Charts",
+    }
+    assert sidebar_section_titles.count("Overview") == 2
+    assert "Chart Gallery" not in sidebar_section_titles
     learning_sections = SIDEBAR_SECTION_GROUPS[0][2]
+    chart_sections = SIDEBAR_SECTION_GROUPS[1][2]
     other_sections = SIDEBAR_SECTION_GROUPS[2][2]
     assert [section[0] for section in learning_sections] == [
         "Overview",
@@ -1656,8 +1933,53 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         "Styling",
         "Advanced",
     ]
+    assert chart_sections == (
+        CHART_GALLERY_SIDEBAR_LINK,
+        *CHART_FAMILY_SIDEBAR_SECTIONS,
+        POLAR_SIDEBAR_SECTION,
+        DOCS_SECTIONS[4],
+    )
+    assert CHART_GALLERY_SIDEBAR_LINK == (
+        "Overview",
+        "/overview/gallery/",
+        "chart-column",
+        (),
+    )
+    assert [section[0] for section in CHART_FAMILY_SIDEBAR_SECTIONS] == [
+        "Core Charts",
+        "Distributions",
+        "Density & Fields",
+        "Specialized",
+    ]
+    expected_non_polar_routes = tuple(
+        route
+        for _title, route in DOCS_SECTIONS[3][3]
+        if route not in {polar_route for _polar_title, polar_route in POLAR_DOCS_ROUTES}
+    )
+    grouped_non_polar_routes = tuple(
+        route
+        for _title, _landing_route, _icon, leaves in CHART_FAMILY_SIDEBAR_SECTIONS
+        for _leaf_title, route in leaves
+    )
+    assert grouped_non_polar_routes == expected_non_polar_routes
+    assert len(grouped_non_polar_routes) == len(set(grouped_non_polar_routes))
+    assert POLAR_DOCS_ROUTES == (
+        ("Overview", POLAR_DOCS_ROUTE),
+        ("Radar", RADAR_DOCS_ROUTE),
+        ("Radial Bar", RADIAL_BAR_DOCS_ROUTE),
+        ("Pie & Donut", PIE_DOCS_ROUTE),
+        ("Wind Rose", WIND_ROSE_DOCS_ROUTE),
+    )
+    assert POLAR_SIDEBAR_SECTION == (
+        "Polar Charts",
+        POLAR_DOCS_ROUTE,
+        "radar",
+        POLAR_DOCS_ROUTES,
+    )
+    for _title, route in POLAR_DOCS_ROUTES:
+        assert f'href:"{route}"' in rendered
     assert "Advanced" not in {section[0] for section in other_sections}
-    for group_title in ("Learning", "Examples", "Other"):
+    for group_title in ("Learning", "Charts", "Other"):
         assert group_title in rendered
     for category, route in (
         ("Learn", "/"),
@@ -1682,8 +2004,40 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     ):
         assert icon in rendered
     assert "LucidePlug" not in rendered
-    assert rendered.count('"aria-current":((') == 3
+    assert rendered.count('"aria-current":((') == direct_link_count
     assert ">XY<" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("route", "expected_open_group"),
+    (
+        ("/charts/scatter/", "Core Charts"),
+        ("/charts/ecdf/", "Distributions"),
+        ("/charts/contour-plot/", "Density & Fields"),
+        ("/charts/segments/", "Specialized"),
+        ("/charts/radial-bar-chart/", "Polar Charts"),
+        ("/charts/pie-chart/", "Polar Charts"),
+        ("/overview/gallery/", None),
+    ),
+)
+def test_xy_sidebar_opens_only_the_current_chart_family(
+    route: str,
+    expected_open_group: str | None,
+) -> None:
+    """Open one exact chart family without expanding unrelated accordions."""
+    chart_families = (*CHART_FAMILY_SIDEBAR_SECTIONS, POLAR_SIDEBAR_SECTION)
+    open_groups = [
+        title
+        for title, landing_route, icon, leaves in chart_families
+        if "open:true" in str(_section_items(title, landing_route, icon, leaves, route)[0])
+    ]
+
+    assert open_groups == ([] if expected_open_group is None else [expected_open_group])
+    gallery_link = str(_section_items(*CHART_GALLERY_SIDEBAR_LINK, route)[0])
+    assert 'jsx("details"' not in gallery_link
+    assert ('"aria-current":(true ? "page"' in gallery_link) == (
+        route == CHART_GALLERY_SIDEBAR_LINK[1]
+    )
 
 
 def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
@@ -1937,6 +2291,14 @@ def test_chart_gallery_pages_append_factory_api_tables() -> None:
             "xy.stairs_chart",
         ),
         "/charts/scatter/": ("xy.scatter_chart",),
+        "/charts/polar-chart/": (
+            "xy.polar_chart",
+            "xy.theta_axis",
+            "xy.r_axis",
+        ),
+        "/charts/radar-chart/": ("xy.radar_chart",),
+        "/charts/radial-bar-chart/": ("xy.polar_bar_chart",),
+        "/charts/wind-rose/": ("xy.wind_rose",),
         "/charts/bar-chart/": ("xy.bar_chart", "xy.column_chart"),
         "/charts/histogram/": ("xy.histogram_chart",),
         "/charts/ecdf/": ("xy.ecdf_chart",),
@@ -2023,6 +2385,32 @@ def test_chart_factory_api_expands_forwarded_chart_props() -> None:
     assert "| `width` |" in markdown
     assert "| `zoom_limits` |" in markdown
     assert "| `link_axes` |" in markdown
+
+
+def test_polar_axis_api_expands_forwarded_axis_props() -> None:
+    """Show the underlying x/y options instead of an opaque ``**kwargs`` row."""
+    theta_reference, radial_reference = component_api_references(("xy.theta_axis", "xy.r_axis"))
+    theta_names = tuple(parameter.name for parameter in theta_reference.parameters)
+    radial_names = tuple(parameter.name for parameter in radial_reference.parameters)
+    refused = frozenset(_POLAR_INERT_AXIS_KEYWORDS)
+    x_axis_names = tuple(
+        name for name in inspect.signature(xy.x_axis).parameters if name not in refused
+    )
+    y_axis_names = tuple(
+        name for name in inspect.signature(xy.y_axis).parameters if name not in refused
+    )
+
+    assert theta_names[:5] == ("unit", "zero", "direction", "sector", "grid_shape")
+    assert theta_names[5:] == x_axis_names
+    assert radial_names[:2] == ("hole", "origin")
+    assert radial_names[2:] == y_axis_names
+    assert "**kwargs" not in {*theta_names, *radial_names}
+    # The polar axes refuse these outright, so the table must not offer them.
+    assert not refused & {*theta_names, *radial_names}
+    assert theta_reference.parameters[theta_names.index("tick_values")].description
+    assert theta_reference.parameters[theta_names.index("sector")].description
+    assert radial_reference.parameters[radial_names.index("domain")].description
+    assert radial_reference.parameters[radial_names.index("hole")].description
 
 
 def test_other_api_owned_pages_append_focused_tables() -> None:

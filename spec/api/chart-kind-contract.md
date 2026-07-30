@@ -245,13 +245,15 @@ style, per-cell data on the wire, one ring definition the other renderers cite.
 
 The rectangle family deliberately has two wire shapes:
 
-- **Full rectangles** (`histogram` today, and later irregular cells/candles):
+- **Full rectangles** (`histogram`, plus bars with unequal per-item widths):
   four edge columns, `x0/x1/y0/y1`. Use this when widths are irregular or both
-  axes need independent per-mark edges.
+  axes need independent per-mark edges. Under polar, a bar's four edges are an
+  annular sector rather than a Cartesian rectangle.
 - **Compact bars** (`bar`/`column`): one position column, one endpoint value
   column, an optional baseline column or scalar `value0_const`, and scalar
-  `width`. This keeps common bars to two data columns instead of four while
-  preserving the same rect fragment shader and legend/color path.
+  `width`. Equal per-item widths collapse to this path. This keeps common bars
+  to two data columns instead of four while preserving the same rect fragment
+  shader and legend/color path.
 
 Do not regress bars back to full rectangles for convenience; the 10k-category
 benchmark tracks this as part of the core 2D payload budget.
@@ -263,6 +265,9 @@ benchmark tracks this as part of the core 2D payload budget.
   mark-blind. A new kind inherits them without writing any interaction code, but
   they are not unconditional: `navigation`/`pan`/`zoom` default to on and can be
   turned off — or scoped to specific axes — per figure.
+  Polar is coordinate-system-specific: hover, fixed-minimum radial zoom, and
+  reset ship, while theta pan/rotation, box zoom, selection, brush, and
+  crosshair are disabled.
   [interaction.md](interaction.md) is the authority on the switches, per-axis
   policy, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.

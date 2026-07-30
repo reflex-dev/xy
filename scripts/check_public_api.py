@@ -71,7 +71,7 @@ DECLARATIVE_ANNOTATION_EXPORTS = (
     "y_band",
     "text",
 )
-DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis")
+DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis", "theta_axis", "r_axis")
 DECLARATIVE_CHROME_EXPORTS = (
     "legend",
     "tooltip",
@@ -83,6 +83,11 @@ DECLARATIVE_CHROME_EXPORTS = (
 DECLARATIVE_CHART_EXPORTS = (
     "chart",
     "scatter_chart",
+    "polar_chart",
+    "radar_chart",
+    "polar_bar_chart",
+    "pie_chart",
+    "wind_rose",
     "segments_chart",
     "triangle_mesh_chart",
     "line_chart",

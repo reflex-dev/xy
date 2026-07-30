@@ -141,6 +141,9 @@ table.
 
 ## Related Charts
 
+- [Polar charts](/docs/xy/charts/polar-chart/#map-a-polar-field) — place a
+  regular theta/r heatmap on rings and spokes, optionally with contour
+  isolines.
 - [Hexbin plots](/docs/xy/charts/hexbin/) — bin scattered points into a colored
   hexagonal grid.
 - [Contour plots](/docs/xy/charts/contour-plot/) — draw iso-value lines over a

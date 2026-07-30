@@ -6390,9 +6390,9 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
     """A polar chart: the same marks, rendered through polar coordinates.
 
     Each mark's first channel is the angle and its second is the radius, so
-    `xy.line` and `xy.scatter` are reused verbatim rather than replaced by
-    polar-specific marks. Configure the angular axis with `xy.theta_axis` and
-    the radial axis with `xy.r_axis`.
+    `xy.line`, `xy.scatter`, `xy.area`, `xy.bar`, and `xy.column` are reused
+    rather than replaced by polar-specific marks. Configure the angular axis
+    with `xy.theta_axis` and the radial axis with `xy.r_axis`.
 
         xy.polar_chart(
             xy.line(angle, gain, name="measured"),
@@ -6401,8 +6401,10 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
         )
 
     Supported mark kinds are listed in `xy.config.POLAR_MARK_KINDS`; anything
-    else is refused at build time, with the supported set named in the error,
-    rather than approximated. See spec/design/polar-axes.md.
+    outside that set is refused at build time rather than approximated. Prefer
+    `xy.radar_chart` for categorical spider plots, `xy.polar_bar_chart`
+    for radial bars, and `xy.wind_rose` for directional distributions. Other
+    details and deferred geometry are tracked in spec/design/polar-axes.md.
     """
     _require_polar_coords(props)
     return Chart("polar_chart", children, **props)
@@ -6554,7 +6556,9 @@ def polar_bar_chart(*children: Component, **props: Any) -> Chart:
 
     Bars carry the angle as their first channel and the radius as their second,
     with `width` in the angular axis's own unit (radians by default, degrees
-    when the theta axis says so).
+    when the theta axis says so). A scalar width creates equal sectors; a
+    per-bar width sequence creates unequal sectors for pie/donut composition.
+    `base` sets the inner radius, so a positive base opens an annular hole.
 
         xy.polar_bar_chart(
             xy.bar(directions, counts, width=30.0),

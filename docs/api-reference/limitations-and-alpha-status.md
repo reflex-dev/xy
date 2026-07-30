@@ -28,6 +28,10 @@ pre-1.0 releases can make breaking changes with migration notes.
   new visible-window representation.
 - Density is native-binned and GPU-rendered. It is not an all-GPU ingest and
   aggregation pipeline.
+- Polar traces do not use Cartesian decimation, density, or refined-view
+  tiers. `line`, `scatter`, and `area` render directly and reject more than
+  200,000 points per trace. Heatmap and contour grids are not governed by that
+  point ceiling.
 - Arrow ingest is zero-copy only for compatible, null-free primitive layouts.
   Chunking, nulls, dtype conversion, and datetime conversion can copy.
 - Disk-backed/out-of-core residency is not a shipped public tier.
@@ -46,6 +50,18 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
 - Linked views synchronize viewport axes, not selections or cross-filtering.
 - Facets support display/export and shared domains but not `Chart` append,
   pick, or Python-side range-selection methods.
+- Polar interaction currently consists of hover, radial zoom about a fixed
+  radial minimum, and reset. Authored sectors are supported; theta pan/rotation,
+  interactive sector zoom, box zoom, selection, brushing, and crosshairs are
+  disabled.
+- Point-anchored `text`, `label`, `marker`, `arrow`, and `callout` annotations
+  use the joint `(theta, r)` projection consistently on polar charts in the
+  browser, SVG, and native raster output. Polar rules and bands remain deferred
+  because they require spoke/ring and sector/annulus geometry, and raise at
+  payload build instead of using Cartesian geometry.
+- Polar histograms, box plots, hexbin/density, generic segments, and meshes
+  remain outside the mark allowlist. Polar LOD, facets/animation, and angular
+  navigation/selection are also deferred.
 - Browser context limits matter on large dashboards. XY's context governor
   defaults to 12 live contexts and reacquires off-screen charts as they return;
   more than that many simultaneously visible charts is not an unbounded

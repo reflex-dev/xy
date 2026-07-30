@@ -25,6 +25,16 @@ and very large density traces can build a lazy multiresolution pyramid for
 viewport queries. These are pre-1.0 policy thresholds, not API guarantees;
 write code against the behavior and recorded `tier`, not a hard-coded count.
 
+Polar traces are an explicit exception to this ladder. They always use the
+direct tier because Cartesian M4 and density reductions do not preserve cyclic
+polar geometry. Polar `line`, `scatter`, and `area` traces have a hard
+200,000-point ceiling; building a larger point trace raises `ValueError`
+instead of silently drawing an unbounded payload or applying an unsuitable
+reduction. Heatmap and contour grids are not rejected merely because their
+cell count exceeds that point ceiling. Polar heatmaps inverse-sample at the
+requested browser/export surface, so output work is pixel-bounded even though
+source ingest and validation still depend on the source grid.
+
 ## Automatic versus explicit density
 
 ~~~python demo exec

@@ -52,9 +52,20 @@ ANNOTATION_FACTORIES = (
     "y_band",
     "text",
 )
+AXIS_FACTORIES = (
+    "x_axis",
+    "y_axis",
+    "theta_axis",
+    "r_axis",
+)
 CHART_FACTORIES = (
     "chart",
     "scatter_chart",
+    "polar_chart",
+    "radar_chart",
+    "polar_bar_chart",
+    "pie_chart",
+    "wind_rose",
     "line_chart",
     "area_chart",
     "histogram_chart",
@@ -244,8 +255,7 @@ def test_public_factories_are_typed_root_exports() -> None:
     for name in (
         *MARK_FACTORIES,
         *ANNOTATION_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
         *CHROME_FACTORIES,
         *CHART_FACTORIES,
     ):
@@ -263,8 +273,7 @@ def test_composition_alpha_contract_is_explicitly_exported() -> None:
         *ANNOTATION_FACTORIES,
         *CHART_FACTORIES,
         *CHROME_FACTORIES,
-        "x_axis",
-        "y_axis",
+        *AXIS_FACTORIES,
     }
 
     for name in sorted(contract):
@@ -282,8 +291,7 @@ def test_public_component_factories_have_typed_signatures() -> None:
     expected_returns = {
         **{name: components.Mark for name in MARK_FACTORIES},
         **{name: components.Annotation for name in ANNOTATION_FACTORIES},
-        "x_axis": components.Axis,
-        "y_axis": components.Axis,
+        **{name: components.Axis for name in AXIS_FACTORIES},
         "legend": components.Legend,
         "tooltip": components.Tooltip,
         "colorbar": components.Colorbar,
@@ -352,10 +360,18 @@ def test_annotation_factory_kinds_are_registered_with_typed_appliers() -> None:
 
 def test_chart_factories_construct_named_lazy_charts() -> None:
     for name in CHART_FACTORIES:
-        chart = getattr(components, name)()
+        if name == "radar_chart":
+            chart = components.radar_chart(["a", "b", "c"])
+        elif name == "wind_rose":
+            chart = components.wind_rose([0.0], [1.0])
+        elif name == "pie_chart":
+            chart = components.pie_chart(["a", "b"], [1.0, 2.0])
+        else:
+            chart = getattr(components, name)()
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        assert chart.children == ()
+        if name not in {"radar_chart", "wind_rose", "pie_chart"}:
+            assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None
 

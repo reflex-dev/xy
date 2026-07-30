@@ -146,7 +146,7 @@ not fall out of sight.
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
 | 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Implemented core | `xy.sankey_chart(links)` — Python layout (`_sankey.py`: layering, barycentre crossing minimisation, endpoint stacking) over the new `ribbon` primitive (per-end colours, flow-axis gradient, protocol v11). Alluvial/dependency-wheel remain compositions to build on the same primitive. Deferred: GPU picking (CPU hover only), legend swatches, cycle auto-breaking. |
 | 31 | Network/tree/org | network graph, force graph, tree, dendrogram, org chart, arc diagram | Planned later | Valuable but layout-heavy; should follow core 2D marks. |
-| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented | Quiver, barbs, and bounded streamlines feed shared instanced segments; `xy.wind_rose` ships as stacked polar bars over Python-side binning. |
+| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented across core and `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments through `xy.pyplot`; `xy.wind_rose(...)` bins compass bearings and speed bands into stacked polar sectors in core. |
 | 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Implemented in `xy.pyplot` | Curvilinear quads and explicit/native triangulations route through indexed meshes and marching-triangle kernels. |
 | 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar marks | Partially implemented | Polar shipped as the first non-cartesian system (chart-level `coords`, spec/design/polar-axes.md), including the phase-6/7 grid inverse and axis-depth surface. Ternary/Smith/carpet remain planned and should reuse the same seam. |
 | 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Prototyped (PR closed unmerged) | The closed `codex/finance-charting-surface` exploration branch has a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
@@ -213,7 +213,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 |---:|---|---|---|
 | 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Implemented core: polar coordinate system + radar/polar-bar/wind-rose compositions, heatmap/contour/errorbar, sector layout, hole/r-origin, categorical θ, log/symlog radius, and polygonal grids. Rule/band annotations, polar LOD, facets/animation, and angular navigation/selection remain tracked in polar-axes.md §§8–9. |
 | 28 | Ternary / Smith / carpet | Plotly/scientific compatibility. | New coordinate systems, not new mark primitives. |
-| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | All implemented; `xy.wind_rose` rides the polar bar path. |
+| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Quiver, barbs, and streamplot are implemented through `xy.pyplot`; `xy.wind_rose(...)` ships as a core helper over stacked polar bars. |
 | 30 | Pcolormesh / tricontour / tripcolor | Matplotlib-style irregular grid science. | Implemented through `xy.pyplot` with native quad/triangle geometry. |
 | 31 | Waffle / mosaic / Mekko / variwide | Business/category compatibility. | Mostly rectangle layout algorithms. |
 | 32 | Packed bubble / Venn / Euler | Compatibility and presentation charts. | Layout algorithms and label placement dominate. |
@@ -414,9 +414,10 @@ not re-implementing shipped primitives.
 3. **Statistical compatibility depth.** Add strip/swarm/boxen/rug,
    regression/diagnostic helpers, richer density hover/readout, and
    scatter-matrix/joint-plot composition on the shipped primitives.
-4. **Pie / donut in the composition API.** Implemented in `xy.pyplot` today;
-   promote to a core `xy.pie_chart(xy.pie(...))` surface with bounded arc
-   geometry and label placement.
+4. **Pie / donut depth.** `xy.pie_chart(labels, values)` ships in the
+   composition API over unequal-width polar bars, and `xy.pyplot` supplies the
+   Matplotlib-shaped pie helpers. Remaining depth is nested donuts and
+   variable-radius composition.
 5. **Re-land the finance surface.** Open a fresh PR from the closed exploration
    branch, rebased onto current composition/LOD primitives, then extend the
    `FinanceLayer` system with depth charts, Heikin-Ashi, and Renko.
@@ -449,21 +450,19 @@ xy.violin_chart(xy.violin(values, group=None, bandwidth="auto"))
 xy.chart(xy.errorbar(x, y, yerr=..., xerr=...))
 xy.chart(xy.hexbin(x, y, gridsize=50, color_scale="log"))
 xy.candlestick_chart(xy.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
-
-# next
-xy.pie_chart(xy.pie(values, labels=..., donut=0.0))
+xy.pie_chart(labels, values, hole=0.55)    # wedge bars + an owned slice tooltip
 ```
 
 New chart kinds land as composition marks plus a family container
-(`xy.box_chart(xy.box(...))`, `xy.pie_chart(xy.pie(...))`, …).
+(`xy.box_chart(xy.box(...))`, `xy.histogram_chart(xy.hist(...))`, …).
 
 ## Decision Summary
 
 The rectangle/polygon/grid-texture foundations, statistical breadth block,
-full mark styling, native PNG rasterizer, and the **Reflex-first reactive API**
-(reflex-xy adapter) are in place, and `v0.0.1` is launched with a live docs
-site. The next product track is **post-launch stabilization** (the open
-interaction/adapter bug backlog), followed by statistical compatibility depth
-and **pie/donut** in the composition API. Finance (candlestick plus
-indicators) remains prototyped on a closed exploration branch awaiting a fresh
-landing.
+full mark styling, native PNG rasterizer, core polar/pie/donut composition, and
+the **Reflex-first reactive API** (reflex-xy adapter) are in place, and
+`v0.0.1` is launched with a live docs site. The next product track is
+**post-launch stabilization** (the open interaction/adapter bug backlog),
+followed by statistical compatibility depth and pie/donut depth (nesting and
+variable radius). Finance (candlestick plus indicators) remains prototyped on
+a closed exploration branch awaiting a fresh landing.

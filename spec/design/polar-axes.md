@@ -5,8 +5,8 @@ for the (θ, r) → pixel transform, the angular conventions, the wire shape, an
 which marks are legal under `coords="polar"`. Where an implementation and this
 document disagree, this document is right and the implementation is a bug.
 
-Roadmap context: item 18 (radar/polar), items 29/32 (wind rose "awaits polar
-support"), item 34 (specialist coordinate systems) in
+Roadmap context: item 18 (radar/polar), items 29/32 (wind rose), and item 34
+(specialist coordinate systems) in
 [`../api/chart-roadmap.md`](../api/chart-roadmap.md).
 
 ## 1. The shape of the problem
@@ -174,7 +174,7 @@ Eight properties this pins down, each of which has matching coverage:
 ### 3.1 Where it sits in the existing pipeline
 
 The Cartesian pipeline is two independent 1-D maps. On the client
-(`AXIS_GLSL`, `js/src/40_gl.ts:80`):
+(`AXIS_GLSL` in `js/src/40_gl.ts`):
 
 ```
 xyDecode(encoded, meta)   →  undo §16 offset encoding, back to data space
@@ -182,8 +182,8 @@ xyAxisCoord(...)          →  apply the scale (log / symlog / linear)
 · map.x + map.y           →  affine to clip space
 ```
 
-and in Python, `_Scale.coord()` then `_Scale.__call__()`
-(`python/xy/_svg.py:814`, `:827`) do the same two steps.
+and in Python, `_Scale.coord()` then `_Scale.__call__()` in
+`python/xy/_svg.py` do the same two steps.
 
 **Polar replaces only the last step**, and replaces it with a *joint* map over
 both axes. Decode and scale are untouched. After `xyAxisCoord` yields θ and r
@@ -191,8 +191,8 @@ in scale-coordinate space, the joint polar map produces a position directly,
 and the per-axis `u_xmap`/`u_ymap` affine is bypassed. This is why log and
 symlog radius reuse the existing axis-scale implementation.
 
-Because the WebGL canvas is positioned and sized to exactly the plot rect
-(`js/src/50_chartview.ts:1833`), clip space `[-1, 1]²` **is** the plot rect. So
+Because the WebGL canvas is positioned and sized to exactly the plot rect,
+clip space `[-1, 1]²` **is** the plot rect. So
 the GLSL form needs no plot-rect uniforms at all — only the centre, the radius
 in clip units per axis, and the radial range:
 
@@ -260,7 +260,7 @@ Fixture cases are chosen so a human can check them by inspection:
 
 Three consumers must agree with that file:
 
-1. **Python** — a unit test over `_polar_project`. Fast, always runs.
+1. **Python** — a unit test over `_PolarProjection`. Fast, always runs.
 2. **GLSL** — `scripts/polar_parity_smoke.py` renders one scatter point per
    fixture sample in headless Chrome and compares each colour's lit-pixel
    centroid to the fixture value. This binds the *actual shader* in the shipped
@@ -271,9 +271,8 @@ Three consumers must agree with that file:
    transform test.
 
 This is deliberately stronger than the existing tick-math arrangement, where
-`js/src/30_ticks.ts` and its hand port in `python/xy/_svg.py:477-767` are bound
-by **nothing executable** — a gap that has already allowed a live divergence in
-the tick-count target between client and exporters. Polar does not repeat it.
+`js/src/30_ticks.ts` and its hand port in `python/xy/_svg.py` are bound by
+nothing executable. Polar does not repeat that gap.
 
 ## 5. Chord versus arc
 
@@ -441,6 +440,16 @@ grid blits will silently project through a straight-line map.
 `heatmap`, `contour`, and `errorbar` (`POLAR_MARK_KINDS`,
 `python/xy/config.py`).
 
+`area` uses chord-bounded fill geometry, which supports the categorical
+composition built by `xy.radar_chart(...)`. Each radar series closes at a full
+turn rather than by repeating its first angle, which would sweep the closing
+segment backwards through the circle. `bar` and `column` use annular sectors;
+`xy.polar_bar_chart(...)` makes that composition explicit, and
+`xy.wind_rose(...)` bins directional observations into stacked sector marks
+using compass convention `zero="N"` plus clockwise angles. The client subdivides
+each sector arc by the span-proportional formula in §5, SVG uses true arc
+commands, and raster flattens the same sector to a polygon.
+
 A bar's angular width may vary per bar. Equal widths ship through the compact
 bar path (one scalar width, `BAR_VS`); unequal widths ship four edge columns,
 which under polar *are* an annular sector — `(x0, x1)` is the angular span and
@@ -488,12 +497,14 @@ transfer unmodified and must not be silently reused:
   density renders as centre-concentrated.
 
 Both need their own design work in
-[`lod-architecture.md`](lod-architecture.md). Until then the cap is explicit and
-reported, per §28.
+[`lod-architecture.md`](lod-architecture.md). Any future fallback or ceiling
+change must be explicit and reported, per §28.
 
 ## 8. Interaction
 
-MVP surface, deliberately small:
+The point-pick buffer uses the same polar transform as the visible scatter
+geometry, and the screen→data inverse in §3.2 supplies θ/r readouts. The existing
+modebar reset remains available.
 
 - **Hover** — screen-space nearest-point test, seam-aware per §3.2, with the
   readout reporting (θ, r) in the axis's declared unit.
