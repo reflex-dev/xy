@@ -1514,3 +1514,77 @@ def test_polar_direct_ceiling_covers_every_capped_mark(kind) -> None:
     }
     with pytest.raises(ValueError, match="polar ceiling"):
         xy.polar_chart(marks[kind]()).figure().build_payload_split()
+
+
+def _text_boxes(doc: str) -> list[tuple[float, float, str, float]]:
+    boxes = []
+    for match in re.finditer(r"<text([^>]*)>([^<]*)</text>", doc):
+        attrs, text = match.group(1), match.group(2)
+        x = re.search(r'\bx="([-\d.]+)"', attrs)
+        y = re.search(r'\by="([-\d.]+)"', attrs)
+        size = re.search(r'font-size="([\d.]+)"', attrs)
+        if x and y and text.strip():
+            boxes.append(
+                (
+                    float(x.group(1)),
+                    float(y.group(1)),
+                    text.strip(),
+                    float(size.group(1)) if size else 11.0,
+                )
+            )
+    return boxes
+
+
+def _overlapping_pairs(boxes) -> int:
+    count = 0
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            x1, y1, t1, f1 = boxes[i]
+            x2, y2, t2, f2 = boxes[j]
+            w1, w2 = len(t1) * f1 * 0.55, len(t2) * f2 * 0.55
+            if abs(x1 - x2) < (w1 + w2) / 2 and abs(y1 - y2) < (f1 + f2) / 2:
+                count += 1
+    return count
+
+
+@pytest.mark.parametrize(
+    ("hole", "size"),
+    [(0.7, 390), (0.6, 700), (0.0, 390)],
+)
+def test_radial_tick_labels_do_not_overlap(hole, size) -> None:
+    """Radial labels march along a 22.5-degree spoke, so their usable run is the
+    annulus width projected onto it — about a fifth of the plot. Sizing the tick
+    request off the full plot height packed a height's worth of labels into that
+    fifth, and the polar path skips the collision pass that would thin them.
+    Not a narrow-viewport effect: the 700px case overlapped worse than 390px."""
+    chart = xy.polar_chart(
+        xy.line([0.0, 90.0, 180.0, 270.0], [10.0, 20.0, 30.0, 40.0]),
+        xy.theta_axis(unit="degrees"),
+        xy.r_axis(hole=hole, domain=(0.0, 60.0)),
+        width=size,
+        height=size,
+    )
+    boxes = _text_boxes(chart.figure().to_svg())
+    assert boxes, "no tick labels emitted"
+    assert _overlapping_pairs(boxes) == 0
+
+
+def test_negative_radial_autorange_keeps_its_pad() -> None:
+    """`min(0.0, lo)` collapsed to `lo` once the data went negative, throwing the
+    pad away and producing the picture the branch exists to forbid: four
+    readings within 0.7% of each other resolved to [-100.8, -100.1] and drew as
+    a full-disc star. Centre origin is only meaningful when zero ends the
+    range."""
+
+    def radial_range(values):
+        spec, _ = (
+            xy.polar_chart(xy.line(list(range(len(values))), values)).figure().build_payload_split()
+        )
+        return spec["y_axis"]["range"]
+
+    lo, hi = radial_range([-100.5, -100.2, -100.8, -100.1])
+    assert lo < -100.8 and hi > -100.1, (lo, hi)
+
+    # Non-negative data keeps the centre-origin contract exactly as before.
+    assert radial_range([100.5, 100.2, 100.8, 100.1]) == [0.0, 100.8]
+    assert radial_range([1.0, 2.0, 3.0, 4.0]) == [0.0, 4.0]

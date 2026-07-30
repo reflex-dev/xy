@@ -3369,6 +3369,37 @@ def _polar_wedge_path(
     )
 
 
+def _polar_radial_tick_length(polar: "_PolarProjection") -> float:
+    """Label-density length for the radial axis under polar.
+
+    Radial labels march along a `_POLAR_RLABEL_DEG` spoke, so their usable run
+    is the annulus width projected onto that spoke — about a fifth of the plot
+    at the default 22.5 degrees. Mirrored by _radialTickLength in
+    js/src/50_chartview.ts.
+    """
+    span = polar.radius * (1.0 - polar.inner_fraction)
+    return max(1.0, span * abs(math.sin(math.radians(_POLAR_RLABEL_DEG))))
+
+
+def _polar_thin_radial_labels(labels: list[float], length_px: float) -> list[float]:
+    """Stride-thin radial tick LABELS to what the spoke can hold.
+
+    The grid rings and the labels come from one tick list, so sizing the whole
+    list to the spoke thinned the rings too — a 520px disc dropped from three
+    rings to two. Ring density stays tied to the plot; only the labels, which
+    are the things that actually collide, are thinned. Endpoints are kept so
+    the radial extent stays readable.
+    """
+    capacity = max(2, int(length_px / 45))
+    if len(labels) <= capacity:
+        return labels
+    stride = math.ceil(len(labels) / capacity)
+    thinned = labels[::stride]
+    if labels and labels[-1] not in thinned:
+        thinned.append(labels[-1])
+    return thinned
+
+
 def _polar_frame_path(polar: "_PolarProjection") -> str:
     """SVG path for the visible annular sector, shared by clip and frame."""
     return _polar_wedge_path(
@@ -3672,6 +3703,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
+    if polar is not None:
+        # Rings keep full density; only the labels ride the spoke.
+        ylab = _polar_thin_radial_labels(ylab, _polar_radial_tick_length(polar))
     xmt, ymt = minor_axis_ticks(xa), minor_axis_ticks(ya)
     dom_style = (spec.get("dom") or {}).get("style") or {}
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}

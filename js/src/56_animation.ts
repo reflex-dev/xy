@@ -364,6 +364,19 @@ Object.assign(ChartView.prototype, {
   },
 
   _prepareBarPositionInterpolation(previous, next, match) {
+    // BAR_VS mixes the transition into p/v0/v1 in CLIP space, but its polar
+    // branch needs data space and re-derives theta and both radii from the raw
+    // attributes — so only the scalar half-width survives the mix. The result
+    // was not a snap but a hybrid matching neither old nor new data: the wedge
+    // jumped to its destination angle on frame 0 while its angular width
+    // animated. polar-axes.md defers polar animation; make that deferral
+    // guarded like its siblings so the wedge snaps cleanly and says why.
+    // (Polar scatter and line interpolate correctly — they mix before
+    // projecting — and entrance `grow` still honours u_animationProgress.)
+    if (this.spec?.coords === "polar") {
+      match.fallback ||= "snap:polar-unsupported";
+      return false;
+    }
     const oldBar = previous._cpuBar;
     const newBar = next._cpuBar;
     if (!oldBar || !newBar || previous.orientation !== next.orientation ||

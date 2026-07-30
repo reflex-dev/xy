@@ -1083,6 +1083,26 @@ export class ChartView {
     return [Number(r[0]), Number(r[1])];
   }
 
+  // Stride-thin radial tick LABELS to what the POLAR_RLABEL_DEG spoke can
+  // hold. Their usable run is the annulus width projected onto that spoke —
+  // about a fifth of the plot at the default 22.5 degrees — so a plot-height
+  // worth of labels packed into it and overlapped, the polar path skipping the
+  // collision pass that would otherwise thin them. Grid rings come from the
+  // same tick list and must keep full density, so only the labels are thinned.
+  // Mirrored by _polar_thin_radial_labels in python/xy/_svg.py.
+  _polarThinRadialLabels(labels, geom) {
+    if (!geom || !Array.isArray(labels)) return labels;
+    const span = geom.radius * (1 - (geom.hole || 0));
+    const usable = Math.max(1, span * Math.abs(Math.sin((POLAR_RLABEL_DEG * Math.PI) / 180)));
+    const capacity = Math.max(2, Math.floor(usable / 45));
+    if (labels.length <= capacity) return labels;
+    const stride = Math.ceil(labels.length / capacity);
+    const thinned = labels.filter((_, i) => i % stride === 0);
+    const last = labels[labels.length - 1];
+    if (!thinned.includes(last)) thinned.push(last);
+    return thinned;
+  }
+
   // One full turn in the axis's own angular unit, or 0 when the axis is not a
   // continuous angular one — mirrors _tick_window_filter in _svg.py.
   _polarAngularTurn(axisId): number {
@@ -6630,7 +6650,7 @@ export class ChartView {
         const labelOffset = Math.min(RLABEL, sectorSweep / 2);
         const angle = this._polarThetaAngle(polarGeom, polarGeom.thetaStart)
           + Math.sign(polarGeom.dirUnit || 1) * labelOffset;
-        for (const v of (yt.labels || yt.ticks)) {
+        for (const v of this._polarThinRadialLabels(yt.labels || yt.ticks, polarGeom)) {
           const radius = this._polarRadius(polarGeom, v);
           if (!(radius > 0) || radius > polarGeom.radius + 1e-6) continue;
           const spinY = Number(yAxis.tick_label_angle) || 0;

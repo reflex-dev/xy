@@ -1430,10 +1430,23 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # An explicit domain/bounds still wins — it short-circuits above.
             # Log radius has no zero and already resolved its positive extent
             # above. Linear/symlog keep the established centre-origin default.
-            out_lo = lo if scale == "log" else min(0.0, lo)
-            # No outer pad either: the outermost ring should be the data max,
-            # matching how both matplotlib and Plotly frame a polar plot.
-            out_hi = hi
+            # `min(0.0, lo)` collapsed to `lo` once the data went negative,
+            # which threw the pad away and produced the very picture this
+            # branch forbids: four readings within 0.7% of each other resolved
+            # to [-100.8, -100.1] and drew as a full-disc star. Centre origin
+            # is only meaningful when zero is an end of the range — below zero
+            # it is vacuous, so keep the ordinary padded extent there.
+            if scale == "log":
+                out_lo = lo
+            elif lo >= 0.0:
+                out_lo = 0.0
+            # else: keep the padded out_lo computed above.
+            # No outer pad when the centre is the origin: the outermost ring
+            # should be the data max, matching how matplotlib and Plotly frame
+            # a polar plot. A negative floor keeps its pad on both sides so the
+            # range stays symmetric about the data.
+            if lo >= 0.0 or scale == "log":
+                out_hi = hi
             return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
         anchor = self._zero_baseline_anchor(axis_id)
         if anchor == "lo" and lo == 0.0 and hi > 0.0:
