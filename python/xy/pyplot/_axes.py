@@ -1212,7 +1212,7 @@ def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
 
     ``Path.to_polygons`` applies the patch transform and resolves curves into
     straight segments, so a rotated Rectangle, a Circle, and a Wedge all come
-    back as real geometry rather than as cubic-Bézier control points. An
+    back as real geometry rather than as cubic Bézier control points. An
     artist-level `transform=` rides along per `_patch_placement`. `pixels` is
     the output size the flattening is resolved for — see
     `_refine_at_pixel_scale`, which is why it is not resolved in data units.

@@ -14,7 +14,7 @@ which covers user-visible releases across the whole package.
   advances the axes color cycle.
 - Patch geometry now comes from `Path.to_polygons`, with the patch transform
   applied. `Rectangle(angle=...)` keeps its rotation, and curved patches use
-  the curve rather than its cubic-Bézier control points: at the default figure size
+  the curve rather than its cubic Bézier control points: at the default figure size
   `Circle(radius=1)` covers 3.141 rather than 3.251, and
   `Ellipse(width=2, height=1, angle=20)` covers 1.570 rather than 3.251.
 - The flattening is resolved at the figure's pixel size rather than in data

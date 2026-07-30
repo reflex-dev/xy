@@ -174,7 +174,7 @@ def test_added_ellipse_flattens_its_curve_under_the_patch_transform() -> None:
     _fig, ax = plt.subplots()
     ax.add_patch(Ellipse((0, 0), width=2, height=1, angle=20, facecolor="green"))
     meshes, _edges = _patch_marks(ax)
-    # pi*a*b. Raw cubic-Bézier control points without the transform give 3.2509.
+    # pi*a*b. Raw cubic Bézier control points without the transform give 3.2509.
     assert _mesh_area(meshes[0]) == pytest.approx(np.pi * 1.0 * 0.5, rel=1e-2)
 
 
