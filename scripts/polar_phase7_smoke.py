@@ -586,9 +586,26 @@ def _validate_static(case: Case, figure: Any, output_dir: Path) -> tuple[int, in
         distance = np.abs(image.astype(np.int16) - target[None, None, :])
         count = int(np.all(distance <= 24, axis=2).sum())
         if count < minimum:
+            # A bare count says a mark is missing but not why, and this probe is
+            # the only place the native rasterizer is checked against an authored
+            # colour — so say which of the three failure shapes it is. `svg_hits`
+            # separates a raster-only bug from one in the geometry both static
+            # exporters share; `loose` separates a recoloured mark from an absent
+            # one; the neighbours separate "painted over" from "never emitted".
+            svg_hits = svg.lower().count(color.lower().encode())
+            loose = int(np.all(distance <= 72, axis=2).sum())
+            pixels = image.reshape(-1, 3)
+            uniques, counts = np.unique(pixels, axis=0, return_counts=True)
+            order = np.argsort(counts)[::-1][:8]
+            common = ", ".join(
+                "#{:02x}{:02x}{:02x}x{}".format(*uniques[i].tolist(), int(counts[i])) for i in order
+            )
             raise AssertionError(
                 f"{case.name}: native PNG has only {count} {color} pixels "
-                f"(expected at least {minimum})"
+                f"(expected at least {minimum}); within-72 {loose}, "
+                f"SVG mentions the colour {svg_hits}x, "
+                f"canvas {image.shape[1]}x{image.shape[0]}, "
+                f"ink {ink_fraction:.2%}, most common: {common}"
             )
 
     (output_dir / f"{case.name}.svg").write_bytes(svg)
