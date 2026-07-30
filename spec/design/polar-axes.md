@@ -130,14 +130,16 @@ Five properties this pins down, each of which has matching coverage:
   under it. `_polar_legend_reserve` (`_svg.py`, mirrored by `_polarLegendReserve`)
   therefore takes a gutter off the canvas edge **before** the disc is fitted, and
   records it as `plot["legend_box_*"]` / `view._legendBox`; the legend places and
-  bounds itself in that box, and `loc` chooses where within it. `_polar_legend_room`
-  (22% of the canvas width, clamped to 120–200 px) on the side `loc` names, or `_POLAR_LEGEND_BAND` (64 px) beneath the
-  disc at compact widths, where a side gutter would leave a disc too small to
-  read. Derived from the canvas width rather than measured from the label set, for the
-  same reason the subdivision count is a shared formula: every renderer knows the
-  canvas to the pixel, while a measured reservation would drift with each
-  renderer's font metrics. A label wider than the gutter ellipsizes with its full
-  text in `title`/ARIA, as the static exporters already do against the plot width. Nothing is reserved when the author supplied an
+  bounds itself in that box, and `loc` chooses where within it.
+  `_polar_legend_room` (22% of the canvas width, clamped to 120–200 px) on the
+  side `loc` names, or `_POLAR_LEGEND_BAND` (64 px) beneath the disc at compact
+  widths, where a side gutter would leave a disc too small to read. Derived from
+  the canvas width rather than measured from the label set, for the same reason
+  the subdivision count is a shared formula: every renderer knows the canvas to
+  the pixel, while a measured reservation would drift with each renderer's font
+  metrics. A label wider than the gutter wraps in the browser and ellipsizes in
+  the static exporters, which have no scroll axis to fall back on; either way the
+  full text stays in `title`/ARIA. Nothing is reserved when the author supplied an
   `anchor` (an explicit plot-relative placement they own, still resolved against
   the plot) or a four-tuple `padding` (which already states the box the plot
   should occupy, and remains the way to hand-reserve a caption band), and nothing

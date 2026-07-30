@@ -2194,6 +2194,19 @@ export class ChartView {
       if (!record) return;
       const previous = Number(record._styleDpr);
       if (!(previous > 0) || previous === dpr) return;
+      // Repair in place ONLY while the CPU mirrors still cover every row the
+      // GPU holds. The streaming-append fast path extends styleBuf with a tail
+      // `bufferSubData` and advances `n` without growing `_cpuStyle`
+      // (54_kernel.ts), so after an append the mirror is short: re-uploading it
+      // would shrink the store out from under the appended rows, and scaling it
+      // would leave that tail at the old dpr either way. Leave `_styleDpr`
+      // stale instead — the append guard then refuses the fast path and its
+      // rebuild renormalizes every row at the current dpr, which is the
+      // fallback that case has always relied on.
+      const rows = Number(record.n);
+      if (!(rows > 0)) return;
+      if (record._cpuStyle && record._cpuStyle.length !== rows * 4) return;
+      if (record._cpuRadius && record._cpuRadius.length !== rows * 2) return;
       const factor = dpr / previous;
       // Widths ride component 2 of the canonical style row; the other three
       // components (opacity, artist alpha, symbol) are dpr-independent.
@@ -2606,10 +2619,12 @@ export class ChartView {
     // `minmax(0, max-content)`, not bare `max-content`: the box is capped at
     // `--xy-legend-max-width`, and a column that refuses to shrink below its
     // content made a long row overflow horizontally — a legend with a horizontal
-    // SCROLLBAR, which hides the label it is meant to be showing. Vertical
-    // overflow still scrolls (that is the browser legend's advantage over the
-    // static exporters, which can only ellipsize); horizontal overflow
-    // ellipsizes per row instead, with the full text in `title`/ARIA.
+    // SCROLLBAR, which hides the label it is meant to be showing. Shrinkable
+    // columns let a long label WRAP inside its column instead, so the inline axis
+    // never needs to scroll and the text stays whole; the block axis still
+    // scrolls, which is the browser legend's advantage over the static
+    // exporters, which can only ellipsize. Row `title`/ARIA carries the full
+    // name either way, for the rows the block-axis cap does clip.
     lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},minmax(0,max-content));` +
       "column-gap:2em;row-gap:.5em;overflow-x:hidden;overflow-y:auto;";

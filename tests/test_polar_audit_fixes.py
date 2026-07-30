@@ -372,28 +372,32 @@ def test_client_caps_the_title_box_at_the_measured_wrap_width() -> None:
 # -- legend overflow --------------------------------------------------------
 
 
-def test_a_long_legend_row_ellipsizes_instead_of_scrolling_sideways() -> None:
+def test_a_long_legend_row_wraps_instead_of_scrolling_sideways() -> None:
     """A pie legend grew a horizontal scrollbar, hiding the label it was showing.
 
     The box is capped at `--xy-legend-max-width`, but its grid columns were
     `max-content` — they refused to shrink — so an over-wide row overflowed and
-    `overflow:auto` answered with a sideways scrollbar. Vertical scrolling stays
-    (it is what the browser legend has over the static exporters, which can only
-    ellipsize); horizontal overflow now ellipsizes per row.
+    `overflow:auto` answered with a sideways scrollbar. Shrinkable columns let the
+    label wrap inside its column instead, so nothing needs to scroll sideways and
+    no text is dropped. Block-axis scrolling stays: it is what the browser legend
+    has over the static exporters, which can only ellipsize.
+
+    The row deliberately stays a BLOCK, not a flex line. A flex container
+    blockifies its children's computed `display`, which would turn an author's
+    `inline-flex` swatch utility into `flex`
+    (`test_tailwind_root_customization.py`), and a nowrap label removes the very
+    wrapping that keeps a narrow chart's legend scrollable rather than clipped
+    (`test_legend_resize_regression.py`). The swatch keeps aligning through the
+    `vertical-align` it already carries.
     """
-    theme = (ROOT / "js/src/20_theme.ts").read_text(encoding="utf-8")
     # Columns that can shrink, and no horizontal scroll axis.
     assert "minmax(0,max-content)" in CHARTVIEW
     assert "overflow-x:hidden;overflow-y:auto;" in CHARTVIEW
-    # Only the LABEL clips. The swatch is `flex:none` and keeps overflow visible,
-    # so an authored oversized marker still draws outside its 18x14 box.
-    assert 'data-xy-slot="legend_item"]){display:flex;align-items:center;min-width:0}' in theme
-    assert (
-        'data-xy-slot="legend_label"]){min-width:0;overflow:hidden;'
-        "text-overflow:ellipsis;white-space:nowrap}" in theme
-    )
-    assert 'data-xy-slot="legend_swatch"]){display:inline-block;flex:none;' in theme
-    # An ellipsis must never make text unreachable: same full-text-in-title/ARIA
+    theme = (ROOT / "js/src/20_theme.ts").read_text(encoding="utf-8")
+    assert 'data-xy-slot="legend_item"]){' not in theme
+    assert 'data-xy-slot="legend_label"]){' not in theme
+    assert 'data-xy-slot="legend_swatch"]){display:inline-block;width:' in theme
+    # Clipping must never make text unreachable: same full-text-in-title/ARIA
     # rule the categorical tick labels use.
     assert "row.title = String(it.name);" in CHARTVIEW
     assert 'row.setAttribute("aria-label", String(it.name));' in CHARTVIEW
@@ -515,6 +519,23 @@ def test_a_dpr_change_rescales_the_buffers_baked_in_device_pixels() -> None:
     assert "g._cpuRadius = values;" in CHARTVIEW
     # Run before the layout/paint of the same frame.
     assert "this._rescaleDprBakedBuffers();\n    this._layout();" in CHARTVIEW
+
+
+def test_the_dpr_rescale_defers_to_the_append_rebuild_on_a_short_mirror() -> None:
+    """The rescale re-uploads whole buffers from `_cpuStyle`/`_cpuRadius`, but the
+    streaming-append fast path extends `styleBuf` with a tail `bufferSubData` and
+    advances `n` without growing those mirrors (54_kernel.ts). Re-uploading a short
+    mirror would shrink the store out from under the appended rows, and scaling it
+    would leave that tail at the old dpr regardless. Leaving `_styleDpr` stale
+    hands the repair back to the append guard's rebuild — the fallback
+    `scripts/append_stream_smoke.py` asserts via `dprChangeRebuilds`.
+    """
+    assert "const rows = Number(record.n);" in CHARTVIEW
+    assert "if (record._cpuStyle && record._cpuStyle.length !== rows * 4) return;" in CHARTVIEW
+    assert "if (record._cpuRadius && record._cpuRadius.length !== rows * 2) return;" in CHARTVIEW
+    # The guard the fallback runs through must stay in place.
+    kernel = (ROOT / "js/src/54_kernel.ts").read_text(encoding="utf-8")
+    assert "if (g.styleBuf && g._styleDpr !== this.dpr) return false;" in kernel
 
 
 def test_a_dpr_change_stays_synchronous() -> None:

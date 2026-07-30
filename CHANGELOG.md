@@ -71,15 +71,19 @@ in the README).
   now rescales the per-instance stroke widths and corner radii that are baked in
   device pixels, so authored strokes and wedge corners keep their intended size
   across a zoom. The DPR handler stays synchronous: a DPR change with no container
-  resize has no later event to piggyback on.
+  resize has no later event to piggyback on. A trace whose CPU style/radius mirror
+  no longer spans every row on the GPU — which is what a streaming tail append
+  leaves behind — is skipped rather than repaired in place, so the existing
+  append-time rebuild still does the renormalizing for it.
 - `xy.pie_chart` appears in the generated chart-factory API reference alongside
   the other polar compositions.
-- A legend row too wide for its box ellipsizes instead of growing a horizontal
+- A legend row too wide for its box wraps instead of growing a horizontal
   scrollbar. The box is capped at `--xy-legend-max-width`, but its grid columns
   were `max-content` and refused to shrink, so an over-wide row overflowed and
   `overflow:auto` answered sideways — hiding the label it was meant to show.
-  Vertical scrolling is unchanged; the full text stays available in
-  `title`/ARIA, matching how categorical tick labels already ellipsize.
+  Columns are now `minmax(0, max-content)` and the inline axis never scrolls.
+  Vertical scrolling is unchanged, and rows carry their full name in
+  `title`/ARIA for the ones the height cap clips.
 - `xy.pie_chart` no longer prints the same number twice. Values that already sum
   to 100 — how most pie data arrives — made `show_values` and `show_percent`
   collide, so `[40, 30, 20, 10]` rendered `Direct  40  (40%)`: a legend row that
