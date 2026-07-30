@@ -3418,7 +3418,9 @@ export class ChartView {
       const raw = tickValues[tickIndex];
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
-      const tick = document.createElement("span");
+      // `any` because the node carries the stashed beside-the-bar cssText below
+      // (same reason as the legend box's `lg`).
+      const tick: any = document.createElement("span");
       tick.textContent =
         hasExplicitTicks &&
           Array.isArray(cb.tick_labels) &&
