@@ -290,6 +290,11 @@ matplotlib arc-interpolates paths.
 | Heatmap cells | **true arc boundaries** | The fragment-stage inverse samples each screen pixel in (θ, r), so cell edges follow rings/spokes. |
 | Contour / error-bar segments | **chord** | They are independent data-space segments projected at their endpoints, with radial clipping before projection. |
 
+A polar bar's **orientation is fixed**: its position column is the angle and
+its value column is the radius. Every renderer reads `pos` as θ regardless, so
+`orientation="horizontal"` does not rotate the bar, it transposes it — that
+combination is refused at mark construction rather than drawn (§7).
+
 Chords need no subdivision, which is why line, scatter and area are cheap. Arcs
 flatten to polylines wherever the medium lacks a real arc: the raster display
 list always, and the GPU bar sweep by construction. SVG needs no count: it draws

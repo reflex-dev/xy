@@ -1454,8 +1454,6 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # time radius keeps the ordinary padded extent — the same reasoning
             # that already exempts a negative floor below.
             if self._axis_kind(axis_id) == "time":
-                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
-            if self._axis_kind(axis_id) == "time":
                 # Zero is the Unix epoch, not a centre. Pinning a time radius
                 # there spanned the disc from 1970 to the data and parked every
                 # ring at the rim; a singleton instant was the worst case. Time

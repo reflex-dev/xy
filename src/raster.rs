@@ -54,6 +54,10 @@ struct PolarClip {
     direction: f32,
     wide: bool,
     full: bool,
+    /// A collapsed annulus or a collapsed sweep: nothing is visible. Kept as a
+    /// clip that masks everything rather than a construction failure — see
+    /// `PolarClip::new`.
+    empty: bool,
 }
 
 impl PolarClip {
@@ -62,11 +66,17 @@ impl PolarClip {
             .into_iter()
             .all(f32::is_finite)
             || inner < 0.0
-            || outer < inner
-            || sweep == 0.0
         {
             return None;
         }
+        // A collapsed annulus (`outer <= inner`) or a collapsed sweep is an
+        // EMPTY visible sector, not a malformed command stream: a valid Python
+        // hole or sector can round to coincident f32 radii/angles at the
+        // requested device radius. `None` here is not "no clip" — the
+        // OP_POLAR_CLIP handler applies `?` to it, which unwinds through
+        // `ok?` and drops the whole framebuffer, so a legal figure exported a
+        // blank PNG. Mask the marks instead and let the later rectangular clip
+        // reset state for chrome.
         let span = sweep.abs();
         Some(Self {
             cx,
@@ -78,11 +88,15 @@ impl PolarClip {
             direction: sweep.signum(),
             wide: span > std::f32::consts::PI,
             full: span >= std::f32::consts::TAU * (1.0 - 1e-6),
+            empty: outer <= inner || span == 0.0,
         })
     }
 
     #[inline]
     fn contains(&self, x: f32, y: f32) -> bool {
+        if self.empty {
+            return false;
+        }
         let v = [x - self.cx, self.cy - y]; // math coordinates: +y is up
         let radius2 = v[0] * v[0] + v[1] * v[1];
         if radius2 < self.inner * self.inner || radius2 > self.outer * self.outer {
@@ -128,7 +142,7 @@ impl PolarClip {
         // coincide.  That is an empty visible annulus, not a malformed command
         // stream: mask marks completely and let the later rectangular clip
         // reset state for chrome.
-        if self.inner >= self.outer {
+        if self.empty {
             return 0.0;
         }
         let center = (x as f32 + 0.5, y as f32 + 0.5);
@@ -3353,6 +3367,29 @@ mod tests {
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert_eq!(px(&out, 10, 2, 5), [0, 0, 255, 255]); // inside clip
         assert_eq!(px(&out, 10, 8, 5), [0, 0, 0, 0]); // clipped away
+    }
+
+    #[test]
+    fn degenerate_polar_clips_mask_marks_instead_of_dropping_the_frame() {
+        // `OP_POLAR_CLIP` applies `?` to this constructor, and that `None`
+        // unwinds through `ok?` to abort `rasterize_with_spans` — a legal
+        // figure would export a BLANK png rather than an empty annulus. A
+        // collapsed annulus or sweep is empty-but-valid, exactly as
+        // `pixel_coverage` already documented for coincident radii.
+        let collapsed_annulus =
+            PolarClip::new(10.0, 10.0, 9.0, 3.0, 0.0, std::f32::consts::FRAC_PI_2)
+                .expect("a collapsed annulus is an empty clip, not a failure");
+        assert!(!collapsed_annulus.contains(15.0, 5.0));
+        assert_eq!(collapsed_annulus.pixel_coverage(15, 5), 0.0);
+
+        let collapsed_sweep = PolarClip::new(10.0, 10.0, 0.0, 9.0, 0.0, 0.0)
+            .expect("a collapsed sweep is an empty clip, not a failure");
+        assert!(!collapsed_sweep.contains(15.0, 10.0));
+        assert_eq!(collapsed_sweep.pixel_coverage(15, 10), 0.0);
+
+        // Genuinely malformed input is still refused.
+        assert!(PolarClip::new(f32::NAN, 10.0, 0.0, 9.0, 0.0, 1.0).is_none());
+        assert!(PolarClip::new(10.0, 10.0, -1.0, 9.0, 0.0, 1.0).is_none());
     }
 
     #[test]
