@@ -1215,6 +1215,7 @@ rendered mark family and its accepted `style=` properties.
 | `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | — | bin-driven |
 | `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ outline | ✅ |
 | `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ | ✅ `width` |
+| `ribbon` | per-end colours are **channels** (`color`/`color_target`), not style — `style.fill` gradients are rejected so the flow gradient cannot be half-overridden | — | — | ✅ outline, falls back to the band colour | ✅ bump cubic | — | ✅ `stroke_width` |
 | `scatter` | ✅ + color/size channels | — | 17 `symbol` glyphs | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
 | `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | — | cell-driven |
 

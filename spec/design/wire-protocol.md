@@ -457,7 +457,13 @@ Two independent version constants:
   top-level `coords: "polar"` mode plus `theta_unit`, `theta_zero`, and
   `theta_direction` on the angular axis. A cached v10 client would accept the
   same x/y columns and render a plausible Cartesian chart, so it must be
-  rejected. v12 adds resolved `sector`/`grid_shape` fields on the angular axis
+  rejected. v11 also adds the `ribbon` mark kind (the flow band behind
+  `sankey`: six span columns, two resolved paints, optional semantic
+  `tooltip_rows` — the ribbon geometry contract in
+  `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
+  unknown kinds, so a cached v10 client would silently draw every flow diagram
+  as a point cloud of span endpoints. v12 adds resolved
+  `sector`/`grid_shape` fields on the angular axis
   and `hole` plus optional `r_origin` on the radial axis, and makes
   heatmap/contour/error-bar trace schemas legal in polar coordinates. A cached
   v11 client would silently draw a full circular, centre-origin view and route

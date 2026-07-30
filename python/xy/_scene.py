@@ -22,6 +22,57 @@ from ._svg import _column, _density_column, _lut, _monotone_tangents
 # is visually indistinguishable from the SVG's true cubics.
 _BEZIER_STEPS = 16
 
+# Segments per ribbon edge. Fixed rather than view-adaptive: a flow diagram has
+# tens of links, so the ceiling is free, and a view-dependent count would have
+# to be recorded per §28 rather than chosen silently. The client sweeps the same
+# count so the live chart and the exports flatten identically. This resolution
+# keeps chord error below a visible pixel on wide, high-contrast diagrams.
+RIBBON_STEPS = 96
+
+
+def ribbon_edge(
+    x0: float, x1: float, ya: float, yb: float, steps: int = RIBBON_STEPS
+) -> np.ndarray:
+    """One edge of a flow band, in the caller's coordinate space.
+
+    The cubic of the ribbon contract: both control points sit at the horizontal
+    midpoint and hold their own end's y, so the edge leaves and arrives
+    horizontally (d3's `curveBumpX`). The function is pure arithmetic with no
+    opinion about units — but the contract makes the curve normative in
+    **axis-transformed space**, so exporters pass mapped endpoints rather than
+    mapping the flattened result (the two orders differ on log/symlog axes).
+    Returned flattened because the raster display list has no curve opcode; the
+    SVG exporter rebuilds the exact `C` from the same four numbers.
+    """
+    t = np.linspace(0.0, 1.0, steps + 1)
+    u = 1.0 - t
+    mid = (x0 + x1) / 2.0
+    xs = u**3 * x0 + 3 * u**2 * t * mid + 3 * u * t**2 * mid + t**3 * x1
+    ys = u**3 * ya + 3 * u**2 * t * ya + 3 * u * t**2 * yb + t**3 * yb
+    return np.column_stack([xs, ys])
+
+
+def ribbon_polygon(
+    x0: float,
+    x1: float,
+    src_lo: float,
+    src_hi: float,
+    dst_lo: float,
+    dst_hi: float,
+    steps: int = RIBBON_STEPS,
+) -> np.ndarray:
+    """A whole flow band as one closed polygon, in the caller's space.
+
+    One polygon, not two triangles or a mesh: the seam-free fill paths in both
+    exporters require a single uniform-alpha shape, and a gradient across a
+    triangle mesh is impossible anyway (the contract explains why). This is the
+    single reference both static exporters and the golden geometry test consume,
+    so SVG and PNG cannot drift from each other.
+    """
+    upper = ribbon_edge(x0, x1, src_hi, dst_hi, steps)
+    lower = ribbon_edge(x0, x1, src_lo, dst_lo, steps)
+    return np.vstack([upper, lower[::-1]])
+
 
 def curve_points(xv: np.ndarray, yv: np.ndarray, sx: Any, sy: Any, smooth: bool) -> np.ndarray:
     """Pixel-space polyline for a series. Smooth flattens the monotone-cubic

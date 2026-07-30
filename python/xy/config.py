@@ -33,6 +33,10 @@ import warnings
 # `theta_zero` and `theta_direction` on the angular (x) axis spec. A v10 client
 # would ignore `coords` entirely and draw the (theta, r) columns as cartesian
 # x/y — a plausible, completely wrong picture — so it must reject the payload.
+# It also adds the `ribbon` trace kind (flow bands: six geometry columns and an
+# optional second paint channel, `color_target`). markOf() falls back to
+# scatter for unknown kinds, so a v10 client would silently draw every ribbon
+# as a point cloud of its y-corner columns.
 # v12 adds polar sector/grid-shape metadata on the angular axis and hole/origin
 # metadata on the radial axis. A v11 client would silently draw a full circular
 # grid with a centre-origin radius, so the new geometry must fail the handshake.

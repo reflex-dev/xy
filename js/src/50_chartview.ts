@@ -2,7 +2,7 @@ import { PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -3659,6 +3659,7 @@ export class ChartView {
   get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
+  get ribbonProg() { return this._prog("ribbon", RIBBON_VS, RIBBON_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -4357,6 +4358,148 @@ export class ChartView {
     }
     this._buildInstanceStyleChannels(g, t, buffer, "width");
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
+  }
+
+  // Flow bands (ribbon geometry contract). The six geometry columns reuse the
+  // mesh attribute slots; the two paints ride a_rgba/a_rgba2. CPU copies are
+  // retained for hover: picking is deferred (the id pass is point-geometry
+  // only), so tooltips resolve by containment against the same cubic.
+  _buildRibbonMark(g, t, buffer) {
+    const names = [
+      ["x0", "x0"], ["x1", "x1"], ["y0", "y0"], ["y1", "y1"],
+      ["t0", "target_y0"], ["t1", "target_y1"],
+    ];
+    g._cpuRibbon = {};
+    for (const [slot, key] of names) {
+      const values = this._columnView(buffer, this.spec.columns[t[key]]);
+      g[slot + "Meta"] = { ...this.spec.columns[t[key]] };
+      g[slot + "Buf"] = this._upload(values);
+      g._cpuRibbon[slot] = values;
+      g.n = g.n === undefined ? values.length : Math.min(g.n, values.length);
+    }
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    if (t.color && t.color.mode === "direct_rgba") {
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+    }
+    if (t.color_target && t.color_target.mode === "direct_rgba") {
+      g.rgba2Buf = this._upload(
+        this._columnView(buffer, this.spec.columns[t.color_target.buf]),
+      );
+    }
+    g.colorTarget = t.color_target
+      ? parseColor(this.root, t.color_target.color, g.color)
+      : null;
+    // Outline paint (ribbon geometry contract). An omitted stroke colour means
+    // "match the band's own fill" — resolving it to g.color here would paint
+    // every band of a per-band (direct_rgba) ribbon with the constant
+    // fallback, which is not a colour the trace uses anywhere.
+    const style = t.style || {};
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, g.color) : null;
+    g.strokeWidth = Number(style.stroke_width) || 0;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
+  }
+
+  _drawRibbons(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.ribbonProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_t0", g.t0Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_t1", g.t1Meta, g.yAxis);
+    // RIBBON_VS reads the SHARED mode/constant uniforms (the RECT_VS design);
+    // the per-column _setAxisUniforms calls above only cover the *meta pairs,
+    // so without these four writes log/symlog axes silently render as linear.
+    gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
+    gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
+    gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
+    gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
+    gl.uniform1i(u("u_segments"), RIBBON_STEPS);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const stroke = g.stroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
+    // A flat band must mix toward ITS OWN colour, so a per-band source buffer
+    // with no target buffer binds the source buffer to both attributes —
+    // mixing toward the constant fallback painted every node's right edge
+    // with a colour from a different band.
+    const rgba2Buf = g.rgba2Buf || g.rgbaBuf;
+    const parts = ["x0", "x1", "y0", "y1", "t0", "t1"].map((name) => g[name + "Buf"]._fcId);
+    parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0, rgba2Buf ? rgba2Buf._fcId : 0);
+    this._bindVao(g, "ribbon", parts, () => {
+      this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax2, g.t0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay2, g.t1Buf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+      if (rgba2Buf) this._vaoAttr(ATTR_SLOTS.a_rgba2, rgba2Buf, 0, 1, 4, true);
+    });
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    if (!rgba2Buf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba2, ...(g.colorTarget || g.color));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 2 * (RIBBON_STEPS + 1), g.n);
+  }
+
+  // Containment test against the same cubic the shader sweeps: solve the
+  // monotone bump curve for the cursor's x by bisection, then compare y with
+  // the band's two edges at that parameter.
+  _ribbonHover(g, dataX, dataY) {
+    const cpu = g._cpuRibbon;
+    if (!cpu) return null;
+    // The cubic is normative in axis-transformed space (ribbon geometry
+    // contract), so the pointer and every decoded endpoint go through the
+    // same transform the shader's xyMap applies — solving in raw data space
+    // would hit-test a curve the band does not follow on log/symlog axes.
+    // On linear axes the transform is the identity. A masked-log NaN endpoint
+    // fails every comparison and skips the band, matching the renderers.
+    const xAxis = { ...this._axis(g.xAxis), constant: this._axisConstant(g.xAxis) };
+    const yAxis = { ...this._axis(g.yAxis), constant: this._axisConstant(g.yAxis) };
+    const pointerX = this._axisCoord(xAxis, dataX);
+    const pointerY = this._axisCoord(yAxis, dataY);
+    // _decodeValue already returns data space; decoding twice put every
+    // containment test in a coordinate system nothing else uses.
+    const val = (slot, index) => this._decodeValue(cpu[slot], g[slot + "Meta"], index);
+    const xVal = (slot, index) => this._axisCoord(xAxis, val(slot, index));
+    const yVal = (slot, index) => this._axisCoord(yAxis, val(slot, index));
+    for (let index = 0; index < g.n; index++) {
+      const x0 = xVal("x0", index);
+      const x1 = xVal("x1", index);
+      const lo0 = Math.min(x0, x1);
+      const hi0 = Math.max(x0, x1);
+      if (!(pointerX >= lo0 && pointerX <= hi0) || hi0 === lo0) continue;
+      // x(t) is monotone between the faces (control points at the midpoint),
+      // so 24 bisection steps pin t to ~1e-7 of the span.
+      let a = 0.0;
+      let b = 1.0;
+      const xm = (x0 + x1) / 2;
+      const xAt = (t) => {
+        const uu = 1 - t;
+        return uu * uu * uu * x0 + 3 * uu * uu * t * xm + 3 * uu * t * t * xm + t * t * t * x1;
+      };
+      const rising = x1 >= x0;
+      for (let step = 0; step < 24; step++) {
+        const mid = (a + b) / 2;
+        if ((xAt(mid) < pointerX) === rising) a = mid; else b = mid;
+      }
+      const t = (a + b) / 2;
+      const w0 = (1 - t) ** 3 + 3 * (1 - t) ** 2 * t;
+      const w1 = 1 - w0;
+      const edgeLo = w0 * yVal("y0", index) + w1 * yVal("t0", index);
+      const edgeHi = w0 * yVal("y1", index) + w1 * yVal("t1", index);
+      if (pointerY >= Math.min(edgeLo, edgeHi) && pointerY <= Math.max(edgeLo, edgeHi)) {
+        return { trace: g.trace.id, index, g, dist: 0, synthetic: true };
+      }
+    }
+    return null;
   }
 
   _buildMeshMark(g, t, buffer) {
@@ -7439,6 +7582,11 @@ export class ChartView {
         if (hit) return hit;
         continue;
       }
+      if (g._cpuRibbon) {
+        const hit = this._ribbonHover(g, dataX, dataY);
+        if (hit) return hit;
+        continue;
+      }
       if (g._cpuRect) {
         const hit = this._rectHover(g, dataX, dataY);
         if (hit) return hit;
@@ -7651,8 +7799,15 @@ export class ChartView {
     const id = hit.trace * 1e9 + hit.index;
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
-      // Anchored tooltips do not need a per-pointermove DOM rebuild.
-      if (!this._tooltipAnchor) this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      // Point tooltips stay attached to their data point. Sankey ribbons and
+      // nodes cover an area instead, so keep their tooltip at the pointer as
+      // it travels through the same picked shape.
+      if (hit.g && hit.g._cpuRibbon) {
+        this._setTooltipAnchor(hit, this._lastRow, e.clientX, e.clientY);
+        this._repositionTooltip();
+      } else if (!this._tooltipAnchor) {
+        this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      }
       return;
     }
     this._hoverId = id;

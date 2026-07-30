@@ -812,6 +812,65 @@ class PayloadMixin(_Host):
                 raise ValueError("errorbar role-qualified animation key collision")
         return self._transition_entry(entry, t, pw, source_sel, key_values)
 
+    def _emit_ribbon(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        """Ship a flow band: two faces on x, four span edges on y, two paints.
+
+        The six geometry slots are saturated (ribbon geometry contract), so the
+        target span's y values ride in the `x`/`y` slots and must be shipped on
+        the **y** scale, not the x one — the single easiest thing to get wrong
+        here, and it would place every ribbon's far end at the wrong height.
+        """
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("ribbon trace missing geometry columns")
+        columns = (t.x0, t.x1, t.y0, t.y1, t.x, t.y)
+        arrays = [column.values for column in columns]
+        candidates = [
+            array for column, array in zip(columns, arrays, strict=True) if column.zone.null_count
+        ]
+        sel_arg = kernels.valid_indices_f64(tuple(candidates)) if candidates else None
+        if sel_arg is not None:
+            arrays = [array[sel_arg] for array in arrays]
+        x0v, x1v, slo, shi, tlo, thi = arrays
+        xs, ys = self._axis_scale(t.x_axis), self._axis_scale(t.y_axis)
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            # Always direct: a flow diagram is small-N by nature, and neither
+            # decimation nor a density tier means anything for a band (§28).
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(x0v)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "x0": pw.ship(x0v, t.x0, scale=xs),
+            "x1": pw.ship(x1v, t.x1, scale=xs),
+            "y0": pw.ship(slo, t.y0, scale=ys),
+            "y1": pw.ship(shi, t.y1, scale=ys),
+            "target_y0": pw.ship(tlo, t.x, scale=ys),
+            "target_y1": pw.ship(thi, t.y, scale=ys),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
+        if t.color2_ch is not None:
+            entry["color_target"] = channels.ship_color_channel(
+                t.color2_ch, sel_arg, pw.ship_scalar, pw.ship_u8
+            )
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "ribbon tooltip rows must match ribbon geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            indices = range(len(t.tooltip_rows)) if sel_arg is None else (int(i) for i in sel_arg)
+            entry["tooltip_rows"] = [dict(t.tooltip_rows[i]) for i in indices]
+        self._ship_trace_styles(entry, t, sel_arg, pw)
+        return self._transition_entry(entry, t, pw, sel_arg)
+
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:

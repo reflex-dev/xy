@@ -1741,6 +1741,34 @@ class _Svg:
         self.defs.append(f'<linearGradient id="{gid}" {units}>{stops}</linearGradient>')
         return f"url(#{gid})"
 
+    def gradient_vector(
+        self, x0: float, y0: float, x1: float, y1: float, stops: list[tuple[float, str, float]]
+    ) -> str:
+        """Register a two-point <linearGradient> in user space; returns url(#id).
+
+        `gradient()` above is closed over four axis-aligned directions, which is
+        the right vocabulary for a bar or an area but cannot express a ribbon's
+        gradient — that one runs along the flow, from one face to the other, and
+        every band in a diagram has its own. Hence an explicit endpoint pair.
+        Each stop is ``(offset, color, opacity)``: per-stop opacity is how the
+        alpha channel interpolates along the vector, exactly as the raster's
+        RGBA stops and the client's `mix` do. `userSpaceOnUse` and
+        `stop-opacity` are both in the PDF converter's allowlist, so this
+        survives PDF export unchanged.
+        """
+        gid = self.uid("g")
+        units = (
+            f'gradientUnits="userSpaceOnUse" x1="{_num(x0)}" y1="{_num(y0)}" '
+            f'x2="{_num(x1)}" y2="{_num(y1)}"'
+        )
+        parts = []
+        for offset, color, opacity in stops:
+            escaped = escape(color, {chr(34): "&quot;"})
+            alpha = f' stop-opacity="{_num(opacity)}"' if opacity < 1 else ""
+            parts.append(f'<stop offset="{_num(offset * 100)}%" stop-color="{escaped}"{alpha}/>')
+        self.defs.append(f'<linearGradient id="{gid}" {units}>{"".join(parts)}</linearGradient>')
+        return f"url(#{gid})"
+
 
 def _rounded_rect_path(
     x: float, y: float, w: float, h: float, r_tip: float, r_base: float, tip_top: bool
@@ -4149,6 +4177,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         elif kind == "triangle_mesh":
             marks.append(_triangle_mesh_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
+        elif kind == "ribbon":
+            # MUST precede the rect fall-through below: a ribbon ships
+            # x0/x1/y0/y1 too, so a later branch would silently draw every
+            # flow band as a rectangle.
+            marks.append(_ribbon_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg))
+
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
             marks.append(
                 _rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot, polar)
@@ -5453,6 +5487,102 @@ def _hexbin_marks(
             'stroke-width="0.5" stroke-linejoin="round"/>'
         )
     out.append("</g>")
+    return "".join(out)
+
+
+def _ribbon_marks(
+    t: dict,
+    blob: bytes,
+    cols: list,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict,
+    fallback: str,
+    svg: "_Svg",
+) -> str:
+    """Flow bands as one `<path>` each: exact cubics, gradient along the flow.
+
+    A single path per band, never a mesh — the seam-free mesh route requires one
+    uniform colour, which is exactly what a two-ended ribbon is not (see the
+    ribbon geometry contract). When both ends resolve to the same paint the
+    band gets a plain `fill=` rather than a one-colour gradient, so an ordinary
+    Sankey stays small.
+    """
+    x0v = _column(blob, cols[t["x0"]])
+    x1v = _column(blob, cols[t["x1"]])
+    slo = _column(blob, cols[t["y0"]])
+    shi = _column(blob, cols[t["y1"]])
+    tlo = _column(blob, cols[t["target_y0"]])
+    thi = _column(blob, cols[t["target_y1"]])
+    n = len(x0v)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    source_rgba = _trace_paint_rgba(t, "color", n, fallback, read)
+    fills = _paint.effective_rgba(source_rgba, t, read, component="fill", default_opacity=1.0)
+    if t.get("color_target"):
+        target_rgba = _trace_paint_rgba(t, "color_target", n, fallback, read)
+        fills2 = _paint.effective_rgba(target_rgba, t, read, component="fill", default_opacity=1.0)
+    else:
+        fills2 = fills
+    stroke_css = style.get("stroke")
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_op = _stroke_opacity(style)
+    # An omitted stroke colour matches the band's own fill per band
+    # (edgecolors="face"), so a per-band ribbon does not outline every flow in
+    # one arbitrary colour. Explicit strokes stay a single declared paint.
+    stroke_paint = None if stroke_css is None else escape(_css(stroke_css, fallback))
+
+    def rgb(paint: Any) -> str:
+        return f"rgb({round(paint[0] * 255)},{round(paint[1] * 255)},{round(paint[2] * 255)})"
+
+    out: list[str] = []
+    for i in range(n):
+        px0, px1 = float(sx(x0v[i])), float(sx(x1v[i]))
+        y_slo, y_shi = float(sy(slo[i])), float(sy(shi[i]))
+        y_tlo, y_thi = float(sy(tlo[i])), float(sy(thi[i]))
+        if not all(math.isfinite(v) for v in (px0, px1, y_slo, y_shi, y_tlo, y_thi)):
+            continue
+        # Control points at the horizontal midpoint holding each end's own y:
+        # the band leaves and arrives horizontally (ribbon geometry contract).
+        mid = (px0 + px1) / 2.0
+        d = (
+            f"M {_num(px0)} {_num(y_shi)} "
+            f"C {_num(mid)} {_num(y_shi)} {_num(mid)} {_num(y_thi)} {_num(px1)} {_num(y_thi)} "
+            f"L {_num(px1)} {_num(y_tlo)} "
+            f"C {_num(mid)} {_num(y_tlo)} {_num(mid)} {_num(y_slo)} {_num(px0)} {_num(y_slo)} Z"
+        )
+        a, b = fills[i], fills2[i]
+        rgb_same = all(abs(float(a[k]) - float(b[k])) < 1e-9 for k in range(3))
+        # effective_rgba already folded the trace opacity into the channel
+        # alpha; folding _fill_opacity in again squared it (0.4 -> 0.16).
+        alpha_a, alpha_b = float(a[3]), float(b[3])
+        alpha_same = abs(alpha_a - alpha_b) < 1e-9
+        if rgb_same and alpha_same:
+            paint = f'fill="{rgb(a)}"'
+            attrs = paint + (f' fill-opacity="{_num(alpha_a)}"' if alpha_a < 1 else "")
+        elif alpha_same:
+            ramp = svg.gradient_vector(px0, 0.0, px1, 0.0, [(0.0, rgb(a), 1.0), (1.0, rgb(b), 1.0)])
+            attrs = f'fill="{ramp}"' + (f' fill-opacity="{_num(alpha_a)}"' if alpha_a < 1 else "")
+        else:
+            # Differing endpoint alphas ride per-stop stop-opacity so the
+            # alpha channel interpolates along the flow like the RGB channels
+            # (the raster and the client already do); a path-level
+            # fill-opacity would flatten both ends to the source's alpha.
+            ramp = svg.gradient_vector(
+                px0, 0.0, px1, 0.0, [(0.0, rgb(a), alpha_a), (1.0, rgb(b), alpha_b)]
+            )
+            attrs = f'fill="{ramp}"'
+        if stroke_width > 0:
+            paint_css = stroke_paint if stroke_paint is not None else rgb(source_rgba[i])
+            # The band paint's own alpha rides the stroke stack, exactly as
+            # `effective_rgba` folds it into the fill.
+            edge_op = stroke_op * (1.0 if stroke_paint is not None else float(source_rgba[i][3]))
+            attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
+            if edge_op < 1:
+                attrs += f'stroke-opacity="{_num(edge_op)}" '
+        out.append(f'<path d="{d}" {attrs}/>')
     return "".join(out)
 
 

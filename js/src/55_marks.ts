@@ -166,6 +166,33 @@ export const MARK_KINDS = {
   contour: SEGMENT_MARK,
   segments: SEGMENT_MARK,
   triangle_mesh: MESH_MARK,
+  ribbon: {
+    build: (view, g, t, buffer) => view._buildRibbonMark(g, t, buffer),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawRibbons(
+        g,
+        view._map(g.x0Meta, x0, x1, g.xAxis),
+        view._map(g.y0Meta, y0, y1, g.yAxis),
+      );
+    },
+    // No pointPick: the GPU id pass draws gl.POINTS from the xy slots, which
+    // for a ribbon are the target span's y values — garbage ids. Hover works
+    // through the CPU containment path (_ribbonHover); selection is absent
+    // rather than wrong, per the ribbon geometry contract.
+    retainCpu: true,
+    refreshColor: (view, g) => {
+      if (g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+      // Both ends of the gradient and the outline are theme-resolved CSS, so
+      // all three go stale together on a light/dark flip, not just the source.
+      if (g.trace.color_target) {
+        g.colorTarget = parseColor(view.root, g.trace.color_target.color, g.color);
+      }
+      const style = g.trace.style || {};
+      if (style.stroke) g.stroke = parseColor(view.root, style.stroke, g.color);
+    },
+  },
   error_band: AREA_MARK,
   hexbin: {
     build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),

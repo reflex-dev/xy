@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MARK_FACTORIES = (
     "scatter",
+    "ribbon",
+    "sankey",
     "line",
     "area",
     "histogram",

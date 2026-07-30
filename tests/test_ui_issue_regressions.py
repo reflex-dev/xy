@@ -240,6 +240,80 @@ def test_tooltip_labels_and_semantic_slots_are_independently_styleable(tmp_path:
     assert result["valueAlign"] == "right", result
 
 
+def test_sankey_tooltips_describe_flows_and_nodes(tmp_path: Path) -> None:
+    chart = xy.sankey_chart(
+        [
+            ("Visitors", "Checkout", 42),
+            ("Visitors", "Browse", 58),
+            ("Browse", "Checkout", 21),
+        ],
+        width=520,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const linkTrace = view.gpuTraces.find(
+      (trace) => Array.isArray(trace.tooltipRows) && trace.tooltipRows[0].source
+    );
+    const nodeTrace = view.gpuTraces.find(
+      (trace) => Array.isArray(trace.tooltipRows) && trace.tooltipRows[0].node
+    );
+    if (!linkTrace || !nodeTrace) throw new Error("semantic Sankey rows missing");
+    const linkRow = view._localRow({g: linkTrace, index: 0});
+    const nodeRow = view._localRow({g: nodeTrace, index: 0});
+    const linkLines = view._tooltipLines(view._tooltipItems(linkRow));
+    const nodeLines = view._tooltipLines(view._tooltipItems(nodeRow));
+    view._renderTooltip(linkRow, 200, 120, {announce: false});
+    const linkText = view.tooltip.textContent;
+    view._renderTooltip(nodeRow, 200, 120, {announce: false});
+    const nodeText = view.tooltip.textContent;
+    const hit = {g: linkTrace, trace: 0, index: 0};
+    const canvasRect = view.canvas.getBoundingClientRect();
+    const firstClientX = canvasRect.left + view.plot.x + 30;
+    const firstClientY = canvasRect.top + view.plot.y + 30;
+    view._setTooltipAnchor(hit, linkRow, firstClientX, firstClientY);
+    const firstAnchor = view._tooltipAnchorPx();
+    view._hoverId = 0;
+    view._hoverTarget = hit;
+    view._lastRow = linkRow;
+    view._pickAt = () => hit;
+    view._hoverAt = () => null;
+    view._hover({
+      clientX: firstClientX + 90,
+      clientY: firstClientY + 25,
+    });
+    const movedAnchor = view._tooltipAnchorPx();
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      linkRow,
+      nodeRow,
+      linkLines,
+      nodeLines,
+      linkText,
+      nodeText,
+      anchorDelta: {
+        x: movedAnchor.lx - firstAnchor.lx,
+        y: movedAnchor.ly - firstAnchor.ly,
+      },
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "sankey semantic tooltips")
+
+    assert result["linkRow"]["source"] == "Visitors", result
+    assert result["linkRow"]["target"] == "Checkout", result
+    assert result["linkRow"]["value"] == 42, result
+    assert result["linkLines"] == ["Visitors → Checkout", "Flow: 42"], result
+    assert result["nodeRow"]["node"] == "Visitors", result
+    assert result["nodeRow"]["value"] == 100, result
+    assert result["nodeLines"] == ["Visitors", "Total flow: 100"], result
+    assert result["linkText"] == "Visitors → CheckoutFlow42", result
+    assert result["nodeText"] == "VisitorsTotal flow100", result
+    assert result["anchorDelta"]["x"] == pytest.approx(90), result
+    assert result["anchorDelta"]["y"] == pytest.approx(25), result
+
+
 def test_tooltip_labels_customize_default_channel_rows(tmp_path: Path) -> None:
     data = {
         "quarter": [1, 2],

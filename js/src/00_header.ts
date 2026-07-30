@@ -40,6 +40,9 @@
 // (`theta_unit`, `theta_zero`, `theta_direction`). A v10 client ignores
 // `coords` and draws the (theta, r) columns as cartesian x/y, so it must
 // reject the payload rather than render a plausible wrong picture.
+// v11 also adds the `ribbon` trace kind (flow bands; Sankey). markOf() falls
+// back to scatter for unknown kinds, so a v10 client would render ribbons as
+// a point cloud with no error.
 // v12: polar angular axes carry `sector`/`grid_shape`, and radial axes carry
 // `hole`/`r_origin`. A v11 client would accept those fields but silently draw
 // full circular, centre-origin geometry.
@@ -59,8 +62,9 @@ export const PROTOCOL = 12;
 export const TRACE_GPU_BUFFERS = [
   "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
   "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
+  "t0Buf", "t1Buf",
   "posBuf", "value1Buf", "value0Buf",
-  "rgbaBuf", "styleBuf", "strokeBuf", "radiusBuf", "dBuf",
+  "rgbaBuf", "rgba2Buf", "styleBuf", "strokeBuf", "radiusBuf", "dBuf",
   "_lenBuf", "_segmentDashOffsetBuf", "_segmentDashDirBuf",
   "_transitionPrevXBuf", "_transitionPrevYBuf",
   "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",

@@ -36,6 +36,10 @@ export const ATTR_SLOTS = {
   // a_sval/a_sel — none ever co-resident with a_prev* in the same program.
   a_prevx: 4, a_prevy: 5, a_prevx1: 7, a_prevy1: 8,
   a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
+  // Ribbon target-end colour. Aliases a_style's slot: the ribbon program uses
+  // neither the style nor the stroke channel families, so the slot is free
+  // there, and no other program declares a_rgba2.
+  a_rgba2: 13,
 };
 
 export function makeProgram(gl, vs, fs) {
@@ -917,6 +921,105 @@ void main() {
 
 // Filled triangle meshes: one instance per triangle, with optional scalar LUT
 // color and antialiased barycentric edge strokes.
+// Segments per ribbon edge. Must match _scene.RIBBON_STEPS: the raster
+// exporter flattens the same cubic at the same count, so the live chart and a
+// PNG disagree by strictly less than one segment. 96 keeps the chord error
+// below a visible pixel on wide, high-contrast Sankey diagrams while remaining
+// cheap for the tens of links a flow diagram normally contains.
+export const RIBBON_STEPS = 96;
+
+// Flow band between two vertical spans (the ribbon geometry contract in
+// spec/api/chart-kind-contract.md). One instance per band, swept as a
+// triangle strip of 2*(RIBBON_STEPS+1) vertices; both edges are the
+// curveBumpX cubic — control points at the horizontal midpoint, each holding
+// its own end's y — evaluated in clip space. The contract makes the cubic
+// normative in axis-transformed space, and clip space is an affine image of
+// it, so this sweep, the SVG exporter's pixel-space `C`, and the raster's
+// transformed-endpoint flattening are the same curve on every axis type
+// (cubics are affine-invariant). The six mesh attribute slots are reused
+// with the ribbon column meaning: ay0/ay1 = source span, ax2/ay2 = target
+// span.
+export const RIBBON_VS = `#version 300 es
+in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
+in vec4 a_rgba; in vec4 a_rgba2;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta;
+uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_t0meta; uniform vec2 u_t1meta;
+uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
+uniform int u_segments;
+out vec4 v_rgba;
+flat out vec4 v_rgba0;
+out float v_side;
+out float v_t;
+${AXIS_GLSL}
+void main() {
+  float X0 = xyMap(ax0, u_xmap, u_x0meta, u_xmode, u_xconstant);
+  float X1 = xyMap(ax1, u_xmap, u_x1meta, u_xmode, u_xconstant);
+  float SLO = xyMap(ay0, u_ymap, u_y0meta, u_ymode, u_yconstant);
+  float SHI = xyMap(ay1, u_ymap, u_y1meta, u_ymode, u_yconstant);
+  float TLO = xyMap(ax2, u_ymap, u_t0meta, u_ymode, u_yconstant);
+  float THI = xyMap(ay2, u_ymap, u_t1meta, u_ymode, u_yconstant);
+  float t = floor(float(gl_VertexID) * 0.5) / float(max(u_segments, 1));
+  float side = float(gl_VertexID & 1);
+  float u = 1.0 - t;
+  float b0 = u * u * u;
+  float b1 = 3.0 * u * u * t;
+  float b2 = 3.0 * u * t * t;
+  float b3 = t * t * t;
+  float xm = (X0 + X1) * 0.5;
+  float x = b0 * X0 + (b1 + b2) * xm + b3 * X1;
+  float lo = (b0 + b1) * SLO + (b2 + b3) * TLO;
+  float hi = (b0 + b1) * SHI + (b2 + b3) * THI;
+  gl_Position = vec4(x, mix(lo, hi, side), 0.0, 1.0);
+  // The gradient runs along the flow: each fragment mixes the two end colours
+  // by its own progress across the band.
+  v_rgba = mix(a_rgba, a_rgba2, t);
+  // The SOURCE paint, un-interpolated: an outline with no explicit colour
+  // matches the band's own fill (the edgecolors="face" convention the point
+  // and rect programs already follow), and both exporters stroke each band in
+  // one flat colour, so the client must not ramp where they cannot.
+  v_rgba0 = a_rgba;
+  v_side = side;
+  v_t = t;
+}`;
+
+export const RIBBON_FS = `#version 300 es
+precision highp float;
+uniform float u_opacity;
+uniform vec4 u_stroke; uniform float u_strokeWidth; uniform float u_strokeOpacity;
+// 0 = paint the outline with u_stroke; 1 = match the band's own fill.
+uniform int u_strokeMode;
+in vec4 v_rgba;
+flat in vec4 v_rgba0;
+in float v_side;
+in float v_t;
+out vec4 outColor;
+void main() {
+  // Triangle edges are not multisampled reliably across browsers. Interpolate
+  // the band-side coordinate and use its screen-space derivative to soften the
+  // outermost pixel on both curved edges without changing the interior.
+  float w = max(fwidth(v_side), 1e-5);
+  float edge = min(v_side, 1.0 - v_side);
+  float coverage = smoothstep(0.0, w, edge);
+  float alpha = v_rgba.a * u_opacity * coverage;
+  vec4 premult = vec4(v_rgba.rgb * alpha, alpha);
+  if (u_strokeWidth > 0.0) {
+    // Inset border in device pixels (RECT_FS's SDF trick): edge/w is the
+    // distance to the nearer curved edge, and v_t's own derivative gives the
+    // distance to the two end faces — so the outline closes the band exactly
+    // as the exporters' closed path does, rather than leaving the ends bare.
+    vec4 strokeSrc = u_strokeMode == 1 ? v_rgba0 : u_stroke;
+    float strokeAlpha = strokeSrc.a * u_strokeOpacity * coverage;
+    vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+    float face = min(v_t, 1.0 - v_t) / max(fwidth(v_t), 1e-9);
+    float d = min(edge / w, face);
+    float inner = smoothstep(u_strokeWidth - 0.75, u_strokeWidth + 0.75, d);
+    premult = mix(stroke, premult, inner);
+  }
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
+}`;
+
 export const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;

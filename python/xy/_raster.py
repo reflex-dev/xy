@@ -1095,6 +1095,10 @@ def render_raster(
             )
         elif kind == "triangle_mesh":
             _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+        elif kind == "ribbon":
+            # MUST precede the rect fall-through: a ribbon ships x0/x1/y0/y1
+            # too, so a later branch would draw every band as a rectangle.
+            _emit_ribbon(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
 
@@ -2427,6 +2431,100 @@ def _emit_hexbin(
     y2 = np.asarray(sy(cy[:n, None] + ring_y[None, 1:]), dtype=np.float64).reshape(-1)
     fills = np.repeat(_mesh_fill_rgba(t, blob, cols, n, style, color), 6, axis=0)
     cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
+
+
+def _emit_ribbon(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
+    """Flow bands, flattened, with the gradient running along the flow.
+
+    Geometry comes from `_scene.ribbon_polygon` — the same reference the SVG
+    exporter's cubics and the golden test consume — so the two static outputs
+    cannot drift. The polygon is built from the **axis-mapped** endpoints, not
+    mapped after flattening: the ribbon cubic is normative in transformed space
+    (ribbon geometry contract), which is the only curve the SVG exporter's
+    exact pixel-space `C` and the client's clip-space sweep can both draw —
+    flattening in data space and mapping each vertex bows a different curve on
+    log/symlog axes. Under affine axes the two orders are the same curve.
+    `cmd.grad` takes an arbitrary two-point gradient vector, which is what lets
+    the ramp follow the flow rather than an axis.
+    """
+    x0v = _column(blob, cols[t["x0"]])
+    x1v = _column(blob, cols[t["x1"]])
+    slo = _column(blob, cols[t["y0"]])
+    shi = _column(blob, cols[t["y1"]])
+    tlo = _column(blob, cols[t["target_y0"]])
+    thi = _column(blob, cols[t["target_y1"]])
+    n = len(x0v)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    source_rgba = _trace_paint_rgba(t, "color", n, color, read)
+    fills = np.rint(
+        _paint.effective_rgba(source_rgba, t, read, component="fill", default_opacity=1.0) * 255.0
+    ).astype(np.uint8)
+    if t.get("color_target"):
+        target_rgba = _trace_paint_rgba(t, "color_target", n, color, read)
+        fills2 = np.rint(
+            _paint.effective_rgba(target_rgba, t, read, component="fill", default_opacity=1.0)
+            * 255.0
+        ).astype(np.uint8)
+    else:
+        fills2 = fills
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    # Outline alpha folds opacity * stroke_opacity, the same stack every other
+    # stroked mark applies and the SVG writer's stroke-opacity mirrors. An
+    # omitted stroke colour matches each band's own fill (edgecolors="face"),
+    # resolved per band in the loop rather than once for the whole trace.
+    stroke_op = _stroke_opacity(style)
+    stroke_c = (
+        _rgba(style.get("stroke"), color, stroke_op)
+        if stroke_width > 0 and style.get("stroke") is not None
+        else None
+    )
+    edges = (
+        np.rint(
+            np.column_stack([source_rgba[:, :3] * 255.0, source_rgba[:, 3] * stroke_op * 255.0])
+        ).astype(np.uint8)
+        if stroke_width > 0 and style.get("stroke") is None
+        else None
+    )
+
+    for i in range(n):
+        px0, px1 = float(sx(x0v[i])), float(sx(x1v[i]))
+        py_slo, py_shi = float(sy(slo[i])), float(sy(shi[i]))
+        py_tlo, py_thi = float(sy(tlo[i])), float(sy(thi[i]))
+        if not all(math.isfinite(v) for v in (px0, px1, py_slo, py_shi, py_tlo, py_thi)):
+            continue
+        poly_data = _scene.ribbon_polygon(px0, px1, py_slo, py_shi, py_tlo, py_thi)
+        poly = list(zip(poly_data[:, 0].tolist(), poly_data[:, 1].tolist(), strict=True))
+        # effective_rgba already folded the trace opacity into the alpha.
+        a = tuple(int(v) for v in fills[i])
+        b = tuple(int(v) for v in fills2[i])
+        # Flat only when all FOUR channels agree: ends differing in alpha
+        # alone still ramp, and cmd.grad's RGBA stops interpolate it.
+        if a == b:
+            cmd.fill(poly, a)
+        else:
+            # Gradient vector spans the two faces horizontally; the y term is
+            # irrelevant because the ramp is purely along the flow.
+            gy = float(poly_data[0, 1])
+            cmd.grad(poly, (px0, gy), (px1, gy), [(0.0, a), (1.0, b)])
+        edge_c = (
+            stroke_c
+            if stroke_c is not None
+            else (tuple(int(v) for v in edges[i]) if edges is not None else None)
+        )
+        if edge_c is not None:
+            cmd.stroke([*poly, poly[0]], stroke_width, edge_c)
 
 
 def _emit_triangle_mesh(
