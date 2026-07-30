@@ -4721,11 +4721,21 @@ class Axes(PlotTypeMixin):
         spec = host._scale_specs[key]
         if self._axis_is_dataless(axis):
             return (1.0, 10.0) if spec["name"] == "log" else (0.0, 1.0)
-        if axis == "y" and self._projection == "polar" and spec["name"] != "log":
+        if (
+            axis == "y"
+            and self._projection == "polar"
+            and spec["name"] != "log"
+            and "y" not in self._margin_overrides
+        ):
             # The radial preview must match the engine's polar autorange
             # (centre origin, no outer pad — _figure._range), or every
             # rlim call snapshots cartesian-padded values: set_rmax(2.0)
             # froze [0.85, 2.0] where matplotlib gives [0, 2].
+            #
+            # An AUTHORED margin is the one case that wins: `margins(y=...)` /
+            # `set_ymargin` is an explicit request for outer pad, and swallowing
+            # it here made the setter silently inert on a polar axes. The engine
+            # honours a configured radial margin for the same reason.
             lo, hi = self._entry_extent(axis)
             lo = min(0.0, float(lo))
             hi = float(hi) if hi > lo else lo + 1.0
@@ -5996,7 +6006,14 @@ class Axes(PlotTypeMixin):
             raise ValueError(
                 f"projection {projection!r} is not supported; use 'polar' or 'rectilinear'"
             )
+        changed = self._projection != name
         self._projection = name
+        if changed:
+            # The cached chart carries the OLD coordinate system, so re-activating
+            # a subplot that switched projection re-rendered it in the previous
+            # coords. Only on a real change: `_set_projection` is also called with
+            # the current value during ordinary construction.
+            self._invalidate()
         if name == "polar":
             # Matplotlib's PolarAxes defaults: theta=0 due east, increasing
             # counterclockwise, angles in radians.

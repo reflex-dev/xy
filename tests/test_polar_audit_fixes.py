@@ -75,6 +75,12 @@ def test_wedge_subdivision_never_degenerates_or_overpays() -> None:
     # falls back rather than dividing by it.
     assert polar_bar_segments(10 * turn, turn) == POLAR_BAR_SEGMENTS
     assert polar_bar_segments(1.0, 0.0) == POLAR_BAR_SEGMENTS
+    # A non-finite span falls back too, as `xyPolarBarSegments` does. Without the
+    # guard `math.ceil` of a non-finite product raises instead of returning an
+    # int, so the renderers could not even agree on a degenerate wedge.
+    assert polar_bar_segments(float("nan"), turn) == POLAR_BAR_SEGMENTS
+    assert polar_bar_segments(float("inf"), turn) == POLAR_BAR_SEGMENTS
+    assert polar_bar_segments(float("-inf"), turn) == POLAR_BAR_SEGMENTS
 
 
 def test_client_wedge_subdivision_mirrors_the_python_formula() -> None:

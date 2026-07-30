@@ -88,6 +88,11 @@ in the README).
   Columns are now `minmax(0, max-content)` and the inline axis never scrolls.
   Vertical scrolling is unchanged, and rows carry their full name in
   `title`/ARIA for the ones the height cap clips.
+- `xy.pyplot` polar fixes: switching an existing subplot's `projection`
+  invalidates its cached chart, so it re-renders in the new coordinate system
+  rather than the old one; and an authored `margins(y=...)`/`set_ymargin` is
+  honoured on a radial axis instead of being swallowed by the centre-origin
+  autorange preview, which had made both setters silently inert under polar.
 - `xy.pie_chart` no longer prints the same number twice. Values that already sum
   to 100 — how most pie data arrives — made `show_values` and `show_percent`
   collide, so `[40, 30, 20, 10]` rendered `Direct  40  (40%)`: a legend row that

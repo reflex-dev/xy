@@ -98,10 +98,15 @@ py  = cy − rn · R · sin(a)                   # screen space: y grows DOWN
 
 Only values inside the authored θ sector and visible radial interval are
 projected. Point and line positions outside either interval are culled; spans
-and bars are clipped to the visible interval. The authored radial origin must
-be below `r_hi` and no greater than `r_lo`; on a log scale it must also be
-positive. An origin below `r_lo` makes the visible lower ring an annulus, while
-`hole` assigns that ring the explicit display-space fraction `h`.
+and bars are clipped to the visible interval. The authored radial origin sits
+**outside the visible interval, past the endpoint that maps to the centre** —
+never between the two. The inequality therefore follows the range's direction:
+for an ascending range the origin is no greater than `range[0]` and below
+`range[1]`; for a reversed one (`range[0] > range[1]`, which maps `range[0]`
+inward) it is no less than `range[0]` and above `range[1]`. On a log scale it
+must also be positive. An origin strictly past the centre endpoint makes the
+visible inner ring an annulus, while `hole` assigns that ring the explicit
+display-space fraction `h`.
 
 Five properties this pins down, each of which has matching coverage:
 
