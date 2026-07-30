@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from io import BytesIO
 
 import numpy as np
@@ -144,7 +145,9 @@ def test_added_rectangle_patch_fills_with_its_own_face_color() -> None:
     _fig, ax = plt.subplots()
     ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue"))
     meshes, edges = _patch_marks(ax)
-    assert len(meshes) == 1 and len(edges) == 1
+    # Matplotlib leaves edgecolor "none" on a filled patch, so there is no
+    # outline to draw and none is emitted.
+    assert len(meshes) == 1 and edges == []
     assert meshes[0]["kwargs"]["color"] == "rgba(31,119,180,1)"
     assert meshes[0]["kwargs"]["_joined_fill"] is True
     assert _mesh_area(meshes[0]) == pytest.approx(2.0)
@@ -214,7 +217,7 @@ def test_removing_a_filled_patch_takes_its_outline_with_it() -> None:
     from matplotlib.patches import Rectangle
 
     _fig, ax = plt.subplots()
-    artist = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue"))
+    artist = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red"))
     assert len(ax._entries) == 2
     artist.remove()
     assert ax._entries == []
@@ -328,7 +331,7 @@ def test_patch_at_genomic_coordinates_keeps_every_vertex() -> None:
     from matplotlib.patches import Rectangle
 
     _fig, ax = plt.subplots()
-    ax.add_patch(Rectangle((1e9, 0.0), 5000.0, 10.0, facecolor="tab:blue"))
+    ax.add_patch(Rectangle((1e9, 0.0), 5000.0, 10.0, facecolor="tab:blue", edgecolor="black"))
     meshes, edges = _patch_marks(ax)
     # A magnitude-relative duplicate test collapses this to three vertices and
     # zero area, because 1e-5 of 1e9 is 10,000 data units.
@@ -341,7 +344,7 @@ def test_full_disc_wedge_fills_despite_its_repeated_vertex() -> None:
     from matplotlib.patches import Wedge
 
     _fig, ax = plt.subplots()
-    ax.add_patch(Wedge((0, 0), 1.0, 0.0, 360.0, facecolor="tab:blue"))
+    ax.add_patch(Wedge((0, 0), 1.0, 0.0, 360.0, facecolor="tab:blue", edgecolor="black"))
     meshes, edges = _patch_marks(ax)
     # The repeat is not bit-exact, so an exact-equality dedupe leaves it in
     # place and the triangulator rejects the whole disc.
@@ -355,7 +358,11 @@ def test_tightly_spaced_but_distinct_vertices_survive() -> None:
     from matplotlib.patches import Polygon
 
     _fig, ax = plt.subplots()
-    ax.add_patch(Polygon([[0, 0], [1e-9, 0], [1, 0], [1, 1], [0, 1]], facecolor="tab:blue"))
+    ax.add_patch(
+        Polygon(
+            [[0, 0], [1e-9, 0], [1, 0], [1, 1], [0, 1]], facecolor="tab:blue", edgecolor="black"
+        )
+    )
     _meshes, edges = _patch_marks(ax)
     # A 1e-9 edge on a unit-span ring is real geometry, not floating-point
     # noise, and np.isclose's 1e-8 absolute floor would swallow it.
@@ -381,6 +388,159 @@ def test_patch_without_a_path_or_rectangle_getters_raises() -> None:
     _fig, ax = plt.subplots()
     with pytest.raises(TypeError, match="unsupported patch"):
         ax.add_patch(object())
+
+
+def _mesh_radii(entry: dict, radius: float) -> np.ndarray:
+    """Every mesh vertex's distance from the origin, as a fraction of `radius`."""
+    values = [np.asarray(entry["args"][index], dtype=np.float64) for index in range(6)]
+    xs = np.concatenate(values[0::2])
+    ys = np.concatenate(values[1::2])
+    return np.hypot(xs, ys) / radius
+
+
+@pytest.mark.parametrize("radius", [1e-3, 1.0, 1e3])
+def test_patch_curves_flatten_at_output_scale_not_in_data_units(radius: float) -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Circle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Circle((0, 0), radius, facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    # `to_polygons` subdivides until flat in the units it is handed, so
+    # flattening in data space made this 2.5% out at radius 1 and exact at
+    # radius 1000 — the same circle on screen, drawn differently because of
+    # the numbers behind it. Area hides this: the overshoot between the
+    # on-curve points cancels the chord deficit, leaving 0.08% either way.
+    assert _mesh_radii(meshes[0], radius).max() == pytest.approx(1.0, abs=1e-3)
+
+
+def test_small_patch_at_a_large_offset_keeps_its_area() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((1e9, 0.0), 1e-4, 1e-4, facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    # Flattening at output scale means a round trip through `* scale` and
+    # `/ scale`. Carrying the 1e9 offset through it costs eight times more
+    # area than scaling about the patch's own corner does.
+    assert _mesh_area(meshes[0]) == pytest.approx(1e-8, rel=1e-3)
+
+
+def test_filled_patch_with_no_edge_color_emits_no_outline_mark() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="none"))
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red", linewidth=0))
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red"))
+    meshes, edges = _patch_marks(ax)
+    # Three fills, and only the patch that actually asked for a stroke pays
+    # for one. An invisible outline per ring is pure payload.
+    assert len(meshes) == 3
+    assert len(edges) == 1
+    assert edges[0]["kwargs"]["color"] == "rgba(255,0,0,1)"
+
+
+def test_invisible_patch_still_leaves_one_entry_to_hold() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+
+    square = [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]
+    hole = [(3, 3), (3, 7), (7, 7), (7, 3), (3, 3)]
+    codes = ([Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY]) * 2
+    _fig, ax = plt.subplots()
+    # Nested rings abstain from filling and the edge paints nothing, so the
+    # outline is emitted anyway rather than leaving the handle with no entry.
+    handle = ax.add_patch(Path and PathPatch(Path(square + hole, codes), edgecolor="none"))
+    assert len(ax._entries) == 2
+    handle.remove()
+    assert ax._entries == []
+
+
+def test_hiding_a_filled_patch_hides_its_outline_too() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    handle = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red"))
+    handle.set_visible(False)
+    # Hiding only the body left the outline drawn, so a "hidden" patch was
+    # still a red rectangle on screen.
+    assert [entry["kwargs"]["opacity"] for entry in ax._entries] == [0.0, 0.0]
+    handle.set_visible(True)
+    assert [entry["kwargs"]["opacity"] for entry in ax._entries] == [1.0, 1.0]
+
+
+def test_alpha_and_color_on_a_filled_patch_reach_its_outline() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    handle = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red"))
+    handle.set_alpha(0.25)
+    assert [entry["kwargs"]["opacity"] for entry in ax._entries] == [0.25, 0.25]
+    handle.set_color("green")
+    # Matplotlib's Patch.set_color paints face and edge alike.
+    assert {entry["kwargs"]["color"] for entry in ax._entries} == {"green"}
+
+
+def test_transforming_a_filled_patch_moves_its_outline_too() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    from xy.pyplot._transforms import Affine2D
+
+    _fig, ax = plt.subplots()
+    handle = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue", edgecolor="red"))
+    handle.set_transform(Affine2D().translate(10, 0))
+    meshes, edges = _patch_marks(ax)
+    # A transform that moved the body and left the outline behind would tear
+    # the patch in two.
+    assert np.asarray(meshes[0]["args"][0]).min() == pytest.approx(10.0)
+    assert np.asarray(edges[0]["args"][0]).min() == pytest.approx(10.0)
+
+
+def test_ring_past_the_triangulator_cap_says_so_instead_of_dropping_the_fill() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Polygon
+
+    angles = np.linspace(0.0, 2.0 * np.pi, 12000, endpoint=False)
+    _fig, ax = plt.subplots()
+    with pytest.warns(RuntimeWarning, match="could not fill a 12000-vertex ring"):
+        ax.add_patch(Polygon(np.c_[np.cos(angles), np.sin(angles)], facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    # Matplotlib fills this. Abstaining is defensible, doing it silently is
+    # not: a hollow patch looks like a deliberate style choice.
+    assert meshes == []
+    assert len(edges) == 1
+
+
+def test_self_intersecting_patch_says_why_it_could_not_fill() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Polygon
+
+    _fig, ax = plt.subplots()
+    with pytest.warns(RuntimeWarning, match="could not fill a 4-vertex ring"):
+        ax.add_patch(Polygon([[0, 0], [2, 2], [2, 0], [0, 2]], facecolor="tab:blue"))
+    assert _patch_marks(ax)[0] == []
+
+
+def test_degenerate_ring_skips_its_fill_without_warning() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    with warnings.catch_warnings():
+        # A zero-height Rectangle has no body by construction, so warning
+        # about it would cry wolf on every axvline-style spacer.
+        warnings.simplefilter("error")
+        ax.add_patch(Rectangle((0, 0), 2, 0, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    assert meshes == []
+    assert len(edges) == 1
 
 
 def test_masked_and_nan_lines_break_instead_of_bridging_missing_values() -> None:
