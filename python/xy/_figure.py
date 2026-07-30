@@ -1393,7 +1393,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return (0.0, 360.0) if unit == "degrees" else (0.0, 2.0 * math.pi)
         configured_margin = opts.get("margin")
         if lo == hi and configured_margin is None:
-            if self.coords == "polar" and self._axis_dim(axis_id) == "y" and scale != "log":
+            if (
+                self.coords == "polar"
+                and self._axis_dim(axis_id) == "y"
+                and scale != "log"
+                # Zero is the Unix epoch on a time axis, not a centre, so
+                # pinning there spanned the disc from 1970 to the datum and
+                # parked its ring on the rim. Time takes the ordinary pad.
+                and self._axis_kind(axis_id) != "time"
+            ):
                 # Constant-radius data must not bypass the centre-origin
                 # default below: padding a singleton r=5 to [4.75, 5.25] draws
                 # a unit circle as a ring floating mid-disc, exactly the
@@ -1444,6 +1452,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # time radius keeps the ordinary padded extent — the same reasoning
             # that already exempts a negative floor below.
             if self._axis_kind(axis_id) == "time":
+                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
+            if self._axis_kind(axis_id) == "time":
+                # Zero is the Unix epoch, not a centre. Pinning a time radius
+                # there spanned the disc from 1970 to the data and parked every
+                # ring at the rim; a singleton instant was the worst case. Time
+                # keeps the ordinary padded window, like the cartesian axis.
                 return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
             if scale == "log":
                 out_lo = lo

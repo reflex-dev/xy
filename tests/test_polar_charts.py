@@ -1740,3 +1740,21 @@ def test_every_polar_public_name_is_typed_for_static_analysis() -> None:
         "wind_rose",
     ):
         assert f"        {name},\n" in block, name
+
+
+def test_time_radius_is_exempt_from_the_centre_origin_default() -> None:
+    """Zero is the Unix epoch on a time axis, not a centre. Pinning there
+    spanned the disc from 1970 to the data and parked every ring on the rim; a
+    singleton instant resolved to [0.0, 1767225600000.0]. Time takes the
+    ordinary padded window, exactly as the cartesian axis does."""
+    instant = datetime(2026, 1, 1, tzinfo=UTC)
+    angles = [0.0, 1.0, 2.0]
+
+    polar, _ = xy.polar_chart(xy.line(angles, [instant] * 3)).figure().build_payload_split()
+    cartesian, _ = xy.line_chart(xy.line(angles, [instant] * 3)).figure().build_payload_split()
+    assert polar["y_axis"]["range"][0] != 0.0
+    assert polar["y_axis"]["range"] == cartesian["y_axis"]["range"]
+
+    # Numeric radii keep the centre-origin contract untouched.
+    numeric, _ = xy.polar_chart(xy.line(angles, [5.0, 5.0, 5.0])).figure().build_payload_split()
+    assert numeric["y_axis"]["range"] == [0.0, 5.0]
