@@ -24,7 +24,7 @@ in the README).
   rotation and curvature. Patches now fill in their own face color, and their
   geometry comes from `Path.to_polygons` with the patch transform applied, so
   `Rectangle(angle=...)` keeps its rotation and `Circle`/`Ellipse`/`Wedge` use
-  the curve rather than its Bezier control points. The curve is flattened at
+  the curve rather than its cubic-Bézier control points. The curve is flattened at
   the figure's pixel size rather than in data units, so a `Circle(radius=1)`
   is as round as the same circle drawn as `radius=1000`. Unfilled patches stay
   edge-only, the axes color cycle is untouched, and a degenerate patch draws

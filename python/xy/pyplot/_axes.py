@@ -1133,9 +1133,9 @@ def _without_repeats(ring: np.ndarray) -> np.ndarray:
 def _refine_at_pixel_scale(path: Any, transform: Any, rings: list[Any], pixels: float) -> Any:
     """Re-flatten `path` as though the patch spanned `pixels` output pixels.
 
-    ``to_polygons`` subdivides a Bezier until it is flat in the coordinates it
-    is handed, so flattening straight through the patch transform takes its
-    tessellation from the *numeric magnitude* of the data. `Circle(radius=1)`
+    ``to_polygons`` subdivides a cubic Bézier until it is flat in the
+    coordinates it is handed, so flattening through the patch transform takes
+    its tessellation from the *numeric magnitude* of the data. `Circle(radius=1)`
     comes back as sixteen segments whose alternate vertices overshoot the true
     radius by 2.5%, while the identical circle drawn as `radius=1000` comes
     back smooth. Matplotlib never shows this, because its renderers flatten in
@@ -1149,8 +1149,8 @@ def _refine_at_pixel_scale(path: Any, transform: Any, rings: list[Any], pixels: 
 
     The patch transform is applied to the control points rather than composed
     onto a scale transform, because the shim never imports matplotlib. That is
-    exact: an affine maps a Bezier's control points to the control points of
-    the mapped curve, and patch transforms are affine.
+    exact: an affine maps a cubic Bézier's control points to the control
+    points of the mapped curve, and patch transforms are affine.
 
     Scaling is done about the patch's own corner rather than the origin. A
     round trip through `* scale` and `/ scale` costs relative precision, and
@@ -1178,7 +1178,7 @@ def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
 
     ``Path.to_polygons`` applies the patch transform and resolves curves into
     straight segments, so a rotated Rectangle, a Circle, and a Wedge all come
-    back as real geometry rather than as Bezier control points. `pixels` is
+    back as real geometry rather than as cubic-Bézier control points. `pixels` is
     the output size the flattening is resolved for — see
     `_refine_at_pixel_scale`, which is why it is not resolved in data units.
     Ducks without a path fall back to raw vertices, which drop curvature and
