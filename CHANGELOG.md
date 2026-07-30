@@ -49,9 +49,12 @@ in the README).
   the identical box, and wide enough to hold an ordinary row rather than
   ellipsize it. Compact widths take a 64 px band beneath the disc instead. An
   authored `anchor` or four-tuple `padding` still wins.
-- Compact vertical colorbars keep their two extreme tick labels and their title.
-  Collapsing them hid every number and the scale name, leaving an unlabelled
-  gradient; only the interior tick ladder and the text-free minor ticks drop now.
+- Compact vertical colorbars keep their two extreme tick labels, restacked above
+  and below the gradient. Collapsing them hid every number, leaving an unlabelled
+  gradient; only the interior ladder, the rotated title and the text-free minor
+  ticks drop now, and the box's own `title`/ARIA text still names the scale.
+  Stacking is what makes it free: a side gutter wide enough for `0.25` would cost
+  36 px of the plot width the compact collapse exists to protect.
 - A time-valued radial axis autoranges from its data instead of from epoch zero,
   which had squeezed every modern instant into a hairline ring at the rim. An
   explicit `r_axis(margin=)` restores the outer pad it used to discard.
@@ -66,8 +69,9 @@ in the README).
   when the transition ends.
 - A device-pixel-ratio change (browser zoom, or a window moving between displays)
   now rescales the per-instance stroke widths and corner radii that are baked in
-  device pixels, and coalesces into a single resize frame instead of laying out
-  and painting twice.
+  device pixels, so authored strokes and wedge corners keep their intended size
+  across a zoom. The DPR handler stays synchronous: a DPR change with no container
+  resize has no later event to piggyback on.
 - `xy.pie_chart` appears in the generated chart-factory API reference alongside
   the other polar compositions.
 - A legend row too wide for its box ellipsizes instead of growing a horizontal

@@ -480,25 +480,29 @@ def test_client_legend_places_in_the_reserved_box() -> None:
 # -- compact colorbar -------------------------------------------------------
 
 
-def test_compact_colorbars_keep_their_endpoints_and_title() -> None:
-    """Hiding every tick and the title left a gradient with no numbers on it."""
-    # Interior ticks drop; the two extremes and the title do not.
-    assert "node.hidden = compactVertical\n        && Number.isFinite(fraction)" in CHARTVIEW
-    assert "&& fraction !== lowest" in CHARTVIEW
-    assert "&& fraction !== highest;" in CHARTVIEW
+def test_compact_colorbars_keep_their_endpoint_labels() -> None:
+    """Hiding every tick left a gradient with no numbers on it.
+
+    The two extremes survive, restacked above and below the gradient. Beside the
+    bar they would need a gutter wide enough for `0.25`, which costs 36 px of the
+    plot width the compact collapse exists to protect; centred on the 18 px bar
+    they fit in the gap already reserved, so the fix is free.
+    """
     assert (
-        "for (const node of this._colorbar.querySelectorAll('[data-xy-slot=\"colorbar_title\"]')) {"
-        in CHARTVIEW
+        "const endpoint = !Number.isFinite(fraction) "
+        "|| fraction === lowest || fraction === highest;" in CHARTVIEW
     )
-    assert "node.hidden = false;" in CHARTVIEW
-    # Text-free minor ticks stay hidden: ink without a reading.
-    assert 'querySelectorAll("[data-xy-colorbar-minor]")' in CHARTVIEW
-
-
-def test_compact_colorbar_room_covers_the_labels_it_keeps() -> None:
-    assert "const COMPACT_COLORBAR_TICK_ROOM = 30;" in CHARTVIEW
-    assert "const COMPACT_COLORBAR_TITLE_ROOM = 14;" in CHARTVIEW
-    assert "COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM" in CHARTVIEW
+    assert "node.hidden = compactVertical && !endpoint;" in CHARTVIEW
+    # Restacked, and the beside-the-bar placement is restored on the way out.
+    assert "tick._xyBesideCss = tick.style.cssText;" in CHARTVIEW
+    assert "node.style.cssText = node._xyBesideCss;" in CHARTVIEW
+    assert "const COMPACT_COLORBAR_LABEL_GAP = 3;" in CHARTVIEW
+    # The reservation is unchanged, which is what keeps the plot space the
+    # collapse was collapsing for.
+    assert "COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8" in CHARTVIEW
+    # The rotated title and the text-free minor ticks are what a phone cannot
+    # spend; `box.title` keeps the scale name reachable.
+    assert "'[data-xy-slot=\"colorbar_title\"], [data-xy-colorbar-minor]'" in CHARTVIEW
 
 
 # -- dpr-baked buffers and animation cadence --------------------------------
@@ -513,11 +517,17 @@ def test_a_dpr_change_rescales_the_buffers_baked_in_device_pixels() -> None:
     assert "this._rescaleDprBakedBuffers();\n    this._layout();" in CHARTVIEW
 
 
-def test_a_dpr_change_coalesces_into_one_resize_frame() -> None:
-    """Browser zoom changes dpr AND the container box, so a synchronous resize
-    plus the ResizeObserver's queued one laid out and painted twice."""
-    assert "this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);" in CHARTVIEW
-    assert "this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio" not in CHARTVIEW
+def test_a_dpr_change_stays_synchronous() -> None:
+    """`render_smoke_nonumpy.py`'s `dprw` probe calls `_onDprChange()` and reads
+    `dpr`/`canvas.width`/`chrome.width` on the next line: a DPR change with no
+    container resize has no later event to piggyback on. Deferring it into
+    `_queueResize` broke that contract and saved nothing — the ResizeObserver's
+    queued pass already early-returns when width, height and dpr are unchanged.
+    """
+    assert "this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio" in CHARTVIEW
+    assert (
+        "this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);" not in CHARTVIEW
+    )
 
 
 def test_data_animations_throttle_the_label_dom_rebuild() -> None:
