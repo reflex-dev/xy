@@ -105,6 +105,16 @@ Notebook callbacks need a live widget. A standalone HTML export keeps browser
 interactions but cannot call into the notebook kernel; a framework adapter uses
 its own event surface.
 
+## Run the Examples on Binder
+
+The repository's example notebooks run hosted, with no local install, on
+[mybinder.org](https://mybinder.org/v2/gh/reflex-dev/xy/main?urlpath=lab/tree/examples)
+(the launch badge in the README opens the same link). The Binder image
+compiles XY from the browsed commit — including the native Rust core — so the
+notebooks always match the code they sit next to. Expect the first launch
+after a new commit to take several minutes while the image builds; later
+launches reuse it.
+
 ## Streaming in a Notebook
 
 Calling `chart.append(...)` after the widget exists updates the browser client

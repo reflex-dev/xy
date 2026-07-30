@@ -1200,14 +1200,27 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   build — importing the compute layer raises a clear, actionable ImportError naming
   the supported platforms, never a silent degrade. Published platform wheels require
   the native core and fail the build if it is absent.
-- **Binder builds are source builds, not wheel installs.** The repository's
-  `.binder/environment.yml` provisions Python, Rust, and Node, and
-  `.binder/postBuild` installs the checkout with `XY_REQUIRE_CARGO=1`. This keeps
-  hosted examples on the browsed commit while making a missing native core fail
-  during image construction rather than later at notebook import. Playwright's
-  browser download is disabled for this build-only Node install, and the checkout's
-  `target` and `node_modules` build directories are removed after the wheel has
-  captured the native core and render client.
+- **Binder builds are source builds, not wheel installs.** Binder is linux-64,
+  where published wheels already exist — the source build is a deliberate
+  trade-off that keeps hosted examples on the browsed commit at the cost of
+  compiling the core and render client inside repo2docker. The repository's
+  `.binder/environment.yml` provisions the build toolchain (`rust=1.88.*`,
+  `nodejs=22.*` — loose pins, because exact conda build strings are
+  arch-specific and retired by conda-forge rebuilds) plus the scientific stack
+  the example notebooks import (matplotlib, pandas, scipy, scikit-learn,
+  seaborn, h5py, requests). The interpreter is deliberately unpinned: the wheel
+  is ABI-agnostic (py3-none, ctypes C ABI), so repo2docker's frozen base
+  interpreter serves it without churning the preinstalled Jupyter stack.
+  `.binder/postBuild` installs the checkout with `XY_REQUIRE_CARGO=1`, making a
+  missing native core fail during image construction rather than later at
+  notebook import; if the source build breaks, the fallback is
+  `pip install xy` (the published linux-64 wheel), losing only
+  browsed-commit fidelity. Playwright's browser download is disabled for this
+  build-only Node install, and the checkout's `target` and `node_modules` build
+  directories are removed after the wheel has captured the native core and
+  render client. `.github/workflows/binder.yml` runs `repo2docker --no-run`
+  whenever `.binder/` changes — nothing else in CI builds a Binder image, so
+  this is the only check that exercises the config end to end.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
   (native core + JS client + assets), CI-enforced like every other number.
 - **Import-time budget**: `import xy` does no heavy work (< 200 ms); NumPy and

@@ -1,9 +1,27 @@
 channels:
   - conda-forge
 dependencies:
-  # Keep Binder on a released Python version covered by XY's test matrix rather
-  # than inheriting repo2docker's newest stock interpreter.
-  - python=3.13.5=h2b335a9_102_cp313
-  - nodejs=22.16.0=hb8e1007_0
-  - rust=1.88.0=h3a20983_0
-  - pip=25.1.1=pyh8b19718_0
+  # Toolchain for the postBuild source install: the native Rust core and the
+  # Node-built render client are hard requirements of a checkout install.
+  # Loose version pins on purpose — exact conda build strings are
+  # arch-specific (mybinder.org also schedules aarch64 nodes) and conda-forge
+  # rebuilds retire them, which would quietly make this file unsolvable.
+  - rust=1.88.*
+  - nodejs=22.*
+  # No python/pip pin: the wheel is ABI-agnostic (py3-none, ctypes C ABI), so
+  # repo2docker's stock interpreter serves it as-is, and pinning below the
+  # frozen base environment would force mamba to downgrade the interpreter
+  # and churn the whole preinstalled Jupyter stack.
+  #
+  # The scientific stack imported across examples/**/*.ipynb — installing the
+  # checkout itself brings only numpy + anywidget.
+  - matplotlib
+  - pandas
+  - scipy
+  - scikit-learn
+  - seaborn
+  - h5py
+  - requests
+  # Deliberately not provisioned: pysam (bioconda-only) and gwosc, each used
+  # by single specialist notebooks under examples/real_world/; run
+  # `%pip install pysam gwosc` in-notebook when needed.
