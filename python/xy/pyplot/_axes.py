@@ -1101,6 +1101,42 @@ def _cached_axis(which: str, props: dict) -> Any:
     return made
 
 
+def _patch_outline(patch: Any) -> list[np.ndarray]:
+    """Data-space rings of a patch, curves flattened and its transform applied.
+
+    ``Path.to_polygons`` is what matplotlib's own renderers use, so a rotated
+    Rectangle, a Circle, and a Wedge all come back as real geometry. Ducks
+    without it fall back to raw vertices, which drop curvature and rotation.
+    """
+    get_path = getattr(patch, "get_path", None)
+    get_transform = getattr(patch, "get_patch_transform", None)
+    if get_path is not None and get_transform is not None:
+        to_polygons = getattr(get_path(), "to_polygons", None)
+        if to_polygons is not None:
+            rings = to_polygons(get_transform())
+            if len(rings):
+                return [np.asarray(ring, dtype=np.float64) for ring in rings]
+    if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
+        x0, y0 = float(patch.get_x()), float(patch.get_y())
+        x1, y1 = x0 + float(patch.get_width()), y0 + float(patch.get_height())
+        return [np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])]
+    if get_path is not None:
+        return [np.asarray(get_path().vertices, dtype=np.float64)]
+    raise TypeError(f"unsupported patch {type(patch).__name__}")
+
+
+def _patch_fill_color(patch: Any) -> Any:
+    """The patch's own face color, or None when it asks not to be filled."""
+    if not getattr(patch, "get_fill", lambda: True)():
+        return None
+    color = getattr(patch, "get_facecolor", lambda: None)()
+    if color is None or str(color).lower() == "none":
+        return None
+    if isinstance(color, (tuple, list, np.ndarray)) and len(color) == 4 and not float(color[3]):
+        return None
+    return color
+
+
 class Axes(PlotTypeMixin):
     def __init__(self, figure: Any, *, y2_of: Optional["Axes"] = None) -> None:
         self.figure = figure
@@ -5557,11 +5593,13 @@ class Axes(PlotTypeMixin):
         return Artist(self, entry)
 
     def add_patch(self, patch: Any) -> Artist:
-        """Add a patch, approximated as its outline or a stairs fill.
+        """Add a patch as a filled body plus its outline, or as a stairs fill.
 
-        StepPatch-likes (with ``get_data()``) route to `stairs`; Rectangle-
-        and Path-based patches draw their edge as line segments. Unsupported
-        patch types raise.
+        StepPatch-likes (with ``get_data()``) route to `stairs`. Every other
+        patch is flattened to data-space rings via ``Path.to_polygons``, so
+        rotation and curvature survive; each ring fills with the patch's own
+        face color and draws its edge as line segments. Unsupported patch
+        types raise.
         """
         if hasattr(patch, "get_data"):
             data = patch.get_data()
@@ -5582,24 +5620,47 @@ class Axes(PlotTypeMixin):
                 label=getattr(patch, "get_label", lambda: None)(),
                 **({"color": color} if color is not None else {}),
             )
-        if all(hasattr(patch, name) for name in ("get_x", "get_y", "get_width", "get_height")):
-            x0, y0 = float(patch.get_x()), float(patch.get_y())
-            x1, y1 = x0 + float(patch.get_width()), y0 + float(patch.get_height())
-            vertices = np.asarray([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])
-        elif hasattr(patch, "get_path"):
-            vertices = np.asarray(patch.get_path().vertices, dtype=np.float64)
-        else:
-            raise TypeError(f"unsupported patch {type(patch).__name__}")
+        from xy import kernels
+
+        outline = _patch_outline(patch)
+        face = _patch_fill_color(patch)
         edge = getattr(patch, "get_edgecolor", lambda: "#000000")()
-        entry = self._add(
-            "@mark",
-            {
-                "factory": "segments",
-                "args": (vertices[:-1, 0], vertices[:-1, 1], vertices[1:, 0], vertices[1:, 1]),
-                "kwargs": {"color": resolve_color(edge), "width": 1.0},
-            },
-        )
-        return Artist(self, entry)
+        width = float(getattr(patch, "get_linewidth", lambda: 1.0)())
+        entries: list[dict[str, Any]] = []
+        if face is not None:
+            for ring in outline:
+                xv, yv = ring[:, 0], ring[:, 1]
+                if len(xv) > 2 and np.allclose((xv[0], yv[0]), (xv[-1], yv[-1])):
+                    xv, yv = xv[:-1], yv[:-1]
+                try:
+                    topology = kernels.polygon_triangles(xv, yv)
+                except ValueError:
+                    # A zero-area or self-intersecting ring has no triangulation;
+                    # the outline pass below still draws it.
+                    continue
+                x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(xv, yv, topology)
+                entries.append(
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "triangle_mesh",
+                            "args": (x0, y0, x1, y1, x2, y2),
+                            "kwargs": {"color": resolve_color(face), "_joined_fill": True},
+                        },
+                    )
+                )
+        for ring in outline:
+            entries.append(
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (ring[:-1, 0], ring[:-1, 1], ring[1:, 0], ring[1:, 1]),
+                        "kwargs": {"color": resolve_color(edge), "width": width},
+                    },
+                )
+            )
+        return Artist(self, entries[0])
 
     def add_image(self, image: Any) -> AxesImage:
         """Add an AxesImage-like artist by resampling it through `imshow`.

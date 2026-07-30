@@ -113,8 +113,10 @@ Matplotlib's exact patch paths, `bbox=` boxes sized from an estimated text
 width with a fixed corner radius per box style (5 px for `round`, 8 px for
 `round4`) rather than Matplotlib's `pad × fontsize` box path — measured
 against Matplotlib 3.11.1 at 10 pt, `round` is 4.17 px there against 5 px
-here — and errorbar limit flags rendered as one-sided bars without
-Matplotlib's caret arrows.
+here — errorbar limit flags rendered as one-sided bars without
+Matplotlib's caret arrows, and `add_patch` geometry flattened through
+`Path.to_polygons`, which resolves a curved patch into the same straight
+segments Matplotlib's renderers use rather than an exact analytic curve.
 
 ## Sharp edges
 

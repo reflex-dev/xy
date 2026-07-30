@@ -4,6 +4,23 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Patch bodies and geometry — 2026-07-30 (Matplotlib 3.11.1 reference)
+
+- `xy.pyplot.Axes.add_patch` now fills a patch instead of drawing only its
+  outline. Each ring gets a triangle mesh in the patch's own face color, with
+  triangle joins marked as a single fill so browser, PNG, and SVG output
+  suppress internal seams. Patches that report `fill=False`, a `"none"` face
+  color, or a fully transparent one stay edge-only, and the patch never
+  advances the axes color cycle.
+- Patch geometry now comes from `Path.to_polygons(patch.get_patch_transform())`,
+  the same flattening Matplotlib's own renderers use. `Rectangle(angle=...)`
+  keeps its rotation, and curved patches use the curve rather than its Bezier
+  control points: `Circle(radius=1)` covers 3.139 rather than 3.251, and
+  `Ellipse(width=2, height=1, angle=20)` covers 1.570 rather than 3.251.
+- Outlines take the patch's own line width instead of a fixed one point.
+  Degenerate rings with no triangulation, such as a zero-height `Rectangle`,
+  draw their edge and skip the fill rather than raising.
+
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
 - `xy.pyplot.boxplot` no longer routes its default call through the native

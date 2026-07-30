@@ -19,6 +19,15 @@ in the README).
   structural invariants remain hard gates, while the paired CodSpeed rows
   continue to track shim overhead.
 
+### Fixed
+- `Axes.add_patch` rendered every patch as a hollow outline and dropped both
+  rotation and curvature. Patches now fill in their own face color, and their
+  geometry comes from `Path.to_polygons` with the patch transform applied, so
+  `Rectangle(angle=...)` keeps its rotation and `Circle`/`Ellipse`/`Wedge` use
+  the curve rather than its Bezier control points. Unfilled patches stay
+  edge-only, the axes color cycle is untouched, and a degenerate patch draws
+  its edge instead of raising.
+
 ## [0.0.4] - 2026-07-27
 
 ### Added

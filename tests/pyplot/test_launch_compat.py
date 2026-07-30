@@ -113,6 +113,116 @@ def test_adding_external_step_patch_does_not_advance_color_cycle() -> None:
     assert filled[2]["kwargs"]["color"] == "#1f77b4"
 
 
+def _mesh_area(entry: dict) -> float:
+    x0, y0, x1, y1, x2, y2 = (np.asarray(values, dtype=np.float64) for values in entry["args"])
+    return float(np.sum(np.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0))) / 2.0)
+
+
+def _patch_marks(ax: plt.Axes) -> tuple[list[dict], list[dict]]:
+    meshes = [entry for entry in ax._entries if entry.get("factory") == "triangle_mesh"]
+    edges = [entry for entry in ax._entries if entry.get("factory") == "segments"]
+    return meshes, edges
+
+
+def test_added_rectangle_patch_fills_with_its_own_face_color() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    assert len(meshes) == 1 and len(edges) == 1
+    assert meshes[0]["kwargs"]["color"] == "rgba(31,119,180,1)"
+    assert meshes[0]["kwargs"]["_joined_fill"] is True
+    assert _mesh_area(meshes[0]) == pytest.approx(2.0)
+
+
+def test_added_rotated_rectangle_keeps_its_rotation() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((1, 2), 3, 4, angle=30, facecolor="tab:blue"))
+    meshes, _edges = _patch_marks(ax)
+    xs = np.concatenate([np.asarray(meshes[0]["args"][index]) for index in (0, 2, 4)])
+    # Ignoring `angle` leaves the axis-aligned span 1.000..4.000 instead.
+    assert xs.min() == pytest.approx(-1.000, abs=1e-3)
+    assert xs.max() == pytest.approx(3.598, abs=1e-3)
+    assert _mesh_area(meshes[0]) == pytest.approx(12.0)
+
+
+def test_added_ellipse_flattens_its_curve_under_the_patch_transform() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Ellipse
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Ellipse((0, 0), width=2, height=1, angle=20, facecolor="green"))
+    meshes, _edges = _patch_marks(ax)
+    # pi*a*b. Raw Bezier control points without the transform give 3.2509.
+    assert _mesh_area(meshes[0]) == pytest.approx(np.pi * 1.0 * 0.5, rel=1e-2)
+
+
+def test_added_concave_polygon_patch_triangulates_its_true_area() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Polygon
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Polygon([[0, 0], [4, 0], [4, 4], [2, 1], [0, 4]], facecolor="green"))
+    meshes, _edges = _patch_marks(ax)
+    assert _mesh_area(meshes[0]) == pytest.approx(10.0)
+
+
+def test_unfilled_patch_stays_edge_only() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, fill=False))
+    meshes, edges = _patch_marks(ax)
+    assert meshes == []
+    assert len(edges) == 1
+
+
+def test_degenerate_patch_draws_its_edge_without_raising() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 0, facecolor="tab:blue"))
+    meshes, edges = _patch_marks(ax)
+    assert meshes == []
+    assert len(edges) == 1
+    edge_x = np.concatenate((edges[0]["args"][0], edges[0]["args"][2]))
+    assert np.ptp(edge_x) == pytest.approx(2.0)
+
+
+def test_removing_a_filled_patch_takes_its_outline_with_it() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    artist = ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:blue"))
+    assert len(ax._entries) == 2
+    artist.remove()
+    assert ax._entries == []
+
+
+def test_adding_a_filled_patch_does_not_advance_the_color_cycle() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), 2, 1, facecolor="tab:orange"))
+    polygon = ax.fill([0, 1, 1], [0, 0, 1])[0]
+    assert polygon._entry["kwargs"]["color"] == "#1f77b4"
+
+
+def test_patch_without_a_path_or_rectangle_getters_raises() -> None:
+    _fig, ax = plt.subplots()
+    with pytest.raises(TypeError, match="unsupported patch"):
+        ax.add_patch(object())
+
+
 def test_masked_and_nan_lines_break_instead_of_bridging_missing_values() -> None:
     _fig, ax = plt.subplots()
     x = np.arange(5.0)
