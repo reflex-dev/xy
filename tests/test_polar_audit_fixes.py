@@ -369,6 +369,36 @@ def test_client_caps_the_title_box_at_the_measured_wrap_width() -> None:
     assert "function xyWrapLines(lines, advance, maxWidth)" in CHARTVIEW
 
 
+# -- legend overflow --------------------------------------------------------
+
+
+def test_a_long_legend_row_ellipsizes_instead_of_scrolling_sideways() -> None:
+    """A pie legend grew a horizontal scrollbar, hiding the label it was showing.
+
+    The box is capped at `--xy-legend-max-width`, but its grid columns were
+    `max-content` — they refused to shrink — so an over-wide row overflowed and
+    `overflow:auto` answered with a sideways scrollbar. Vertical scrolling stays
+    (it is what the browser legend has over the static exporters, which can only
+    ellipsize); horizontal overflow now ellipsizes per row.
+    """
+    theme = (ROOT / "js/src/20_theme.ts").read_text(encoding="utf-8")
+    # Columns that can shrink, and no horizontal scroll axis.
+    assert "minmax(0,max-content)" in CHARTVIEW
+    assert "overflow-x:hidden;overflow-y:auto;" in CHARTVIEW
+    # Only the LABEL clips. The swatch is `flex:none` and keeps overflow visible,
+    # so an authored oversized marker still draws outside its 18x14 box.
+    assert 'data-xy-slot="legend_item"]){display:flex;align-items:center;min-width:0}' in theme
+    assert (
+        'data-xy-slot="legend_label"]){min-width:0;overflow:hidden;'
+        "text-overflow:ellipsis;white-space:nowrap}" in theme
+    )
+    assert 'data-xy-slot="legend_swatch"]){display:inline-block;flex:none;' in theme
+    # An ellipsis must never make text unreachable: same full-text-in-title/ARIA
+    # rule the categorical tick labels use.
+    assert "row.title = String(it.name);" in CHARTVIEW
+    assert 'row.setAttribute("aria-label", String(it.name));' in CHARTVIEW
+
+
 # -- polar legend gutter ----------------------------------------------------
 
 
@@ -380,7 +410,7 @@ def test_a_polar_legend_gets_a_gutter_beside_the_disc() -> None:
     # The box is outside the plot rect, on the right, and the disc no longer
     # reaches into it.
     assert plot["legend_box_x"] >= plot["x"] + plot["w"]
-    assert plot["legend_box_w"] == pytest.approx(_svg._POLAR_LEGEND_ROOM)
+    assert plot["legend_box_w"] == pytest.approx(_svg._polar_legend_room(720))
 
 
 def test_a_compact_polar_legend_takes_a_band_under_the_disc() -> None:
@@ -437,7 +467,9 @@ def test_a_cartesian_legend_still_overlays_its_plot() -> None:
 
 def test_client_legend_places_in_the_reserved_box() -> None:
     assert "_polarLegendReserve(compact)" in CHARTVIEW
-    assert "const POLAR_LEGEND_ROOM = 96;" in CHARTVIEW
+    assert "function xyPolarLegendRoom(width)" in CHARTVIEW
+    assert "const POLAR_LEGEND_ROOM_FRACTION = 0.22;" in CHARTVIEW
+    assert "room: xyPolarLegendRoom(this.size.w)," in CHARTVIEW
     assert "const POLAR_LEGEND_BAND = 64;" in CHARTVIEW
     # Placement and the responsive max-width both read the legend box, and an
     # authored anchor still resolves against the plot.

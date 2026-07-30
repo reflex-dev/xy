@@ -44,8 +44,11 @@ in the README).
 - A polar figure with a legend reserves a gutter for it and places it there,
   instead of overlaying the disc. A default `upper right` legend covered a wind
   rose's north-east sectors and its outer radial tick label; a disc inscribed in
-  its rect has no free corner to overlay. Compact widths take a band beneath the
-  disc instead. An authored `anchor` or four-tuple `padding` still wins.
+  its rect has no free corner to overlay. The gutter is 22% of the canvas width,
+  clamped to 120-200 px — derived from the canvas so all three renderers reserve
+  the identical box, and wide enough to hold an ordinary row rather than
+  ellipsize it. Compact widths take a 64 px band beneath the disc instead. An
+  authored `anchor` or four-tuple `padding` still wins.
 - Compact vertical colorbars keep their two extreme tick labels and their title.
   Collapsing them hid every number and the scale name, leaving an unlabelled
   gradient; only the interior tick ladder and the text-free minor ticks drop now.
@@ -67,6 +70,18 @@ in the README).
   and painting twice.
 - `xy.pie_chart` appears in the generated chart-factory API reference alongside
   the other polar compositions.
+- A legend row too wide for its box ellipsizes instead of growing a horizontal
+  scrollbar. The box is capped at `--xy-legend-max-width`, but its grid columns
+  were `max-content` and refused to shrink, so an over-wide row overflowed and
+  `overflow:auto` answered sideways — hiding the label it was meant to show.
+  Vertical scrolling is unchanged; the full text stays available in
+  `title`/ARIA, matching how categorical tick labels already ellipsize.
+- `xy.pie_chart` no longer prints the same number twice. Values that already sum
+  to 100 — how most pie data arrives — made `show_values` and `show_percent`
+  collide, so `[40, 30, 20, 10]` rendered `Direct  40  (40%)`: a legend row that
+  reads as repeated text, and long enough to overflow the box. The share keeps
+  the unit and the bare value is dropped, decided once for the whole pie so rows
+  stay uniform.
 
 ### Changed
 - Polar wedge subdivision is span-proportional: `segments(span) =

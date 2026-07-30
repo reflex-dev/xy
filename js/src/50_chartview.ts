@@ -67,13 +67,28 @@ const THETA_ZERO = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
 // plot because data rarely reaches a corner; a disc inscribed in its rect leaves
 // no corner at all, so an inside legend lands on the marks — an `upper right` box
 // covered a wind rose's whole north-east quadrant and the outer radial label
-// under it. Mirrored by _POLAR_LEGEND_ROOM / _POLAR_LEGEND_BAND in
-// python/xy/_svg.py; fixed rather than measured so all three renderers reserve
-// the same box regardless of their font metrics.
-const POLAR_LEGEND_ROOM = 96;
-// Compact widths take a band under the disc instead: a 96 px side gutter out of a
-// 380 px phone canvas leaves a disc too small to read, while vertical room is the
-// one thing a phone viewport has.
+// under it.
+//
+// A FRACTION OF THE CANVAS, clamped, rather than a measurement of the label set:
+// every renderer knows the canvas width to the pixel, so all three reserve the
+// identical box, while a measured reservation would drift with each renderer's
+// font metrics (system-ui here, DejaVu in the exporters). A flat constant was
+// tried first and is the wrong shape — 96 px ellipsized `Partner  (30%)`, an
+// ordinary pie slice's default name, while being a fifth of a phone canvas and a
+// fifteenth of a wide one. A label still wider than the gutter ellipsizes with
+// its full text in `title`/ARIA.
+// Mirrored by `_polar_legend_room` in python/xy/_svg.py.
+const POLAR_LEGEND_ROOM_FRACTION = 0.22;
+const POLAR_LEGEND_ROOM_MIN = 120;
+const POLAR_LEGEND_ROOM_MAX = 200;
+
+// `Math.floor`, not `Math.round`: Python and JavaScript disagree about half-way
+// cases, and the two must land on the same integer pixel.
+function xyPolarLegendRoom(width) {
+  const scaled = Math.floor(Number(width) * POLAR_LEGEND_ROOM_FRACTION);
+  return Math.min(POLAR_LEGEND_ROOM_MAX, Math.max(POLAR_LEGEND_ROOM_MIN, scaled));
+}
+
 const POLAR_LEGEND_BAND = 64;
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
@@ -761,7 +776,10 @@ export class ChartView {
     if (!hasRows) return null;
     if (compact) return { side: "bottom", room: POLAR_LEGEND_BAND };
     const loc = String(options.loc || "upper right");
-    return { side: loc.includes("left") ? "left" : "right", room: POLAR_LEGEND_ROOM };
+    return {
+      side: loc.includes("left") ? "left" : "right",
+      room: xyPolarLegendRoom(this.size.w),
+    };
   }
 
   // Re-cut the plot rect for a disc. Mirrors `_recut_polar_plot` in
@@ -2582,9 +2600,16 @@ export class ChartView {
     const handleTextPad = Number.isFinite(Number(options.handletextpad))
       ? Math.max(0, Number(options.handletextpad))
       : 0.8;
+    // `minmax(0, max-content)`, not bare `max-content`: the box is capped at
+    // `--xy-legend-max-width`, and a column that refuses to shrink below its
+    // content made a long row overflow horizontally — a legend with a horizontal
+    // SCROLLBAR, which hides the label it is meant to be showing. Vertical
+    // overflow still scrolls (that is the browser legend's advantage over the
+    // static exporters, which can only ellipsize); horizontal overflow
+    // ellipsizes per row instead, with the full text in `title`/ARIA.
     lg.style.cssText = "position:absolute;" +
-      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "column-gap:2em;row-gap:.5em;overflow:auto;";
+      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},minmax(0,max-content));` +
+      "column-gap:2em;row-gap:.5em;overflow-x:hidden;overflow-y:auto;";
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
@@ -2732,6 +2757,17 @@ export class ChartView {
       label.textContent = it.name;
       this._applySlot(label, "legend_label");
       row.appendChild(label);
+      // A row too wide for the capped box ellipsizes (the `legend_item` /
+      // `legend_label` rules in 20_theme.ts) rather than pushing a horizontal
+      // scrollbar onto the legend. Only the LABEL clips: the swatch is
+      // `flex:none` and keeps `overflow:visible`, so an authored oversized
+      // marker still draws outside its 18x14 box. Same full-text-in-title/ARIA
+      // rule categorical tick labels use, so nothing an ellipsis hides becomes
+      // unreachable.
+      if (it.name) {
+        row.title = String(it.name);
+        row.setAttribute("aria-label", String(it.name));
+      }
       // Hover emphasis (interaction spec §9): rows backed by live traces dim the rest
       // of the chart while hovered. Manually-added Legend artists carry no
       // trace linkage, so extra_legends rows stay inert.

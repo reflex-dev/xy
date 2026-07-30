@@ -1176,10 +1176,12 @@ def test_raster_polar_area_culls_vertices_outside_the_sector() -> None:
 
 
 def test_pie_chart_slices_carry_category_value_and_share() -> None:
-    chart = xy.pie_chart(["a", "b", "c"], [50.0, 30.0, 20.0], width=300, height=300)
+    # Counts, not shares: the value and the percentage are different numbers, so
+    # both earn their place in the row.
+    chart = xy.pie_chart(["a", "b", "c"], [27.0, 21.0, 13.0], width=300, height=300)
     spec, _ = chart.figure().build_payload()
     names = [t["name"] for t in spec["traces"]]
-    assert names == ["a  50  (50%)", "b  30  (30%)", "c  20  (20%)"]
+    assert names == ["a  27  (44%)", "b  21  (34%)", "c  13  (21%)"]
     # The composition owns its readout: the tooltip is the slice name alone,
     # never theta (layout) or the constant rim radius.
     assert spec["tooltip"] == {"title": "{name}"}
@@ -1187,6 +1189,48 @@ def test_pie_chart_slices_carry_category_value_and_share() -> None:
     # rather than by shrinking each angle, so the shares stay exact.
     widths = [t["bar"]["width"] for t in spec["traces"]]
     assert sum(widths) == pytest.approx(360.0, abs=1e-6)
+
+
+def test_pie_chart_never_prints_the_same_number_twice() -> None:
+    """Percentage-shaped values made both defaults render the same digits.
+
+    `[40, 30, 20, 10]` is how most pie data arrives, and it came out as
+    "Direct  40  (40%)" — a legend row that reads as repeated text, and long
+    enough to overflow the legend box that then grew a horizontal scrollbar.
+    """
+    chart = xy.pie_chart(
+        ["Direct", "Partner", "Organic", "Other"],
+        [40.0, 30.0, 20.0, 10.0],
+        width=300,
+        height=300,
+    )
+    spec, _ = chart.figure().build_payload()
+    names = [t["name"] for t in spec["traces"]]
+    assert names == ["Direct  (40%)", "Partner  (30%)", "Organic  (20%)", "Other  (10%)"]
+
+    # The choice is made once for the whole pie, not per slice: a legend where
+    # one row carries a bare value and the next does not is worse than either
+    # consistent shape. 10.5 does not render as its 10% share, so every row keeps
+    # its value even though the other three would have collided.
+    mixed = xy.pie_chart(["a", "b", "c", "d"], [40.0, 30.0, 20.0, 10.5], width=300, height=300)
+    mixed_spec, _ = mixed.figure().build_payload()
+    assert [t["name"] for t in mixed_spec["traces"]] == [
+        "a  40  (40%)",
+        "b  30  (30%)",
+        "c  20  (20%)",
+        "d  10.5  (10%)",
+    ]
+
+    # A zero slice draws no wedge and gets no row, so it cannot veto the choice.
+    zeroed = xy.pie_chart(["a", "b", "c", "d"], [40.0, 30.0, 30.0, 0.0], width=300, height=300)
+    zero_spec, _ = zeroed.figure().build_payload()
+    assert [t["name"] for t in zero_spec["traces"]] == ["a  (40%)", "b  (30%)", "c  (30%)"]
+
+    # Either switch alone is untouched: with no share to collide with, the value
+    # is always shown.
+    values_only = xy.pie_chart(["a", "b"], [40.0, 60.0], show_percent=False, width=300, height=300)
+    values_spec, _ = values_only.figure().build_payload()
+    assert [t["name"] for t in values_spec["traces"]] == ["a  40", "b  60"]
 
 
 def test_pie_chart_user_tooltip_wins() -> None:

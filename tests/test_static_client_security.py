@@ -48,6 +48,11 @@ _CHROME_WHERE_RULES = (
     ':where(.xy [data-xy-slot="tooltip_label"])::after{',
     ':where(.xy [data-xy-slot="legend"]){',
     ':where(.xy [data-xy-slot="legend_title"]){',
+    # The row is a flex line and the label ellipsizes, so a long entry cannot
+    # push a horizontal scrollbar onto the legend box. Both stay in the `:where()`
+    # layer so an author's utility class still wins.
+    ':where(.xy [data-xy-slot="legend_item"]){',
+    ':where(.xy [data-xy-slot="legend_label"]){',
     ':where(.xy [data-xy-slot="legend_swatch"]){',
     ':where(.xy [data-xy-slot="modebar"]){',
     ':where(.xy) button[data-xy-slot="modebar_button"]{',

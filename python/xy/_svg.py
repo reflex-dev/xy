@@ -2658,21 +2658,40 @@ _POLAR_TICK_GAP = 8.0
 # under it. Both incumbents' answer is to move it out (Plotly puts polar legends
 # in the figure margin), which needs room the disc gives back.
 #
-# Fixed rather than measured from the label set, for the same reason
-# POLAR_BAR_SEGMENTS is fixed: the reservation has to be identical in all three
-# renderers, and a measured one would drift with each renderer's font metrics.
-# The legend still sizes and ellipsizes to the gutter, so a long label is bounded
-# rather than clipped.
-# Mirrored by POLAR_LEGEND_ROOM / POLAR_LEGEND_BAND in js/src/50_chartview.ts.
-_POLAR_LEGEND_ROOM = 96.0
-# Compact widths take a band under the disc instead: a 96 px side gutter out of a
-# 380 px phone canvas leaves a disc too small to read, while vertical room is the
-# one thing a phone viewport has.
+# A FRACTION OF THE CANVAS, clamped, rather than a measurement of the label set:
+# every renderer knows the canvas width to the pixel, so all three reserve the
+# identical box, while a measured reservation would drift with each renderer's
+# font metrics (DejaVu here, system-ui in the browser). A flat constant was tried
+# first and is the wrong shape — 96 px ellipsized `Partner  (30%)`, an ordinary
+# pie slice's default name, while being a fifth of a phone canvas and a
+# fifteenth of a wide one.
+#
+# The floor keeps a narrow chart's legend readable; the ceiling stops a wide one
+# from spending 300 px on four short rows. A label still wider than the gutter
+# ellipsizes with its full text in `title`/ARIA, exactly as the static exporters
+# already ellipsize against the plot width.
+# Mirrored by xyPolarLegendRoom in js/src/50_chartview.ts.
+_POLAR_LEGEND_ROOM_FRACTION = 0.22
+_POLAR_LEGEND_ROOM_MIN = 120.0
+_POLAR_LEGEND_ROOM_MAX = 200.0
+
+
+def _polar_legend_room(width: float) -> float:
+    """Side-gutter width for a polar legend on a `width`-px canvas.
+
+    `floor`, not `round`: Python and JavaScript disagree about half-way cases
+    (banker's rounding versus round-half-up) and the two must land on the same
+    integer pixel.
+    """
+    scaled = math.floor(float(width) * _POLAR_LEGEND_ROOM_FRACTION)
+    return min(_POLAR_LEGEND_ROOM_MAX, max(_POLAR_LEGEND_ROOM_MIN, float(scaled)))
+
+
 _POLAR_LEGEND_BAND = 64.0
 
 
-def _polar_legend_reserve(spec: dict[str, Any], compact: bool) -> tuple[str, float]:
-    """Side and px a polar legend gutter claims: ``("right", 96.0)`` etc.
+def _polar_legend_reserve(spec: dict[str, Any], compact: bool, width: float) -> tuple[str, float]:
+    """Side and px a polar legend gutter claims: ``("right", 158.0)`` etc.
 
     ``("", 0.0)`` when nothing is reserved — a non-polar figure, no legend rows,
     an authored ``anchor`` (an explicit plot-relative placement the author owns),
@@ -2696,7 +2715,7 @@ def _polar_legend_reserve(spec: dict[str, Any], compact: bool) -> tuple[str, flo
     if compact:
         return "bottom", _POLAR_LEGEND_BAND
     loc = str(options.get("loc") or "upper right")
-    return ("left" if "left" in loc else "right"), _POLAR_LEGEND_ROOM
+    return ("left" if "left" in loc else "right"), _polar_legend_room(width)
 
 
 def _polar_label_room(theta_axis: dict[str, Any]) -> float:
@@ -2761,7 +2780,7 @@ def _recut_polar_plot(
     # legend never occupies the disc. Recorded as four floats rather than a
     # nested rect so `plot` stays a flat float map.
     canvas_x0 = 0.0
-    legend_side, legend_room = _polar_legend_reserve(spec, compact)
+    legend_side, legend_room = _polar_legend_reserve(spec, compact, width)
     if legend_room:
         if legend_side == "left":
             box = (0.0, plot["y"], legend_room, plot["h"])
