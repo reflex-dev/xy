@@ -1205,9 +1205,9 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   `.binder/postBuild` installs the checkout with `XY_REQUIRE_CARGO=1`. This keeps
   hosted examples on the browsed commit while making a missing native core fail
   during image construction rather than later at notebook import. Playwright's
-  browser download is disabled for this build-only Node install, and the Cargo and
-  npm build caches are removed after the wheel has captured the native core and
-  render client.
+  browser download is disabled for this build-only Node install, and the checkout's
+  `target` and `node_modules` build directories are removed after the wheel has
+  captured the native core and render client.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
   (native core + JS client + assets), CI-enforced like every other number.
 - **Import-time budget**: `import xy` does no heavy work (< 200 ms); NumPy and
