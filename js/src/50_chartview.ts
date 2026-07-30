@@ -7129,10 +7129,17 @@ export class ChartView {
       const y1 = this._decodeValue(r.y1, r.y1Meta, i);
       let insideX;
       if (geom) {
-        // A four-edge wedge's angular span may straddle the seam; test the
-        // wrapped offset from the span's start instead of a raw interval.
+        // Both renderers draw the band as the DIRECT interval between the two
+        // edges — GLSL takes `abs(a1 - a0)` with `dir = a1 >= a0 ? 1 : -1`, and
+        // `wedge_angles` takes `min(raw0, raw1) .. max(raw0, raw1)` — so the
+        // span is unwrapped and edge order carries no meaning. Measuring it
+        // with a *directional* `mod(x1 - x0, turn)` while anchoring at
+        // `min(x0, x1)` made the two disagree: a descending pair (350, 300)
+        // covered 300..610 instead of 300..350. Only the offset needs wrapping,
+        // so a seam-crossing bar whose edges are emitted unwrapped (-15..15) is
+        // still reachable from dataX = 355.
         const turn = geom.turn || 1;
-        const span = this._polarPositiveMod(x1 - x0, turn) || Math.abs(x1 - x0);
+        const span = Math.abs(x1 - x0);
         insideX = this._polarPositiveMod(dataX - Math.min(x0, x1), turn) <= span;
       } else {
         insideX = dataX >= Math.min(x0, x1) && dataX <= Math.max(x0, x1);

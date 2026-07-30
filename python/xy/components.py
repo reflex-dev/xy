@@ -6394,6 +6394,11 @@ def wind_rose(
     magnitudes = np.asarray(speeds, dtype=float).reshape(-1)
     if bearings.size != magnitudes.size:
         raise ValueError("wind_rose directions and speeds must be the same length")
+    # A fractional count reached np.bincount's `minlength` and surfaced as a
+    # raw NumPy TypeError about "a sequence of integers", which names neither
+    # the parameter nor the caller's mistake.
+    if isinstance(sectors, bool) or not isinstance(sectors, (int, np.integer)):
+        raise ValueError(f"wind_rose sectors must be a whole number; got {sectors!r}")
     if sectors < 3:
         raise ValueError("wind_rose sectors must be at least 3")
     finite = np.isfinite(bearings) & np.isfinite(magnitudes)

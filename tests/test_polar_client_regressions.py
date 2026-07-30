@@ -682,3 +682,66 @@ setTimeout(() => {
     assert result["seam"] == [300.0, 330.0, 0.0, 30.0, 60.0]
     assert result["bounded"] == [0.0, 45.0, 90.0]
     assert result["radialCount"] > 0
+
+
+def test_polar_rect_hover_span_matches_the_drawn_wedge(tmp_path: Path) -> None:
+    """`_rectHover`'s polar containment measured a *directional* span,
+    `mod(x1 - x0, turn)`, while anchoring the offset at `min(x0, x1)`. Both
+    renderers draw the band as the direct unwrapped interval between the edges
+    (GLSL `abs(a1 - a0)`; `_PolarProjection.wedge_angles` `min..max`), so edge
+    order carries no meaning — and the mismatch made a descending pair
+    (350, 300) report a 310-wide wedge covering 300..610 instead of 300..350,
+    and a 350/10 pair hoverable only outside itself."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    chart = xy.polar_chart(
+        xy.bar([30.0], [1.0], width=10.0),
+        xy.theta_axis(unit="degrees"),
+        width=420,
+        height=420,
+    )
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const meta = { scale: 1, offset: 0 };
+    const wedge = (x0, x1) => ({
+      trace: { id: 42 }, n: 1,
+      _cpuRect: {
+        x0: [x0], x1: [x1], y0: [0], y1: [1],
+        x0Meta: meta, x1Meta: meta, y0Meta: meta, y1Meta: meta,
+      },
+    });
+    const hits = (x0, x1, theta) => !!view._rectHover(wedge(x0, x1), theta, 0.5);
+    document.body.setAttribute("data-xy-rect-span", JSON.stringify({
+      // Descending pair: the wedge is 300..350 either way round.
+      descIn: hits(350, 300, 320), descOut: hits(350, 300, 20),
+      // Ascending control.
+      ascIn: hits(300, 350, 320), ascOut: hits(300, 350, 20),
+      // Wide wedge (>180 deg) must stay reachable at its middle.
+      wideIn: hits(0, 270, 200), wideOut: hits(0, 270, 300),
+      // Seam-crossing bar: edges are emitted unwrapped (-15..15).
+      seamIn: hits(-15, 15, 355), seamAlsoIn: hits(-15, 15, 5),
+      seamOut: hits(-15, 15, 180),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-rect-span-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_rect_span.html",
+        "data-xy-rect-span",
+        label="polar rect hover span",
+    )
+    assert result["descIn"] and not result["descOut"], result
+    assert result["ascIn"] and not result["ascOut"], result
+    assert result["wideIn"] and not result["wideOut"], result
+    assert result["seamIn"] and result["seamAlsoIn"] and not result["seamOut"], result

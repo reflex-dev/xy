@@ -1382,3 +1382,68 @@ def test_cartesian_tick_trimming_is_unchanged_by_the_modular_window() -> None:
     axis = {"range": (0.0, 10.0), "kind": "linear", "tick_values": [-1.0, 0.0, 5.0, 10.0, 11.0]}
     ticks, _labelled, _step = axis_ticks(axis, 400.0, True)
     assert ticks == pytest.approx([0.0, 5.0, 10.0])
+
+
+def test_polar_refuses_reverse_on_the_angular_axis() -> None:
+    """`reverse` is the Cartesian flip switch; the angular axis spells the same
+    idea as `direction`. It rode the wire as `"reverse": true` and every
+    renderer ignored it, so the axis silently drew unreversed."""
+    with pytest.raises(ValueError, match="reverse=True on the angular axis"):
+        xy.polar_chart(
+            xy.line([0.0, 1.0], [1.0, 2.0]), xy.theta_axis(reverse=True)
+        ).figure().build_payload_split()
+
+    # The switch that does work, and the radial flip, stay supported.
+    xy.polar_chart(
+        xy.line([0.0, 1.0], [1.0, 2.0]), xy.theta_axis(direction="clockwise")
+    ).figure().build_payload_split()
+    xy.polar_chart(
+        xy.line([0.0, 1.0], [1.0, 2.0]), xy.r_axis(reverse=True)
+    ).figure().build_payload_split()
+
+
+def test_wind_rose_names_a_fractional_sector_count() -> None:
+    """A non-integer count reached np.bincount's `minlength` and surfaced as a
+    raw NumPy TypeError naming neither the parameter nor the mistake."""
+    with pytest.raises(ValueError, match="whole number"):
+        xy.wind_rose([10.0, 20.0], [1.0, 2.0], sectors=8.5)
+    xy.wind_rose([10.0, 20.0], [1.0, 2.0], sectors=8).figure().build_payload_split()
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        (
+            "log radial annihilates every row",
+            lambda: xy.polar_chart(
+                xy.area([0.0, 90.0, 180.0], [1.0, 2.0, 3.0]),
+                xy.theta_axis(unit="degrees"),
+                xy.r_axis(type_="log"),
+            ),
+        ),
+        (
+            "all-NaN radar polygon",
+            lambda: xy.radar_chart(["a", "b", "c"], xy.area([float("nan")] * 3)),
+        ),
+        (
+            "area entirely outside the sector",
+            lambda: xy.polar_chart(
+                xy.area([200.0, 220.0, 240.0], [1.0, 2.0, 3.0]),
+                xy.theta_axis(unit="degrees", sector=(0.0, 90.0)),
+            ),
+        ),
+    ],
+)
+def test_fully_culled_polar_area_exports_without_malformed_path(label, build) -> None:
+    """`_curve_path` returned "" for a fully culled trace and the area join
+    stitched that into `" L  Z"` — malformed path data that also reached the
+    PDF converter's `_parse_path`. An empty vertex array additionally reached
+    the native poly-path builder, which rejects a zero-length buffer, so the
+    export raised instead of drawing nothing."""
+    figure = build().figure()
+    doc = figure.to_svg()
+    for d in re.findall(r'<path d="([^"]*)"', doc):
+        assert d.strip(), f"{label}: empty path data"
+        assert not d.strip().startswith("L"), f"{label}: path opens with a lineto: {d[:40]}"
+        assert " L  " not in d, f"{label}: malformed join: {d[:60]}"
+    assert figure.to_image(format="pdf")[:5] == b"%PDF-"

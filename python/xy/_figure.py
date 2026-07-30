@@ -891,6 +891,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 "the angle must be linear. A log or symlog *radial* axis "
                 "(r_axis) is supported. See spec/design/polar-axes.md."
             )
+        # `reverse` is the Cartesian "flip this axis" switch; on a disc the
+        # equivalent is a direction of travel, which the angular axis already
+        # spells as `direction`. It rode the wire as `"reverse": true` and every
+        # renderer ignored it, so the axis silently drew unreversed — the same
+        # accepted-but-inert trap as a secondary axis. Point at the switch that
+        # works instead. (`r_axis(reverse=True)` is honoured and unaffected.)
+        if theta.get("reverse"):
+            raise ValueError(
+                "coords='polar' does not support reverse=True on the angular "
+                "axis; use theta_axis(direction='clockwise') to reverse the "
+                "direction of travel. See spec/design/polar-axes.md."
+            )
         sector = theta.get("sector")
         if sector is not None:
             unit = theta.get("theta_unit") or "radians"

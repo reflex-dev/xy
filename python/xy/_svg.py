@@ -1766,6 +1766,48 @@ def _poly_path(px: np.ndarray, py: np.ndarray) -> str:
     return _native.svg_poly_path(px, py)
 
 
+def _polar_visible_runs(
+    xv: np.ndarray, yv: np.ndarray, polar: "_PolarProjection"
+) -> list[np.ndarray]:
+    """Index runs of consecutive vertices the polar transform keeps.
+
+    The same split `_curve_path` performs, exposed so a filled area can close
+    each run against its own base instead of stitching every run to one base.
+    """
+    visible = polar.position_mask(xv, yv)
+    if visible.size == 0:
+        return []
+    idx = np.flatnonzero(visible)
+    if idx.size == 0:
+        return []
+    runs = np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1)
+    return [run for run in runs if len(run) >= 2]
+
+
+def _area_fill_path(
+    xv: np.ndarray,
+    yv: np.ndarray,
+    bv: np.ndarray,
+    sx: _Scale,
+    sy: _Scale,
+    smooth: bool,
+    polar: "Optional[_PolarProjection]" = None,
+) -> str:
+    """Closed fill path between a top curve and its base, or "" if nothing is
+    visible. Under polar each visible run closes separately."""
+    if polar is None:
+        top = _curve_path(xv, yv, sx, sy, smooth, None)
+        base = _curve_path(xv[::-1], bv[::-1], sx, sy, smooth, None)
+        return f"{top} L {base[2:]} Z" if top and base else ""
+    parts = []
+    for run in _polar_visible_runs(xv, yv, polar):
+        top = _curve_path(xv[run], yv[run], sx, sy, smooth, polar)
+        base = _curve_path(xv[run][::-1], bv[run][::-1], sx, sy, smooth, polar)
+        if top and base:
+            parts.append(f"{top} L {base[2:]} Z")
+    return " ".join(parts)
+
+
 def _curve_path(
     xv: np.ndarray,
     yv: np.ndarray,
@@ -1786,6 +1828,12 @@ def _curve_path(
     outside the radial range are culled like the client shader culls them —
     the path splits into visible runs, dropping any chord with a culled
     endpoint whole (§8)."""
+    if len(xv) == 0:
+        # `visible.all()` is vacuously true on an empty array, so this fell
+        # through to the native poly-path builder, which rejects a zero-length
+        # buffer. A log radial axis annihilating every row, or an all-NaN
+        # series, therefore crashed the export instead of drawing nothing.
+        return ""
     if polar is not None:
         px, py = polar(xv, yv)
         visible = polar.position_mask(xv, yv)
@@ -3853,8 +3901,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 radial_min, radial_max = sorted((polar.r_lo, polar.r_hi))
                 yv = np.clip(yv, radial_min, radial_max)
                 bv = np.clip(bv, radial_min, radial_max)
+            # Still needed for the (non-perimeter) outline below; the fill
+            # builds its own paired paths so each visible run can close alone.
             top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth, polar)
-            base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth, polar)
             fill_spec = style.get("fill")
             fill = (
                 svg.gradient(fill_spec, color, plot)
@@ -3862,10 +3911,17 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 else escape(color)
             )
             op = _fill_opacity(style, 0.35)
-            joined = f"{top_path} L {base_path[2:]} Z"  # strip the M of the return path
-            marks.append(f'<path d="{joined}" fill="{fill}" fill-opacity="{_num(op)}"/>')
+            # A polar area can be culled away entirely — every vertex outside
+            # the authored sector, or a log radial axis annihilating each row —
+            # or split into several visible runs. The flat join then produced
+            # " L  Z", malformed path data that also reached the PDF
+            # converter's _parse_path, or stitched the first top run onto the
+            # base with a stray L. Close each visible run on its own.
+            joined = _area_fill_path(xv, yv, bv, trace_sx, trace_sy, smooth, polar)
+            if joined:
+                marks.append(f'<path d="{joined}" fill="{fill}" fill-opacity="{_num(op)}"/>')
             lw = float(style.get("line_width", 1.2))
-            if lw > 0:
+            if lw > 0 and (joined or top_path):
                 lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
                 line_color = style.get("line_color") or color
                 outline_path = joined if style.get("stroke_perimeter") else top_path
