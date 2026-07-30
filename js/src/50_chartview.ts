@@ -3861,8 +3861,10 @@ export class ChartView {
     g.colorTarget = t.color_target
       ? parseColor(this.root, t.color_target.color, g.color)
       : null;
-    // Outline paint (ribbon geometry contract): an omitted stroke colour
-    // falls back to the band colour, matching both static exporters.
+    // Outline paint (ribbon geometry contract). An omitted stroke colour means
+    // "match the band's own fill" — resolving it to g.color here would paint
+    // every band of a per-band (direct_rgba) ribbon with the constant
+    // fallback, which is not a colour the trace uses anywhere.
     const style = t.style || {};
     g.stroke = style.stroke ? parseColor(this.root, style.stroke, g.color) : null;
     g.strokeWidth = Number(style.stroke_width) || 0;
@@ -3892,8 +3894,9 @@ export class ChartView {
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform1i(u("u_segments"), RIBBON_STEPS);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
-    const stroke = g.stroke || g.color;
+    const stroke = g.stroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
     // A flat band must mix toward ITS OWN colour, so a per-band source buffer

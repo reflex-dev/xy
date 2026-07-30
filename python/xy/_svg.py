@@ -3980,6 +3980,10 @@ def _ribbon_marks(
     stroke_css = style.get("stroke")
     stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
     stroke_op = _stroke_opacity(style)
+    # An omitted stroke colour matches the band's own fill per band
+    # (edgecolors="face"), so a per-band ribbon does not outline every flow in
+    # one arbitrary colour. Explicit strokes stay a single declared paint.
+    stroke_paint = None if stroke_css is None else escape(_css(stroke_css, fallback))
 
     def rgb(paint: Any) -> str:
         return f"rgb({round(paint[0] * 255)},{round(paint[1] * 255)},{round(paint[2] * 255)})"
@@ -4022,14 +4026,13 @@ def _ribbon_marks(
             )
             attrs = f'fill="{ramp}"'
         if stroke_width > 0:
-            # No explicit stroke colour falls back to the trace colour, the
-            # same rule the raster's _emit_ribbon and the area outline follow.
-            attrs += (
-                f' stroke="{escape(_css(stroke_css, fallback))}" '
-                f'stroke-width="{_num(stroke_width)}" '
-            )
-            if stroke_op < 1:
-                attrs += f'stroke-opacity="{_num(stroke_op)}" '
+            paint_css = stroke_paint if stroke_paint is not None else rgb(source_rgba[i])
+            # The band paint's own alpha rides the stroke stack, exactly as
+            # `effective_rgba` folds it into the fill.
+            edge_op = stroke_op * (1.0 if stroke_paint is not None else float(source_rgba[i][3]))
+            attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
+            if edge_op < 1:
+                attrs += f'stroke-opacity="{_num(edge_op)}" '
         out.append(f'<path d="{d}" {attrs}/>')
     return "".join(out)
 

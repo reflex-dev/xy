@@ -225,15 +225,6 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="stroke-width above ~4px at a sharp angle",
         tracked_by="no style property selects a join; the default is the whole contract",
     ),
-    RendererDivergence(
-        id="ribbon_outline_end_faces",
-        what="A ribbon outline at the band's two vertical end faces",
-        webgl="absent (the outline is an inset border along the curved edges)",
-        svg="stroked (the closed path includes the end faces)",
-        native="stroked (the closed path includes the end faces)",
-        visible_when="stroke on a bare ribbon whose ends do not abut node bands",
-        tracked_by="the ribbon geometry contract's Outline clause",
-    ),
 )
 
 

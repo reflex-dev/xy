@@ -286,9 +286,13 @@ def test_live_ribbons_use_smooth_antialiased_edges() -> None:
     assert "fwidth(v_side)" in shader
     assert "u_opacity * coverage" in shader
     # The outline clause of the ribbon contract: the client draws stroke /
-    # stroke-width / stroke-opacity as an inset border, not nothing.
-    assert "u_strokeWidth" in shader.split("RIBBON_FS", 1)[1].split("MESH_VS", 1)[0]
-    assert "u_strokeOpacity" in shader.split("RIBBON_FS", 1)[1].split("MESH_VS", 1)[0]
+    # stroke-width / stroke-opacity, closes the band over its two end faces,
+    # and matches the band's own fill when no stroke colour was declared.
+    ribbon_fs = shader.split("RIBBON_FS", 1)[1].split("MESH_VS", 1)[0]
+    assert "u_strokeWidth" in ribbon_fs
+    assert "u_strokeOpacity" in ribbon_fs
+    assert "fwidth(v_t)" in ribbon_fs, "the end faces must join the outline distance"
+    assert "u_strokeMode == 1 ? v_rgba0" in ribbon_fs, "match-fill outline missing"
 
 
 def test_svg_ribbon_interpolates_endpoint_alpha_per_stop() -> None:
@@ -346,15 +350,54 @@ def test_raster_ribbon_ramps_alpha_along_the_flow() -> None:
     assert target_ink > 180, "the target end must fade over the page"
 
 
-def test_ribbon_stroke_defaults_to_the_band_colour_in_svg() -> None:
-    """`stroke_width` without a stroke colour must still outline (the raster
-    already fell back to the trace colour; the SVG writer dropped it)."""
+def test_ribbon_stroke_defaults_to_each_bands_own_colour_in_svg() -> None:
+    """`stroke_width` without a stroke colour must still outline, and must
+    match EACH band's fill: a per-band ribbon has no single trace colour, so
+    one shared fallback would outline every flow in a colour it never uses."""
     f = Figure(width=420, height=300)
-    f.ribbon([0.1], [0.9], [0.3], [0.5], [0.4], [0.6], color="#7c3aed", stroke_width=2.0)
+    f.ribbon(
+        [0.1, 0.1],
+        [0.9, 0.9],
+        [0.0, 0.5],
+        [0.2, 0.7],
+        [0.1, 0.6],
+        [0.3, 0.8],
+        color=["#7c3aed", "#0891b2"],
+        stroke_width=2.0,
+    )
     doc = f.to_image(format="svg").decode()
-    band = re.search(r'<path d="M [^"]+" fill="rgb\(124,58,237\)" ([^>]*)/>', doc)
-    assert band is not None
-    assert re.search(r'stroke="[^"]+" stroke-width="2"', band.group(1))
+    strokes = re.findall(r'<path d="M [^"]+"[^>]*stroke="([^"]+)" stroke-width="2"', doc)
+    assert strokes == ["rgb(124,58,237)", "rgb(8,145,178)"], strokes
+
+
+def test_ribbon_raster_outline_matches_each_bands_own_colour() -> None:
+    """The PNG outline follows the band paint too, so an implicit outline is
+    the same colour in both exporters rather than one arbitrary fallback."""
+    from test_png_export import _decode_rgba
+
+    f = Figure(width=420, height=320)
+    f.set_axis("x", domain=(0.0, 1.0), tick_label_strategy="none")
+    f.set_axis("y", domain=(0.0, 1.0), tick_label_strategy="none")
+    # Two flat bands, well separated, each a saturated primary: the outline
+    # pixels must carry the band's own hue, not a shared blue-gray.
+    f.ribbon(
+        [0.1, 0.1],
+        [0.9, 0.9],
+        [0.05, 0.6],
+        [0.3, 0.85],
+        [0.05, 0.6],
+        [0.3, 0.85],
+        color=["#ff0000", "#00ff00"],
+        stroke_width=3.0,
+        opacity=1.0,
+    )
+    pixels = _decode_rgba(f.to_image(format="png", scale=1))
+    reds = pixels[:, :, 0].astype(int)
+    greens = pixels[:, :, 1].astype(int)
+    # A red-dominant and a green-dominant band both present means each band's
+    # own paint reached its outline; a shared fallback would tint one of them.
+    assert ((reds > 180) & (greens < 90)).any(), "no red band ink"
+    assert ((greens > 180) & (reds < 90)).any(), "no green band ink"
 
 
 def test_ribbon_style_stroke_compiles_to_the_outline_not_the_fill() -> None:

@@ -115,7 +115,6 @@ an undocumented difference reads as a bug; a documented one is a contract.
 | what | browser | svg | native png | visible when |
 |---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle |
-| A ribbon outline at the band's two vertical end faces | absent (the outline is an inset border along the curved edges) | stroked (the closed path includes the end faces) | stroked (the closed path includes the end faces) | stroke on a bare ribbon whose ends do not abut node bands |
 
 For what is still alpha, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).

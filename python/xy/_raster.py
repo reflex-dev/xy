@@ -2102,9 +2102,21 @@ def _emit_ribbon(
         fills2 = fills
     stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
     # Outline alpha folds opacity * stroke_opacity, the same stack every other
-    # stroked mark applies and the SVG writer's stroke-opacity mirrors.
+    # stroked mark applies and the SVG writer's stroke-opacity mirrors. An
+    # omitted stroke colour matches each band's own fill (edgecolors="face"),
+    # resolved per band in the loop rather than once for the whole trace.
+    stroke_op = _stroke_opacity(style)
     stroke_c = (
-        _rgba(style.get("stroke"), color, _stroke_opacity(style)) if stroke_width > 0 else None
+        _rgba(style.get("stroke"), color, stroke_op)
+        if stroke_width > 0 and style.get("stroke") is not None
+        else None
+    )
+    edges = (
+        np.rint(
+            np.column_stack([source_rgba[:, :3] * 255.0, source_rgba[:, 3] * stroke_op * 255.0])
+        ).astype(np.uint8)
+        if stroke_width > 0 and style.get("stroke") is None
+        else None
     )
 
     for i in range(n):
@@ -2134,8 +2146,13 @@ def _emit_ribbon(
             gx0, gx1 = float(sx(x0v[i])), float(sx(x1v[i]))
             gy = float(py[0])
             cmd.grad(poly, (gx0, gy), (gx1, gy), [(0.0, a), (1.0, b)])
-        if stroke_c is not None:
-            cmd.stroke([*poly, poly[0]], stroke_width, stroke_c)
+        edge_c = (
+            stroke_c
+            if stroke_c is not None
+            else (tuple(int(v) for v in edges[i]) if edges is not None else None)
+        )
+        if edge_c is not None:
+            cmd.stroke([*poly, poly[0]], stroke_width, edge_c)
 
 
 def _emit_triangle_mesh(

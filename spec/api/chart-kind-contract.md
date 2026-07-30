@@ -108,14 +108,17 @@ the renderers emit a flat fill, not a two-stop gradient, so a plain Sankey
 stays cheap in every output format.
 
 **Outline.** `style.stroke` / `stroke-width` / `stroke-opacity` draw an
-outline over the band. An omitted stroke colour falls back to the trace
-colour (the area-outline rule), and the alpha stack is the stroke colour's own
-alpha × `opacity` × `stroke_opacity`, as for every other stroked mark. The
-static exporters stroke the closed path; the client draws the outline as an
-inset border along the two curved edges (the RECT_FS device-pixel trick), so
-the short end faces are the one recorded divergence — in a Sankey they abut
-the node bands and are invisible. `stroke-dasharray` is **not** in the ribbon
-property set.
+outline over the closed band — both curved edges *and* the two vertical end
+faces, in every renderer (the exporters stroke the closed path; the client
+takes the smaller of the side and flow-parameter device-pixel distances). An
+omitted stroke colour means **match the band's own fill** per band — the
+`edgecolors="face"` rule the point and rect programs already follow — because
+a per-band ribbon has no single trace colour to fall back to. That paint is
+the band's **source-end** colour, flat: `cmd.stroke` and SVG's `stroke=` take
+one colour per band, so the client must not ramp an outline the exporters
+cannot. The alpha stack is the stroke paint's own alpha × `opacity` ×
+`stroke_opacity`, as for every other stroked mark. `stroke-dasharray` is
+**not** in the ribbon property set.
 
 **Picking is deferred.** `pointPick` is false: the GPU id-pass is wired to
 `gl.POINTS`. Hover resolves on the CPU by evaluating the same cubic at the
