@@ -5790,8 +5790,12 @@ class Axes(PlotTypeMixin):
     def get_theta_offset(self) -> float:
         self._require_polar("get_theta_offset")
         zero = self._polar_options.get("theta_zero", "E")
-        table = {"E": 0.0, "N": math.pi / 2, "W": math.pi, "S": -math.pi / 2}
-        return table[zero] if isinstance(zero, str) else float(zero)
+        # Matplotlib's mapping is 0..2pi ccw from east, so "S" reads 3*pi/2 —
+        # not the -pi/2 the render tables use. Same angle, but a compat getter
+        # has to return matplotlib's number: `get_theta_offset() > 0` and
+        # round-trips through `set_theta_offset` both break on the negative.
+        table = {"E": 0.0, "N": math.pi / 2, "W": math.pi, "S": 3 * math.pi / 2}
+        return table[zero] if isinstance(zero, str) else float(zero) % (2 * math.pi)
 
     def get_theta_direction(self) -> int:
         self._require_polar("get_theta_direction")

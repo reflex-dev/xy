@@ -1588,3 +1588,26 @@ def test_negative_radial_autorange_keeps_its_pad() -> None:
     # Non-negative data keeps the centre-origin contract exactly as before.
     assert radial_range([100.5, 100.2, 100.8, 100.1]) == [0.0, 100.8]
     assert radial_range([1.0, 2.0, 3.0, 4.0]) == [0.0, 4.0]
+
+
+def test_get_theta_offset_matches_matplotlibs_zero_to_two_pi_mapping() -> None:
+    """Matplotlib's mapping is 0..2pi ccw from east, so "S" reads 3*pi/2. The
+    getter returned the render tables' -pi/2 — the same angle, but a compat
+    getter has to return matplotlib's number, and the negative breaks both
+    `get_theta_offset() > 0` and a round-trip through `set_theta_offset`."""
+    from xy import pyplot as plt
+
+    expected = {
+        "E": 0.0,
+        "NE": math.pi / 4,
+        "N": math.pi / 2,
+        "NW": 3 * math.pi / 4,
+        "W": math.pi,
+        "SW": 5 * math.pi / 4,
+        "S": 3 * math.pi / 2,
+        "SE": 7 * math.pi / 4,
+    }
+    ax = plt.figure().add_subplot(projection="polar")
+    for location, radians in expected.items():
+        ax.set_theta_zero_location(location)
+        assert ax.get_theta_offset() == pytest.approx(radians), location
