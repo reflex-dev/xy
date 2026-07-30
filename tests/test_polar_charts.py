@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import pytest
 
 import xy
 from xy._svg import _PolarProjection, axis_ticks, layout, minor_axis_ticks
+from xy.config import POLAR_DIRECT_CEILING
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -1447,3 +1449,68 @@ def test_fully_culled_polar_area_exports_without_malformed_path(label, build) ->
         assert not d.strip().startswith("L"), f"{label}: path opens with a lineto: {d[:40]}"
         assert " L  " not in d, f"{label}: malformed join: {d[:60]}"
     assert figure.to_image(format="pdf")[:5] == b"%PDF-"
+
+
+def test_pie_chart_renders_a_zero_valued_slice() -> None:
+    """A zero-valued category is ordinary in aggregated data and `pie_chart`
+    accepts it (values are validated finite and non-negative), but a zero span
+    reached `bar(width=...)` and died as "bar width must be positive" — an
+    error from a layer below naming neither pie_chart nor the label."""
+    doc = xy.pie_chart(["Direct", "Partner", "Organic"], [40.0, 0.0, 20.0]).figure().to_svg()
+    assert "Direct" in doc and "Organic" in doc
+    # The empty category draws no wedge rather than a zero-width one.
+    assert "Partner" not in doc
+    xy.pie_chart(["a", "b"], [1.0, 0.0]).figure().to_image(format="pdf")
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        ("polar_chart", lambda **k: xy.polar_chart(xy.line([0.0, 1.0], [1.0, 2.0]), **k)),
+        ("pie_chart", lambda **k: xy.pie_chart(["a", "b"], [1.0, 2.0], **k)),
+        ("radar_chart", lambda **k: xy.radar_chart(["a", "b", "c"], xy.area([1.0, 2.0, 3.0]), **k)),
+        ("wind_rose", lambda **k: xy.wind_rose([10.0, 20.0], [1.0, 2.0], **k)),
+    ],
+)
+def test_polar_helpers_refuse_a_cartesian_coords_override(label, build) -> None:
+    """`coords` is the only thing making these helpers polar — `Chart.kind` is
+    inert — so `setdefault` let `coords="cartesian"` return unlabelled rects
+    with no axes, silently dropping any authored theta/r axis. It also
+    re-opened every refusal `_validate_coords` adds, since that method returns
+    early for a non-polar figure."""
+    with pytest.raises(ValueError, match="this chart is polar"):
+        build(coords="cartesian")
+    build().figure().build_payload_split()
+
+
+def test_polar_refuses_a_time_angular_axis_by_resolved_kind() -> None:
+    """The declared spelling `theta_axis(type_="time")` was refused while an
+    *inferred* datetime column shipped: kind="time" pinned to a fixed 0..2pi
+    range, so consecutive days wrapped the disc billions of times and the
+    spokes were labelled as radians."""
+    days = [datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=i) for i in range(6)]
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    with pytest.raises(ValueError, match="time angular axis"):
+        xy.polar_chart(xy.line(days, values)).figure().build_payload_split()
+
+    # A time *radial* axis stays supported, and cartesian time is untouched.
+    xy.polar_chart(xy.line(values, days)).figure().build_payload_split()
+    xy.line_chart(xy.line(days, values)).figure().build_payload_split()
+
+
+@pytest.mark.parametrize("kind", ["bar", "column", "errorbar"])
+def test_polar_direct_ceiling_covers_every_capped_mark(kind) -> None:
+    """The gate was narrowed to {line, scatter, area} so heatmap/contour cell
+    grids could exceed the *point* ceiling, which un-capped bar/column/errorbar
+    as collateral — and a polar bar is the most expensive mark there is,
+    2*(96+1) verts per wedge against a cartesian quad's 4."""
+    n = POLAR_DIRECT_CEILING + 1
+    theta = np.linspace(0.0, 360.0, n)
+    values = np.ones(n)
+    marks = {
+        "bar": lambda: xy.bar(theta, values),
+        "column": lambda: xy.column(theta, values),
+        "errorbar": lambda: xy.errorbar(theta, values, yerr=values * 0.1),
+    }
+    with pytest.raises(ValueError, match="polar ceiling"):
+        xy.polar_chart(marks[kind]()).figure().build_payload_split()

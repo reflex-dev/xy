@@ -6072,6 +6072,25 @@ def line_chart(*children: Component, **props: Any) -> Chart:
     return Chart("line_chart", children, **props)
 
 
+def _require_polar_coords(props: dict) -> None:
+    """Pin `coords` to polar, refusing an explicit override.
+
+    `coords` is the ONLY thing that makes one of these helpers polar — `Chart.kind`
+    is inert — so `setdefault` let `pie_chart(..., coords="cartesian")` return
+    unlabelled rounded rects with no axes, silently dropping any authored
+    `theta_axis`/`r_axis`. Worse, `Figure._validate_coords` returns early for a
+    non-polar figure, so the keyword also re-opened every refusal this module
+    relies on it for.
+    """
+    coords = props.get("coords", "polar")
+    if coords != "polar":
+        raise ValueError(
+            f"this chart is polar; coords={coords!r} is not supported. "
+            "Use xy.chart(...) or xy.bar_chart(...) for a cartesian figure."
+        )
+    props["coords"] = "polar"
+
+
 def polar_chart(*children: Component, **props: Any) -> Chart:
     """A polar chart: the same marks, rendered through polar coordinates.
 
@@ -6090,7 +6109,7 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
     else is refused at build time, with the supported set named in the error,
     rather than approximated. See spec/design/polar-axes.md.
     """
-    props.setdefault("coords", "polar")
+    _require_polar_coords(props)
     return Chart("polar_chart", children, **props)
 
 
@@ -6174,7 +6193,7 @@ def radar_chart(
             break
     if not merged:
         rebuilt.append(theta_axis(tick_values=angles, tick_labels=names))
-    props.setdefault("coords", "polar")
+    _require_polar_coords(props)
     return Chart("radar_chart", tuple(rebuilt), **props)
 
 
@@ -6196,7 +6215,12 @@ def _radar_outline(mark: "Mark", angles: list[float], values: list[float]) -> "M
         y=values,
         props={
             "color": props.get("line_color") or props.get("color"),
-            "width": props.get("line_width") or 2.0,
+            # `or` treated a legal 0.0 as "unset" and silently substituted the
+            # 2.0 default, so an author asking for no outline got the thickest
+            # one. Fall back only on a genuinely absent value; an explicit 0
+            # then meets the library-wide "line width must be positive" rule
+            # instead of being quietly overridden.
+            "width": 2.0 if props.get("line_width") is None else props["line_width"],
             "opacity": props.get("line_opacity", 1.0),
             "curve": props.get("curve", "linear"),
             "dash": props.get("dash"),
@@ -6249,7 +6273,7 @@ def polar_bar_chart(*children: Component, **props: Any) -> Chart:
     Returns:
         A polar `Chart`.
     """
-    props.setdefault("coords", "polar")
+    _require_polar_coords(props)
     return Chart("polar_bar_chart", children, **props)
 
 
@@ -6320,6 +6344,15 @@ def pie_chart(
     cursor = 0.0
     for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
         span = value / total * 360.0
+        # A zero-valued category is ordinary in aggregated data and this
+        # factory accepts it (values are validated finite and non-negative),
+        # but a zero span reached `bar(width=...)` and died as "bar width must
+        # be positive" — a message from a layer below that names neither
+        # pie_chart nor the offending label. A slice of no size draws nothing,
+        # so skip the wedge; the legend row goes with it rather than offering
+        # a swatch that highlights nothing.
+        if span <= 0.0:
+            continue
         display = label
         if show_values:
             display += f"  {value:g}"
@@ -6354,7 +6387,7 @@ def pie_chart(
         *defaults,
         *children,
     )
-    props.setdefault("coords", "polar")
+    _require_polar_coords(props)
     return Chart("pie_chart", children, **props)
 
 
@@ -6453,7 +6486,7 @@ def wind_rose(
         base = base + counts
         lower = upper
 
-    props.setdefault("coords", "polar")
+    _require_polar_coords(props)
     # A wind rose is the one polar composition where the ANGLE is data — it is
     # the compass bearing — so it opts the direction row back in by naming it,
     # and pairs it with the band's own count. `y` is the band height (see the

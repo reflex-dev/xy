@@ -884,6 +884,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # byte-identical across linear/log/symlog), so the same figure points a
         # datum at opposite sides of the disc depending on where it is drawn.
         # The spec offers a scale row for r only; a log radial axis stays valid.
+        # Inspecting only the *declared* spelling let an inferred time column
+        # through: datetime theta shipped with kind="time" pinned to a fixed
+        # 0..2pi range, so twelve consecutive days wrapped the disc billions of
+        # times and the spokes were labelled as radians. `theta_axis(domain=)`
+        # is aliased to `sector`, so there was no escape hatch either. Refuse on
+        # the resolved kind, and say what a time angle would have to mean.
+        if self._axis_kind("x") == "time":
+            raise ValueError(
+                "coords='polar' does not support a time angular axis; an "
+                "instant has no angle. Map time onto the turn yourself — e.g. "
+                "theta = 2*pi * ((t - t0) / period) — and pass the result as a "
+                "number. A time *radial* axis (r_axis) is supported."
+            )
         theta_scale = theta.get("type")
         if theta_scale is not None and theta_scale != "linear":
             raise ValueError(
@@ -940,7 +953,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
                         "y axis r_origin must not be less than the resolved radial maximum"
                     )
         for t in self.traces:
-            if t.kind in {"line", "scatter", "area"} and t.n_points > POLAR_DIRECT_CEILING:
+            # heatmap/contour are exempt because a cell grid legitimately
+            # carries more cells than the *point* ceiling. Narrowing the gate
+            # to that end un-capped bar/column/errorbar as collateral, and a
+            # polar bar is the most expensive mark there is — 2*(96+1) verts
+            # per wedge against a cartesian quad's 4 — so a million of them
+            # built without a word. Name every capped kind explicitly.
+            if (
+                t.kind in {"line", "scatter", "area", "bar", "column", "errorbar"}
+                and t.n_points > POLAR_DIRECT_CEILING
+            ):
                 # Polar has no decimation or density tier to fall back to
                 # (polar-axes.md §7), so past the cap the only honest options
                 # are refusing or an unbounded direct draw. Refuse, and say
