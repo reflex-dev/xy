@@ -16,31 +16,30 @@ state and events remain in Reflex while XY owns chart data, rendering, and
 interaction math.
 
 ~~~md alert warning
-### Unreleased Adapter
+### Published, Experimental Adapter
 
-`reflex-xy` is not published on PyPI. The adapter is an opt-in prototype whose
-API and event payloads may change before its first release. Install it from the
-tagged Git subdirectory below; installing it by package name alone with uv or
-pip will not work.
+`reflex-xy` is published on PyPI and can be installed by package name. The
+adapter remains experimental, so its API and event payloads may change between
+releases. Pin versions for production deployments and review the changelog when
+upgrading.
 ~~~
 
 ## Install and Configure
 
-Pair the public `xy` 0.0.1 wheel with the adapter from the matching `v0.0.1`
-repository tag. Pinning both sides avoids mixing an unreleased adapter revision
-with a different core API:
+Install `reflex-xy` from PyPI. It declares compatible `xy` and Reflex
+dependencies:
 
 ~~~~md tabs
 ## uv
 
 ~~~bash
-uv add "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+uv add reflex-xy
 ~~~
 
 ## pip
 
 ~~~bash
-python -m pip install "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+python -m pip install reflex-xy
 ~~~
 ~~~~
 

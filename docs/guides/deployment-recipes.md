@@ -156,20 +156,19 @@ assume the policies will merge into a working configuration. Follow
 for the current directives and security tradeoffs, and test the final response
 headers rather than only opening the file locally.
 
-## Reflex live applications depend on an unreleased adapter
+## Reflex live applications use the published adapter
 
 The [Reflex integration path](/docs/xy/integrations/reflex/) describes fixed,
 live-token, and state-backed application tiers, but it depends on the separate
-`reflex-xy` adapter. That adapter is experimental and is not currently a
-published package, so the integration guide is a preview rather than an
-installable production recipe.
+`reflex-xy` adapter. The adapter is published on PyPI, so install it with
+`uv add reflex-xy` or `python -m pip install reflex-xy`. It remains
+experimental.
 
-Until a released adapter version is available, use core XY's standalone HTML,
-PNG, or SVG outputs, or evaluate the adapter from source in a pinned test
-environment. Do not place `pip install reflex-xy` in production automation and
-assume it resolves from the public package index. When it is released, pin
-both `xy` and `reflex-xy`, test their documented compatibility, and then follow
-the live deployment boundary in the integration guide.
+For production automation, commit the resolved uv lockfile or pin compatible
+`xy` and `reflex-xy` versions in your requirements, test their documented
+compatibility, and follow the live deployment boundary in the integration
+guide. Core XY's standalone HTML, PNG, and SVG outputs remain available when a
+live Reflex application is not required.
 
 For the capability-level decision, see
 [Choosing a runtime and deployment mode](/docs/xy/advanced/runtime-and-deployment/).

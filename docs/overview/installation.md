@@ -96,23 +96,23 @@ Rust tooling beyond the commands above.
   uv add pyarrow
   ~~~
 
-- The separate Reflex adapter supports state-backed application charts, but it
-  is experimental and is not published on PyPI. Opt in by pairing the released
-  `xy` core with the adapter from the matching `v0.0.1` Git tag. With uv:
+- The separate `reflex-xy` adapter supports state-backed application charts
+  and is published on PyPI. It remains experimental. With uv:
 
   ~~~bash
-  uv add "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+  uv add reflex-xy
   ~~~
 
   Or with pip:
 
   ~~~bash
-  python -m pip install "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+  python -m pip install reflex-xy
   ~~~
 
-  The tag keeps the unreleased adapter aligned with the public 0.0.1 core.
-  Continue with the [Reflex integration guide](/docs/xy/integrations/reflex/)
-  for its current limitations and setup.
+  The adapter installs compatible `xy` and Reflex dependencies. Pin resolved
+  versions for production deployments. Continue with the
+  [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
+  limitations and setup.
 
 - Native PNG is the default static raster path and does not launch a browser.
   Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
