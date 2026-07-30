@@ -34,6 +34,20 @@ CHART_FACTORY_GROUPS = (
         (xy.line_chart, xy.area_chart, xy.step_chart, xy.stairs_chart),
     ),
     ("Scatter", (xy.scatter_chart,)),
+    # The polar compositions are public factories like any other, so they belong
+    # in the generated inventory. `pie_chart` is listed with them: without an
+    # entry here the API reference implied the only way to draw a pie was to
+    # hand-roll wedge bars — the exact thing the factory exists to replace.
+    (
+        "Polar",
+        (
+            xy.polar_chart,
+            xy.radar_chart,
+            xy.polar_bar_chart,
+            xy.pie_chart,
+            xy.wind_rose,
+        ),
+    ),
     ("Bar and Column", (xy.bar_chart, xy.column_chart)),
     (
         "Distributions",

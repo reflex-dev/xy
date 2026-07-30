@@ -287,7 +287,15 @@ export function fmtAxis(axis, v, tickStep) {
   // transform. Category labels own the display text, so they must win over
   // angular numeric formatting here.
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
-  if (axis && axis.theta_unit) return fmtAngle(v, axis.theta_unit, tickStep);
+  // An authored `format` wins over the angular default. It used to lose: the
+  // angular branch ran first, so `theta_axis(format=".0f°")` shipped, was
+  // accepted, and was then overwritten by the built-in degree/radian text in
+  // every renderer. The default only applies when nothing was authored.
+  // Mirrored by the same branch in `_fmt_axis` (python/xy/_svg.py).
+  if (axis && axis.theta_unit) {
+    const authored = fmtNumberSpec(v, axis.format);
+    return authored || fmtAngle(v, axis.theta_unit, tickStep);
+  }
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
   const formatted = fmtNumberSpec(v, axis && axis.format);
   if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {

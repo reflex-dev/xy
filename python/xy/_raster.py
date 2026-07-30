@@ -1418,6 +1418,9 @@ def render_raster(
         _ticks, tick_labels, step = extra_y_ticks[axis_id]
         emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
     legacy_title = spec.get("title") if not spec.get("title_options") else None
+    # The width layout measured the title band at; wrapping anywhere else would
+    # draw more lines than `title_room` reserved (see _svg._title_wrap_width).
+    title_wrap_width = plot.get("title_wrap_width")
     if legacy_title:
         title_slot = slots.get("title") or {}
         title_italic, title_bold = _native_font_emphasis(
@@ -1426,18 +1429,25 @@ def render_raster(
                 "font_weight": title_slot.get("font-weight", 400),
             }
         )
-        cmd.text(
+        legacy_size = slot_font_size(title_slot, 14.0)
+        legacy_block = _textblock.measure(legacy_title, legacy_size, max_width=title_wrap_width)
+        # Lines run downward from the baseline, so lift the block by its trailing
+        # lines: the last line keeps the historical single-line baseline. A
+        # one-line title has no trailing lines and emits exactly as before.
+        legacy_trailing = (legacy_block.line_count - 1) * legacy_block.line_step
+        _emit_text_block(
+            cmd,
             width / 2,
-            plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
+            plot["y"] - plot["top_axis_room"] - (10 if compact else 12) - legacy_trailing,
             1,
-            slot_font_size(title_slot, 14.0),
+            legacy_size,
             slot_paint("title", default_text),
-            str(legacy_title),
+            "\n".join(legacy_block.lines),
             italic=title_italic,
             bold=title_bold,
         )
     for title_entry in [] if legacy_title else _title_entries(spec):
-        title_style, title_size, title_block = _title_metrics(spec, title_entry)
+        title_style, title_size, title_block = _title_metrics(spec, title_entry, title_wrap_width)
         title_italic, title_bold = _native_font_emphasis(
             {
                 "font_style": title_style.get("font-style"),
@@ -1465,7 +1475,9 @@ def render_raster(
             {"left": 0, "center": 1, "right": 2}.get(loc, 1),
             title_size,
             _parse_color(slot_text_color(title_style, default_text)),
-            str(title_entry["text"]),
+            # The wrapped lines, not the raw string: one long line inside a
+            # two-line band is the clipping bug this reservation exists to stop.
+            "\n".join(title_block.lines),
             italic=title_italic,
             bold=title_bold,
         )

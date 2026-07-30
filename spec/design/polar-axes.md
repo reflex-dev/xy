@@ -34,12 +34,48 @@ organize by primitive, not by chart name.
 | θ grid shape | `"circular"` (default) or `"linear"` | Linear joins the angular spokes into polygonal radial rings. |
 | θ scale | linear only | A non-linear angle has no coherent projection; `type_="log"`/`"symlog"` on the angular axis is rejected at payload build. |
 | r scale | linear, log, or symlog | Radius normalization happens in scale-coordinate space. |
-| r range | `[r_lo, r_hi]` | Linear/symlog autorange retains the centre-origin default; log autorange starts at its positive minimum. |
+| r range | `[r_lo, r_hi]` | Linear/symlog autorange retains the centre-origin default; log autorange starts at its positive minimum. Three exemptions in §2.1. |
 | inner shape | `hole ∈ [0, 1)` or a data-space `r_origin` | Mutually exclusive authored controls. An omitted origin resolves to visible `r_lo`. |
+| signed r | a position, never a direction | §2.2. |
 
 The compass composition — `zero="N"`, `direction="clockwise"` — makes θ = 90°
 point East, 180° South, 270° West. Wind roses depend on exactly this; §4 pins it
 with fixtures.
+
+### 2.1 Radial autorange (normative)
+
+A linear or symlog radius starts at the **centre** (matplotlib's `rmin = 0`) and
+ends at the data maximum with **no outer pad**, so the outermost ring *is* the
+largest datum. A radius padded away from zero puts the smallest datum at the
+centre and makes a 5%-variation series read as radiating from nothing.
+
+Three exemptions, each because the centre-origin rule is vacuous there:
+
+- **Log radius** — has no zero; it resolves its own strictly positive extent.
+- **Data below zero** — zero is no longer an end of the range, so the ordinary
+  padded extent is kept on both sides and stays symmetric about the data.
+- **A time radius** — its zero is 1 January 1970. Pinning a modern instant's
+  origin there squeezes the whole series into a hairline ring at the rim
+  (twelve consecutive days out of ~1.7e12 ms occupy 0.0006% of the radius), so
+  a time radius keeps the ordinary padded extent. A time *angular* axis remains
+  refused outright (§9): an instant has no angle, but it does have a distance.
+
+An authored `margin=` restores the outer pad — it is a request for exactly the
+pad this rule otherwise drops, and honouring it is what keeps `r_axis(margin=)`
+from being another accepted-and-ignored keyword. An authored `domain=`/`bounds=`
+overrides autorange entirely.
+
+### 2.2 Signed radii (normative)
+
+A negative radius is **a position on a range that includes it**, not a direction.
+`r = -5` therefore draws *nearer the centre* than `r = 0`, on an axis whose
+autoranged floor is below both. It is **not** reflected through the centre the
+way matplotlib reflects it — reflection would put two different data values at
+the same pixel, and the §3.2 inverse could not name which one a hover found.
+
+A radius outside the visible interval is culled for points and line vertices,
+and clamped for fills and annular sectors (§8). That is the only place a
+radius's sign changes what is drawn rather than where.
 
 ## 3. The transform (normative)
 
@@ -87,6 +123,34 @@ Five properties this pins down, each of which has matching coverage:
   survive: the title band, a colorbar's gutter, and the left gutter when the
   radial axis has a title (which is drawn there and would otherwise leave the
   canvas).
+- **A legend gets a gutter, not a corner.** A Cartesian legend overlays the plot
+  because data rarely reaches a corner. A disc inscribed in its rect leaves no
+  corner at all, so an inside legend lands on the marks — a default `upper right`
+  box covered a wind rose's whole north-east quadrant and the outer radial label
+  under it. `_polar_legend_reserve` (`_svg.py`, mirrored by `_polarLegendReserve`)
+  therefore takes a gutter off the canvas edge **before** the disc is fitted, and
+  records it as `plot["legend_box_*"]` / `view._legendBox`; the legend places and
+  bounds itself in that box, and `loc` chooses where within it. `_POLAR_LEGEND_ROOM`
+  (96 px) on the side `loc` names, or `_POLAR_LEGEND_BAND` (64 px) beneath the
+  disc at compact widths, where a side gutter would leave a disc too small to
+  read. Fixed rather than measured from the label set, for the same reason the
+  subdivision count is a shared formula: a measured reservation would drift with
+  each renderer's font metrics. Nothing is reserved when the author supplied an
+  `anchor` (an explicit plot-relative placement they own, still resolved against
+  the plot) or a four-tuple `padding` (which already states the box the plot
+  should occupy, and remains the way to hand-reserve a caption band), and nothing
+  is reserved for a figure whose angular axis is `tick_label_strategy="none"` —
+  that early return skips the whole recut, and it is the donut/gauge case whose
+  chrome the author has already taken over.
+- **A title reserves the lines it will wrap into.** `_title_wrap_width` — the
+  canvas minus the *authored/default* horizontal gutters, mirrored by
+  `_titleWrapWidth` in the client — is resolved before the title band, and both
+  the reservation and the drawing wrap at it. Wrapping at the final plot width
+  would be circular (the measured left gutter depends on the plot height, which
+  depends on the title band). The client also caps the title element at that
+  width, so the DOM cannot wrap into more lines than layout reserved; measuring
+  one line and painting two lifted a compact Wind Rose title ~10 px off the top
+  of the canvas.
 - **A partial sector owns its bounding box.** Full turns retain the centred
   circle above. For a partial turn, layout finds the bounds of the visible
   outer arc plus inner boundary and scales/translates that shape to the plot
@@ -219,13 +283,34 @@ matplotlib arc-interpolates paths.
 
 Chords need no subdivision, which is why line, scatter and area are cheap. Arcs
 flatten to polylines wherever the medium lacks a real arc: the raster display
-list always, and the GPU bar sweep by construction. The subdivision count is
-`POLAR_BAR_SEGMENTS` (`python/xy/config.py`, mirrored in
-`js/src/50_chartview.ts`) — fixed rather than view-adaptive, because bar counts
-are small and a view-dependent count would have to be recorded per §28 rather
-than chosen silently. SVG needs no count: it draws real `A` arcs
-(`_polar_wedge_path`), and `polar_wedge_points` is the flattened twin the
-raster path consumes.
+list always, and the GPU bar sweep by construction. SVG needs no count: it draws
+real `A` arcs (`_polar_wedge_path`), and `polar_wedge_points` is the flattened
+twin the raster path consumes.
+
+The subdivision count is **span-proportional and recorded as a formula**
+(`config.polar_bar_segments`, mirrored by `xyPolarBarSegments` in
+`js/src/50_chartview.ts`):
+
+```
+segments(span) = clamp(ceil(POLAR_BAR_SEGMENTS · |span| / turn),
+                       POLAR_BAR_SEGMENTS_MIN, POLAR_BAR_SEGMENTS)
+```
+
+`POLAR_BAR_SEGMENTS` (96) is the count for a wedge sweeping a **full turn**,
+sized so the chord sagitta stays inside the client's `XY_POLAR_AA` expansion up
+to a ~1400-device-px disc. Sagitta is quadratic in the per-segment angle, so
+holding `span / n` fixed holds the flattening error fixed: proportional
+subdivision preserves that bound for every narrower wedge instead of paying the
+worst case for all of them. A 16-sector wind rose sector needs six segments, not
+96 — 14 vertices per bar instead of 194.
+
+This is **not** the view-adaptive count §28 would require a recording for. The
+input is the *authored* angular width — the scalar `width` on the compact bar
+path, and the widest `x1 − x0` in the trace on the four-edge path (measured once
+at build, cached on the trace) — so zoom, resize and export cannot change it, and
+all three renderers reach the same count for the same figure. A single instanced
+draw shares one count, hence "widest in the trace": every narrower wedge in it is
+then over-subdivided, never under.
 
 On the client the flattening never reaches the screen: the GL context runs
 with `antialias: false`, so wedge edges are fragment-shader coverage like
@@ -273,7 +358,7 @@ them draw points:
 | `SEGMENT_VS` | 588 | error bars, stems, contour | **yes for allowlisted `errorbar` and `contour` only** — this does not make generic segment marks polar-legal |
 | `MESH_VS` | 653 | hexbin, triangle mesh | no — §7 |
 | `AREA_VS` | 738 | area (error bands stay outside the polar allowlist) | yes — interpolates in data space, then projects, so radial edges are true radii and fill boundaries are chords |
-| `BAR_VS` | — | compact bars | yes — sweeps `POLAR_BAR_SEGMENTS`+1 vertex pairs per instance: an annular sector, not a quad |
+| `BAR_VS` | — | compact bars | yes — sweeps `segments(span)`+1 vertex pairs per instance (§5): an annular sector, not a quad |
 | `RECT_VS` | 796 | four-edge rects: the unequal-width slice path (§7); histogram/box/violin stay refused | yes — sweeps the same annular sector as `BAR_VS` |
 
 `POINT_SIMPLE_VS` and `PICK_VS` are the traps. Scatter silently switches to the
@@ -454,6 +539,8 @@ The Plotly-parity and axis-depth increments are shipped:
 | Polygonal grid | `theta_axis(grid_shape="linear")` joins spoke intersections into polygonal radial rings. |
 | Polar error bars | The `errorbar` trace schema uses the polar segment branch with joint radial clipping. Generic segment/mesh support did not ship. |
 | pyplot `projection="polar"` | Factories plus theta/r controls and the allowlisted mark families route into the same core polar figure. |
+| Angular tick text | `theta_axis(format=...)` wins over the built-in degree/radian text in all three renderers. It used to lose — the angular branch ran first and overwrote the authored spec — so a `format=` on a polar angular axis was accepted and ignored. Authored `tick_labels` still win over both, and a categorical θ axis keeps its category names. |
+| Legend beside the disc | A polar figure with a legend reserves a gutter and places the legend in it (§3, layout). Zero-width wedges are legal at the mark layer, so a 0% pie/gauge slice draws nothing instead of raising. |
 
 The remaining work stays explicitly disabled or direct-only:
 
@@ -463,7 +550,21 @@ The remaining work stays explicitly disabled or direct-only:
 | Secondary θ / r axes | A polar figure carries exactly one angular and one radial axis. A second axis bound and validated like a Cartesian one while the transform read only the primary pair, so an overlapping secondary range drew *pixel-identical* to the primary and a disjoint one was culled away — with a straight Cartesian spine still drawn in the gutter of a disc. Payload build rejects any axis id outside `{"x", "y"}` under `coords="polar"`. |
 | Non-linear θ scale | The angle must be linear. `theta_axis(type_="log"/"symlog")` was accepted and honoured by exactly one renderer — the client scaled θ before projecting while the static exporters ignored the scale outright — so one figure pointed the same datum at opposite sides of the disc depending on where it was drawn. A log or symlog **radial** scale is supported (§3) and unaffected. |
 | `reverse` on the angular axis | The Cartesian flip switch has no polar meaning; the angular axis spells direction of travel as `theta_axis(direction=...)`. `reverse=True` rode the wire and every renderer ignored it, so payload build rejects it. `r_axis(reverse=True)` is honoured. |
-| Time angular axis | An instant has no angle. Datetime theta was pinned to a fixed 0..2pi range regardless of the data, so consecutive days wrapped the disc billions of times under radian spoke labels. Payload build refuses on the *resolved* column kind, not just a declared `type_="time"`. A time **radial** axis is supported. |
+| Time angular axis | An instant has no angle. Datetime theta was pinned to a fixed 0..2pi range regardless of the data, so consecutive days wrapped the disc billions of times under radian spoke labels. Payload build refuses on the *resolved* column kind, not just a declared `type_="time"`. A time **radial** axis is supported, and autoranges per §2.1 rather than from epoch zero. |
+| Minor ticks (`minor_tick_values`, `minor_style`) | Neither axis draws minor rings or minor spokes: the client skips the whole minor pass under polar (`!hideX && !polarGeom`) and so do both exporters (`if polar is not None: break`). The values and their style rode the wire and were dropped by all three. `xy.theta_axis`/`xy.r_axis` refuse them and point at `tick_values`. Finer rings are real geometry work, not a formatting toggle. |
+| Rim label collision controls (`tick_label_min_gap`, `tick_label_strategy` in `auto`/`hide`/`rotate`/`stagger`/`preserve`) | The collision pass is edge-relative — it thins a ladder of labels along one side — and a rim has no side. Angular labels ring the disc and radial labels are stride-thinned to what the `POLAR_RLABEL_DEG` spoke holds, so a minimum gap and a collision strategy had nothing to feed. Refused; `off` (hide the labels) and `none` (hide the axis) are honoured, and `tick_count`/`tick_values` remain the deliberate way to thin. |
+| `tick_label_anchor` | Polar labels anchor radially: outward around the rim, outward along the label spoke. An edge-relative anchor had nothing to act on. Refused; `tick_label_angle` rotates the text and is honoured. |
+
+The four rows above are refused **on the documented polar surface**
+(`xy.theta_axis` / `xy.r_axis`), not at payload build, and that placement is
+deliberate. `xy.pyplot`'s polar projection assembles its axis out of a property
+bag it does not fully own: every Axes carries an rcParam-derived `minor_style`,
+and `minorticks_on()` / `tick_params(ha=)` add more. Refusing at payload build
+would turn `projection="polar"` into an error over defaults nobody authored, so
+`components._polar_axis_kwargs` **drops** them for that adapter — the same thing
+all three renderers already do with the values — and
+[`../matplotlib/compat.md`](../matplotlib/compat.md) records the drop. A
+hand-authored polar axis is the case that must hear about it, and does.
 | Cartesian `coords` on a polar helper | `coords` is the only thing making `polar_chart`, `pie_chart`, `radar_chart`, `polar_bar_chart` and `wind_rose` polar, so an explicit `coords="cartesian"` silently returned an axis-less cartesian figure *and* re-opened every refusal in this table (`_validate_coords` returns early for a non-polar figure). The helpers now refuse it. |
 | Polar LOD | §7. Exit criterion for `scatterpolargl`-scale claims. Point traces remain direct and capped. |
 | Polar facets / animation | Untouched by this increment; no support claim is made. |

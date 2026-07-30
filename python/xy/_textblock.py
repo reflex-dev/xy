@@ -9,7 +9,7 @@ small formulas because it must resolve responsive layout client-side.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ from typing import Any, TypeVar, cast
 from . import _fontmetrics
 
 LINE_HEIGHT = 1.2
-_MeasurementKey = tuple[str, float, float]
+_MeasurementKey = tuple[str, float, float, float | None]
 _MEASUREMENTS: ContextVar[dict[_MeasurementKey, "TextBlock"] | None] = ContextVar(
     "xy_textblock_measurements",
     default=None,
@@ -73,16 +73,63 @@ def cached_measurements(
     return cast(Callable[..., _Return], wrapped)
 
 
-def measure(text: object, font_size: float, line_height: float = LINE_HEIGHT) -> TextBlock:
-    """Measure a newline-delimited block in the core DejaVu metrics."""
+def wrap_lines(lines: Sequence[str], font_size: float, max_width: float) -> tuple[str, ...]:
+    """Greedy word wrap of already newline-split lines, at `max_width` px.
+
+    Mirrors `xyWrapLines` in js/src/50_chartview.ts, and matches how CSS
+    `white-space: pre-line` treats the same string: authored newlines are hard
+    breaks (the caller has already split on them), runs of other whitespace
+    collapse to one space, and a break is only ever taken at a space. A single
+    word wider than `max_width` keeps its own line and overflows, because that
+    is what a browser does without an explicit `overflow-wrap`.
+    """
+    size = max(0.0, float(font_size))
+    limit = float(max_width)
+    wrapped: list[str] = []
+    for line in lines:
+        words = str(line).split()
+        if not words:
+            wrapped.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if _fontmetrics.advance(candidate, size) <= limit:
+                current = candidate
+            else:
+                wrapped.append(current)
+                current = word
+        wrapped.append(current)
+    return tuple(wrapped)
+
+
+def measure(
+    text: object,
+    font_size: float,
+    line_height: float = LINE_HEIGHT,
+    max_width: float | None = None,
+) -> TextBlock:
+    """Measure a newline-delimited block in the core DejaVu metrics.
+
+    A finite positive `max_width` word-wraps the block first, so the measured
+    height is the height the wrapped text actually occupies. Callers that wrap
+    must draw `block.lines`, not the original string, or the reservation and the
+    drawing disagree — which is exactly how a wrapped chart title came to be
+    clipped in the browser while layout reserved one line for it.
+    """
     size = max(0.0, float(font_size))
     normalized = str(text).replace("\r\n", "\n").replace("\r", "\n")
     resolved_line_height = float(line_height)
-    key = (normalized, size, resolved_line_height)
+    limit: float | None = None if max_width is None else float(max_width)
+    if limit is not None and not (math.isfinite(limit) and limit > 0.0):
+        limit = None
+    key = (normalized, size, resolved_line_height, limit)
     cache = _MEASUREMENTS.get()
     if cache is not None and key in cache:
         return cache[key]
     lines = tuple(normalized.split("\n")) or ("",)
+    if limit is not None:
+        lines = wrap_lines(lines, size, limit)
     line_step = size * resolved_line_height
     ascent = size * _fontmetrics.ASCENT / _fontmetrics.BASE_PX
     descent = size * _fontmetrics.DESCENT / _fontmetrics.BASE_PX

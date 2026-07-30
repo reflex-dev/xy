@@ -1,4 +1,4 @@
-import { PROTOCOL, xyByteSpan } from "./00_header";
+import { PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
@@ -26,6 +26,30 @@ const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 // ~1400-device-px disc — the fragment SDF then trims the strip to an exactly
 // round arc (see POLAR_WEDGE_GLSL in 40_gl.ts).
 const POLAR_BAR_SEGMENTS = 96;
+// Floor on any single wedge's subdivision: two segments keep a strip that still
+// brackets the true arc after the AA expansion, even for a hairline slice.
+const POLAR_BAR_SEGMENTS_MIN = 2;
+
+// Subdivisions for one wedge of angular width `span` out of `turn`. Mirrors
+// `polar_bar_segments` in python/xy/config.py.
+//
+// The count used to be a flat POLAR_BAR_SEGMENTS per wedge, sized for the worst
+// case of a wedge sweeping the whole circle. Almost no wedge does: a 16-sector
+// wind rose sweeps 22.5 degrees, so every bar paid 2*(96+1) = 194 vertices for an
+// arc that needs six segments, and 50k polar bars fell off a cliff building
+// ~9.7M vertices a frame instead of ~700k. Sagitta is quadratic in the
+// per-segment angle, so holding `span / n` fixed holds the flattening error
+// fixed: the honest count is exactly proportional, which reproduces 96 at a full
+// turn and preserves the bound for everything narrower. §28 — a recorded formula
+// over the AUTHORED angular width, never a view-dependent choice, so zooming and
+// exporting cannot change it.
+function xyPolarBarSegments(span, turn) {
+  // An unmeasurable span falls back to the full-turn count: under-subdividing a
+  // wide wedge is a visible facet, and paying for one is not.
+  if (!(turn > 0) || !Number.isFinite(span)) return POLAR_BAR_SEGMENTS;
+  const scaled = Math.ceil(POLAR_BAR_SEGMENTS * (Math.abs(span) / turn));
+  return Math.max(POLAR_BAR_SEGMENTS_MIN, Math.min(POLAR_BAR_SEGMENTS, scaled));
+}
 // Uniform room outside the outer ring for angular tick labels. Mirrored by
 // _POLAR_LABEL_ROOM in python/xy/_svg.py.
 const POLAR_LABEL_ROOM = 30;
@@ -39,6 +63,18 @@ const POLAR_TICK_GAP = 8;
 // python/xy/_svg.py; the wire carries the letters so one table serves all
 // renderers.
 const THETA_ZERO = { E: 0, N: Math.PI / 2, W: Math.PI, S: -Math.PI / 2 };
+// Gutter reserved for a legend beside a disc. A cartesian legend overlays the
+// plot because data rarely reaches a corner; a disc inscribed in its rect leaves
+// no corner at all, so an inside legend lands on the marks — an `upper right` box
+// covered a wind rose's whole north-east quadrant and the outer radial label
+// under it. Mirrored by _POLAR_LEGEND_ROOM / _POLAR_LEGEND_BAND in
+// python/xy/_svg.py; fixed rather than measured so all three renderers reserve
+// the same box regardless of their font metrics.
+const POLAR_LEGEND_ROOM = 96;
+// Compact widths take a band under the disc instead: a 96 px side gutter out of a
+// 380 px phone canvas leaves a disc too small to read, while vertical room is the
+// one thing a phone viewport has.
+const POLAR_LEGEND_BAND = 64;
 // DejaVu Sans advances at 16 px, generated beside python/xy/_fontmetrics.py
 // and the native rasterizer. Layout must retain proportional glyph metrics:
 // character count makes "WWWW" and "iiii" reserve the same (wrong) width.
@@ -58,6 +94,33 @@ const XY_MISSING_ADVANCE = 16;
 // font rasterization/rounding cannot consume its authored title-to-tick gap.
 const Y_TITLE_MEASURE_SAFETY_PX = 2;
 
+// Greedy word wrap of already newline-split lines. Mirrors `wrap_lines` in
+// python/xy/_textblock.py, and matches what CSS `white-space: pre-line` does to
+// the same string: authored newlines are hard breaks, runs of other whitespace
+// collapse to one space, breaks are only taken at a space, and a word wider than
+// the limit keeps its own line and overflows (no `overflow-wrap` is set).
+function xyWrapLines(lines, advance, maxWidth) {
+  const wrapped = [];
+  for (const line of lines) {
+    const words = String(line).split(/\s+/).filter((word) => word.length);
+    if (!words.length) {
+      wrapped.push("");
+      continue;
+    }
+    let current = words[0];
+    for (const word of words.slice(1)) {
+      const candidate = `${current} ${word}`;
+      if (advance(candidate) <= maxWidth) current = candidate;
+      else {
+        wrapped.push(current);
+        current = word;
+      }
+    }
+    wrapped.push(current);
+  }
+  return wrapped;
+}
+
 function xyTextAdvance(text, fontSize) {
   let units = 0;
   for (const char of String(text)) {
@@ -72,6 +135,14 @@ function xyTextAdvance(text, fontSize) {
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
 const COMPACT_COLORBAR_GAP = 8;
+// Room beside a compact vertical colorbar for its two endpoint tick labels, and
+// for its rotated title. The compact form used to hide every tick and the title
+// outright, which left an unlabelled gradient — a colour ramp with no numbers on
+// it says nothing at all, so it is not a smaller version of the chrome, it is
+// the absence of it. Two numbers and the scale name are what make the ramp
+// readable; interior ticks are what a narrow chart can actually afford to drop.
+const COMPACT_COLORBAR_TICK_ROOM = 30;
+const COMPACT_COLORBAR_TITLE_ROOM = 14;
 let XY_A11Y_ID = 0;
 // Legend hover emphasis (interaction spec §9): opacity kept by non-hovered series on
 // the marks canvas, and by non-hovered rows in the legend box itself.
@@ -563,7 +634,8 @@ export class ChartView {
       ? axesColorbar
         ? 44 + (colorbar.label ? 18 : 0)
         : (this._compactVerticalColorbar
-          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + 8
+          ? COMPACT_COLORBAR_GAP + COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
+            + (colorbar.label ? COMPACT_COLORBAR_TITLE_ROOM : 0)
           : 62 + automaticColorbarGap + (colorbar.label ? 18 : 0))
       : 0;
     const colorbarBottomRoom = horizontalColorbar
@@ -587,12 +659,29 @@ export class ChartView {
       (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
       this._axisTickLabelStrategy(axis) !== "none");
     const hasTopAxis = topAxes.length > 0;
+    const authoredLeft = pad
+      ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
+      : (compact ? 46 : MARGIN.l);
+    // Width the title wraps at. Resolved from the authored/default gutters
+    // (`baseRight`, before colorbar and right-axis room) rather than the final
+    // plot rect, because the measured left gutter depends on the plot height,
+    // which depends on the title band — wrapping at the final width would be
+    // circular. Mirrors `_title_wrap_width` in python/xy/_svg.py.
+    //
+    // The title DIV wraps whether or not layout accounts for it (white-space is
+    // `pre-line`), so measuring one line and drawing two put the first line
+    // above the canvas: a compact Wind Rose title lost about 10 px off its top.
+    // `_positionTitles` caps the element at this same width, so what the DOM
+    // wraps is exactly what is reserved here.
+    this._titleWrapWidth = Math.max(40, this.size.w - authoredLeft - baseRight);
     const titleRoom = this._titleEntries().reduce((room, entry) => {
       const authoredSize = Number.parseFloat(entry.style?.["font-size"]);
       const titleFontSize = Number.isFinite(authoredSize)
         ? authoredSize
         : this._slotFontSize("title", 14);
-      const measured = this._estimateTickLabel(entry.text, titleFontSize).h;
+      const measured = this._estimateTickLabel(
+        entry.text, titleFontSize, this._titleWrapWidth,
+      ).h;
       const pad = Number.isFinite(Number(entry.pad)) ? Number(entry.pad) : 8;
       const candidate = entry.automatic_y !== false
         ? Math.max(compact ? 26 : 30, measured + pad)
@@ -606,9 +695,6 @@ export class ChartView {
     const provisionalBottom =
       Math.max(baseBottom, provisionalBottomAxisRoom) + colorbarBottomRoom;
     const plotHeight = Math.max(40, this.size.h - provisionalTop - provisionalBottom);
-    const authoredLeft = pad
-      ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
-      : (compact ? 46 : MARGIN.l);
     // Explicit padding is a floor, not permission to clip. Long numeric or
     // categorical ticks and an outside y title reserve the room their actual
     // strings need before the plot rectangle is fixed.
@@ -648,7 +734,34 @@ export class ChartView {
       w: plotWidth,
       h: Math.max(40, this.size.h - top - marginBottom),
     };
-    this._recutPolarPlot();
+    // The box legends place themselves in. Null means "the plot rect", which is
+    // every cartesian chart and every polar chart that reserves no gutter — kept
+    // null rather than aliased to `this.plot`, because `_recutPolarPlot` REPLACES
+    // that object and an alias would freeze the pre-recut geometry.
+    this._legendRect = null;
+    this._recutPolarPlot(compact);
+  }
+
+  // Side and px a polar legend gutter claims, or null when nothing is reserved:
+  // a non-polar figure, no legend rows, an authored `anchor` (an explicit
+  // plot-relative placement the author owns), or an authored 4-tuple `padding`
+  // (which already states the box the plot should occupy, and is the documented
+  // way to hand-reserve a caption band).
+  // Mirrors `_polar_legend_reserve` in python/xy/_svg.py.
+  _polarLegendReserve(compact) {
+    const s = this.spec || {};
+    if (s.coords !== "polar" || s.show_legend === false) return null;
+    if (Array.isArray(s.padding) && s.padding.length === 4) return null;
+    const options = s.legend || {};
+    if (Array.isArray(options.anchor) && [2, 4].includes(options.anchor.length)) return null;
+    const hasRows = (options.items || []).length > 0
+      || (s.extra_legends || []).length > 0
+      || (s.traces || []).some((t) =>
+        t && (t.name || (t.color && t.color.mode === "categorical")));
+    if (!hasRows) return null;
+    if (compact) return { side: "bottom", room: POLAR_LEGEND_BAND };
+    const loc = String(options.loc || "upper right");
+    return { side: loc.includes("left") ? "left" : "right", room: POLAR_LEGEND_ROOM };
   }
 
   // Re-cut the plot rect for a disc. Mirrors `_recut_polar_plot` in
@@ -676,14 +789,38 @@ export class ChartView {
     );
   }
 
-  _recutPolarPlot() {
+  _recutPolarPlot(compact = false) {
     if (this.spec?.coords !== "polar") return;
     const xAxisSpec = this._axis("x") || {};
     if (this._axisTickLabelStrategy(xAxisSpec) === "none") return;
+    // A legend gutter comes off the canvas edge FIRST, before the disc is fitted
+    // to what remains, so the disc never occupies the gutter and the legend
+    // never occupies the disc. Mirrors the same block in `_recut_polar_plot`.
+    let canvasX0 = 0;
+    let canvasW = this.size.w;
+    let canvasH = this.size.h;
+    const reserve = this._polarLegendReserve(compact);
+    if (reserve) {
+      const p0 = { ...this.plot };
+      if (reserve.side === "left") {
+        canvasX0 = reserve.room;
+        this._legendRect = { x: 0, y: p0.y, w: reserve.room, h: p0.h };
+        p0.x = Math.max(p0.x, reserve.room);
+      } else if (reserve.side === "right") {
+        canvasW -= reserve.room;
+        this._legendRect = { x: canvasW, y: p0.y, w: reserve.room, h: p0.h };
+      } else {
+        canvasH -= reserve.room;
+        this._legendRect = { x: p0.x, y: canvasH, w: p0.w, h: reserve.room };
+      }
+      p0.w = Math.max(40, Math.min(p0.w, canvasW - p0.x));
+      p0.h = Math.max(40, Math.min(p0.h, canvasH - p0.y));
+      this.plot = p0;
+    }
     const p = this.plot;
     const reservedTop = p.y;
-    const reservedRight = this.size.w - p.x - p.w;
-    const reservedBottom = this.size.h - p.y - p.h;
+    const reservedRight = canvasW - p.x - p.w;
+    const reservedBottom = canvasH - p.y - p.h;
     const room = this._polarLabelRoom(xAxisSpec);
     // An explicit `padding` states the box the author wants the plot to
     // occupy — usually to reserve a band under the disc for a legend or
@@ -705,8 +842,10 @@ export class ChartView {
     // titled radial axis keeps its gutter whole rather than part-reclaimed.
     const yAxis = this._axis("y") || {};
     const titled = !!yAxis.label;
-    const left = titled ? Math.max(side, p.x) : side;
-    const right = this.size.w - side;
+    // `canvasX0` is a left legend gutter; the label room still applies inside
+    // it. With no gutter it is 0 and `side >= room`, so this is the old value.
+    const left = Math.max(titled ? Math.max(side, p.x) : side, canvasX0 + room);
+    const right = canvasW - side;
     // Only the bottom can be symmetrised: the top also holds the figure title,
     // and the bottom keeps its full band when the theta axis has a title of its
     // own (it is drawn there; reclaiming the band pushed it off the canvas).
@@ -715,7 +854,7 @@ export class ChartView {
     // rect downward would walk it off the canvas.
     const keepsBottom = !!xAxis.label || this.spec?.colorbar?.orientation === "horizontal";
     const bottomReserve = keepsBottom ? reservedBottom : Math.min(reservedBottom, reservedTop);
-    const bottom = this.size.h - Math.max(room, bottomReserve);
+    const bottom = canvasH - Math.max(room, bottomReserve);
     const top = reservedTop + room;
     const w = right - left;
     const h = bottom - top;
@@ -726,6 +865,13 @@ export class ChartView {
     // without this the title rides the rect down and the topmost angular label
     // lands on top of it. Mirrors the same line in `_recut_polar_plot`.
     this._topAxisRoom = (this._topAxisRoom || 0) + room;
+    // Re-square the legend gutter against the FINAL rect so the box tracks the
+    // disc it sits beside rather than the pre-recut rect it was cut from.
+    if (reserve) {
+      const box = this._legendRect;
+      if (reserve.side === "bottom") this._legendRect = { ...box, x: this.plot.x, w: this.plot.w };
+      else this._legendRect = { ...box, y: this.plot.y, h: this.plot.h };
+    }
   }
 
   _titleEntries() {
@@ -761,6 +907,11 @@ export class ChartView {
       title.style.textAlign = loc;
       title.style.left = `${x}px`;
       title.style.top = `${anchorY}px`;
+      // Cap the box at the width `_layout` measured the title band at, so the
+      // DOM cannot wrap into more lines than the band reserves. The transform
+      // still positions by the element's REAL height, so an agreed line count
+      // means the reserved band and the painted block are the same box.
+      title.style.maxWidth = `${Math.max(40, Number(this._titleWrapWidth) || 40)}px`;
       title.style.transform = `translate(${shiftX}, calc(-100% - ${Number(entry.pad ?? 8)}px))`;
     }
   }
@@ -1548,7 +1699,14 @@ export class ChartView {
     const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this._onDprChange = () => {
       if (this._destroyed) return;
-      this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio
+      // Queued, not immediate. Browser zoom changes devicePixelRatio *and* the
+      // container's CSS size, so this fired a synchronous full resize+paint and
+      // the ResizeObserver then queued a second one for the same gesture: two
+      // layouts and two frames for one zoom. `_queueResize` coalesces both into
+      // the single rAF that already serves resizes; it re-reads
+      // devicePixelRatio, and `measure` re-reads the container for fluid
+      // charts so the queued pass sees the post-zoom box.
+      this._queueResize(this.size.w, this.size.h, this.fluid || this.fluidH);
       this._armDprWatch();
     };
     mq.addEventListener?.("change", this._onDprChange, { once: true });
@@ -1996,6 +2154,56 @@ export class ChartView {
     this._ctxIo.observe(this.root);
   }
 
+  // Re-upload the buffers whose values were baked at a device-pixel ratio, after
+  // dpr changed under them (browser zoom, or a window moving between displays).
+  //
+  // Per-instance stroke/line widths (`styleBuf` component 2) and corner radii
+  // (`radiusBuf`) are written in DEVICE pixels at build time, because the
+  // shaders consume device pixels. Everything else in the frame absorbs a dpr
+  // change through uniforms and the backing-store resize, so these two silently
+  // kept the OLD scale: after a zoom from 1x to 2x, a chart's authored 2 px
+  // strokes and 6 px wedge corners rendered at half their intended size, and
+  // only these marks were wrong. The streaming-append fast path already refuses
+  // to patch a trace whose `_styleDpr` is stale (54_kernel.ts); this is the
+  // matching repair for the traces already on the GPU.
+  _rescaleDprBakedBuffers() {
+    if (!this.gl || this._glLost) return;
+    const dpr = this.dpr;
+    const rescale = (record) => {
+      if (!record) return;
+      const previous = Number(record._styleDpr);
+      if (!(previous > 0) || previous === dpr) return;
+      const factor = dpr / previous;
+      // Widths ride component 2 of the canonical style row; the other three
+      // components (opacity, artist alpha, symbol) are dpr-independent.
+      const style = record._cpuStyle;
+      if (style && record.styleBuf) {
+        for (let i = 2; i < style.length; i += 4) style[i] *= factor;
+        this._reuploadBuffer(record.styleBuf, style);
+      }
+      const radius = record._cpuRadius;
+      if (radius && record.radiusBuf) {
+        for (let i = 0; i < radius.length; i++) radius[i] *= factor;
+        this._reuploadBuffer(record.radiusBuf, radius);
+      }
+      record._styleDpr = dpr;
+    };
+    for (const g of this.gpuTraces || []) {
+      rescale(g);
+      rescale(g.drill);
+      rescale(g.sampleOverlay);
+      for (const d of g.densityCache || []) rescale(d && d.overlay);
+      rescale(g.density && g.density.overlay);
+    }
+    for (const g of this._transitionOldTraces || []) rescale(g);
+  }
+
+  _reuploadBuffer(buffer, data) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  }
+
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
   // are untouched — the _map() uniforms absorb the new aspect — and the pick
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
@@ -2011,10 +2219,16 @@ export class ChartView {
     this.dpr = dpr;
     this.size.w = w;
     this.size.h = h;
+    // Before the layout/paint below, so this frame draws at the new scale.
+    this._rescaleDprBakedBuffers();
     this._layout();
     const p = this.plot;
-    this.root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
-    this.root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+    // Legends are bounded by the box they place in, which under polar is the
+    // reserved gutter rather than the plot rect — clamping to the plot would let
+    // a long label spill back over the disc the gutter exists to protect.
+    const lb = this._legendRect || p;
+    this.root.style.setProperty("--xy-legend-max-width", Math.max(40, lb.w - 12) + "px");
+    this.root.style.setProperty("--xy-legend-max-height", Math.max(40, lb.h - 12) + "px");
     this.canvas.style.left = p.x + "px";
     this.canvas.style.top = p.y + "px";
     this.canvas.style.width = p.w + "px";
@@ -2055,8 +2269,8 @@ export class ChartView {
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
-      `--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
-      `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
+      `--xy-legend-max-width:${Math.max(40, (this._legendRect || this.plot).w - 12)}px;` +
+      `--xy-legend-max-height:${Math.max(40, (this._legendRect || this.plot).h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "user-select:none;";
     this._applySlot(root, "root");
@@ -2996,7 +3210,14 @@ export class ChartView {
     // Responsive anchors flow through private custom properties consumed by a
     // zero-specificity rule. Author classes or component styles can still set
     // real left/right/top/bottom/transform declarations and win normally.
-    const rightInset = this.size.w - (this.plot.x + this.plot.w);
+    //
+    // Cartesian legends place inside the plot rect; a polar chart hands over a
+    // gutter beside the disc instead (`_recutPolarPlot`), because a disc fills
+    // its rect and an inside box lands on the marks. An authored `anchor` is
+    // still resolved against the PLOT — it is a plot-relative coordinate — and
+    // reserves no gutter, so the two cannot disagree.
+    const plot = anchor ? this.plot : (this._legendRect || this.plot);
+    const rightInset = this.size.w - (plot.x + plot.w);
     const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
     const locTokens = loc.split(/[\s_-]+/);
     const v = loc.includes("upper") || locTokens.includes("top")
@@ -3170,6 +3391,11 @@ export class ChartView {
               ? fmtLog(value)
               : fmtLinear(value, tickStep);
       const fraction = fractionFor(value);
+      // The compact vertical form keeps only the two extreme ticks (see
+      // `_positionColorbar`), so record each tick's position on the node and let
+      // positioning decide — the tick VALUES are generated here, and which of
+      // them survive is a responsive decision that changes with the container.
+      tick.dataset.xyColorbarFraction = String(fraction);
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${barThickness + 2}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${barThickness + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
@@ -3200,9 +3426,15 @@ export class ChartView {
     if (cb.label) {
       const label = document.createElement("span");
       label.textContent = String(cb.label);
+      // The vertical title sits outside the tick column. On a compact width that
+      // column holds two short endpoint labels instead of a full ladder, so the
+      // title moves in to match (`_positionColorbar` re-sets this on resize).
+      const titleGap = this._compactVerticalColorbar
+        ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
+        : barThickness + 40;
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${barThickness + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${barThickness + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+        : `position:absolute;left:${titleGap}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
@@ -3242,14 +3474,41 @@ export class ChartView {
       : this.plot.y + (this.plot.h - barHeight) * (1 - Number(anchor[1] ?? 0.5))) + "px";
     this._colorbar.style.width = (horizontal
       ? axesPlacement ? this.plot.w : barWidth
-      : axesPlacement ? this.plot.w + 44 : compactVertical ? COLORBAR_THICKNESS : 66) + "px";
+      : axesPlacement
+        ? this.plot.w + 44
+        : compactVertical
+          ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
+            + (cb.label ? COMPACT_COLORBAR_TITLE_ROOM : 0)
+          : 66) + "px";
     this._colorbar.style.height = (horizontal
       ? axesPlacement ? this.plot.h + 24 : 50
       : Math.max(24, barHeight)) + "px";
     this._colorbar.dataset.xyCompact = compactVertical ? "true" : "false";
-    for (const node of this._colorbar.querySelectorAll(
-      '[data-xy-slot="colorbar_tick"], [data-xy-slot="colorbar_title"]'
-    )) {
+    // Compact keeps the two EXTREME ticks and the title; only the interior
+    // ladder is dropped. Hiding all of them left a bare gradient with no numbers
+    // and no scale name, which is unreadable rather than merely condensed.
+    const ticks = [...this._colorbar.querySelectorAll('[data-xy-slot="colorbar_tick"]')];
+    const fractions = ticks.map((node) => Number(node.dataset.xyColorbarFraction));
+    const lowest = Math.min(...fractions);
+    const highest = Math.max(...fractions);
+    ticks.forEach((node, index) => {
+      const fraction = fractions[index];
+      node.hidden = compactVertical
+        && Number.isFinite(fraction)
+        && fraction !== lowest
+        && fraction !== highest;
+    });
+    for (const node of this._colorbar.querySelectorAll('[data-xy-slot="colorbar_title"]')) {
+      node.hidden = false;
+      if (!horizontal) {
+        node.style.left = (compactVertical
+          ? COLORBAR_THICKNESS + COMPACT_COLORBAR_TICK_ROOM
+          : (axesPlacement ? this.plot.w : COLORBAR_THICKNESS) + 40) + "px";
+      }
+    }
+    // Minor ticks stay off in the compact form: they carry no text, so they add
+    // ink without adding a reading.
+    for (const node of this._colorbar.querySelectorAll("[data-xy-colorbar-minor]")) {
       node.hidden = compactVertical;
     }
   }
@@ -3566,7 +3825,15 @@ export class ChartView {
         values[i * 2] = source[i * components] * this.dpr;
         values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
       }
+      // Kept CPU-readable for the same reason as `_cpuStyle`: these rows are
+      // baked at the dpr in force right now, and a later dpr change rescales
+      // them in place (`_rescaleDprBakedBuffers`) instead of leaving 1x radii
+      // on a 2x canvas.
+      g._cpuRadius = values;
       g.radiusBuf = this._upload(values);
+      // Also stamped here: a trace can carry corner radii without any style
+      // channels, and an unstamped record is one the rescale pass skips.
+      g._styleDpr = this.dpr;
     }
     if (t.stroke && t.stroke.mode === "direct_rgba") {
       g._cpuStroke = this._columnView(buffer, this.spec.columns[t.stroke.buf]);
@@ -3659,10 +3926,9 @@ export class ChartView {
 
   _destroySampleOverlay(s) {
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
-      s.strokeBuf, s.selBuf, s.dBuf]) {
-      if (b) this.gl.deleteBuffer(b);
-    }
+    // Same shared list the trace teardown uses: an overlay is a point-tier
+    // clone of a trace and grows the same channel buffers.
+    this._deleteBuffers(s, TRACE_GPU_BUFFERS);
   }
 
   // Full teardown of every sample overlay this tier owns. Overlays ride their
@@ -3797,6 +4063,9 @@ export class ChartView {
       copy("symbol", 3);
       s._cpuStyle = values;
       s.styleBuf = this._upload(values);
+      // Overlays bake device-pixel widths like their parent trace, so they need
+      // the same stamp for `_rescaleDprBakedBuffers` to find them.
+      s._styleDpr = this.dpr;
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
       s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
@@ -4463,6 +4732,27 @@ export class ChartView {
     gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
     gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
+  }
+
+  // Widest angular span, in the theta axis's own data units, across a
+  // four-edge-column trace. Cached on the trace: it is a property of the data,
+  // not of the view, so it survives pan/zoom and cannot make the subdivision
+  // count view-dependent (§28). Rebuilt traces get a fresh object and re-measure.
+  _polarRectMaxSpan(g) {
+    if (g._polarMaxSpan !== undefined) return g._polarMaxSpan;
+    const cpu = g._cpuRect;
+    // No CPU copy to measure (a path that does not retain one) means fall back
+    // to the full-turn count rather than guess narrow.
+    let widest = cpu ? 0 : NaN;
+    if (cpu) {
+      for (let i = 0; i < g.n; i++) {
+        const span = this._decodeValue(cpu.x1, cpu.x1Meta, i)
+          - this._decodeValue(cpu.x0, cpu.x0Meta, i);
+        if (Number.isFinite(span)) widest = Math.max(widest, Math.abs(span));
+      }
+    }
+    g._polarMaxSpan = widest;
+    return widest;
   }
 
   // Geometry of the polar disc, in the units the shaders and the CPU-side
@@ -5684,7 +5974,14 @@ export class ChartView {
     if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
-    const rectPolarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
+    // Unequal widths ship four edge columns, so one instanced draw covers wedges
+    // of different sweeps: the count follows the WIDEST of them (recorded once at
+    // build time, from data alone), which keeps every narrower wedge inside the
+    // same flattening bound. A pie's widest slice sets the cost for the pie.
+    const rectGeom = this._polarGeometry();
+    const rectPolarSegments = rectGeom
+      ? xyPolarBarSegments(this._polarRectMaxSpan(g) * rectGeom.dirUnit, 2 * Math.PI)
+      : 0;
     if (rectPolarSegments) {
       gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
       gl.uniform1i(u("u_polarSegments"), rectPolarSegments);
@@ -5784,11 +6081,15 @@ export class ChartView {
     if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
     if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     // A polar bar sweeps an annular sector: segments+1 vertex PAIRS instead of
-    // one quad's four corners. Subdivision is fixed rather than px-adaptive —
-    // bar counts are small (a dense wind rose is ~80 sectors) so the ceiling
-    // costs nothing, and a view-dependent count would have to be recorded per
-    // §28 rather than chosen silently.
-    const polarSegments = this._polarGeometry() ? POLAR_BAR_SEGMENTS : 0;
+    // one quad's four corners. The count follows this trace's own angular width
+    // (xyPolarBarSegments) rather than the full-turn worst case, at the same
+    // flattening bound — a 22.5-degree wind-rose sector costs 14 vertices, not
+    // 194. The compact bar path carries ONE scalar width, so the whole instanced
+    // draw shares one honest count.
+    const barGeom = this._polarGeometry();
+    const polarSegments = barGeom
+      ? xyPolarBarSegments(Number(g.width) * barGeom.dirUnit, 2 * Math.PI)
+      : 0;
     if (polarSegments) {
       gl.uniform1f(u("u_wedgeGap"), (Number(g.trace.style?.wedge_gap) || 0) * this.dpr);
       gl.uniform1i(u("u_polarSegments"), polarSegments);
@@ -5910,8 +6211,11 @@ export class ChartView {
     return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
   }
 
-  _estimateTickLabel(text, fontSize) {
-    const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  // `maxWidth` word-wraps the block before measuring, so `h` is the height the
+  // wrapped text actually occupies. Mirrors `_textblock.measure(max_width=...)`
+  // in python/xy/_textblock.py, including the wrap rule in `xyWrapLines`.
+  _estimateTickLabel(text, fontSize, maxWidth = null) {
+    let lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
     const context = typeof document !== "undefined"
       ? (
         this._tickMeasureCanvas
@@ -5922,12 +6226,13 @@ export class ChartView {
     // the browser's generic sans-serif while the DOM paints system-ui can
     // under-reserve long y labels enough to consume the title's 0.4 em gap.
     if (context) context.font = `${fontSize}px system-ui, sans-serif`;
+    const advance = (line) =>
+      context?.measureText(line).width || xyTextAdvance(line, fontSize);
+    const limit = Number(maxWidth);
+    if (Number.isFinite(limit) && limit > 0) lines = xyWrapLines(lines, advance, limit);
     return {
       lines,
-      w: Math.max(
-        fontSize * 0.7,
-        ...lines.map((line) => context?.measureText(line).width || xyTextAdvance(line, fontSize)),
-      ),
+      w: Math.max(fontSize * 0.7, ...lines.map(advance)),
       h: Math.max(fontSize * 1.2, lines.length * fontSize * 1.2),
       lineStep: fontSize * 1.2,
     };
@@ -6128,7 +6433,15 @@ export class ChartView {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     const now = this._now();
-    const labelCadenceMs = this._viewAnim ? 80 : 0;
+    // Tick labels are DOM: `this.labels` is emptied and every label, baseline
+    // and tick div is recreated. A view animation throttles that to 80 ms
+    // because the ranges are moving. A DATA animation was not throttled at all,
+    // so an entrance or update transition rebuilt the whole label layer 60 times
+    // a second while the axes stood still — the labels are identical between
+    // those frames unless `_transitionView` is also interpolating the view, and
+    // that case is covered by the same cadence. The final frame runs with
+    // `_dataAnim` already cleared, so the settled labels always land.
+    const labelCadenceMs = (this._viewAnim || this._dataAnim) ? 80 : 0;
     const updateLabels = labelCadenceMs === 0
       || this._lastLabelDraw === null
       || now - this._lastLabelDraw >= labelCadenceMs;
@@ -7423,22 +7736,17 @@ export class ChartView {
     this._deleteVaos(g);
     this._deleteVaos(g._homeDecimated);
     this._deleteVaos(g.drill);
-    this._deleteBuffers(g, [
-      "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
-      "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
-      "posBuf", "value1Buf", "value0Buf",
-      "_transitionPrevXBuf", "_transitionPrevYBuf",
-      "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
-    ]);
+    // TRACE_GPU_BUFFERS is the single list of every buffer field a built trace
+    // can own; the build paths and this teardown must not drift apart, so both
+    // sides read the same names (see the constant for how it is enforced).
+    this._deleteBuffers(g, TRACE_GPU_BUFFERS);
     // Only geometry is owned independently by the retained M4 overview;
     // style/channel buffers are shared with the live trace and were deleted
     // above exactly once.
     if (g._decimatedRefined) {
       this._deleteBuffers(g._homeDecimated, ["xBuf", "yBuf", "baseBuf"]);
     }
-    this._deleteBuffers(g.drill, [
-      "xBuf", "yBuf", "cBuf", "rgbaBuf", "sBuf", "styleBuf", "strokeBuf", "selBuf", "dBuf",
-    ]);
+    this._deleteBuffers(g.drill, TRACE_GPU_BUFFERS);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
     for (const d of g.densityCache || []) textures.push(d && d.tex);

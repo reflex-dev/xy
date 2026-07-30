@@ -1436,6 +1436,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # to [-100.8, -100.1] and drew as a full-disc star. Centre origin
             # is only meaningful when zero is an end of the range — below zero
             # it is vacuous, so keep the ordinary padded extent there.
+            # A TIME radius is the exception: its zero is 1 January 1970, so a
+            # centre origin puts every modern instant in a hairline ring at the
+            # rim (twelve consecutive days out of ~1.7e12 ms resolved to a band
+            # 0.0006% of the radius wide) and the axis reads as a solid disc
+            # edge. Zero is not a meaningful radial origin for an instant, so a
+            # time radius keeps the ordinary padded extent — the same reasoning
+            # that already exempts a negative floor below.
+            if self._axis_kind(axis_id) == "time":
+                return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
             if scale == "log":
                 out_lo = lo
             elif lo >= 0.0:
@@ -1444,8 +1453,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # No outer pad when the centre is the origin: the outermost ring
             # should be the data max, matching how matplotlib and Plotly frame
             # a polar plot. A negative floor keeps its pad on both sides so the
-            # range stays symmetric about the data.
-            if lo >= 0.0 or scale == "log":
+            # range stays symmetric about the data. An explicit `margin` is an
+            # authored request for that pad, and dropping it was the third way
+            # the polar radial axis accepted a keyword and ignored it: keep the
+            # padded outer ring whenever one was asked for.
+            if (lo >= 0.0 or scale == "log") and configured_margin is None:
                 out_hi = hi
             return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
         anchor = self._zero_baseline_anchor(axis_id)
