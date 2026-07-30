@@ -19,7 +19,64 @@ in the README).
   `set/get_rorigin`. Generic segment/mesh marks, polar rule/band annotations,
   LOD, facets/animation, and angular navigation/selection remain deferred.
 
+### Fixed
+- Repeated data updates no longer leak GPU buffers. Trace teardown walked a
+  hand-kept list of geometry buffer names, so every rebuilt trace — each
+  state-driven update, each append that could not patch in place, each animated
+  spec swap — orphaned its style, direct-RGBA colour, stroke, corner-radius,
+  LOD-blend and dashed-line-length buffers. All three teardown paths (trace,
+  drill window, sample overlay) now read one shared `TRACE_GPU_BUFFERS` list,
+  pinned against the build paths by a test so a new channel cannot reintroduce
+  the leak.
+- Chart titles reserve the lines they actually wrap into. The browser wrapped a
+  long title while layout measured one line, so a compact Wind Rose title lost
+  about 10 px off the top of the canvas. Titles now wrap at one shared width in
+  all three renderers, and the browser caps the title element at that same width.
+  Single-line titles are unchanged.
+- A polar figure with a legend reserves a gutter for it and places it there,
+  instead of overlaying the disc. A default `upper right` legend covered a wind
+  rose's north-east sectors and its outer radial tick label; a disc inscribed in
+  its rect has no free corner to overlay. Compact widths take a band beneath the
+  disc instead. An authored `anchor` or four-tuple `padding` still wins.
+- Compact vertical colorbars keep their two extreme tick labels and their title.
+  Collapsing them hid every number and the scale name, leaving an unlabelled
+  gradient; only the interior tick ladder and the text-free minor ticks drop now.
+- A time-valued radial axis autoranges from its data instead of from epoch zero,
+  which had squeezed every modern instant into a hairline ring at the rim. An
+  explicit `r_axis(margin=)` restores the outer pad it used to discard.
+- `theta_axis(format=...)` now wins over the built-in degree/radian tick text in
+  every renderer, instead of shipping and being overwritten.
+- A zero-width bar is legal and draws nothing, like `line_width=0`. A 0% progress
+  ring, an empty category in aggregated data, and a hand-rolled wedge at zero all
+  produce one, and each used to fail with "bar width must be positive". Negative
+  and non-finite widths are still refused.
+- Data animations no longer rebuild the whole tick-label DOM on every frame; they
+  use the same 80 ms cadence view animations use, and force one settled rebuild
+  when the transition ends.
+- A device-pixel-ratio change (browser zoom, or a window moving between displays)
+  now rescales the per-instance stroke widths and corner radii that are baked in
+  device pixels, and coalesces into a single resize frame instead of laying out
+  and painting twice.
+- `xy.pie_chart` appears in the generated chart-factory API reference alongside
+  the other polar compositions.
+
 ### Changed
+- Polar wedge subdivision is span-proportional: `segments(span) =
+  clamp(ceil(96 · |span| / turn), 2, 96)` in every renderer, over the *authored*
+  angular width. Sagitta is quadratic in the per-segment angle, so this holds the
+  flattening bound while a 16-sector wind-rose bar costs 14 vertices instead of
+  194 — the fixed full-turn count made ~50k polar bars build ~9.7M vertices a
+  frame. A full-turn wedge still uses 96.
+- `xy.theta_axis`/`xy.r_axis` now refuse the Cartesian axis keywords no polar
+  renderer implements — `minor_tick_values`, `minor_style`,
+  `tick_label_min_gap`, `tick_label_anchor`, and the collision spellings of
+  `tick_label_strategy` (`auto`, `hide`, `rotate`, `stagger`, `preserve`) — each
+  with a pointer to the control that does work. They previously rode the wire and
+  were dropped by all three renderers, so the documented axis surface advertised
+  options that did nothing. `off` and `none` remain honoured. `xy.pyplot`'s
+  `projection="polar"` drops the same keywords instead of refusing, because every
+  matplotlib Axes carries an rcParam-derived minor style it never authored; that
+  drop is recorded in `spec/matplotlib/compat.md`.
 - The renderer/spec protocol is now v12. Angular axes resolve
   `sector`/`grid_shape` and radial axes resolve `hole` plus optional
   `r_origin`; a cached v11 client would silently draw full-circle,

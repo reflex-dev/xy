@@ -45,6 +45,27 @@
 // full circular, centre-origin geometry.
 export const PROTOCOL = 12;
 
+// Every GL buffer field a built trace — or a drill / sample-overlay clone of
+// one — can own. Teardown reads this list instead of a hand-kept subset: the
+// previous subset covered geometry only, so every rebuilt trace (a state-driven
+// data update, an append that cannot patch in place, an animated spec swap)
+// orphaned its style, direct-rgba colour, stroke, corner-radius, LOD-blend and
+// dashed line-length buffers, and repeated updates walked the GPU out of
+// memory. It lives here, in the leaf module, because both the ChartView
+// teardown and the LOD drill teardown must delete exactly the same set and
+// 45_lod cannot import from 50_chartview. `test_trace_teardown_deletes_every_gpu_buffer`
+// pins that every `<name>Buf` field assigned anywhere in js/src appears here,
+// so adding a channel buffer cannot silently reintroduce the leak.
+export const TRACE_GPU_BUFFERS = [
+  "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+  "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
+  "posBuf", "value1Buf", "value0Buf",
+  "rgbaBuf", "styleBuf", "strokeBuf", "radiusBuf", "dBuf",
+  "_lenBuf", "_segmentDashOffsetBuf", "_segmentDashDirBuf",
+  "_transitionPrevXBuf", "_transitionPrevYBuf",
+  "_transitionPrevPosBuf", "_transitionPrevValue1Buf", "_transitionPrevValue0Buf",
+];
+
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL
 // above versions renderer semantics; this separately versions the transport

@@ -31,7 +31,7 @@ import numpy as np
 
 from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
-from .config import DEFAULT_PALETTE, POLAR_BAR_SEGMENTS
+from .config import DEFAULT_PALETTE, polar_bar_segments
 
 
 def escape(data: str, entities: dict[str, str] | None = None) -> str:
@@ -810,7 +810,12 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
         i = round(v)
         return str(cats[i]) if 0 <= i < len(cats) else ""
     if axis.get("theta_unit"):
-        return _fmt_angle(v, axis["theta_unit"], step)
+        # An authored `format` wins over the angular default. It used to lose:
+        # this branch ran first, so `theta_axis(format="{:.0f} deg")` shipped, was
+        # accepted, and was then overwritten by the built-in degree/radian text in
+        # every renderer. The default only applies when nothing was authored.
+        authored = _fmt_number_spec(v, axis.get("format"))
+        return authored if authored is not None else _fmt_angle(v, axis["theta_unit"], step)
     if kind == "time":
         return _fmt_time_spec(v, axis.get("format")) or _fmt_time(v, step)
     formatted = _fmt_number_spec(v, axis.get("format"))
@@ -2479,19 +2484,34 @@ def _decode_title_geometry(spec: dict[str, Any], blob: bytes) -> dict[str, Any]:
     return {**spec, "title_options": decoded} if changed else spec
 
 
+def _title_wrap_width(width: float, left: float, right: float) -> float:
+    """Width a chart title wraps at, in CSS px.
+
+    Deliberately derived from the *authored/default* horizontal gutters rather
+    than the final plot rect: the measured left gutter depends on the plot
+    height, which depends on the title band, so wrapping at the final width
+    would be circular. `_recut_polar_plot` and the measured gutters may narrow
+    the plot afterwards; the title keeps this width so what layout reserved is
+    what gets drawn. Mirrored by `_titleWrapWidth` in js/src/50_chartview.ts.
+    """
+    return max(40.0, float(width) - float(left) - float(right))
+
+
 def _title_metrics(
-    spec: dict[str, Any], entry: dict[str, Any]
+    spec: dict[str, Any],
+    entry: dict[str, Any],
+    wrap_width: float | None = None,
 ) -> tuple[dict[str, Any], float, _textblock.TextBlock]:
     base = slot_styles(spec).get("title") or {}
     style = {**base, **(entry.get("style") or {})}
     size = _px_size(style.get("font-size"), 14.0)
-    return style, size, _textblock.measure(entry["text"], size)
+    return style, size, _textblock.measure(entry["text"], size, max_width=wrap_width)
 
 
-def _title_room(spec: dict[str, Any], compact: bool) -> float:
+def _title_room(spec: dict[str, Any], compact: bool, wrap_width: float | None = None) -> float:
     room = 0.0
     for entry in _title_entries(spec):
-        _style, _size, block = _title_metrics(spec, entry)
+        _style, _size, block = _title_metrics(spec, entry, wrap_width)
         pad = float(entry.get("pad", 8.0))
         if entry.get("automatic_y", True):
             candidate = max(26.0 if compact else 30.0, block.height + pad)
@@ -2520,11 +2540,14 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         top = 6 if compact else 10
         bottom = 36 if compact else 42
     axes = _axes_by_id(spec)
-    title_room = _title_room(spec, compact)
     # The first pass uses the authored/default horizontal allocation. A second
     # pass after the measured left gutter catches an auto-collision decision
     # whose final plot width changes the chosen label set.
     provisional_w = max(40.0, width - left - right)
+    # Resolved before the title band, because the band's height now depends on
+    # how many lines the title wraps into at this width.
+    title_wrap_width = _title_wrap_width(width, left, right)
+    title_room = _title_room(spec, compact, title_wrap_width)
     top_axis_room, bottom_axis_room, measured_bottom_room = _x_axis_rooms(
         axes, provisional_w, compact
     )
@@ -2597,11 +2620,14 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # Emitters place the figure title above this gutter; recording it here
         # keeps layout() the single source of the top-axis reservation.
         "title_room": title_room,
+        # The width the title band was measured at. Emitters must wrap at the
+        # same width or they draw more lines than `title_room` reserved.
+        "title_wrap_width": title_wrap_width,
         "top_axis_room": top_axis_room,
         "bottom_axis_room": bottom_axis_room,
     }
     if spec.get("coords") == "polar":
-        _recut_polar_plot(spec, plot, width, height)
+        _recut_polar_plot(spec, plot, width, height, compact)
     return width, height, compact, plot
 
 
@@ -2625,6 +2651,53 @@ _POLAR_RLABEL_DEG = 22.5
 # Mirrored by POLAR_TICK_GAP in js/src/50_chartview.ts.
 _POLAR_TICK_GAP = 8.0
 
+# Gutter reserved for a legend beside a disc. A Cartesian legend overlays the
+# plot because data rarely reaches a corner; a disc inscribed in its rect leaves
+# no corner at all, so an inside legend lands on the marks — an `upper right` box
+# covered a wind rose's whole north-east quadrant and the outer radial label
+# under it. Both incumbents' answer is to move it out (Plotly puts polar legends
+# in the figure margin), which needs room the disc gives back.
+#
+# Fixed rather than measured from the label set, for the same reason
+# POLAR_BAR_SEGMENTS is fixed: the reservation has to be identical in all three
+# renderers, and a measured one would drift with each renderer's font metrics.
+# The legend still sizes and ellipsizes to the gutter, so a long label is bounded
+# rather than clipped.
+# Mirrored by POLAR_LEGEND_ROOM / POLAR_LEGEND_BAND in js/src/50_chartview.ts.
+_POLAR_LEGEND_ROOM = 96.0
+# Compact widths take a band under the disc instead: a 96 px side gutter out of a
+# 380 px phone canvas leaves a disc too small to read, while vertical room is the
+# one thing a phone viewport has.
+_POLAR_LEGEND_BAND = 64.0
+
+
+def _polar_legend_reserve(spec: dict[str, Any], compact: bool) -> tuple[str, float]:
+    """Side and px a polar legend gutter claims: ``("right", 96.0)`` etc.
+
+    ``("", 0.0)`` when nothing is reserved — a non-polar figure, no legend rows,
+    an authored ``anchor`` (an explicit plot-relative placement the author owns),
+    or an authored 4-tuple ``padding`` (which already states the box the plot
+    should occupy, and is the documented way to hand-reserve a caption band).
+
+    Mirrored by `_polarLegendReserve` in js/src/50_chartview.ts.
+    """
+    if spec.get("coords") != "polar" or not spec.get("show_legend", True):
+        return "", 0.0
+    padding = spec.get("padding")
+    if isinstance(padding, list) and len(padding) == 4:
+        return "", 0.0
+    options = spec.get("legend") or {}
+    anchor = options.get("anchor")
+    if anchor and len(anchor) in (2, 4):
+        return "", 0.0
+    rows = options.get("items") or legend_items(spec.get("traces") or [])
+    if not rows and not (spec.get("extra_legends") or []):
+        return "", 0.0
+    if compact:
+        return "bottom", _POLAR_LEGEND_BAND
+    loc = str(options.get("loc") or "upper right")
+    return ("left" if "left" in loc else "right"), _POLAR_LEGEND_ROOM
+
 
 def _polar_label_room(theta_axis: dict[str, Any]) -> float:
     """Room outside the ring for the angular tick labels.
@@ -2647,7 +2720,11 @@ def _polar_label_room(theta_axis: dict[str, Any]) -> float:
 
 
 def _recut_polar_plot(
-    spec: dict[str, Any], plot: dict[str, float], width: float, height: float
+    spec: dict[str, Any],
+    plot: dict[str, float],
+    width: float,
+    height: float,
+    compact: bool = False,
 ) -> None:
     """Re-cut the plot rect for a disc, in place.
 
@@ -2671,10 +2748,35 @@ def _recut_polar_plot(
     (polar-axes.md §3), so that room has to come out of the rect rather than out
     of the transform — otherwise every renderer would need the same fudge factor
     and they would eventually disagree about it.
+
+    Third, a legend gutter (`_polar_legend_reserve`) is taken off the rect and
+    recorded as `plot["legend_box"]`, so the legend sits beside the disc instead
+    of on top of it. `_legend_layout` places and bounds itself in that box.
     """
     theta_axis = spec.get("x_axis") or {}
     if theta_axis.get("tick_label_strategy") == "none":
         return
+    # The legend gutter is taken off the canvas edge FIRST, before the disc is
+    # fitted to what is left, so the disc never occupies the gutter and the
+    # legend never occupies the disc. Recorded as four floats rather than a
+    # nested rect so `plot` stays a flat float map.
+    canvas_x0 = 0.0
+    legend_side, legend_room = _polar_legend_reserve(spec, compact)
+    if legend_room:
+        if legend_side == "left":
+            box = (0.0, plot["y"], legend_room, plot["h"])
+            canvas_x0 = legend_room
+            plot["x"] = max(plot["x"], legend_room)
+        elif legend_side == "right":
+            width -= legend_room
+            box = (width, plot["y"], legend_room, plot["h"])
+        else:
+            height -= legend_room
+            box = (plot["x"], height, plot["w"], legend_room)
+        plot["legend_box_x"], plot["legend_box_y"] = box[0], box[1]
+        plot["legend_box_w"], plot["legend_box_h"] = box[2], box[3]
+        plot["w"] = max(40.0, min(plot["w"], width - plot["x"]))
+        plot["h"] = max(40.0, min(plot["h"], height - plot["y"]))
     # The top gutter also holds the figure title, which emitters place at
     # `plot.y - top_axis_room - pad`; it is a floor, never given back.
     reserved_top = plot["y"]
@@ -2709,7 +2811,9 @@ def _recut_polar_plot(
     # still get the full reclaim.
     y_axis = spec.get("y_axis") or {}
     titled = bool(y_axis.get("label")) and _axis_text_paint_visible(y_axis, "label_color")
-    left = max(side, plot["x"]) if titled else side
+    # `canvas_x0` is a left legend gutter; the label room still applies inside it.
+    # With no gutter it is 0 and `side >= room`, so this is the previous value.
+    left = max(max(side, plot["x"]) if titled else side, canvas_x0 + room)
     right = width - side
     # Vertically the title side is fixed, so only the bottom can be
     # symmetrised — and only when the theta axis has no title of its own,
@@ -2750,6 +2854,13 @@ def _recut_polar_plot(
     # reservation: without this the title would ride the rect down and the
     # topmost angular label would land on top of it.
     plot["top_axis_room"] = plot["top_axis_room"] + room
+    # Re-square the legend gutter against the FINAL rect so the box tracks the
+    # disc it sits beside rather than the pre-recut rect it was cut from.
+    if legend_room:
+        if legend_side in ("left", "right"):
+            plot["legend_box_y"], plot["legend_box_h"] = plot["y"], plot["h"]
+        else:
+            plot["legend_box_x"], plot["legend_box_w"] = plot["x"], plot["w"]
 
 
 def _tick_window(axis: dict[str, Any]) -> tuple[float, float]:
@@ -3136,7 +3247,7 @@ def polar_wedge_points(
     theta1: float,
     r0: float,
     r1: float,
-    steps: int = POLAR_BAR_SEGMENTS,
+    steps: Optional[int] = None,
     corner_radius: float = 0.0,
     wedge_gap: float = 0.0,
 ) -> list[tuple[float, float]]:
@@ -3144,7 +3255,10 @@ def polar_wedge_points(
     `_polar_wedge_path`, for the raster display list (no arc opcode).
 
     Both are driven by the same angles and radii, so the two exports agree to
-    within the flattening; `steps` is the shared POLAR_BAR_SEGMENTS.
+    within the flattening. `steps` defaults to `config.polar_bar_segments` over
+    this wedge's own sweep — a 22.5-degree wind-rose sector is flattened with six
+    segments rather than the full-turn worst case of 96, at the same sagitta
+    bound. Pass an explicit count only to pin one.
     """
     # Clamp both radii into the visible radial interval: a bar crossing r_lo or
     # r_hi retains the visible part instead of becoming an invalid endpoint.
@@ -3164,6 +3278,8 @@ def polar_wedge_points(
     if angles is None:
         return []
     a0, a1 = angles
+    if steps is None:
+        steps = polar_bar_segments(a1 - a0, 2.0 * math.pi)
 
     if corner_radius > 0.0 and inner > 0.0:
         return _rounded_wedge_points(polar, a0, a1, inner, outer, corner_radius, steps, wedge_gap)
@@ -3314,7 +3430,16 @@ def _polar_wedge_path(
         # Rounded corners are not circular arcs once rolled back out of the
         # unrolled frame, so the shared polygon is the honest shape here too.
         pts = _rounded_wedge_points(
-            polar, a0, a1, inner, outer, corner_radius, POLAR_BAR_SEGMENTS, wedge_gap
+            polar,
+            a0,
+            a1,
+            inner,
+            outer,
+            corner_radius,
+            # Same span-proportional count `polar_wedge_points` flattens with, so
+            # a rounded wedge and its raster twin sample the identical profile.
+            polar_bar_segments(a1 - a0, 2.0 * math.pi),
+            wedge_gap,
         )
         if len(pts) < 3:
             return ""
@@ -3676,9 +3801,19 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # clips to the disc instead, so nothing bleeds into the corners outside the
     # outer ring.
     clip_id = svg.uid("clip")
+    # A polar legend lives in its own gutter OUTSIDE the plot rect, so the shared
+    # clip has to cover the union of the two boxes or the legend is clipped away
+    # entirely. Union, not replacement: the same id still bounds in-plot chrome.
+    clip_x0, clip_y0 = plot["x"], plot["y"]
+    clip_x1, clip_y1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
+    if "legend_box_w" in plot:
+        clip_x0 = min(clip_x0, plot["legend_box_x"])
+        clip_y0 = min(clip_y0, plot["legend_box_y"])
+        clip_x1 = max(clip_x1, plot["legend_box_x"] + plot["legend_box_w"])
+        clip_y1 = max(clip_y1, plot["legend_box_y"] + plot["legend_box_h"])
     svg.defs.append(
-        f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
-        f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
+        f'<clipPath id="{clip_id}"><rect x="{_num(clip_x0)}" y="{_num(clip_y0)}" '
+        f'width="{_num(clip_x1 - clip_x0)}" height="{_num(clip_y1 - clip_y0)}"/></clipPath>'
     )
     # Marks clip to the disc under polar so nothing bleeds into the corners the
     # outer ring does not cover. This is a SECOND id: `clip_id` also bounds
@@ -3999,18 +4134,30 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
     legacy_title = spec.get("title") if not spec.get("title_options") else None
+    title_wrap_width = plot.get("title_wrap_width")
     if legacy_title:
         title_slot = slots.get("title") or {}
+        legacy_size = slot_font_size(title_slot, 14.0)
+        legacy_block = _textblock.measure(legacy_title, legacy_size, max_width=title_wrap_width)
+        # Wrapped lines run downward from the baseline, so lift the block by its
+        # trailing lines: the LAST line keeps the historical single-line baseline
+        # and the extra lines fill the room `_title_room` reserved above it. A
+        # one-line title has no trailing lines and is byte-identical to before.
+        legacy_trailing = (legacy_block.line_count - 1) * legacy_block.line_step
+        legacy_y = plot["y"] - plot["top_axis_room"] - (10 if compact else 12) - legacy_trailing
+        legacy_x = width / 2
+        legacy_text = "\n".join(legacy_block.lines)
+        legacy_content = _text_block_content(legacy_text, legacy_x, legacy_block.line_step)
         chrome.append(
-            f'<text x="{_num(width / 2)}" '
-            f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
-            f'text-anchor="middle" font-size="{_num(slot_font_size(title_slot, 14.0))}"'
+            f'<text x="{_num(legacy_x)}" '
+            f'y="{_num(legacy_y)}" '
+            f'text-anchor="middle" font-size="{_num(legacy_size)}"'
             f"{slot_text_attrs(title_slot, font_weight='400')} "
             f'fill="{escape(slot_text_color(title_slot, default_text))}">'
-            f"{escape(str(legacy_title))}</text>"
+            f"{legacy_content}</text>"
         )
     for title_entry in [] if legacy_title else _title_entries(spec):
-        title_style, title_size, title_block = _title_metrics(spec, title_entry)
+        title_style, title_size, title_block = _title_metrics(spec, title_entry, title_wrap_width)
         # Matplotlib's `axes.titleweight`/`axes.labelweight` both default to
         # "normal", so chrome text stays at 400 unless a style or rcParam asks
         # for more. Keep this in step with the `title`/`axis_title` slot rules
@@ -4031,13 +4178,18 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             "right": plot["x"] + plot["w"],
         }.get(loc, plot["x"] + plot["w"] / 2.0)
         anchor = {"left": "start", "center": "middle", "right": "end"}.get(loc, "middle")
+        # `title_block.lines` is the wrapped set — drawing `entry["text"]` here
+        # would put the whole title on one line inside a band reserved for two.
+        title_content = _text_block_content(
+            "\n".join(title_block.lines), title_x, title_block.line_step
+        )
         chrome.append(
             f'<text x="{_num(title_x)}" '
             f'y="{_num(title_y)}" '
             f'text-anchor="{anchor}" font-size="{_num(title_size)}" '
             f"{title_font_attrs.lstrip()} "
             f'fill="{escape(slot_text_color(title_style, default_text))}">'
-            f"{_text_block_content(title_entry['text'], title_x, title_block.line_step)}</text>"
+            f"{title_content}</text>"
         )
 
     def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
@@ -6036,7 +6188,19 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     legend is kept inside the plot and its labels are visibly ellipsized. A
     Columns follow Matplotlib's handle/text/column spacing and size to their
     own labels rather than inheriting the width of the longest label.
+
+    A polar chart hands over a `legend_box_*` gutter beside the disc
+    (`_recut_polar_plot`); everything below then bounds and places the legend in
+    that box instead of over the marks, and `loc` chooses where within it.
     """
+    if "legend_box_w" in plot:
+        plot = {
+            **plot,
+            "x": plot["legend_box_x"],
+            "y": plot["legend_box_y"],
+            "w": plot["legend_box_w"],
+            "h": plot["legend_box_h"],
+        }
     style_opts = options.get("style") or {}
     font_size = _legend_font_size(style_opts)
     char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)

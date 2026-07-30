@@ -1,3 +1,4 @@
+import { TRACE_GPU_BUFFERS } from "./00_header";
 import { parseColor } from "./20_theme";
 
 // ---------------------------------------------------------------------------
@@ -688,10 +689,10 @@ function lodSameWindow(a, b) {
 }
 
 function lodFreeDrillBuffers(view, d) {
-  const gl = view.gl;
   view._deleteVaos(d); // each drill object carries its own VAOs
-  for (const b of [d.xBuf, d.yBuf, d.cBuf, d.rgbaBuf, d.sBuf, d.styleBuf,
-    d.strokeBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
+  // The shared list, not a drill-shaped subset: a drill window is built by the
+  // same channel code as its trace, so it grows the same buffers.
+  view._deleteBuffers(d, TRACE_GPU_BUFFERS);
 }
 
 // Reset the trace's drill lifecycle state without touching the (moved or
@@ -928,6 +929,10 @@ export function lodApplyDrill(view, g, upd, buffers) {
     copy("stroke_width", 2, view.dpr);
     copy("symbol", 3);
     d._cpuStyle = values;
+    // Widths are baked in DEVICE pixels; stamp the dpr they were baked at so a
+    // later zoom rescales them (view._rescaleDprBakedBuffers) instead of leaving
+    // a drill window's strokes at the previous scale.
+    d._styleDpr = view.dpr;
     if (!d.styleBuf) d.styleBuf = gl.createBuffer();
     d.styleBuf._fcType = gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.styleBuf);

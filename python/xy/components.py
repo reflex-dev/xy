@@ -2661,6 +2661,85 @@ def y_axis(
     )
 
 
+#: Cartesian axis keywords no polar renderer implements, mapped to what a polar
+#: chart does instead. Each of these rode the wire and was then dropped on the
+#: floor by the client *and* both exporters — the same accepted-but-inert trap as
+#: a polar secondary axis or an angular `reverse`, and the reason the polar axis
+#: documentation was advertising controls that did nothing.
+#:
+#: Refused HERE, on the documented polar surface, rather than at payload build:
+#: `xy.pyplot`'s polar projection forwards rcParam-derived axis props (a
+#: `minor_style` for every Axes, `minorticks_on()` values, a `ha=` anchor) into
+#: the same figure, and refusing there would turn `projection="polar"` into an
+#: error. `_polar_axis_kwargs` strips them for that adapter instead, which is
+#: recorded in spec/matplotlib/compat.md.
+_POLAR_INERT_AXIS_KEYWORDS: dict[str, str] = {
+    "minor_tick_values": (
+        "no minor rings or spokes are drawn on a disc, so the values were accepted and "
+        "dropped. Pass the values you want drawn as tick_values"
+    ),
+    "minor_style": (
+        "no minor ticks or minor grid are drawn on a disc, so the style had nothing to "
+        "paint. Style the major rings and spokes with style="
+    ),
+    "tick_label_min_gap": (
+        "tick labels ring the disc rather than running along an edge, so there is no "
+        "collision pass for a minimum gap to feed. Radial labels are stride-thinned to "
+        "what the label spoke holds; use tick_count or tick_values to thin deliberately"
+    ),
+    "tick_label_anchor": (
+        "each tick label anchors radially — outward around the rim, and outward along "
+        "the radial label spoke — so an edge-relative anchor has nothing to act on. Use "
+        "tick_label_angle to rotate the label text"
+    ),
+}
+
+#: Tick-label strategies that only mean something to the edge-relative collision
+#: pass. `off` (hide the label text) and `none` (hide the whole axis) are honoured
+#: under polar and stay out of this set.
+_POLAR_INERT_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "preserve"})
+
+
+def _refuse_inert_polar_axis_kwargs(kwargs: dict[str, Any], vocabulary: str) -> None:
+    """Reject polar axis keywords no renderer implements, naming the alternative."""
+    for key, explanation in _POLAR_INERT_AXIS_KEYWORDS.items():
+        value = kwargs.get(key)
+        if value is None or value == {}:
+            continue
+        raise ValueError(
+            f"{vocabulary} does not support {key}={value!r}: {explanation}. "
+            "See spec/design/polar-axes.md."
+        )
+    strategy = kwargs.get("tick_label_strategy")
+    if isinstance(strategy, str) and strategy.replace("-", "_") in (
+        _POLAR_INERT_TICK_LABEL_STRATEGIES
+    ):
+        raise ValueError(
+            f"{vocabulary} does not support tick_label_strategy={strategy!r}; rim labels "
+            "have no edge-relative collision pass. 'off' (hide the tick labels) and "
+            "'none' (hide the axis) are supported. See spec/design/polar-axes.md."
+        )
+
+
+def _polar_axis_kwargs(props: Mapping[str, Any]) -> dict[str, Any]:
+    """`props` with the keywords `theta_axis`/`r_axis` refuse removed.
+
+    For adapters that build a polar axis out of a general axis-property bag they
+    do not fully control — `xy.pyplot`, whose polar Axes carries an rcParam
+    `minor_style` and whatever `minorticks_on()`/`ha=` left behind. Dropping is
+    what all three renderers already do with these values; the point of the
+    refusal is that a *hand-authored* polar axis hears about it.
+    """
+    dropped = set(_POLAR_INERT_AXIS_KEYWORDS)
+    out = {key: value for key, value in props.items() if key not in dropped}
+    strategy = out.get("tick_label_strategy")
+    if isinstance(strategy, str) and strategy.replace("-", "_") in (
+        _POLAR_INERT_TICK_LABEL_STRATEGIES
+    ):
+        out.pop("tick_label_strategy")
+    return out
+
+
 def theta_axis(
     *,
     unit: Optional[str] = None,
@@ -2673,8 +2752,27 @@ def theta_axis(
     """Configure the angular axis of an `xy.polar_chart`.
 
     Delegates to `x_axis` — the angular axis *is* the x axis under
-    ``coords="polar"`` — so every `x_axis` keyword (``label``, ``tick_values``,
-    ``style``, …) applies here too and is validated by one shared path.
+    ``coords="polar"`` — so the `x_axis` keywords listed below apply here too and
+    are validated by one shared path.
+
+    **Not every `x_axis` keyword survives a disc**, and the ones that do not are
+    refused here rather than accepted and dropped:
+
+    * ``minor_tick_values`` / ``minor_style`` — no minor rings or spokes are
+      drawn. Pass the values you want drawn as ``tick_values``.
+    * ``tick_label_min_gap`` and ``tick_label_strategy`` in its collision
+      spellings (``"auto"``, ``"hide"``, ``"rotate"``, ``"stagger"``,
+      ``"preserve"``) — rim labels have no edge-relative collision pass.
+      ``"off"`` (hide the labels) and ``"none"`` (hide the axis) work.
+    * ``tick_label_anchor`` — labels anchor radially. Use ``tick_label_angle``.
+
+    Three more are refused when the figure is built, because they depend on the
+    resolved data: ``type_="log"``/``"symlog"``, ``reverse=True``, and a
+    time-valued angular column. An instant and a non-linear angle have no
+    coherent projection; use ``direction=`` to reverse the direction of travel.
+
+    ``format`` **is** honoured and wins over the built-in degree/radian text, so
+    ``theta_axis(unit="degrees", format=".0f°")`` relabels the spokes.
 
     Args:
         unit: Angular unit of the data, ``"radians"`` (default) or ``"degrees"``.
@@ -2692,6 +2790,7 @@ def theta_axis(
     Returns:
         An `Axis` for the angular dimension.
     """
+    _refuse_inert_polar_axis_kwargs(kwargs, "theta_axis")
     axis = x_axis(**kwargs)
     if sector is not None and axis.domain is not None:
         raise ValueError("theta_axis sector and domain describe the same limit; pass only one")
@@ -2731,8 +2830,28 @@ def r_axis(
     """Configure the radial axis of an `xy.polar_chart`.
 
     Delegates to `y_axis` — the radial axis *is* the y axis under
-    ``coords="polar"`` — so every `y_axis` keyword applies. Provided so polar
+    ``coords="polar"`` — so the `y_axis` keywords apply. Provided so polar
     compositions read in polar vocabulary rather than mixing x/y with theta/r.
+
+    The same four keywords `xy.theta_axis` refuses are refused here, and for the
+    same reason — no minor rings, no rim collision pass, no edge-relative label
+    anchor. ``reverse=True``, ``type_="log"``, ``type_="symlog"`` and a
+    time-valued radial column are all supported on the radius.
+
+    **Autorange.** A linear or symlog radius starts at the centre (matplotlib's
+    ``rmin=0``) and ends at the data maximum with no outer pad, so the outermost
+    ring *is* the largest datum; log autorange stays strictly positive. Two
+    exceptions: data that goes below zero keeps its ordinary padded extent
+    (a centre origin is vacuous below zero), and so does a **time** radius,
+    whose zero is 1970 — pinning it would squeeze every modern instant into a
+    hairline ring at the rim. An explicit ``margin=`` restores the outer pad;
+    an explicit ``domain=``/``bounds=`` overrides autorange entirely.
+
+    **Signed radii are positions, not directions.** A negative radius is not
+    mirrored through the centre the way matplotlib mirrors it: it is a value on
+    a range that includes it, so ``-5`` draws nearer the centre than ``0``. A
+    radius outside the visible interval is culled for points and line vertices
+    and clamped for fills and sectors (spec/design/polar-axes.md §3, §8).
 
     Args:
         hole: Display-space inner-radius fraction, from 0 (no hole) up to but
@@ -2746,6 +2865,7 @@ def r_axis(
     """
     if hole is not None and origin is not None:
         raise ValueError("r_axis hole and origin are mutually exclusive")
+    _refuse_inert_polar_axis_kwargs(kwargs, "r_axis")
     axis = y_axis(**kwargs)
     return replace(
         axis,
@@ -6344,13 +6464,12 @@ def pie_chart(
     cursor = 0.0
     for index, (label, value) in enumerate(zip(names, amounts, strict=True)):
         span = value / total * 360.0
-        # A zero-valued category is ordinary in aggregated data and this
-        # factory accepts it (values are validated finite and non-negative),
-        # but a zero span reached `bar(width=...)` and died as "bar width must
-        # be positive" — a message from a layer below that names neither
-        # pie_chart nor the offending label. A slice of no size draws nothing,
-        # so skip the wedge; the legend row goes with it rather than offering
-        # a swatch that highlights nothing.
+        # A zero-valued category is ordinary in aggregated data and this factory
+        # accepts it. A zero-width wedge is legal at the mark layer now (it draws
+        # nothing, like `line_width=0`), so this skip is no longer about avoiding
+        # an error from a layer below — it is about the LEGEND: a row whose swatch
+        # highlights nothing on hover and toggles nothing on click is worse than
+        # no row. Dropping the wedge drops the row with it.
         if span <= 0.0:
             continue
         display = label

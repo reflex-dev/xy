@@ -691,12 +691,20 @@ def _bar_like(
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
     pos, category_labels = self._axis_positions_with_labels(x, category_axis)
+    # Zero is legal and draws nothing, like the library-wide `line_width=0` rule.
+    # A bar of no size is an ordinary DATA state, not an author error: a 0%
+    # progress ring, an empty category in aggregated output, and the first frame
+    # of a grow animation all produce one. Refusing it made every hand-rolled
+    # wedge recipe — the pie/gauge compositions the docs show — die at exactly
+    # 0% with "bar width must be positive", a message about the author's code
+    # from a value that came out of their data. Negative and non-finite widths
+    # are still refused: they are not degenerate, they are meaningless.
     if np.isscalar(width):
         # Scalar widths are overwhelmingly the common path. Preserve the
         # established scalar validator (including bool rejection) without
         # allocating two temporary NumPy arrays for every bar chart.
         try:
-            width_values: float | np.ndarray = self._positive_scalar(width, f"{kind} width")
+            width_values: float | np.ndarray = self._nonnegative_scalar(width, f"{kind} width")
         except ValueError as exc:
             if isinstance(width, (str, bytes)):
                 raise ValueError(f"{kind} width must be scalar or contain numeric values") from exc
@@ -704,7 +712,7 @@ def _bar_like(
     elif isinstance(width, np.ndarray) and width.ndim == 0:
         if np.issubdtype(width.dtype, np.bool_):
             raise ValueError(f"{kind} width must be scalar or contain numeric values")
-        width_values = self._positive_scalar(width.item(), f"{kind} width")
+        width_values = self._nonnegative_scalar(width.item(), f"{kind} width")
     else:
         try:
             raw_width_array = np.asarray(width)
@@ -722,8 +730,8 @@ def _bar_like(
             raise ValueError(
                 f"{kind} width must be scalar or broadcast to the {len(pos)} bars"
             ) from None
-        if not np.isfinite(width_values).all() or np.any(width_values <= 0.0):
-            raise ValueError(f"{kind} width values must be finite and positive")
+        if not np.isfinite(width_values).all() or np.any(width_values < 0.0):
+            raise ValueError(f"{kind} width values must be finite and non-negative")
     vals = self._bar_value_matrix(y, len(pos), kind)
     n_series, n_items = vals.shape
     if mode == "normalized":

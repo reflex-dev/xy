@@ -215,6 +215,13 @@ Object.assign(ChartView.prototype, {
         this._dataAnimRaf = null;
         for (const record of records) this._clearTransitionVisual(record.g);
         this._finishDataAnimation(phase);
+        // The label layer is throttled while `_dataAnim` is live (see the
+        // cadence in `_drawChrome`), so force one settled rebuild now that it is
+        // cleared. Same completion contract as the view animation in
+        // 53_interaction.ts — without it a transition could leave labels from up
+        // to one cadence tick earlier on screen.
+        this._lastLabelDraw = null;
+        this.draw();
       }
     };
     this._dataAnimRaf = requestAnimationFrame(tick);

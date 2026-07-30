@@ -7,6 +7,7 @@ recorded in the shipped spec, never silent (§28).
 
 from __future__ import annotations
 
+import math
 import warnings
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
@@ -52,16 +53,42 @@ POLAR_MARK_KINDS = frozenset(
 # letting an unbounded polar scatter allocate its way to a cliff.
 POLAR_DIRECT_CEILING = 200_000
 
-# Subdivisions across one polar bar's angular span, for the renderers that
-# flatten arcs (the raster display list has no arc opcode, and the GPU sweeps a
-# fixed triangle strip). Mirrored by POLAR_BAR_SEGMENTS in js/src/50_chartview.ts.
-# Fixed rather than px-adaptive: bar counts are small — a dense wind rose is
-# ~80 sectors — so the ceiling is free, and a view-dependent count would have to
-# be recorded per §28 rather than chosen silently. Sized so a full-turn wedge's
+# Subdivisions across one FULL TURN, for the renderers that flatten arcs (the
+# raster display list has no arc opcode, and the GPU sweeps a triangle strip).
+# Mirrored by POLAR_BAR_SEGMENTS in js/src/50_chartview.ts. Sized so a wedge's
 # chord sagitta stays inside the client's XY_POLAR_AA expansion up to a
 # ~1400-device-px disc, letting the fragment SDF trim the strip to an exactly
 # round arc; the raster's coverage-scanline fill smooths the same polygon.
 POLAR_BAR_SEGMENTS = 96
+
+# Floor on the subdivision of any single wedge. Two segments keep a strip that
+# still brackets the true arc after the AA expansion, even for a hairline slice.
+POLAR_BAR_SEGMENTS_MIN = 2
+
+
+def polar_bar_segments(span: float, turn: float) -> int:
+    """Subdivisions for one wedge of angular width `span` out of `turn`.
+
+    The count used to be a flat `POLAR_BAR_SEGMENTS` per wedge, sized for the
+    worst case of a wedge sweeping the whole circle. Almost no wedge does: a
+    16-sector wind rose sweeps 22.5 degrees, so every bar paid 2*(96+1) = 194
+    vertices for an arc that needs six segments, and 50k polar bars fell off a
+    performance cliff building ~9.7M vertices per frame instead of ~700k.
+
+    Sagitta is what the constant is sized against, and it is quadratic in the
+    per-segment angle: holding `span / n` fixed holds the flattening error fixed.
+    So the honest count is exactly proportional — `POLAR_BAR_SEGMENTS * span /
+    turn` — which reproduces 96 for a full turn and preserves the error bound for
+    everything narrower. §28: the decision is a recorded formula over the
+    AUTHORED angular width, not a view-dependent choice, so all three renderers
+    reach the same count for the same figure at any zoom or export size.
+    """
+    if not (turn > 0.0):
+        return POLAR_BAR_SEGMENTS
+    fraction = abs(float(span)) / float(turn)
+    scaled = math.ceil(POLAR_BAR_SEGMENTS * fraction)
+    return max(POLAR_BAR_SEGMENTS_MIN, min(POLAR_BAR_SEGMENTS, scaled))
+
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the

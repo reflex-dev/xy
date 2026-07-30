@@ -28,6 +28,7 @@ import xy
 
 from .. import _textblock
 from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
+from ..components import _polar_axis_kwargs
 from ._artists import (
     Artist,
     AxesImage,
@@ -1097,7 +1098,13 @@ def _cached_axis(which: str, props: dict) -> Any:
             key in props
             for key in ("theta_unit", "theta_zero", "theta_direction", "sector", "grid_shape")
         ):
-            angular = dict(props)
+            # `_polar_axis_kwargs` drops the keywords `theta_axis` refuses. This
+            # bag is not hand-authored: every Axes carries an rcParam-derived
+            # `minor_style`, and `minorticks_on()`/`tick_params(ha=)` add more.
+            # Dropping them is what all three renderers already do with those
+            # values; refusing would turn `projection="polar"` into an error over
+            # a default nobody asked for. Recorded in spec/matplotlib/compat.md.
+            angular = _polar_axis_kwargs(props)
             unit = angular.pop("theta_unit", None)
             zero = angular.pop("theta_zero", None)
             direction = angular.pop("theta_direction", None)
@@ -1112,7 +1119,7 @@ def _cached_axis(which: str, props: dict) -> Any:
                 **angular,
             )
         if which == "y" and any(key in props for key in ("hole", "r_origin")):
-            radial = dict(props)
+            radial = _polar_axis_kwargs(props)
             hole = radial.pop("hole", None)
             origin = radial.pop("r_origin", None)
             return xy.r_axis(hole=hole, origin=origin, **radial)

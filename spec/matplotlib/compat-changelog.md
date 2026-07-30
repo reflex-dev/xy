@@ -21,6 +21,17 @@ which covers user-visible releases across the whole package.
   rules/spans, LOD, facets/animation, angular navigation/selection, and the
   stateful `plt.polar`/`plt.thetagrids`/`plt.rgrids` wrappers remain deferred
   or absent and fail loudly where a Cartesian fallback would be misleading.
+- Minor ticks, minor tick styling, tick-label horizontal alignment, and the
+  tick-label collision strategies are now recorded as **dropped** on a polar
+  Axes rather than left undocumented. No renderer draws minor rings or spokes,
+  and rim labels have neither an edge-relative collision pass nor an anchor.
+  A hand-authored `xy.theta_axis`/`xy.r_axis` refuses them; the shim drops them,
+  because every Axes carries an rcParam-derived minor style and refusing would
+  break `projection="polar"` over a default nobody authored.
+- A polar radial axis carrying datetimes now autoranges from its data instead of
+  from epoch zero, which had compressed every modern instant into a hairline
+  ring at the rim. `set_rlim` and an explicit radial `margin` are unaffected and
+  still win.
 
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 

@@ -1374,7 +1374,11 @@ def test_seam_crossing_sector_keeps_its_explicit_theta_ticks(sector, requested, 
     ticks, _labelled, _step = axis_ticks(axis, 400.0, True)
     assert ticks == pytest.approx(expected if expected is not None else requested)
     if sector == (300.0, 420.0):
-        # Minor ticks trim through the same window, and were dropped too.
+        # Minor ticks trim through the same window, and were dropped too. This
+        # exercises the trimming helper directly: `minor_tick_values` on a polar
+        # axis is now refused at payload build (no renderer draws minor rings or
+        # spokes), so the branch is correct-but-dormant rather than reachable
+        # from a figure. See spec/design/polar-axes.md §9.
         assert minor_axis_ticks(axis) == pytest.approx([315.0, 15.0, 45.0])
 
 
