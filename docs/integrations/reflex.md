@@ -15,15 +15,6 @@ Reflex component. The core `xy` package stays framework-neutral: application
 state and events remain in Reflex while XY owns chart data, rendering, and
 interaction math.
 
-~~~md alert warning
-### Published, Experimental Adapter
-
-`reflex-xy` is published on PyPI and can be installed by package name. The
-adapter remains experimental, so its API and event payloads may change between
-releases. Pin versions for production deployments and review the changelog when
-upgrading.
-~~~
-
 ## Install and Configure
 
 Install `reflex-xy` from PyPI. It declares compatible `xy` and Reflex
