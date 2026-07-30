@@ -1121,10 +1121,13 @@ def _without_repeats(ring: np.ndarray) -> np.ndarray:
     if len(ring) < 2:
         return ring
     span = float(np.hypot(*(ring.max(axis=0) - ring.min(axis=0))))
-    gaps = np.hypot(*(ring[1:] - ring[:-1]).T)
-    # Negated so a non-finite gap or span keeps the vertex. The triangulator
-    # rejects the ring on its own terms rather than us silently emptying it.
-    return ring[np.r_[True, ~(gaps <= span * 1e-12)]]
+    if not np.isfinite(span):
+        # One non-finite coordinate makes every tolerance derived from the span
+        # meaningless: against an infinite one, each gap reads as a duplicate
+        # and the ring empties. Keep it whole and let the triangulator reject
+        # it on its own terms.
+        return ring
+    return ring[np.r_[True, np.hypot(*(ring[1:] - ring[:-1]).T) > span * 1e-12]]
 
 
 def _patch_outline(patch: Any) -> list[np.ndarray]:

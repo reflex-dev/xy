@@ -362,6 +362,20 @@ def test_tightly_spaced_but_distinct_vertices_survive() -> None:
     assert len(edges[0]["args"][0]) == 5
 
 
+@pytest.mark.parametrize("bad", [np.inf, -np.inf, np.nan])
+def test_patch_with_a_non_finite_coordinate_keeps_its_vertices(bad: float) -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import Rectangle
+
+    _fig, ax = plt.subplots()
+    ax.add_patch(Rectangle((0, 0), bad, 1.0, fill=False))
+    _meshes, edges = _patch_marks(ax)
+    # An infinite span makes every gap read as a duplicate and empties the
+    # ring; a NaN span makes every comparison false and leaves it alone. The
+    # two take opposite branches, so both belong here.
+    assert len(edges[0]["args"][0]) == 4
+
+
 def test_patch_without_a_path_or_rectangle_getters_raises() -> None:
     _fig, ax = plt.subplots()
     with pytest.raises(TypeError, match="unsupported patch"):
