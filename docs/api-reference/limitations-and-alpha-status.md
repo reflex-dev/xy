@@ -53,9 +53,10 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
 - Polar interaction currently consists of hover plus opt-in radial zoom about a
   fixed radial minimum. Zoom defaults to off (`xy.wind_rose()` excepted) and is
   enabled per chart with `xy.interaction_config(zoom=True)` or a `zoom=True` chart
-  prop; reset comes with it, since a chart that cannot move has no view to
-  restore. Authored sectors are supported; theta pan/rotation, interactive sector
-  zoom, box zoom, selection, brushing, and crosshairs are disabled.
+  prop; reset is hidden unless zoom or an explicit `reset_axes` gives it axes to
+  restore. `default_drag_action` accepts only `"auto"`/`"none"` on a polar chart.
+  Authored sectors are supported; theta pan/rotation, interactive sector zoom, box
+  zoom, selection, brushing, and crosshairs are disabled.
 - Point-anchored `text`, `label`, `marker`, `arrow`, and `callout` annotations
   use the joint `(theta, r)` projection consistently on polar charts in the
   browser, SVG, and native raster output. Polar rules and bands remain deferred

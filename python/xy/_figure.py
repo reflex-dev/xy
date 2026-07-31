@@ -1006,8 +1006,28 @@ class Figure(AnnotationsMixin, PayloadMixin):
         action = self._default_drag_action(action)
         if action in {"auto", "none"}:
             return
+        if self.coords == "polar":
+            # A disc has no drag tools at all (polar-axes.md §8), which is why
+            # polar's resolved drag mode is `none`: the client returns [] for
+            # `pan_axes` and forces `box_zoom`/`select`/`brush` off under polar,
+            # whatever the flags say. So every action but `auto`/`none` is
+            # accepted-and-inert — the plausible-but-wrong outcome §28 refuses
+            # everywhere else in this validator. Radial zoom is unaffected: it is
+            # a wheel/button gesture, not a drag.
+            raise ValueError(
+                f"coords='polar' does not support default_drag_action={action!r}; a "
+                "disc has no drag tools (theta pan, box zoom, and rectangular/lasso "
+                "selection all lack polar geometry), so only 'auto' and 'none' are "
+                "meaningful. Radial zoom is a wheel/button gesture — enable it with "
+                "interaction_config(zoom=True). See spec/design/polar-axes.md."
+            )
 
         def enabled(name: str) -> bool:
+            # `zoom` reads through the resolved predicate rather than the raw
+            # dict so this can never disagree with what `_interaction_spec`
+            # ships. The polar guard above means the two currently agree for
+            # every action that reaches here; keeping the indirection is what
+            # stops that from silently ceasing to be true.
             if name == "zoom":
                 return self._zoom_enabled()
             return self.interaction.get(name, True) is not False

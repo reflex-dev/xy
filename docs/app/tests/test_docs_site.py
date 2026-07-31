@@ -1582,6 +1582,10 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
         # follows the zoom capability, so the page must not promise it either.
         "**Zoom is off by default.**",
         "reset-axis policy is empty",
+        # Reset is not unconditionally absent: an authored `reset_axes` grants it
+        # with zoom still off, and `default_drag_action` is narrowed under polar.
+        "An explicit `reset_axes` also grants reset",
+        'accepts only `"auto"` and `"none"` here',
         "xy.interaction_config(zoom=True)",
         "def zoomable_polar_demo():",
         "authored fractional degree",

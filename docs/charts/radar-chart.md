@@ -141,10 +141,11 @@ disabled. Browser, SVG, PDF, and native raster exports share the same radar
 geometry.
 
 A radar profile is read against a fixed frame of spokes, and zoom scales the
-outer ring about a fixed center, so it crops the frame instead of magnifying the
+outer ring about a fixed center, so it crops that frame instead of magnifying the
 comparison. Add `xy.interaction_config(zoom=True)` (or `zoom=True` on the chart)
-to enable radial-only zoom when the shared scale is worth magnifying; reset
-becomes available with it, since only then is there a view to restore.
+to enable radial-only zoom when the shared scale is worth magnifying; reset comes
+with it, since only then does a gesture exist to undo. An explicit `reset_axes`
+grants reset by itself for a chart driven from application state.
 
 See [Polar chart interaction and limits](/docs/xy/charts/polar-chart/#hover-and-zoom)
 for the complete coordinate-system contract.

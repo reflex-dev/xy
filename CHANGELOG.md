@@ -105,7 +105,8 @@ in the README).
 
 ### Changed
 - All Polar charts with the exception of wind rose disable zoom by default.
-- `default_drag_action="zoom"` on a polar chart now raises at construction
+- `default_drag_action` accepts only `"auto"`/`"none"` on a polar chart; the
+  values naming drag tools a disc does not have now raise at construction
   instead of being accepted and silently doing nothing.
 - Default tooltips now lead with the hovered series name, and the radial row of
   a polar readout is labelled `r` rather than presented as a Cartesian `y`. The
