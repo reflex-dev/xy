@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -543,7 +544,13 @@ def test_live_browser_coords_cursor_and_toolbar_controls_drive_python_state() ->
             "forwardAfterForwardDisabled": True,
             "pageErrors": [],
         }
-        assert "$5.0M" in coords
+        formatted_y = re.search(r"\$(\d+\.\d)M", coords)
+        assert formatted_y is not None
+        # The page targets the canvas center, while the data viewport is
+        # slightly offset by platform-dependent subplot gutters.  Validate
+        # the custom formatter and the expected central value without tying
+        # this behavioral test to one font/layout pixel grid.
+        assert float(formatted_y.group(1)) == pytest.approx(5.0, abs=0.25)
         assert any(bounds != pytest.approx(original_x) for bounds in observed_x)
         assert any(bounds == pytest.approx(original_x) for bounds in observed_x)
         assert axes.get_xlim() != pytest.approx(original_x)

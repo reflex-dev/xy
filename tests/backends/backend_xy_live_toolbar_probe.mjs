@@ -38,11 +38,29 @@ try {
     y: bounds.y + bounds.height * 0.5,
   };
   await page.mouse.move(center.x, center.y);
-  await page.waitForFunction(
-    () =>
-      document.querySelector(".xy-matplotlib-status")?.textContent.includes("$5.0M") &&
-      getComputedStyle(document.querySelector(".xy-matplotlib-canvas")).cursor === "crosshair",
-  );
+  try {
+    await page.waitForFunction(
+      () =>
+        /\$\d+\.\dM/.test(
+          document.querySelector(".xy-matplotlib-status")?.textContent || "",
+        ) &&
+        getComputedStyle(document.querySelector(".xy-matplotlib-canvas")).cursor === "crosshair",
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const canvas = document.querySelector(".xy-matplotlib-canvas");
+      const status = document.querySelector(".xy-matplotlib-status");
+      return {
+        cursor: canvas ? getComputedStyle(canvas).cursor : null,
+        cursorName: canvas?.dataset.xyCursor ?? null,
+        status: status?.textContent ?? null,
+        statusName: status?.dataset.xyToolbarStatus ?? null,
+      };
+    });
+    throw new Error(`live status/cursor did not update: ${JSON.stringify(state)}`, {
+      cause: error,
+    });
+  }
   result.coords = await status.textContent();
   result.cursor = await canvas.evaluate((element) => getComputedStyle(element).cursor);
 

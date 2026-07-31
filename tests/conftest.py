@@ -10,8 +10,10 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +28,7 @@ RENDER_CALLS = (
     'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);',
     'xy.renderStandalone(document.getElementById("chart"), spec, buf);',
 )
+_BROWSER_PROBE_RUNNER = Path(__file__).with_name("browser_probe_runner.mjs")
 
 
 def probe_document(chart, probe: str, *, head: str = "") -> str:
@@ -77,7 +80,43 @@ class _BrowserUnavailable(RuntimeError):
     """The browser binary could not be executed at all — environmental."""
 
 
-def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
+@lru_cache(maxsize=1)
+def _playwright_node() -> tuple[str | None, str | None]:
+    """Return the Node driver and a cached local-toolchain error, if any."""
+
+    node = shutil.which("node")
+    if node is None:
+        return None, "node executable not found"
+    try:
+        probe = subprocess.run(
+            [node, "-e", "require.resolve('playwright')"],
+            cwd=_BROWSER_PROBE_RUNNER.parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"could not inspect the Playwright driver: {exc}"
+    if probe.returncode:
+        detail = (probe.stderr or probe.stdout).strip()
+        return None, f"Playwright is not installed for {node}: {detail or probe.returncode}"
+    return node, None
+
+
+def _failure_detail(output: str, *, limit: int = 4_000) -> str:
+    """Keep the useful beginning and end of a bounded subprocess diagnostic."""
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) > 18:
+        lines = [*lines[:12], "...", *lines[-6:]]
+    return " / ".join(lines)[:limit]
+
+
+def _dump_dom(
+    chromium: str,
+    page: Path,
+    result_attribute: str,
+) -> tuple[str | None, str | None]:
     """One headless render pass.
 
     Returns ``(dom, failure)``; exactly one is set. A ``failure`` string means
@@ -86,44 +125,32 @@ def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
     allowed to degrade into a skip. Only a browser that cannot be spawned at all
     raises `_BrowserUnavailable`.
     """
-    profile = page.parent / ".xy-chromium-profile"
+    browser = Path(chromium)
+    if not browser.is_file() or not os.access(browser, os.X_OK):
+        raise _BrowserUnavailable(f"Chromium executable is missing or not executable: {chromium}")
+    node, driver_error = _playwright_node()
+    if node is None:
+        raise _BrowserUnavailable(driver_error or "Playwright Node driver unavailable")
     try:
         proc = subprocess.run(
             [
+                node,
+                str(_BROWSER_PROBE_RUNNER),
                 chromium,
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                f"--user-data-dir={profile}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-background-networking",
-                "--disable-component-update",
-                "--disable-default-apps",
-                "--disable-extensions",
-                "--disable-sync",
-                "--metrics-recording-only",
-                "--mute-audio",
-                "--allow-file-access-from-files",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--hide-scrollbars",
-                "--window-size=640,480",
-                "--virtual-time-budget=8000",
-                "--dump-dom",
                 page.as_uri(),
+                result_attribute,
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=30,
         )
     except subprocess.TimeoutExpired:
-        return None, "chromium timed out after 120s"
+        return None, "Playwright Chromium probe timed out after 30s"
     except OSError as exc:  # binary vanished, not executable, exec format error
         raise _BrowserUnavailable(str(exc)) from exc
     if proc.returncode != 0:
-        tail = " / ".join((proc.stderr or "").strip().splitlines()[-3:])
-        return None, f"chromium exited {proc.returncode}: {tail or '(no stderr)'}"
+        detail = _failure_detail(proc.stderr or proc.stdout)
+        return None, f"chromium exited {proc.returncode}: {detail or '(no diagnostic)'}"
     return proc.stdout, None
 
 
@@ -147,15 +174,15 @@ def run_browser_probe(
     ``XY_REQUIRE_BROWSER=1`` turns even that into a failure so CI cannot pass by
     absence.
 
-    Headless probes on shared runners have transient warm-up misses (virtual
-    time / GL init) that a relaunch clears; a genuine regression fails every
-    attempt with a *value* mismatch, which we surface — never retry away.
+    Headless probes on shared runners can have transient process/GL startup
+    misses that a relaunch clears; a genuine regression fails every attempt
+    with a value mismatch, which we surface — never retry away.
     """
     page.write_text(document, encoding="utf-8")
     last: str | None = None
     for _ in range(3):
         try:
-            dom, failure = _dump_dom(chromium, page)
+            dom, failure = _dump_dom(chromium, page, result_attribute)
         except _BrowserUnavailable as exc:
             if os.environ.get("XY_REQUIRE_BROWSER"):
                 pytest.fail(
