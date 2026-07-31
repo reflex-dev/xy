@@ -14,7 +14,7 @@
 //   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, v?, mid, m}
 //   in:   payload {fig, version, spec, buffers} — buffers are ArrayBuffers
 //         msg {fig, version?, mid?, message, buffers} — replies carry our mid
-//         err {fig, error}
+//         err {fig, error, resync?}
 // A subscribe/reconnect starts a version epoch: no msg is applied until its
 // authoritative payload arrives. Replies and append pushes carry versions;
 // view-state-only pushes remain versionless.
@@ -428,7 +428,9 @@ export function XYChart(props) {
     };
 
     const emitMessage = (m) => {
-      if (awaitingPayload) return;
+      // socket.io flushes its sendBuffer before firing `connect`; never queue
+      // an old-epoch request while the namespace is disconnected.
+      if (awaitingPayload || !socket.connected) return;
       const envelope = { fig: token, mid, m };
       if (payloadVersion !== null) envelope.v = payloadVersion;
       socket.emit("msg", envelope);
@@ -527,7 +529,7 @@ export function XYChart(props) {
           dispatchView(m);
           return;
         }
-        if (awaitingPayload) return;
+        if (awaitingPayload || !socket.connected) return;
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
           m = withSelectionSeq(m);
           lastSelect = m.type === "select_clear" ? null : m;
@@ -659,11 +661,16 @@ export function XYChart(props) {
       }
       const wireVersion = Number.isInteger(data.version) ? data.version : null;
       if (wireVersion !== null && payloadVersion !== null) {
-        const expected = message.type === "append" && data.mid == null
+        const isAppendPush = message.type === "append" && data.mid == null;
+        const expected = isAppendPush
           ? payloadVersion + 1
           : payloadVersion;
         if (wireVersion !== expected) {
           discardPendingReply(message);
+          // A forward gap means at least one append was not applied (for
+          // example, an oversized binary push). Re-prime from a full payload
+          // instead of rejecting every subsequent append forever.
+          if (isAppendPush && wireVersion > expected && socket.connected) subscribe();
           return;
         }
       }
@@ -723,11 +730,20 @@ export function XYChart(props) {
     const onErr = (data) => {
       if (destroyed || !data || data.fig !== token) return;
       console.warn(`xy: ${data.error} (fig ${data.fig})`);
+      if (data.resync === true && socket.connected) subscribe();
+    };
+
+    const onDisconnect = () => {
+      payloadVersion = null;
+      awaitingPayload = true;
+      clickInputs.clear();
+      restoreSelectionSeqs.clear();
     };
 
     socket.on("payload", onPayload);
     socket.on("msg", onMsg);
     socket.on("err", onErr);
+    socket.on("disconnect", onDisconnect);
     // Resubscribe on every (re)connect: after the app plane reconnects the
     // shared manager, rooms are gone and — on another backend node — the
     // figure itself may need a state-driven rebuild. `sub` triggers both.
@@ -769,6 +785,7 @@ export function XYChart(props) {
       socket.off("payload", onPayload);
       socket.off("msg", onMsg);
       socket.off("err", onErr);
+      socket.off("disconnect", onDisconnect);
       socket.off("connect", subscribe);
       const remaining = (subCounts.get(token) || 1) - 1;
       if (remaining <= 0) {

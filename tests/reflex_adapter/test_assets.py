@@ -72,8 +72,11 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "awaitingPayload = true" in subscribe
     assert "clickInputs.clear()" in subscribe
     assert "restoreSelectionSeqs.clear()" in subscribe
-    assert "if (awaitingPayload) return" in jsx
+    assert "awaitingPayload || !socket.connected" in jsx
     assert "awaitingPayload = false" in jsx
+    assert 'socket.on("disconnect", onDisconnect)' in jsx
+    assert "wireVersion > expected && socket.connected" in jsx
+    assert "data.resync === true && socket.connected" in jsx
     # Rejected replies and accepted generation advances both reclaim pending
     # synthetic click/selection bookkeeping.
     assert "discardPendingReply(message)" in jsx

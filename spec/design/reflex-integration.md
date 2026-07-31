@@ -149,7 +149,7 @@ client -> server (namespace /_xy)
 server -> client
   payload {fig, version, spec, buffers}   first paint / full refresh
   msg     {fig, version?, mid?, message, buffers}   reply or push (no mid)
-  err     {fig, error}                    unknown/foreign token, rebuild failed
+  err     {fig, error, resync?}           failure; resync requests a new `sub`
 ```
 
 `mid` is a per-mount id: several charts on a page share the socket, replies
@@ -363,10 +363,11 @@ transparently rebuild after a sweep, so the TTL bounds large figure/data
 memory, not correctness. The registry retains only an evicted token's scalar
 version so a rebuild on the same worker remains monotonic for a still-mounted
 client; the figure and its data buffers are released. If an interaction is the
-first touch after eviction, the namespace rebuilds, sends that mount a
-replacement payload, and drops the old-generation interaction for the client
-to retry. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
-publishes and always ships the latest payload.
+first touch after eviction, the namespace rebuilds, sends every subscribed
+mount a replacement payload room-wide, and drops the old-generation
+interaction for the triggering client to retry. Rapid re-publishes coalesce:
+an un-started broadcast absorbs newer publishes and always ships the latest
+payload.
 
 ## 4. Updates and streaming
 
@@ -398,7 +399,9 @@ publishes and always ships the latest payload.
   push carries the post-append figure version; the client applies it only when
   it is the next version in the active payload epoch, using the existing
   follow policy (refit at home, slide when pinned to the live edge, hold when
-  inspecting history).
+  inspecting history). A forward version gap triggers a new `sub`; an
+  over-attachment-limit append emits `err {resync: true}` for the same full-
+  payload recovery instead of leaving the client permanently behind.
 - **Interaction** (pan/zoom/hover/select): `msg` round-trips into the
   kernel, exactly the anywidget flow — tier updates, density re-bins, exact
   f64 pick rows, selection masks as binary buffers.
@@ -608,6 +611,9 @@ version. This prevents an in-flight pick or selection from resolving in a
 replacement coordinate space. On subscribe/reconnect, the client waits for
 the new payload before accepting messages and treats it as a fresh comparison
 epoch, so a different worker may safely begin again at version 1.
+While disconnected, the wrapper does not enqueue kernel messages: socket.io
+flushes its send buffer before its `connect` callback, which would otherwise
+send old-epoch requests ahead of the resetting `sub`.
 
 ## 6. Latency budget
 

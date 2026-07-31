@@ -22,11 +22,11 @@ Events, client -> server:
 Events, server -> client:
     payload {fig, version, spec, buffers}   first paint / full refresh
     msg     {fig, version?, mid?, message, buffers}  reply or room-wide push
-    err     {fig, error}                    token unknown/foreign, rebuild failed
+    err     {fig, error, resync?}            failure; resync requests a new `sub`
 
-Each payload begins an authoritative client comparison epoch. Replies and
-append pushes carry that figure version; view-state-only pushes may omit it.
-Clients gate `msg` events until the epoch's payload arrives, then reject
+Each successful `sub` begins an authoritative client comparison epoch. Replies
+and append pushes carry that figure version; view-state-only pushes may omit
+it. Clients gate `msg` events until the epoch's payload arrives, then reject
 versions outside that epoch (including stale interaction replies).
 
 Every inbound handler is total: malformed input drops or answers `err`,
@@ -202,9 +202,10 @@ class XYNamespace(AsyncNamespace):
             return
         if rebuilt:
             # The request was made against the evicted generation. Re-prime
-            # this still-connected mount and let it retry in the new version;
-            # never resolve old coordinates against the rebuilt figure.
-            await self._send_payload(sid, token, entry)
+            # every still-connected mount and let it retry in the new version;
+            # the rebuilt generation is token-global, not SID-local. Never
+            # resolve old coordinates against the rebuilt figure.
+            await self.broadcast_payload(token, entry)
             return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
@@ -257,10 +258,17 @@ class XYNamespace(AsyncNamespace):
         if len(wire_buffers) > _MAX_WIRE_ATTACHMENTS:
             # This packet goes to a room: one oversized push would close every
             # subscriber's shared websocket at once (see _MAX_WIRE_ATTACHMENTS).
-            # A push is droppable, so fail loud instead of emitting it.
+            # Fail loud instead of emitting it. Versioned append pushes also
+            # ask clients to resubscribe because the figure already advanced.
             await self.emit(
                 "err",
-                {"fig": token, "error": "push exceeds wire attachment limit"},
+                {
+                    "fig": token,
+                    "error": "push exceeds wire attachment limit",
+                    # A versioned push is an append: the figure already
+                    # advanced, so clients need an authoritative full payload.
+                    "resync": version is not None,
+                },
                 room=self._room(token),
             )
             return

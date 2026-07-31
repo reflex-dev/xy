@@ -176,11 +176,14 @@ def test_broadcast_over_attachment_limit_answers_err_not_msg(_fresh_registry):
             collector = Collector(client)
             await client.emit("sub", {"fig": token, "px": 640}, namespace="/_xy")
             await collector.next(collector.payloads)
-            await namespace.broadcast_message(token, {"kind": "append"}, [b"\x00" * 4] * 11)
+            await namespace.broadcast_message(
+                token, {"kind": "append"}, [b"\x00" * 4] * 11, version=2
+            )
             error = await collector.next(collector.errors)
             await client.disconnect()
         assert error["fig"] == token
         assert "attachment" in error["error"]
+        assert error["resync"] is True
         assert collector.messages.empty()
 
     run(main())
@@ -469,39 +472,49 @@ def test_interaction_after_ttl_rebuild_receives_new_payload(_fresh_registry):
         state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
         registry.publish(state_token, make_figure(16), broadcast=False)
         async with data_plane_server(rebuild=rebuild) as (url, _):
-            client = await connect_client(url)
-            collector = Collector(client)
-            await client.emit("sub", {"fig": state_token, "mid": "m1"}, namespace="/_xy")
-            first = await collector.next(collector.payloads)
-            assert first["version"] == 1
+            first_client = await connect_client(url)
+            second_client = await connect_client(url)
+            first_collector = Collector(first_client)
+            second_collector = Collector(second_client)
+            await first_client.emit(
+                "sub", {"fig": state_token, "mid": "m1"}, namespace="/_xy"
+            )
+            await second_client.emit(
+                "sub", {"fig": state_token, "mid": "m2"}, namespace="/_xy"
+            )
+            assert (await first_collector.next(first_collector.payloads))["version"] == 1
+            assert (await second_collector.next(second_collector.payloads))["version"] == 1
 
             registry.append(state_token, x=[2.0], y=[6.0])
-            append = await collector.next(collector.messages)
-            assert append["version"] == 2
+            assert (await first_collector.next(first_collector.messages))["version"] == 2
+            assert (await second_collector.next(second_collector.messages))["version"] == 2
             evicted = registry.get(state_token)
             assert registry.sweep(now=evicted.last_access + 1_000_000.0) == [state_token]
 
             message = {"type": "pick", "trace": 0, "index": 2, "seq": 31}
-            await client.emit(
+            await first_client.emit(
                 "msg",
                 {"fig": state_token, "mid": "m1", "v": 2, "m": message},
                 namespace="/_xy",
             )
-            replacement = await collector.next(collector.payloads)
-            assert replacement["version"] == 3
+            first_replacement = await first_collector.next(first_collector.payloads)
+            second_replacement = await second_collector.next(second_collector.payloads)
+            assert first_replacement["version"] == 3
+            assert second_replacement["version"] == 3
             with pytest.raises(asyncio.TimeoutError):
-                await Collector.next(collector.messages, timeout=0.15)
+                await Collector.next(first_collector.messages, timeout=0.15)
 
             message["seq"] = 32
-            await client.emit(
+            await second_client.emit(
                 "msg",
-                {"fig": state_token, "mid": "m1", "v": 3, "m": message},
+                {"fig": state_token, "mid": "m2", "v": 3, "m": message},
                 namespace="/_xy",
             )
-            reply = await collector.next(collector.messages)
+            reply = await second_collector.next(second_collector.messages)
             assert reply["version"] == 3
             assert reply["message"]["seq"] == 32
-            await client.disconnect()
+            await first_client.disconnect()
+            await second_client.disconnect()
 
         assert rebuilt == [state_token]
 
