@@ -317,10 +317,10 @@ class ChromiumSession:
             websocket.settimeout(remaining)
             try:
                 reply = json.loads(websocket.recv_text(deadline=deadline))
-            except OSError:
-                # A receive timeout can leave only part of a frame buffered.
-                # Fail closed instead of letting another CDP call resume an
-                # indeterminate stream.
+            except BaseException:
+                # Any receive or decode failure can leave only part of a frame
+                # consumed. Fail closed instead of letting another CDP call
+                # resume an indeterminate stream.
                 self._invalidate_websocket()
                 raise
             if reply.get("id") == call_id:
@@ -349,7 +349,7 @@ class ChromiumSession:
             websocket.settimeout(remaining)
             try:
                 reply = json.loads(websocket.recv_text(deadline=deadline))
-            except OSError:
+            except BaseException:
                 self._invalidate_websocket()
                 raise
             if reply.get("method"):

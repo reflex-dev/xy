@@ -377,6 +377,105 @@ def test_cdp_call_closes_and_invalidates_websocket_when_send_fails() -> None:
     assert websocket.send_calls == 1
 
 
+@pytest.mark.parametrize(
+    "received, expected_exception",
+    [
+        pytest.param(
+            _chromium.ChromiumError("websocket closed by browser"),
+            _chromium.ChromiumError,
+            id="closed-stream",
+        ),
+        pytest.param("{invalid json", json.JSONDecodeError, id="invalid-json"),
+    ],
+)
+def test_cdp_call_invalidates_websocket_on_receive_or_decode_failure(
+    received: BaseException | str,
+    expected_exception: type[BaseException],
+) -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.aborted = False
+            self.send_calls = 0
+
+        def settimeout(self, _timeout_s: float) -> None:
+            pass
+
+        def send_text(self, _message: str) -> None:
+            self.send_calls += 1
+
+        def recv_text(self, *, deadline: float) -> str:
+            assert deadline > 0
+            if isinstance(received, BaseException):
+                raise received
+            return received
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    websocket = FakeWebSocket()
+    session = object.__new__(_chromium.ChromiumSession)
+    session._ws = websocket
+    session._next_id = 0
+    session._events = {}
+
+    with pytest.raises(expected_exception):
+        session._call("Page.navigate", timeout_s=5.0)
+
+    assert websocket.aborted
+    assert session._ws is None
+    with pytest.raises(_chromium.ChromiumError, match="no longer usable"):
+        session._call("Page.navigate", timeout_s=5.0)
+    assert websocket.send_calls == 1
+
+
+@pytest.mark.parametrize(
+    "received, expected_exception",
+    [
+        pytest.param(
+            _chromium.ChromiumError("websocket closed mid-frame"),
+            _chromium.ChromiumError,
+            id="closed-stream",
+        ),
+        pytest.param("{invalid json", json.JSONDecodeError, id="invalid-json"),
+    ],
+)
+def test_cdp_event_wait_invalidates_websocket_on_receive_or_decode_failure(
+    received: BaseException | str,
+    expected_exception: type[BaseException],
+) -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.aborted = False
+            self.recv_calls = 0
+
+        def settimeout(self, _timeout_s: float) -> None:
+            pass
+
+        def recv_text(self, *, deadline: float) -> str:
+            assert deadline > 0
+            self.recv_calls += 1
+            if isinstance(received, BaseException):
+                raise received
+            return received
+
+        def abort(self) -> None:
+            self.aborted = True
+
+    websocket = FakeWebSocket()
+    session = object.__new__(_chromium.ChromiumSession)
+    session._ws = websocket
+    session._events = {}
+
+    with pytest.raises(expected_exception):
+        session._wait_event("Page.loadEventFired", session_id="page", timeout_s=5.0)
+
+    assert websocket.aborted
+    assert session._ws is None
+    with pytest.raises(_chromium.ChromiumError, match="no longer usable"):
+        session._wait_event("Page.loadEventFired", session_id="page", timeout_s=5.0)
+    assert websocket.recv_calls == 1
+
+
 def test_page_session_aborts_browser_when_target_creation_is_ambiguous(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

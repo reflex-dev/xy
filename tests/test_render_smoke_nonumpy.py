@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -10,17 +11,60 @@ import pytest
 def _load_render_smoke():
     root = Path(__file__).resolve().parents[1]
     scripts = root / "scripts"
-    sys.path.insert(0, str(scripts))
     path = scripts / "render_smoke_nonumpy.py"
     spec = importlib.util.spec_from_file_location("render_smoke_nonumpy", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    original_path = sys.path[:]
+    missing = object()
+    original_modules = {name: sys.modules.get(name, missing) for name in (spec.name, "_protocol")}
+    try:
+        sys.path.insert(0, str(scripts))
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = original_path
+        for name, original in original_modules.items():
+            if original is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original  # type: ignore[assignment]
 
 
 render_smoke = _load_render_smoke()
+
+
+def test_load_render_smoke_restores_preexisting_import_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_path = sys.path[:]
+    previous_smoke = ModuleType("render_smoke_nonumpy")
+    previous_protocol = ModuleType("_protocol")
+    previous_protocol.PROTOCOL_VERSION = render_smoke.PROTOCOL_VERSION
+    monkeypatch.setitem(sys.modules, "render_smoke_nonumpy", previous_smoke)
+    monkeypatch.setitem(sys.modules, "_protocol", previous_protocol)
+
+    loaded = _load_render_smoke()
+
+    assert loaded is not previous_smoke
+    assert sys.path == original_path
+    assert sys.modules["render_smoke_nonumpy"] is previous_smoke
+    assert sys.modules["_protocol"] is previous_protocol
+
+
+def test_load_render_smoke_removes_transient_import_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_path = sys.path[:]
+    monkeypatch.delitem(sys.modules, "render_smoke_nonumpy", raising=False)
+    monkeypatch.delitem(sys.modules, "_protocol", raising=False)
+
+    _load_render_smoke()
+
+    assert sys.path == original_path
+    assert "render_smoke_nonumpy" not in sys.modules
+    assert "_protocol" not in sys.modules
 
 
 class _Clock:
