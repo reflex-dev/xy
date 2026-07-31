@@ -80,8 +80,17 @@ class _WebSocket:
     def settimeout(self, timeout_s: float | None) -> None:
         self._sock.settimeout(timeout_s)
 
-    def _recv_exact(self, n: int) -> bytes:
+    def _set_deadline_timeout(self, deadline: float | None) -> None:
+        if deadline is None:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("websocket receive deadline expired")
+        self._sock.settimeout(remaining)
+
+    def _recv_exact(self, n: int, *, deadline: float | None = None) -> bytes:
         while len(self._buffer) < n:
+            self._set_deadline_timeout(deadline)
             chunk = self._sock.recv(65536)
             if not chunk:
                 raise ChromiumError("websocket closed mid-frame")
@@ -105,23 +114,27 @@ class _WebSocket:
         header += mask
         self._sock.sendall(bytes(header) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
-    def recv_text(self) -> str:
+    def recv_text(self, *, deadline: float | None = None) -> str:
         """Next complete text message (transparently answers pings)."""
         message = bytearray()
         while True:
-            b0, b1 = self._recv_exact(2)
+            b0, b1 = self._recv_exact(2, deadline=deadline)
             opcode, fin = b0 & 0x0F, b0 & 0x80
             length = b1 & 0x7F
             if length == 126:
-                length = int.from_bytes(self._recv_exact(2), "big")
+                length = int.from_bytes(self._recv_exact(2, deadline=deadline), "big")
             elif length == 127:
-                length = int.from_bytes(self._recv_exact(8), "big")
+                length = int.from_bytes(self._recv_exact(8, deadline=deadline), "big")
             if b1 & 0x80:  # masked server frame: illegal, but drain it
-                mask = self._recv_exact(4)
-                data = bytes(b ^ mask[i % 4] for i, b in enumerate(self._recv_exact(length)))
+                mask = self._recv_exact(4, deadline=deadline)
+                data = bytes(
+                    b ^ mask[i % 4]
+                    for i, b in enumerate(self._recv_exact(length, deadline=deadline))
+                )
             else:
-                data = self._recv_exact(length)
+                data = self._recv_exact(length, deadline=deadline)
             if opcode == 0x9:  # ping -> pong
+                self._set_deadline_timeout(deadline)
                 self._sock.sendall(bytes([0x8A, 0x80]) + secrets.token_bytes(4))
                 continue
             if opcode == 0x8:
@@ -134,6 +147,10 @@ class _WebSocket:
     def close(self) -> None:
         with contextlib.suppress(OSError):
             self._sock.sendall(bytes([0x88, 0x80]) + secrets.token_bytes(4))
+        self._sock.close()
+
+    def abort(self) -> None:
+        """Close immediately without writing another frame to a broken stream."""
         self._sock.close()
 
 
@@ -151,6 +168,7 @@ class ChromiumSession:
         if launch_timeout_s <= 0:
             raise ChromiumError("Chromium launch timeout must be positive")
         deadline = time.monotonic() + launch_timeout_s
+        self._ws: _WebSocket | None = None
         # ignore_cleanup_errors covers the GC-finalizer path; close() does its
         # own retrying removal (see _cleanup_tmp) for the common `with` path.
         self._tmp = tempfile.TemporaryDirectory(prefix="xy-export-", ignore_cleanup_errors=True)
@@ -197,48 +215,65 @@ class ChromiumSession:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ChromiumError("Chromium did not connect to DevTools in time")
-            self._ws: _WebSocket | None = _WebSocket(ws_url, timeout_s=remaining)
+            self._ws = _WebSocket(ws_url, timeout_s=remaining)
             self._next_id = 0
             self._events: dict[tuple[Optional[str], str], list[dict[str, Any]]] = {}
         except BaseException:
-            self._cleanup_failed_init()
+            self._cleanup_failed_init(deadline)
             raise
 
-    def _cleanup_failed_init(self) -> None:
-        """Release every resource acquired before ``__init__`` raised."""
-        websocket = getattr(self, "_ws", None)
+    def _invalidate_websocket(self) -> None:
+        websocket = self._ws
+        self._ws = None
         if websocket is not None:
             with contextlib.suppress(Exception):
-                websocket.close()
+                websocket.abort()
 
+    def _stop_process(self, deadline: float) -> None:
+        """Stop and reap Chromium without waiting past ``deadline``."""
         proc = getattr(self, "_proc", None)
-        if proc is not None:
-            try:
-                running = proc.poll() is None
-            except Exception:
-                running = True
-            if running:
-                with contextlib.suppress(Exception):
-                    proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(Exception):
-                    proc.kill()
-                with contextlib.suppress(Exception):
-                    proc.wait(timeout=10)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    proc.kill()
-                with contextlib.suppress(Exception):
-                    proc.wait(timeout=10)
+        if proc is None:
+            return
+
+        def wait_timeout() -> float:
+            return min(10.0, max(0.0, deadline - time.monotonic()))
+
+        try:
+            running = proc.poll() is None
+        except Exception:
+            running = True
+        if running:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+        try:
+            proc.wait(timeout=wait_timeout())
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=wait_timeout())
+        except Exception:
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=wait_timeout())
+
+    def _abort_session(self, deadline: float) -> None:
+        """Make an ambiguously mutated CDP session impossible to reuse."""
+        self._invalidate_websocket()
+        self._stop_process(deadline)
+
+    def _cleanup_failed_init(self, deadline: float) -> None:
+        """Release every resource acquired before ``__init__`` raised."""
+        self._invalidate_websocket()
+        self._stop_process(deadline)
 
         stderr_file = getattr(self, "_stderr_file", None)
         if stderr_file is not None:
             with contextlib.suppress(Exception):
                 stderr_file.close()
         with contextlib.suppress(Exception):
-            self._cleanup_tmp()
+            self._cleanup_tmp(deadline=deadline)
 
     def _call(
         self,
@@ -267,16 +302,21 @@ class ChromiumSession:
             # sendall() may have written only part of a WebSocket frame.  The
             # stream cannot be resynchronized, so do not let later CDP calls
             # reuse it.
-            self._ws = None
-            with contextlib.suppress(Exception):
-                websocket.close()
+            self._invalidate_websocket()
             raise
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ChromiumError(f"timeout waiting for {method}")
             websocket.settimeout(remaining)
-            reply = json.loads(websocket.recv_text())
+            try:
+                reply = json.loads(websocket.recv_text(deadline=deadline))
+            except OSError:
+                # A receive timeout can leave only part of a frame buffered.
+                # Fail closed instead of letting another CDP call resume an
+                # indeterminate stream.
+                self._invalidate_websocket()
+                raise
             if reply.get("id") == call_id:
                 if "error" in reply:
                     raise ChromiumError(f"{method}: {reply['error']}")
@@ -301,7 +341,11 @@ class ChromiumSession:
             if remaining <= 0:
                 raise ChromiumError(f"timeout waiting for event {method}")
             websocket.settimeout(remaining)
-            reply = json.loads(websocket.recv_text())
+            try:
+                reply = json.loads(websocket.recv_text(deadline=deadline))
+            except OSError:
+                self._invalidate_websocket()
+                raise
             if reply.get("method"):
                 self._events.setdefault((reply.get("sessionId"), reply["method"]), []).append(
                     reply.get("params", {})
@@ -317,7 +361,18 @@ class ChromiumSession:
                 raise ChromiumError("timeout opening Chromium page session")
             return value
 
-        target = self._call("Target.createTarget", {"url": "about:blank"}, timeout_s=remaining())
+        try:
+            target = self._call(
+                "Target.createTarget",
+                {"url": "about:blank"},
+                timeout_s=remaining(),
+            )
+        except BaseException:
+            # The command may have reached Chromium even if its response did
+            # not reach us.  Without a target id the only safe cleanup is to
+            # stop the browser and make this session impossible to reuse.
+            self._abort_session(deadline)
+            raise
         target_id = target["targetId"]
         page_path = Path(self._tmp.name) / f"chart-{target_id[:8]}.html"
         try:
@@ -510,7 +565,7 @@ class ChromiumSession:
         self._stderr_file.close()
         self._cleanup_tmp()
 
-    def _cleanup_tmp(self) -> None:
+    def _cleanup_tmp(self, *, deadline: float | None = None) -> None:
         # Chromium's child processes (zygote/GPU) can keep flushing the profile
         # dir for a beat after the main process exits, so a bare rmtree races
         # them and dies with "Directory not empty". Retry the removal briefly,
@@ -518,7 +573,13 @@ class ChromiumSession:
         # under the OS temp dir and is disposable.
         for delay in (0.0, 0.1, 0.25, 0.5):
             if delay:
-                time.sleep(delay)
+                if deadline is None:
+                    time.sleep(delay)
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(delay, remaining))
             try:
                 shutil.rmtree(self._tmp.name)
                 break
