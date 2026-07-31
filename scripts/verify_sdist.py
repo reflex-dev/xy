@@ -26,6 +26,7 @@ REQUIRED_FILES = {
     "Cargo.toml",
     "LICENSE",
     "PKG-INFO",
+    "README.md",
     "SECURITY.md",
     "hatch_build.py",
     "pyproject.toml",
@@ -97,15 +98,25 @@ FORBIDDEN_PARTS = {
     "wheelhouse",
 }
 FORBIDDEN_SUFFIXES = {".dll", ".dylib", ".pyd", ".pyc", ".pyo", ".so", ".whl"}
-FORBIDDEN_TOP_LEVEL = {
-    ".github",
-    "Makefile",
-    "benchmarks",
-    "docs",
-    "examples",
-    "scripts",
-    "spec",
-    "tests",
+ALLOWED_TOP_LEVEL = {
+    # Hatchling force-includes the active VCS exclusion file so builds from the
+    # unpacked sdist preserve the source-selection rules.
+    ".gitignore",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "PKG-INFO",
+    "README.md",
+    "SECURITY.md",
+    "hatch_build.py",
+    "js",
+    "package-lock.json",
+    "package.json",
+    "pyproject.toml",
+    "python",
+    "src",
 }
 ROOT_RE = re.compile(r"^xy-\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
 
@@ -126,7 +137,12 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
             root = member_path.parts[0]
             roots.add(root)
             if member.isfile():
-                rel = "/".join(member_path.parts[1:])
+                relative_parts = member_path.parts[1:]
+                if not relative_parts:
+                    raise AssertionError(
+                        f"sdist top-level entry must be a directory: {member.name!r}"
+                    )
+                rel = "/".join(relative_parts)
                 if rel in files:
                     raise AssertionError(f"sdist contains duplicate file member: {rel}")
                 files.add(rel)
@@ -233,7 +249,7 @@ def verify_sdist(path: str) -> None:
     forbidden = sorted(
         name
         for name in files
-        if PurePosixPath(name).parts[0] in FORBIDDEN_TOP_LEVEL
+        if PurePosixPath(name).parts[0] not in ALLOWED_TOP_LEVEL
         or any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
         or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
     )

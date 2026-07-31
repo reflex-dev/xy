@@ -63,12 +63,15 @@ def _write_sdist(
     omit: Optional[set[str]] = None,
     extra: Optional[dict[str, bytes]] = None,
     replacements: Optional[dict[str, Union[bytes, str]]] = None,
+    root_file: bool = False,
 ) -> None:
     root = "xy-0.0.1"
     omit = omit or set()
     extra = extra or {}
     replacements = replacements or {}
     with tarfile.open(path, "w:gz") as tf:
+        if root_file:
+            _add_file(tf, root, b"not a directory")
         for name in sorted(verify_sdist.REQUIRED_FILES - omit):
             data = b""
             if name == "PKG-INFO" and pkg_info is not None:
@@ -94,6 +97,21 @@ def test_verify_sdist_accepts_required_source_shape(tmp_path: Path) -> None:
     _write_sdist(sdist)
 
     verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "root", [".github", "benchmarks", "docs", "examples", "scripts", "spec", "tests"]
+)
+def test_readme_does_not_reference_excluded_sdist_content(root: str) -> None:
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    relative_references = (
+        f"]({root}/",
+        f'href="{root}/',
+        f'src="{root}/',
+        f'srcset="{root}/',
+    )
+
+    assert not any(reference in readme for reference in relative_references)
 
 
 def test_verify_sdist_accepts_normalized_metadata_spacing(tmp_path: Path) -> None:
@@ -171,14 +189,19 @@ def test_verify_sdist_rejects_missing_static_bundle(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "name",
     [
+        ".agents/config.json",
+        ".binder/environment.yml",
         ".github/workflows/ci.yml",
+        "AGENTS.md",
         "Makefile",
         "benchmarks/bench.py",
         "docs/index.md",
         "examples/demo.ipynb",
+        "pr-assets/review.png",
         "scripts/verify_local.py",
         "spec/design-dossier.md",
         "tests/test_import.py",
+        "uv.lock",
     ],
 )
 def test_verify_sdist_rejects_repository_only_content(tmp_path: Path, name: str) -> None:
@@ -235,6 +258,14 @@ def test_verify_sdist_rejects_duplicate_file_member(tmp_path: Path) -> None:
     _write_sdist(sdist, extra={"LICENSE": b"duplicate"})
 
     with pytest.raises(AssertionError, match="duplicate file member"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_regular_file_at_distribution_root(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, root_file=True)
+
+    with pytest.raises(AssertionError, match="top-level entry must be a directory"):
         verify_sdist.verify_sdist(str(sdist))
 
 
