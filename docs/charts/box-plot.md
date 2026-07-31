@@ -1,6 +1,6 @@
 ---
 title: Box Plot in Python
-description: Box plot Python charts with xy — compare distributions across groups with quartiles, whiskers, and outliers in a fast, interactive boxplot that pans and zooms.
+description: Boxplot Python charts with xy. Compare distributions across groups with quartiles, whiskers, and outliers in a fast, interactive box and whisker plot.
 components:
   - xy.box_chart
 ---
@@ -204,8 +204,9 @@ Pass column names with `data=` instead of arrays when your data is a table.
 ### How do I make a box plot in Python?
 
 Pass a list of arrays to `xy.box(...)`, one per group, inside
-`xy.box_chart(...)` and render it. Quartiles, whiskers, and axes are computed
-for the whole box chart automatically.
+`xy.box_chart(...)` and render it. That is all a Python box and whisker plot
+needs: quartiles, whiskers, and axes are computed for the whole box chart
+automatically.
 
 ### How do I show outliers on a box plot?
 
