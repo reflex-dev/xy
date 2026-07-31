@@ -268,6 +268,37 @@ def test_coordinate_navigation_and_draggable_probes_change_live_state(
         assert result["navigation"][0]["transport"] == "widget"
 
 
+@pytest.mark.parametrize("engine", ["matplotlib", "xy"])
+def test_draggable_legend_records_its_visible_geometry_change(engine: str) -> None:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    from xy.backends.backend_xy import FigureCanvasXY, FigureManagerXY
+
+    figure = Figure()
+    if engine == "xy":
+        canvas = FigureCanvasXY(figure)
+        FigureManagerXY(canvas, 1)
+    else:
+        FigureCanvasAgg(figure)
+    axes = figure.subplots()
+    axes.plot([0, 1], [0, 1], label="line")
+    legend = axes.legend()
+    legend.set_draggable(True)
+
+    result = drive_behavior(
+        engine=engine,
+        requirements=("interactive",),
+        figures=[figure],
+        namespace={"legend": legend},
+    )
+
+    assert result["status"] == "passed", result["errors"]
+    record = result["draggables"][0]
+    assert record["geometry_changed"] is True
+    assert np.subtract(record["center_after"], record["center_before"]) == pytest.approx((23, 17))
+
+
 def test_unbounded_animation_uses_a_declared_bounded_final() -> None:
     from matplotlib.animation import FuncAnimation
     from matplotlib.backends.backend_agg import FigureCanvasAgg

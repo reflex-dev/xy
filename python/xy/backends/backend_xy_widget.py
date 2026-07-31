@@ -302,7 +302,18 @@ class FigureCanvasXYWidget(anywidget.AnyWidget):
             return
         dpi = float(canvas.figure.dpi)
         canvas.figure.set_size_inches(width / dpi, height / dpi, forward=False)
-        _process(ResizeEvent("resize_event", canvas))
+        event = ResizeEvent("resize_event", canvas)
+        axes = list(canvas.figure.axes)
+        event.inaxes = axes[0] if axes else None
+        bbox = event.inaxes.bbox if event.inaxes is not None else canvas.figure.bbox
+        event.x = float(bbox.x0 + bbox.x1) / 2.0
+        event.y = float(bbox.y0 + bbox.y1) / 2.0
+        event.xdata = event.ydata = None
+        if event.inaxes is not None:
+            event.xdata, event.ydata = event.inaxes.transData.inverted().transform(
+                (event.x, event.y)
+            )
+        _process(event)
         canvas.draw_idle()
         # Directly constructed widgets are not cached on the canvas and thus
         # do not receive the canvas draw hook.

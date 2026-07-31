@@ -907,6 +907,7 @@ def drive_draggable_artists(figure: object, *, engine: str) -> list[dict[str, An
         try:
             start = _artist_drag_center(artist, canvas)
             end = (start[0] + 23.0, start[1] + 17.0)
+            record["center_before"] = [start[0], start[1]]
             before = figure_state_sha256(figure)
             record["state_before_sha256"] = before
             for event_name, xy, raw_buttons, widget_buttons in (
@@ -932,10 +933,19 @@ def drive_draggable_artists(figure: object, *, engine: str) -> list[dict[str, An
                         f"{event_name} failed: {event['failure']['exception_type']}: "
                         f"{event['failure']['message']}"
                     )
+            if callable(draw):
+                draw()
+            center_after = _artist_drag_center(artist, canvas)
             after = figure_state_sha256(figure)
+            geometry_changed = not (
+                math.isclose(start[0], center_after[0], abs_tol=1e-6)
+                and math.isclose(start[1], center_after[1], abs_tol=1e-6)
+            )
+            record["center_after"] = [center_after[0], center_after[1]]
+            record["geometry_changed"] = geometry_changed
             record["state_after_sha256"] = after
-            record["state_changed"] = before != after
-            if before == after:
+            record["state_changed"] = before != after or geometry_changed
+            if not record["state_changed"]:
                 raise RuntimeError("drag gesture did not change visible artist state")
         except BaseException as exc:
             record["failure"] = _exception_record(

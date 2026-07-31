@@ -125,7 +125,10 @@ def test_widget_dispatches_genuine_matplotlib_events_with_data_coordinates() -> 
     key = seen["key_press_event"]
     assert isinstance(key, KeyEvent)
     assert (key.x, key.y, key.key) == (100, 50, "ctrl+a")
-    assert isinstance(seen["resize_event"], ResizeEvent)
+    resize = seen["resize_event"]
+    assert isinstance(resize, ResizeEvent)
+    assert resize.inaxes is axes
+    assert (resize.xdata, resize.ydata) == pytest.approx((1, 0))
     assert tuple(figure.bbox.size) == pytest.approx((300, 150))
     assert isinstance(seen["close_event"], CloseEvent)
 
