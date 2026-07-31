@@ -23,11 +23,19 @@ _THEME_STYLE_KEYS = {
 
 def test_static_benchmark_export_uses_shared_theme() -> None:
     rows = {("xy", 10_000): {"status": "ok", "visible_complete_ms": 71}}
-    spec, _ = build(rows, [10_000], ["xy"], "time", color_scheme="dark").figure().build_payload()
-    style = spec["dom"]["style"]
-    assert {
-        token: style[style_key] for token, style_key in _THEME_STYLE_KEYS.items()
-    } == BENCHMARK_DARK_THEME
+    for color_scheme, expected_theme in (
+        ("light", BENCHMARK_LIGHT_THEME),
+        ("dark", BENCHMARK_DARK_THEME),
+    ):
+        spec, _ = (
+            build(rows, [10_000], ["xy"], "time", color_scheme=color_scheme)
+            .figure()
+            .build_payload()
+        )
+        style = spec["dom"]["style"]
+        assert {
+            token: style[style_key] for token, style_key in _THEME_STYLE_KEYS.items()
+        } == expected_theme
 
 
 def test_live_benchmark_theme_derives_both_color_schemes() -> None:

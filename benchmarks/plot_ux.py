@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import xy
-from xy._benchmark_theme import BENCHMARK_DARK_THEME
+from xy._benchmark_theme import BENCHMARK_DARK_THEME, BENCHMARK_LIGHT_THEME
 
 GIB = 2**30
 
@@ -151,11 +151,11 @@ def build(
         domain = (0.0, 5.8)
 
     decades = [1e4, 1e5, 1e6, 1e7, 1e8]
-    theme = [xy.theme(**BENCHMARK_DARK_THEME)] if color_scheme == "dark" else []
+    theme = BENCHMARK_DARK_THEME if color_scheme == "dark" else BENCHMARK_LIGHT_THEME
     return xy.line_chart(
         *marks,
         *notes,
-        *theme,
+        xy.theme(**theme),
         xy.legend(show=True, loc="upper left"),
         xy.modebar(show=False),
         xy.tooltip(format={"y": ".3f"}),
