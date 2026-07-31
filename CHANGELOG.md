@@ -9,6 +9,12 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Expanded the stable browser styling contract from 29 to 48 DOM slots so CSS,
+  Tailwind utilities, `class_names`, and `styles` can independently reach
+  Cartesian axis lines/ticks/gesture bands, the annotation canvas, colorbar
+  extensions/contour lines/minor ticks, and every visible modebar part,
+  including its draggable grip, menus, icons, labels, indicators, separators,
+  and history controls.
 - Completed the phase-6/7 polar depth surface: `xy.polar_chart` now admits
   heatmap, contour, and error-bar traces alongside line/scatter/area/bar; the
   heatmap uses a fragment-stage polar inverse in the browser and the matching

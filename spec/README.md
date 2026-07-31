@@ -107,6 +107,9 @@ Release bar, contribution rules, and audit trail.
 - [`tailwind-customizability-audit-2026-07-26.md`](process/tailwind-customizability-audit-2026-07-26.md)
   — Tailwind source discovery, cascade ownership, live updates, slot coverage,
   production-browser matrix, and remaining browser boundaries.
+- [`css-tailwind-surface-audit-2026-07-30.md`](process/css-tailwind-surface-audit-2026-07-30.md)
+  — component-by-component DOM/canvas audit, granular modebar/colorbar/axis
+  slots, matched browser evidence, and the CSS/Tailwind ownership boundary.
 
 ## assets/
 

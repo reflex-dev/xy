@@ -102,6 +102,50 @@ _FONT_PROBE = """
   }
 """
 
+_GRANULAR_CHROME_SLOTS = (
+    "annotation_layer",
+    "colorbar_extension",
+    "colorbar_line",
+    "colorbar_minor_tick",
+    "modebar_drag_handle",
+    "modebar_control_group",
+    "modebar_separator",
+    "modebar_icon",
+    "modebar_zoom_value",
+    "modebar_indicator",
+    "modebar_selection_icon",
+    "modebar_menu",
+    "modebar_menu_separator",
+    "modebar_menu_icon",
+    "modebar_menu_label",
+    "modebar_history_controls",
+    "axis_band",
+    "axis_line",
+    "tick_mark",
+)
+_GRANULAR_SLOT_CLASSES = {
+    slot: f"xy-tailwind-{slot.replace('_', '-')}" for slot in _GRANULAR_CHROME_SLOTS
+}
+_GRANULAR_SLOT_LAYERS = (
+    "@layer base, components, utilities;\n@layer utilities {\n"
+    + "\n".join(
+        f"  .{class_name} {{ --xy-probe-slot: {slot}; }}"
+        for slot, class_name in _GRANULAR_SLOT_CLASSES.items()
+    )
+    + """
+  .xy-tailwind-annotation-layer { opacity: .73; }
+  .xy-tailwind-colorbar-extension { fill: rgb(249, 115, 22); }
+  .xy-tailwind-colorbar-line { border-color: rgb(6, 182, 212); }
+  .xy-tailwind-colorbar-minor-tick { border-color: rgb(139, 92, 246); }
+  .xy-tailwind-modebar-drag-handle { background: rgb(236, 72, 153); }
+  .xy-tailwind-modebar-menu-label { font-weight: 800; }
+  .xy-tailwind-axis-band { cursor: crosshair; }
+  .xy-tailwind-axis-line { background: rgb(220, 38, 38); }
+  .xy-tailwind-tick-mark { background: rgb(22, 163, 74); }
+}
+"""
+)
+
 
 def test_tailwind_root_font_utilities_and_explicit_styles_follow_the_cascade(
     tmp_path: Path,
@@ -140,6 +184,132 @@ def test_tailwind_root_font_utilities_and_explicit_styles_follow_the_cascade(
     assert explicit["size"] == "17px"
     assert explicit["weight"] == "500"
     assert float(explicit["lineHeight"].removesuffix("px")) == pytest.approx(23.8, abs=0.1)
+
+
+def test_every_granular_chrome_slot_receives_tailwind_and_yields_visual_defaults(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    chart = xy.scatter_chart(
+        xy.scatter(
+            [0.0, 1.0, 2.0],
+            [1.0, 3.0, 2.0],
+            color=[0.1, 0.5, 0.9],
+            size=9,
+        ),
+        xy.colorbar(title="Intensity", ticks=[0.1, 0.9]),
+        xy.x_axis(style={"tick_length": 6}),
+        xy.y_axis(style={"tick_length": 6}),
+        xy.vline(1.0, text="target"),
+        class_names=_GRANULAR_SLOT_CLASSES,
+        width=560,
+        height=360,
+    )
+    document = chart.to_html(custom_css=_GRANULAR_SLOT_LAYERS)
+    assert _RENDER_CALL in document
+    slots_json = repr(list(_GRANULAR_CHROME_SLOTS)).replace("'", '"')
+    probe = f"""
+  const host = document.getElementById("chart");
+  const probeSpec = {{
+    ...spec,
+    colorbar: {{
+      ...spec.colorbar,
+      line_only: true,
+      extend: "both",
+      minor_ticks: true,
+      lines: [{{ value: 0.5, color: "#0f172a", width: 2, dash: "dashed" }}],
+    }},
+  }};
+  const view = xy.renderStandalone(host, probeSpec, buf);
+  try {{
+    view._drawNow();
+    view._raf = null;
+    const slots = {slots_json};
+    const reached = {{}};
+    for (const slot of slots) {{
+      const node = view.root.querySelector(`[data-xy-slot="${{slot}}"]`);
+      if (!node) throw new Error(`missing ${{slot}} node`);
+      reached[slot] = {{
+        className: node.getAttribute("class") || "",
+        probe: getComputedStyle(node).getPropertyValue("--xy-probe-slot").trim(),
+      }};
+    }}
+    const extension = view.root.querySelector('[data-xy-slot="colorbar_extension"]');
+    const colorbarLine = view.root.querySelector('[data-xy-slot="colorbar_line"]');
+    const minorTick = view.root.querySelector('[data-xy-slot="colorbar_minor_tick"]');
+    const drag = view.root.querySelector('[data-xy-slot="modebar_drag_handle"]');
+    const menuLabel = view.root.querySelector('[data-xy-slot="modebar_menu_label"]');
+    const axisBand = view.root.querySelector('[data-xy-slot="axis_band"]');
+    const axisLine = view.root.querySelector('[data-xy-slot="axis_line"]');
+    const tickMark = view.root.querySelector('[data-xy-slot="tick_mark"]');
+    const axisLines = [...view.root.querySelectorAll('[data-xy-slot="axis_line"]')];
+    const tickMarks = [...view.root.querySelectorAll('[data-xy-slot="tick_mark"]')];
+    document.body.setAttribute("data-xy-granular-slot-probe", JSON.stringify({{
+      reached,
+      visual: {{
+        annotationOpacity: getComputedStyle(view.overlay).opacity,
+        extensionFill: getComputedStyle(extension).fill,
+        colorbarLineBorder: getComputedStyle(colorbarLine).borderLeftColor,
+        minorTickBorder: getComputedStyle(minorTick).borderLeftColor,
+        dragBackground: getComputedStyle(drag).backgroundColor,
+        menuLabelWeight: getComputedStyle(menuLabel).fontWeight,
+        axisBandCursor: getComputedStyle(axisBand).cursor,
+        axisLineBackground: getComputedStyle(axisLine).backgroundColor,
+        tickMarkBackground: getComputedStyle(tickMark).backgroundColor,
+        axisLineInlineBackground: axisLine.style.background,
+        tickMarkInlineBackground: tickMark.style.background,
+        colorbarLineInlineBorder: colorbarLine.style.border,
+        minorTickInlineBorder: minorTick.style.border,
+        axisBandInlineCursor: axisBand.style.cursor,
+        axisLinesCarryRefinements: axisLines.every(
+          (node) => !!node.dataset.xyAxis && !!node.dataset.xyAxisSide),
+        tickMarksCarryRefinements: tickMarks.every(
+          (node) => !!node.dataset.xyAxis && !!node.dataset.xyAxisSide
+            && ["major", "minor"].includes(node.dataset.xyTickKind)),
+      }},
+    }}));
+  }} catch (err) {{
+    document.body.setAttribute(
+      "data-xy-granular-slot-probe-error",
+      String((err && err.stack) || err),
+    );
+  }}
+"""
+    document = document.replace(_RENDER_CALL, probe, 1)
+
+    result = run_browser_probe(
+        chromium,
+        document,
+        tmp_path / "tailwind_granular_chrome_slots.html",
+        "data-xy-granular-slot-probe",
+        label="Tailwind granular chrome slot probe",
+    )
+
+    assert set(result["reached"]) == set(_GRANULAR_CHROME_SLOTS)
+    for slot, reached in result["reached"].items():
+        assert _GRANULAR_SLOT_CLASSES[slot] in reached["className"].split()
+        assert reached["probe"] == slot
+    assert result["visual"] == {
+        "annotationOpacity": "0.73",
+        "extensionFill": "rgb(249, 115, 22)",
+        "colorbarLineBorder": "rgb(6, 182, 212)",
+        "minorTickBorder": "rgb(139, 92, 246)",
+        "dragBackground": "rgb(236, 72, 153)",
+        "menuLabelWeight": "800",
+        "axisBandCursor": "crosshair",
+        "axisLineBackground": "rgb(220, 38, 38)",
+        "tickMarkBackground": "rgb(22, 163, 74)",
+        "axisLineInlineBackground": "",
+        "tickMarkInlineBackground": "",
+        "colorbarLineInlineBorder": "",
+        "minorTickInlineBorder": "",
+        "axisBandInlineCursor": "",
+        "axisLinesCarryRefinements": True,
+        "tickMarksCarryRefinements": True,
+    }
 
 
 def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> None:

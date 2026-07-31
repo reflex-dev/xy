@@ -314,16 +314,38 @@ DOM chrome slots:
 | `chrome` | Canvas-backed axis/grid/annotation layer |
 | `canvas` | Plot canvas |
 | `labels` | Axis/tick label layer |
+| `annotation_layer` | Canvas-painted annotation layer as one bitmap |
 | `legend` | Legend container |
+| `legend_title` | Legend title |
 | `legend_item` | Legend row |
 | `legend_swatch` | Legend color swatch |
+| `legend_label` | Legend text label |
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
 | `colorbar_title` | Colorbar title |
+| `colorbar_extension` | One under/over-range extension |
+| `colorbar_line` | One contour boundary on a line-only colorbar |
+| `colorbar_minor_tick` | One unlabeled minor colorbar tick |
 | `tooltip` | Tooltip container |
+| `tooltip_title` | Tooltip title |
+| `tooltip_row` | One tooltip row |
+| `tooltip_label` | One tooltip field label |
+| `tooltip_value` | One tooltip field value |
 | `modebar` | Modebar container |
+| `modebar_drag_handle` | Draggable modebar grip |
+| `modebar_control_group` | Main control group |
+| `modebar_separator` | Top-level toolbar separator |
 | `modebar_button` | Modebar button |
+| `modebar_icon` | Top-level button icon wrapper |
+| `modebar_zoom_value` | Current zoom percentage |
+| `modebar_indicator` | Zoom-limit or menu-open indicator |
+| `modebar_selection_icon` | Active selection-mode icon |
+| `modebar_menu` | Modebar popover |
+| `modebar_menu_separator` | Popover separator |
+| `modebar_menu_icon` | Popover command icon |
+| `modebar_menu_label` | Popover command label |
+| `modebar_history_controls` | Back/forward history group |
 | `selection` | Selection rectangle, lasso path, and lasso handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
@@ -332,6 +354,9 @@ DOM chrome slots:
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
+| `axis_band` | Invisible axis-only gesture band |
+| `axis_line` | Cartesian axis baseline |
+| `tick_mark` | Cartesian major or minor tick mark |
 
 Each rendered slot also receives `data-xy-slot="<slot>"`, so plain CSS,
 attribute selectors, and Tailwind arbitrary variants can target the same stable

@@ -1504,7 +1504,8 @@ _AXIS_BAND_PROBE = """
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
     const bandsExist = !!bandX && !!bandY;
     const cursors = bandsExist
-      && bandX.style.cursor === "ew-resize" && bandY.style.cursor === "ns-resize";
+      && getComputedStyle(bandX).cursor === "ew-resize"
+      && getComputedStyle(bandY).cursor === "ns-resize";
 
     const realRaf = window.requestAnimationFrame;
     let frames = [];
@@ -1586,11 +1587,12 @@ _AXIS_BAND_POLICY_PROBE = """
     // pan-only y band shows a grab hand, grabbing while a drag is active.
     const bandX = view.root.querySelector('[data-xy-axis-band="x"]');
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
-    const zoomableShowsResize = !!bandX && bandX.style.cursor === "ew-resize";
-    const panOnlyShowsGrab = !!bandY && bandY.style.cursor === "grab";
+    const zoomableShowsResize = !!bandX && getComputedStyle(bandX).cursor === "ew-resize";
+    const panOnlyShowsGrab = !!bandY && getComputedStyle(bandY).cursor === "grab";
 
     let grabbingDuringDrag = false;
     let grabRestoredAfterDrag = false;
+    let cursorRestoredWithoutInline = false;
     if (bandY) {
       const yRect = bandY.getBoundingClientRect();
       const sx = yRect.left + yRect.width / 2;
@@ -1599,14 +1601,15 @@ _AXIS_BAND_POLICY_PROBE = """
         { pointerId: 9, clientX: x, clientY: y, bubbles: true, cancelable: true });
       bandY.dispatchEvent(new PointerEvent("pointerdown", opts(sx, sy)));
       bandY.dispatchEvent(new PointerEvent("pointermove", opts(sx, sy + 40)));
-      grabbingDuringDrag = bandY.style.cursor === "grabbing";
+      grabbingDuringDrag = getComputedStyle(bandY).cursor === "grabbing";
       bandY.dispatchEvent(new PointerEvent("pointerup", opts(sx, sy + 40)));
-      grabRestoredAfterDrag = bandY.style.cursor === "grab";
+      grabRestoredAfterDrag = getComputedStyle(bandY).cursor === "grab";
+      cursorRestoredWithoutInline = bandY.style.cursor === "";
     }
 
     document.body.setAttribute("data-xy-axisband-policy-probe", JSON.stringify({
       zoomableShowsResize, panOnlyShowsGrab,
-      grabbingDuringDrag, grabRestoredAfterDrag,
+      grabbingDuringDrag, grabRestoredAfterDrag, cursorRestoredWithoutInline,
     }));
   } catch (err) {
     document.body.setAttribute(

@@ -296,9 +296,9 @@ Object.assign(ChartView.prototype, {
       const dim = this._axisDim(axisId);
       const band = document.createElement("div");
       band.dataset.xyAxisBand = axisId;
-      band.style.cssText =
-        "position:absolute;z-index:2;touch-action:none;" +
-        `cursor:${this._axisBandCursor(axisId, dim)};`;
+      band.style.cssText = "position:absolute;z-index:2;touch-action:none;";
+      band.style.setProperty("--xy-axis-band-cursor", this._axisBandCursor(axisId, dim));
+      this._applySlot(band, "axis_band");
       this.root.appendChild(band);
       this._axisBands[axisId] = band;
       this._bindAxisBand(band, axisId, dim);
@@ -470,7 +470,10 @@ Object.assign(ChartView.prototype, {
       const finished = drag;
       drag = null;
       finished.capture.release();
-      band.style.cursor = this._axisBandCursor(axisId, dim);
+      // `grabbing` is transient controller state. Remove it on release so the
+      // low-priority default (and any author/Tailwind cursor utility above it)
+      // resumes instead of pinning the configured default inline.
+      band.style.removeProperty("cursor");
       if (finished.mode === "span") this.selRect.style.display = "none";
       // Only a real release commits a coordinate-dependent gesture; a pan keeps
       // the view it already reached however the gesture ended.

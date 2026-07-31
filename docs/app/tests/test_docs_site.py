@@ -628,7 +628,15 @@ def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
         "colorbar(show=False)",
     ):
         assert option in content
-    for slot in ("colorbar", "colorbar_bar", "colorbar_tick", "colorbar_title"):
+    for slot in (
+        "colorbar",
+        "colorbar_bar",
+        "colorbar_extension",
+        "colorbar_line",
+        "colorbar_tick",
+        "colorbar_minor_tick",
+        "colorbar_title",
+    ):
         assert f"`{slot}`" in content
     assert "The last compatible continuous mark wins" in content
     assert "does not currently mount custom chrome" in content
