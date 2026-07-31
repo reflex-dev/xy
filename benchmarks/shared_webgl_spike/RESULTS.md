@@ -1,6 +1,6 @@
 # Browser results
 
-Run on 2026-07-31 in the Codex in-app browser (Chrome 150.0.0.0) at a 2259 × 1294
+Run on 2026-07-31 in the Codex in-app browser (Chrome 150.0.0.0) at a 2240 × 1284
 CSS-pixel viewport and device-pixel ratio 1.1. WebGL2 used ANGLE's Metal renderer on an
 Apple M5 Pro. These numbers are machine/browser-specific; rerun the harness for decisions
 about a target deployment.
@@ -19,34 +19,37 @@ The charts in this run use the spike's synthetic renderer, not production xy `Ch
 | Full-set correctness | **PASS** | **FAIL: 34 unavailable** |
 | Canary checks | 50 / 50 | 16 / 16 surviving |
 | Exact pick checks | 150 / 150 | 48 / 48 surviving |
-| Productive chart presentations / second | **2,687** | **960** |
+| Productive chart presentations / second | **2,449** | **949** |
 
-The native path created all 50 contexts, but Chromium evicted the oldest 34 and retained 16.
-The shared path kept every chart live through one context. Native's much smaller 0.4 ms CPU
-batch p95 is not an apples-to-apples win: that batch only rendered 16 charts, while the shared
-batch rendered all 50 and produced about 2.8× as many useful chart presentations per second.
+The native path created all 50 contexts, but only 16 remained live when measured. The harness
+did not capture the identities or creation order of the 34 unavailable contexts. The shared path
+kept every chart live through one context. Native's smaller 0.4 ms CPU batch p95 is not an
+apples-to-apples win: that batch only rendered 16 charts, while the shared batch rendered all 50
+and produced about 2.6× as many useful chart presentations per second.
 
 ## Shared correctness and recovery
 
 - 50 asymmetric frame canaries passed under deliberately poisoned WebGL state.
 - 150 exact encoded-ID pick checks passed.
 - Verification forced a 17-pixel non-zero source crop from the grow-only host canvas.
-- A deliberate `WEBGL_lose_context` cycle retained the visible 2D frames, rebuilt the shared
-  programs and all 50 per-chart GPU object sets, and passed the full checks again.
+- A deliberate `WEBGL_lose_context` cycle rebuilt the shared programs and all 50 per-chart GPU
+  object sets, then passed the full checks again. This capture did not inspect the visible 2D
+  canvases during the 650 ms loss window, so visible-frame retention remains unverified.
 
 ## Three-second production-profile benchmarks
 
-State poisoning was off for both timing runs; correctness checks always turn it on.
+Both timing runs used the dense viewport with 1,024 points per chart. State poisoning was off for
+the timing runs; correctness checks always turn it on.
 
 | Metric | Shared GLHost | Native contexts |
 | --- | ---: | ---: |
-| Duration | 3.014 s | 3.001 s |
-| Productive batches | 162 | 180 |
-| Observed batch rate | 53.75 fps | 59.97 fps |
-| Chart presentations | 8,100 | 2,880 |
-| Chart presentations / second | 2,687.46 | 959.55 |
-| CPU batch p50 | 1.30 ms | 0.30 ms |
-| CPU batch p95 | 16.50 ms | 0.40 ms |
+| Duration | 3.001 s | 3.001 s |
+| Productive batches | 147 | 178 |
+| Observed batch rate | 48.98 fps | 59.32 fps |
+| Chart presentations | 7,350 | 2,848 |
+| Chart presentations / second | 2,448.94 | 949.14 |
+| CPU batch p50 | 1.20 ms | 0.30 ms |
+| CPU batch p95 | 1.30 ms | 0.40 ms |
 | Shared 2D copy p95 / chart | 0.10 ms | n/a |
 
 These are JavaScript CPU submission timings, not completed GPU execution timings.

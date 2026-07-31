@@ -14,13 +14,14 @@
   --blue: #64a8ff;
   --radius: 18px;
   --shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
+
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizelegibility;
 }
 
 * {
@@ -58,7 +59,7 @@ code {
   border-radius: 0.35em;
   color: var(--mint);
   background: rgba(100, 231, 189, 0.07);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 0.91em;
 }
 
@@ -253,6 +254,11 @@ input[type="range"] {
 
 .switch input:checked + .switch__track {
   background: #6e962b;
+}
+
+.switch input:focus-visible + .switch__track {
+  outline: 2px solid var(--acid);
+  outline-offset: 3px;
 }
 
 .switch input:checked + .switch__track::after {
@@ -534,11 +540,10 @@ main {
   border-radius: 6px;
   color: #efffd2;
   background: rgba(4, 15, 11, 0.92);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.57rem;
   pointer-events: none;
   white-space: nowrap;
-  transform: translate(7px, calc(-100% - 7px));
 }
 
 .pick-tooltip[data-show="true"] {
@@ -548,7 +553,7 @@ main {
 .chart-card__foot {
   min-height: 29px;
   color: #708c80;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.56rem;
 }
 
@@ -588,7 +593,7 @@ main {
   margin: 0;
   padding: 0 16px 16px;
   color: #819c90;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: SFMono-Regular, Consolas, monospace;
   font-size: 0.68rem;
   line-height: 1.6;
   white-space: pre-wrap;

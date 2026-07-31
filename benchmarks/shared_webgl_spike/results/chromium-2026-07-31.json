@@ -15,8 +15,8 @@
       "shading_language_version": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
     },
     "viewport_css_pixels": {
-      "width": 2259,
-      "height": 1294
+      "width": 2240,
+      "height": 1284
     },
     "device_pixel_ratio": 1.1,
     "canvas_pixels": {
@@ -43,21 +43,24 @@
         "context_losses": 1,
         "context_restores": 1,
         "live_charts_after_restore": 50,
-        "correctness_after_restore": "pass"
+        "correctness_after_restore": true,
+        "visible_frames_during_loss_checked": false
       },
       "benchmark": {
-        "duration_ms": 3014.0,
+        "duration_ms": 3001.2999999523163,
+        "points_per_chart": 1024,
+        "dense": true,
         "target_fps": 60,
-        "observed_fps": 53.74917053749171,
-        "productive_batches": 162,
+        "observed_fps": 48.978775864570515,
+        "productive_batches": 147,
         "expected_batches": 180,
-        "dropped_intervals": 18,
-        "chart_presentations": 8100,
-        "chart_presentations_per_second": 2687.4585268745855,
+        "dropped_intervals": 33,
+        "chart_presentations": 7350,
+        "chart_presentations_per_second": 2448.938793228526,
         "frame_ms": {
-          "p50": 1.3000000715255737,
-          "p95": 16.5,
-          "p99": 16.700000047683716
+          "p50": 1.2000000476837158,
+          "p95": 1.3000000715255737,
+          "p99": 1.5
         },
         "present_ms_per_chart": {
           "p50": 0.0,
@@ -84,18 +87,20 @@
         "state_stress": true
       },
       "benchmark": {
-        "duration_ms": 3001.4000000953674,
+        "duration_ms": 3000.5999999046326,
+        "points_per_chart": 1024,
+        "dense": true,
         "target_fps": 60,
-        "observed_fps": 59.972013058666164,
-        "productive_batches": 180,
+        "observed_fps": 59.32146904141083,
+        "productive_batches": 178,
         "expected_batches": 180,
-        "dropped_intervals": 0,
-        "chart_presentations": 2880,
-        "chart_presentations_per_second": 959.5522089386586,
+        "dropped_intervals": 2,
+        "chart_presentations": 2848,
+        "chart_presentations_per_second": 949.1435046625733,
         "frame_ms": {
-          "p50": 0.30000007152557373,
+          "p50": 0.2999999523162842,
           "p95": 0.40000009536743164,
-          "p99": 0.7999999523162842
+          "p99": 0.40000009536743164
         },
         "state_stress": false,
         "context_losses_during_run": 0,

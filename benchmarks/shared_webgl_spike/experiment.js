@@ -66,16 +66,36 @@ const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve))
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-function percentile(values, fraction) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
+function createSampleBuffer() {
+  return {
+    values: new Float64Array(SAMPLE_LIMIT),
+    length: 0,
+    head: 0,
+  };
+}
+
+function percentile(samples, fraction) {
+  if (!samples.length) return 0;
+  const sorted = Array.from(samples.values.subarray(0, samples.length)).sort(
+    (a, b) => a - b,
+  );
   const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1);
   return sorted[Math.max(0, index)];
 }
 
 function pushSample(samples, value) {
-  samples.push(value);
-  if (samples.length > SAMPLE_LIMIT) samples.splice(0, samples.length - SAMPLE_LIMIT);
+  if (samples.length < SAMPLE_LIMIT) {
+    samples.values[samples.length] = value;
+    samples.length += 1;
+    return;
+  }
+  samples.values[samples.head] = value;
+  samples.head = (samples.head + 1) % SAMPLE_LIMIT;
+}
+
+function clearSamples(samples) {
+  samples.length = 0;
+  samples.head = 0;
 }
 
 function formatMs(value) {
@@ -138,15 +158,26 @@ function createProgramSet(gl) {
   let line = null;
   let pick = null;
   let poisonVao = null;
+  let poisonTransformFeedback = null;
+  let poisonUniformBuffer = null;
   try {
     line = createProgram(gl, LINE_VS, LINE_FS);
     pick = createProgram(gl, PICK_VS, PICK_FS);
     poisonVao = gl.createVertexArray();
-    if (!poisonVao) throw new Error("WebGL could not allocate the poison VAO");
+    poisonTransformFeedback = gl.createTransformFeedback();
+    poisonUniformBuffer = gl.createBuffer();
+    if (!poisonVao || !poisonTransformFeedback || !poisonUniformBuffer) {
+      throw new Error("WebGL could not allocate state-stress resources");
+    }
+    gl.bindBuffer(gl.UNIFORM_BUFFER, poisonUniformBuffer);
+    gl.bufferData(gl.UNIFORM_BUFFER, 16, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.UNIFORM_BUFFER, null);
     return {
       line,
       pick,
       poisonVao,
+      poisonTransformFeedback,
+      poisonUniformBuffer,
       lineUniforms: {
         yScale: gl.getUniformLocation(line, "u_yScale"),
         color: gl.getUniformLocation(line, "u_color"),
@@ -160,6 +191,8 @@ function createProgramSet(gl) {
     if (line) gl.deleteProgram(line);
     if (pick) gl.deleteProgram(pick);
     if (poisonVao) gl.deleteVertexArray(poisonVao);
+    if (poisonTransformFeedback) gl.deleteTransformFeedback(poisonTransformFeedback);
+    if (poisonUniformBuffer) gl.deleteBuffer(poisonUniformBuffer);
     throw error;
   }
 }
@@ -169,10 +202,15 @@ function destroyProgramSet(gl, programs) {
   gl.deleteProgram(programs.line);
   gl.deleteProgram(programs.pick);
   gl.deleteVertexArray(programs.poisonVao);
+  gl.deleteTransformFeedback(programs.poisonTransformFeedback);
+  gl.deleteBuffer(programs.poisonUniformBuffer);
 }
 
 function beginPass(gl, framebuffer, width, height, blend) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  const colorTarget = framebuffer ? gl.COLOR_ATTACHMENT0 : gl.BACK;
+  gl.readBuffer(colorTarget);
+  gl.drawBuffers([colorTarget]);
   gl.viewport(0, 0, width, height);
   gl.enable(gl.SCISSOR_TEST);
   gl.scissor(0, 0, width, height);
@@ -184,9 +222,16 @@ function beginPass(gl, framebuffer, width, height, blend) {
   gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
   gl.disable(gl.SAMPLE_COVERAGE);
   gl.disable(gl.DITHER);
+  gl.frontFace(gl.CCW);
+  gl.cullFace(gl.BACK);
+  gl.depthFunc(gl.LESS);
   gl.colorMask(true, true, true, true);
   gl.depthMask(true);
   gl.stencilMask(0xffffffff);
+  gl.stencilFunc(gl.ALWAYS, 0, 0xffffffff);
+  gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  gl.polygonOffset(0, 0);
+  gl.blendColor(0, 0, 0, 0);
   gl.blendEquation(gl.FUNC_ADD);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   if (blend) gl.enable(gl.BLEND);
@@ -199,12 +244,21 @@ function beginPass(gl, framebuffer, width, height, blend) {
     gl.bindSampler(unit, null);
   }
   gl.activeTexture(gl.TEXTURE0);
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
   gl.bindVertexArray(null);
   gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+  for (let binding = 0; binding < 4; binding += 1) {
+    gl.bindBufferBase(gl.UNIFORM_BUFFER, binding, null);
+  }
+  gl.bindBuffer(gl.UNIFORM_BUFFER, null);
   gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
   gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
   gl.pixelStorei(gl.PACK_ALIGNMENT, 4);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
   gl.useProgram(null);
   gl.clearColor(0, 0, 0, 0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -214,10 +268,33 @@ function poisonState(gl, programs, width, height) {
   gl.disable(gl.BLEND);
   gl.enable(gl.DEPTH_TEST);
   gl.enable(gl.CULL_FACE);
+  gl.enable(gl.STENCIL_TEST);
+  gl.enable(gl.POLYGON_OFFSET_FILL);
   gl.colorMask(false, false, false, false);
+  gl.frontFace(gl.CW);
+  gl.cullFace(gl.FRONT);
+  gl.depthFunc(gl.GREATER);
+  gl.stencilMask(0);
+  gl.stencilFunc(gl.NEVER, 1, 0);
+  gl.stencilOp(gl.REPLACE, gl.REPLACE, gl.REPLACE);
+  gl.polygonOffset(1, 1);
+  gl.blendColor(1, 0, 1, 0.5);
+  gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
+  gl.blendFunc(gl.ZERO, gl.ZERO);
   gl.viewport(1, 2, Math.max(1, width - 3), Math.max(1, height - 4));
   gl.scissor(Math.max(0, width - 2), Math.max(0, height - 2), 1, 1);
+  gl.readBuffer(gl.NONE);
+  gl.drawBuffers([gl.NONE]);
+  gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
   gl.activeTexture(gl.TEXTURE3);
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, programs.poisonTransformFeedback);
+  for (let binding = 0; binding < 4; binding += 1) {
+    gl.bindBufferBase(gl.UNIFORM_BUFFER, binding, programs.poisonUniformBuffer);
+  }
+  gl.bindBuffer(gl.UNIFORM_BUFFER, programs.poisonUniformBuffer);
   gl.bindVertexArray(programs.poisonVao);
   gl.useProgram(programs.pick);
 }
@@ -392,7 +469,11 @@ function pickAtPixel(
 }
 
 function sampleMatches(actual, expected, tolerance = 3) {
-  return actual.every((value, index) => Math.abs(value - expected[index]) <= tolerance);
+  // Channel 1 carries the per-render frame counter and must reject stale frames.
+  return actual.every((value, index) => {
+    const allowed = index === 1 ? 0 : tolerance;
+    return Math.abs(value - expected[index]) <= allowed;
+  });
 }
 
 class ChartView {
@@ -405,8 +486,6 @@ class ChartView {
     this.color = new Float32Array(PALETTE[index % PALETTE.length]);
     this.vertices = new Float32Array(POINT_COUNT * 2);
     this.frameByte = 0;
-    this.lastRenderTime = 0;
-    this.lastPresentedAt = 0;
     this.pixelWidth = 1;
     this.pixelHeight = 1;
     this.dpr = 1;
@@ -495,9 +574,16 @@ class ChartView {
     const localY = clamp(clientY - rect.top, 0, rect.height);
     const y = this.vertices[index * 2 + 1] * this.yScale;
     this.tooltip.textContent = `#${index}  y ${y.toFixed(3)}`;
-    this.tooltip.style.left = `${localX}px`;
-    this.tooltip.style.top = `${localY}px`;
     this.tooltip.dataset.show = "true";
+    const gap = 7;
+    const tooltipWidth = this.tooltip.offsetWidth;
+    const tooltipHeight = this.tooltip.offsetHeight;
+    let left = localX + gap;
+    let top = localY - gap - tooltipHeight;
+    if (left + tooltipWidth > rect.width) left = localX - gap - tooltipWidth;
+    if (top < 0) top = localY + gap;
+    this.tooltip.style.left = `${clamp(left, 0, rect.width - tooltipWidth)}px`;
+    this.tooltip.style.top = `${clamp(top, 0, rect.height - tooltipHeight)}px`;
   }
 }
 
@@ -540,7 +626,7 @@ class SharedBackend {
         chart.pickTarget = null;
         chart.setState("lost", "host lost");
       }
-      this.app.onContextLost("Shared host context lost; 2D presentation frames retained.");
+      this.app.onContextLost("Shared host context lost; all clients paused together.");
     };
 
     this._handleContextRestored = () => {
@@ -622,8 +708,16 @@ class SharedBackend {
     }
     // Force a non-zero source-Y during presentation. This exercises the
     // grow-only host crop path even when every visible chart has equal CSS size.
-    this.ensureCapacity(chart.pixelWidth, chart.pixelHeight + 17);
-    return { cropOffsetPixels: this.capacityHeight - chart.pixelHeight };
+    const tallest = this.charts.reduce(
+      (height, item) => Math.max(height, item.pixelHeight),
+      chart.pixelHeight,
+    );
+    const widest = this.charts.reduce(
+      (width, item) => Math.max(width, item.pixelWidth),
+      chart.pixelWidth,
+    );
+    this.ensureCapacity(widest, tallest + 17);
+    return { cropOffsetPixels: this.capacityHeight - tallest };
   }
 
   onResize(chart) {
@@ -675,8 +769,6 @@ class SharedBackend {
     );
     const presentMs = performance.now() - presentStart;
 
-    chart.lastRenderTime = time;
-    chart.lastPresentedAt = performance.now();
     if (stressState) poisonState(this.gl, this.programs, chart.pixelWidth, chart.pixelHeight);
     return { ...timings, presentMs };
   }
@@ -796,7 +888,6 @@ class NativeBackend {
     this.app = app;
     this.mode = "native";
     this.records = [];
-    this.generation = 1;
   }
 
   attach(chart) {
@@ -814,6 +905,8 @@ class NativeBackend {
       destroying: false,
       lossExtension: null,
       cycleResolve: null,
+      cycleTimer: 0,
+      restoreTimer: 0,
     };
     chart.native = record;
     this.records.push(record);
@@ -836,6 +929,7 @@ class NativeBackend {
 
     chart.canvas.addEventListener("webglcontextrestored", () => {
       if (record.destroying) return;
+      let rebuilt = false;
       try {
         record.programs = createProgramSet(gl);
         record.lossExtension = gl.getExtension("WEBGL_lose_context");
@@ -844,12 +938,17 @@ class NativeBackend {
         chart.setState("live");
         this.app.needsDraw = true;
         this.app.onContextRestored(`Native context ${chart.index + 1} restored.`);
+        rebuilt = true;
       } catch (error) {
         chart.setState("error", "restore failed");
         this.app.log(`Native chart ${chart.index + 1} restore failed: ${error.message}`);
       }
+      clearTimeout(record.cycleTimer);
+      clearTimeout(record.restoreTimer);
+      record.cycleTimer = 0;
+      record.restoreTimer = 0;
       if (record.cycleResolve) {
-        record.cycleResolve(true);
+        record.cycleResolve(rebuilt);
         record.cycleResolve = null;
       }
     });
@@ -885,8 +984,6 @@ class NativeBackend {
     chart.frameByte = (chart.frameByte + 1) & 255;
     beginPass(gl, null, chart.pixelWidth, chart.pixelHeight, true);
     const timings = uploadAndDraw(gl, record.programs, chart);
-    chart.lastRenderTime = time;
-    chart.lastPresentedAt = performance.now();
     if (stressState) poisonState(gl, record.programs, chart.pixelWidth, chart.pixelHeight);
     return { ...timings, presentMs: 0 };
   }
@@ -919,6 +1016,7 @@ class NativeBackend {
     const gl = record?.gl;
     if (!gl || gl.isContextLost()) return { pass: false, lost: true };
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readBuffer(gl.BACK);
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     const topLeft = new Uint8Array(4);
     const bottomRight = new Uint8Array(4);
@@ -964,13 +1062,15 @@ class NativeBackend {
 
   async cycleContext() {
     const record = this.records.find(
-      (item) => item.gl && !item.gl.isContextLost() && item.lossExtension,
+      (item) =>
+        item.gl && !item.gl.isContextLost() && item.lossExtension && !item.cycleResolve,
     );
     if (!record) return false;
     const extension = record.lossExtension;
     const restored = new Promise((resolve) => {
       record.cycleResolve = resolve;
-      setTimeout(() => {
+      record.cycleTimer = setTimeout(() => {
+        record.cycleTimer = 0;
         if (record.cycleResolve) {
           record.cycleResolve(false);
           record.cycleResolve = null;
@@ -978,13 +1078,24 @@ class NativeBackend {
       }, 5000);
     });
     extension.loseContext();
-    setTimeout(() => extension.restoreContext(), 650);
+    record.restoreTimer = setTimeout(() => {
+      record.restoreTimer = 0;
+      if (!record.destroying) extension.restoreContext();
+    }, 650);
     return restored;
   }
 
   dispose() {
     for (const record of this.records) {
       record.destroying = true;
+      clearTimeout(record.cycleTimer);
+      clearTimeout(record.restoreTimer);
+      record.cycleTimer = 0;
+      record.restoreTimer = 0;
+      if (record.cycleResolve) {
+        record.cycleResolve(false);
+        record.cycleResolve = null;
+      }
       if (!record.gl || record.gl.isContextLost()) continue;
       destroyPickTarget(record.gl, record.chart);
       destroyChartGpu(record.gl, record.chart);
@@ -999,15 +1110,21 @@ class ExperimentApp {
   constructor() {
     const params = new URLSearchParams(location.search);
     this.mode = params.get("mode") === "native" ? "native" : "shared";
-    this.count = clamp(Number(params.get("count")) || 50, 1, 50);
+    const countParam = params.get("count");
+    const requestedCount = countParam?.trim() ? Number(countParam) : 50;
+    this.count = clamp(
+      Number.isFinite(requestedCount) ? Math.trunc(requestedCount) : 50,
+      1,
+      50,
+    );
     this.backend = null;
     this.charts = [];
     this.rebuilding = false;
     this.needsDraw = true;
-    this.frameSamples = [];
-    this.presentSamples = [];
-    this.uploadSamples = [];
-    this.drawSamples = [];
+    this.frameSamples = createSampleBuffer();
+    this.presentSamples = createSampleBuffer();
+    this.uploadSamples = createSampleBuffer();
+    this.drawSamples = createSampleBuffer();
     this.frameCountWindow = 0;
     this.fpsObserved = 0;
     this.fpsWindowStart = performance.now();
@@ -1109,7 +1226,10 @@ class ExperimentApp {
   navigate(changes) {
     const params = new URLSearchParams(location.search);
     params.set("mode", changes.mode || this.mode);
-    params.set("count", String(changes.count || this.count));
+    params.set("count", String(changes.count ?? this.count));
+    this.resizeObserver?.disconnect();
+    this.backend?.dispose();
+    this.backend = null;
     location.search = params.toString();
   }
 
@@ -1132,6 +1252,12 @@ class ExperimentApp {
       this.backend = this.mode === "shared" ? new SharedBackend(this) : new NativeBackend(this);
       for (const chart of this.charts) this.backend.attach(chart);
     } catch (error) {
+      try {
+        this.backend?.dispose();
+      } catch (disposeError) {
+        this.log("Renderer cleanup failed.", { message: disposeError.message });
+      }
+      this.backend = null;
       this.setStatus(error.message, "fail");
       this.log("Renderer initialization failed.", { message: error.message, stack: error.stack });
       this.rebuilding = false;
@@ -1311,9 +1437,7 @@ class ExperimentApp {
       const contextInvariant = this.mode !== "shared" || stats.liveContexts === 1;
       const coherentLiveSet = rendered === stats.liveCharts;
       const coverageComplete =
-        rendered === stats.requestedCharts &&
-        testCharts.length === stats.requestedCharts &&
-        testCharts.length * indices.length === stats.requestedCharts * indices.length;
+        rendered === stats.requestedCharts && testCharts.length === stats.requestedCharts;
       const pass =
         fullyLive &&
         contextInvariant &&
@@ -1368,116 +1492,127 @@ class ExperimentApp {
     if (!this.backend || this.rebuilding) return null;
     this.ui.benchmark.disabled = true;
     const wasStreaming = this.ui.streaming.checked;
-    this.ui.streaming.checked = true;
-    this.frameSamples.length = 0;
-    this.presentSamples.length = 0;
-    this.uploadSamples.length = 0;
-    this.drawSamples.length = 0;
-    const startPresentations = this.presentationsTotal;
-    const startBatches = this.productiveBatchesTotal;
-    const startLosses = this.contextLosses;
-    const startRestores = this.contextRestores;
-    const start = performance.now();
-    this.setStatus(`Benchmarking ${this.mode} mode for ${(milliseconds / 1000).toFixed(1)}s…`);
-    await wait(milliseconds);
-    const elapsed = performance.now() - start;
-    const stats = this.backend.getStats();
-    const productiveBatches = this.productiveBatchesTotal - startBatches;
-    const targetFps = Number(this.ui.fpsTarget.value) || 60;
-    const expectedBatches = Math.floor((elapsed * targetFps) / 1000);
-    const chartPresentations = this.presentationsTotal - startPresentations;
-    const chartSizes = this.charts.map((chart) => [chart.pixelWidth, chart.pixelHeight]);
-    const result = {
-      mode: this.mode,
-      durationMs: elapsed,
-      requestedCharts: stats.requestedCharts,
-      liveCharts: stats.liveCharts,
-      fullyLive: stats.liveCharts === stats.requestedCharts,
-      liveContexts: stats.liveContexts,
-      targetFps,
-      observedFps: (productiveBatches * 1000) / Math.max(1, elapsed),
-      productiveBatches,
-      expectedBatches,
-      droppedIntervals: Math.max(0, expectedBatches - productiveBatches),
-      chartPresentations,
-      chartPresentationsPerSecond:
-        (chartPresentations * 1000) / Math.max(1, elapsed),
-      frameMs: {
-        p50: percentile(this.frameSamples, 0.5),
-        p95: percentile(this.frameSamples, 0.95),
-        p99: percentile(this.frameSamples, 0.99),
-      },
-      uploadMsPerChart: {
-        p50: percentile(this.uploadSamples, 0.5),
-        p95: percentile(this.uploadSamples, 0.95),
-      },
-      drawMsPerChart: {
-        p50: percentile(this.drawSamples, 0.5),
-        p95: percentile(this.drawSamples, 0.95),
-      },
-      presentMsPerChart: {
-        p50: percentile(this.presentSamples, 0.5),
-        p95: percentile(this.presentSamples, 0.95),
-      },
-      stateStress: this.ui.poisonState.checked,
-      timingScope: "JavaScript CPU submission; not completed GPU execution",
-      environment: {
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        webgl: this.backend.getEnvironment?.() || null,
-      },
-      pointsPerChart: POINT_COUNT,
-      dpr: this.charts[0]?.dpr || 1,
-      canvasPixels: {
-        minWidth: Math.min(...chartSizes.map(([width]) => width)),
-        maxWidth: Math.max(...chartSizes.map(([width]) => width)),
-        minHeight: Math.min(...chartSizes.map(([, height]) => height)),
-        maxHeight: Math.max(...chartSizes.map(([, height]) => height)),
-      },
-      viewportCssPixels: { width: innerWidth, height: innerHeight },
-      dense: this.ui.dense.checked,
-      contextLossesDuringRun: this.contextLosses - startLosses,
-      contextRestoresDuringRun: this.contextRestores - startRestores,
-      timestamp: new Date().toISOString(),
-    };
-    window.__LAST_BENCHMARK = result;
-    this.ui.streaming.checked = wasStreaming;
-    this.ui.benchmark.disabled = false;
-    this.needsDraw = true;
-    this.setStatus(
-      `Benchmark complete: p95 ${result.frameMs.p95.toFixed(2)} ms, ` +
-        `${result.chartPresentationsPerSecond.toFixed(0)} chart presentations/s.`,
-      result.fullyLive ? "pass" : "working",
-      4000,
-    );
-    this.log("Benchmark complete.", result);
-    return result;
+    try {
+      this.ui.streaming.checked = true;
+      clearSamples(this.frameSamples);
+      clearSamples(this.presentSamples);
+      clearSamples(this.uploadSamples);
+      clearSamples(this.drawSamples);
+      const startPresentations = this.presentationsTotal;
+      const startBatches = this.productiveBatchesTotal;
+      const startLosses = this.contextLosses;
+      const startRestores = this.contextRestores;
+      const start = performance.now();
+      this.setStatus(
+        `Benchmarking ${this.mode} mode for ${(milliseconds / 1000).toFixed(1)}s…`,
+      );
+      await wait(milliseconds);
+      const elapsed = performance.now() - start;
+      const stats = this.backend.getStats();
+      const productiveBatches = this.productiveBatchesTotal - startBatches;
+      const targetFps = Number(this.ui.fpsTarget.value) || 60;
+      const expectedBatches = Math.floor((elapsed * targetFps) / 1000);
+      const chartPresentations = this.presentationsTotal - startPresentations;
+      const chartSizes = this.charts.map((chart) => [chart.pixelWidth, chart.pixelHeight]);
+      const result = {
+        mode: this.mode,
+        durationMs: elapsed,
+        requestedCharts: stats.requestedCharts,
+        liveCharts: stats.liveCharts,
+        fullyLive: stats.liveCharts === stats.requestedCharts,
+        liveContexts: stats.liveContexts,
+        targetFps,
+        observedFps: (productiveBatches * 1000) / Math.max(1, elapsed),
+        productiveBatches,
+        expectedBatches,
+        droppedIntervals: Math.max(0, expectedBatches - productiveBatches),
+        chartPresentations,
+        chartPresentationsPerSecond:
+          (chartPresentations * 1000) / Math.max(1, elapsed),
+        frameMs: {
+          p50: percentile(this.frameSamples, 0.5),
+          p95: percentile(this.frameSamples, 0.95),
+          p99: percentile(this.frameSamples, 0.99),
+        },
+        uploadMsPerChart: {
+          p50: percentile(this.uploadSamples, 0.5),
+          p95: percentile(this.uploadSamples, 0.95),
+        },
+        drawMsPerChart: {
+          p50: percentile(this.drawSamples, 0.5),
+          p95: percentile(this.drawSamples, 0.95),
+        },
+        presentMsPerChart: {
+          p50: percentile(this.presentSamples, 0.5),
+          p95: percentile(this.presentSamples, 0.95),
+        },
+        stateStress: this.ui.poisonState.checked,
+        timingScope: "JavaScript CPU submission; not completed GPU execution",
+        environment: {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          webgl: this.backend.getEnvironment?.() || null,
+        },
+        pointsPerChart: POINT_COUNT,
+        dpr: this.charts[0]?.dpr || 1,
+        canvasPixels: {
+          minWidth: Math.min(...chartSizes.map(([width]) => width)),
+          maxWidth: Math.max(...chartSizes.map(([width]) => width)),
+          minHeight: Math.min(...chartSizes.map(([, height]) => height)),
+          maxHeight: Math.max(...chartSizes.map(([, height]) => height)),
+        },
+        viewportCssPixels: { width: innerWidth, height: innerHeight },
+        dense: this.ui.dense.checked,
+        contextLossesDuringRun: this.contextLosses - startLosses,
+        contextRestoresDuringRun: this.contextRestores - startRestores,
+        timestamp: new Date().toISOString(),
+      };
+      window.__LAST_BENCHMARK = result;
+      this.ui.lastCheck.textContent =
+        `BENCH · p95 ${result.frameMs.p95.toFixed(2)} ms · ` +
+        `${result.chartPresentationsPerSecond.toFixed(0)} presentations/s`;
+      this.setStatus(
+        `Benchmark complete: p95 ${result.frameMs.p95.toFixed(2)} ms, ` +
+          `${result.chartPresentationsPerSecond.toFixed(0)} chart presentations/s.`,
+        result.fullyLive ? "pass" : "working",
+        4000,
+      );
+      this.log("Benchmark complete.", result);
+      return result;
+    } finally {
+      this.ui.streaming.checked = wasStreaming;
+      this.ui.benchmark.disabled = false;
+      this.needsDraw = true;
+    }
   }
 
   async cycleContext() {
     if (!this.backend || this.rebuilding) return false;
     this.ui.cycle.disabled = true;
-    this.setStatus(
-      this.mode === "shared"
-        ? "Losing the one shared context; every client should pause together…"
-        : "Losing one native context; peer charts should continue…",
-    );
-    const restored = await this.backend.cycleContext();
-    await nextFrame();
-    await nextFrame();
-    this.ui.cycle.disabled = false;
-    if (!restored) {
+    try {
       this.setStatus(
-        "Context-loss extension unavailable or restoration timed out.",
-        "fail",
-        4000,
+        this.mode === "shared"
+          ? "Losing the one shared context; every client should pause together…"
+          : "Losing one native context; peer charts should continue…",
       );
-      return false;
+      const restored = await this.backend.cycleContext();
+      await nextFrame();
+      await nextFrame();
+      if (!restored) {
+        this.setStatus(
+          "Context-loss extension unavailable or restoration timed out.",
+          "fail",
+          4000,
+        );
+        return false;
+      }
+      this.needsDraw = true;
+      await nextFrame();
+      const check = await this.verify();
+      return Boolean(check?.pass);
+    } finally {
+      this.ui.cycle.disabled = false;
     }
-    this.needsDraw = true;
-    await nextFrame();
-    const check = await this.verify();
-    return Boolean(check?.pass);
   }
 
   snapshot() {

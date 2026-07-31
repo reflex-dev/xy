@@ -20,7 +20,11 @@
         </p>
       </div>
 
-      <div class="hero__diagram" aria-label="Shared renderer architecture">
+      <div
+        class="hero__diagram"
+        role="img"
+        aria-label="Architecture: 50 chart views feed one GLHost, which presents to 50 DOM canvases."
+      >
         <div class="diagram-node diagram-node--source">50 chart views</div>
         <div class="diagram-arrow">→</div>
         <div class="diagram-node diagram-node--host">1 GLHost</div>
@@ -111,10 +115,10 @@
         </article>
       </section>
 
-      <section class="result-strip" aria-live="polite">
+      <section class="result-strip">
         <div id="health-dot" class="health-dot" data-state="working"></div>
         <p id="status">Building the shared renderer…</p>
-        <p id="last-check" class="result-strip__aside">Checks not run yet</p>
+        <p id="last-check" class="result-strip__aside" role="status">Checks not run yet</p>
       </section>
 
       <section class="grid-section">
