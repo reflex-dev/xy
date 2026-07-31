@@ -838,9 +838,19 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "pattern: dist-*",
         "merge-multiple: true",
         "GH_TOKEN: ${{ github.token }}",
+        "shopt -s nullglob",
+        "artifacts=(dist/*.whl dist/*.tar.gz)",
+        "if (( ${#artifacts[@]} == 0 )); then\n"
+        '            echo "::error::No wheel or sdist artifacts were downloaded"\n'
+        "            exit 1\n"
+        "          fi",
         "dist/*.whl",
         "dist/*.tar.gz",
         "gh release view",
+        "--json isDraft,isPrerelease,name",
+        "gh release edit",
+        "--draft=false",
+        "--prerelease=false",
         "gh release upload",
         "--clobber",
         "gh release create",

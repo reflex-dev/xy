@@ -790,6 +790,56 @@ def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> N
     )
 
 
+def test_release_workflow_rejects_missing_github_release_artifact_guard(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guard = """\
+          shopt -s nullglob
+          artifacts=(dist/*.whl dist/*.tar.gz)
+          if (( ${#artifacts[@]} == 0 )); then
+            echo "::error::No wheel or sdist artifacts were downloaded"
+            exit 1
+          fi
+
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(guard, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "github-release job" in error
+        and "shopt -s nullglob" in error
+        and "artifacts=(dist/*.whl dist/*.tar.gz)" in error
+        and "No wheel or sdist artifacts were downloaded" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_unvalidated_existing_github_release(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("--json isDraft,isPrerelease,name", "--json name")
+        .replace('              gh release edit "$TAG" \\\n', '              echo "$TAG" \\\n')
+        .replace("                --draft=false \\\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "github-release job" in error
+        and "--json isDraft,isPrerelease,name" in error
+        and "gh release edit" in error
+        and "--draft=false" in error
+        for error in errors
+    )
+
+
 def test_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
     """A depth-1 checkout fetches no tags, and the version is derived from them.
 

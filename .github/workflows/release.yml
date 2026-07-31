@@ -329,19 +329,60 @@ jobs:
             exit 1
           fi
 
+          prerelease=()
+          edit_prerelease=(--prerelease=false)
+          expected_prerelease=false
+          if [[ "$TAG" =~ (a|b|rc)[0-9]+ ]]; then
+            prerelease=(--prerelease)
+            edit_prerelease=(--prerelease)
+            expected_prerelease=true
+          fi
+
           # `gh release create` publishes immediately. If a previous run made
           # the release but failed partway through uploading assets, refresh
-          # the verified files instead of failing an otherwise safe retry.
-          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          # the verified files instead of failing an otherwise safe retry. A
+          # manually created draft or mismatched prerelease is normalized and
+          # then re-read before docs promotion is allowed to observe it.
+          if release_json="$(
+            gh release view "$TAG" \
+              --repo "$REPO" \
+              --json isDraft,isPrerelease,name 2>/dev/null
+          )"; then
+            is_draft="$(jq -r '.isDraft' <<<"$release_json")"
+            is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
+            release_name="$(jq -r '.name' <<<"$release_json")"
             echo "::notice::${TAG} already exists; refreshing distribution assets"
             gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber
+
+            if [[ "$is_draft" != "false" ||
+                  "$is_prerelease" != "$expected_prerelease" ||
+                  "$release_name" != "$TAG" ]]; then
+              echo "::notice::${TAG} exists with incomplete metadata; normalizing it"
+              gh release edit "$TAG" \
+                --repo "$REPO" \
+                --draft=false \
+                --title "$TAG" \
+                "${edit_prerelease[@]}"
+            fi
+
+            release_json="$(
+              gh release view "$TAG" \
+                --repo "$REPO" \
+                --json isDraft,isPrerelease,name
+            )"
+            is_draft="$(jq -r '.isDraft' <<<"$release_json")"
+            is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
+            release_name="$(jq -r '.name' <<<"$release_json")"
+            if [[ "$is_draft" != "false" ||
+                  "$is_prerelease" != "$expected_prerelease" ||
+                  "$release_name" != "$TAG" ]]; then
+              echo "::error::${TAG} release metadata is still invalid after normalization"
+              exit 1
+            fi
+
             exit 0
           fi
 
-          prerelease=()
-          if [[ "$TAG" =~ (a|b|rc)[0-9]+ ]]; then
-            prerelease=(--prerelease)
-          fi
           gh release create "$TAG" "${artifacts[@]}" \
             --repo "$REPO" \
             --verify-tag \
