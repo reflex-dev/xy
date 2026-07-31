@@ -99,26 +99,86 @@ def test_release_invalidates_an_active_rebuild_without_unbounded_revision_state(
     assert registry.publish("tok", make_figure(32), broadcast=False).version == 3
 
 
-def test_failed_rebuild_cleanup_is_identity_checked_and_keeps_version(
+def test_failed_rebuild_cleanup_is_identity_and_guard_checked(
     _fresh_registry,
 ):
     registry = _fresh_registry
     registry.subscribe("tok", "sid-1", rebuildable=True)
-    inserted = registry.publish("tok", make_figure(), broadcast=False)
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
+    inserted, did_insert = registry.publish_if_missing("tok", make_figure(), guard=guard)
+    assert inserted is not None
+    assert did_insert
     replacement = registry.publish("tok", make_figure(32), broadcast=False)
 
-    assert not registry.remove_if_current("tok", inserted)
+    assert not registry.remove_if_current("tok", inserted, guard=guard)
+    registry.finish_rebuild("tok", guard)
     assert registry.is_current("tok", replacement)
-    assert registry.remove_if_current("tok", replacement)
-    assert registry._evicted_versions == {"tok": 2}
-    assert registry.publish("tok", make_figure(64), broadcast=False).version == 3
+    assert registry._evicted_versions == {}
+
+
+def test_same_object_publish_invalidates_failed_rebuild_cleanup(_fresh_registry):
+    registry = _fresh_registry
+    figure = make_figure()
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
+    inserted, did_insert = registry.publish_if_missing("tok", figure, guard=guard)
+    assert inserted is not None
+    assert did_insert
+    assert registry.get_with_rebuild_guard("tok") == (inserted, True)
+
+    authoritative = registry.publish("tok", figure, broadcast=False)
+
+    assert authoritative is inserted
+    assert registry.get_with_rebuild_guard("tok") == (inserted, False)
+    assert not registry.remove_if_current("tok", inserted, guard=guard)
+    registry.finish_rebuild("tok", guard)
+    assert registry.is_current("tok", inserted)
+
+
+def test_same_object_publish_reauthorization_schedules_without_version_bump(_fresh_registry):
+    registry = _fresh_registry
+    figure = make_figure()
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
+    inserted, did_insert = registry.publish_if_missing("tok", figure, guard=guard)
+    assert inserted is not None
+    assert did_insert
+    seen = []
+
+    async def on_publish(token, entry):
+        seen.append((token, entry))
+
+    async def main():
+        registry.attach_loop(asyncio.get_running_loop())
+        registry.on_publish(on_publish)
+
+        authoritative = registry.publish("tok", figure)
+        await asyncio.sleep(0)
+
+        assert authoritative is inserted
+        assert authoritative.version == 1
+        assert seen == [("tok", inserted)]
+
+    asyncio.run(main())
+    registry.finish_rebuild("tok", guard)
+    assert registry._active_rebuild_guards == {}
 
 
 def test_failed_rebuild_cleanup_without_subscriber_drops_version(_fresh_registry):
     registry = _fresh_registry
-    inserted = registry.publish("tok", make_figure(), broadcast=False)
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
+    inserted, did_insert = registry.publish_if_missing("tok", make_figure(), guard=guard)
+    assert inserted is not None
+    assert did_insert
 
-    assert registry.remove_if_current("tok", inserted)
+    assert registry.remove_if_current("tok", inserted, guard=guard)
+    registry.finish_rebuild("tok", guard)
     assert registry._evicted_versions == {}
     assert registry.publish("tok", make_figure(32), broadcast=False).version == 1
 

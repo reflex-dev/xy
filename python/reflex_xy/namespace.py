@@ -25,9 +25,9 @@ Events, server -> client:
     err     {fig, error, resync?}            failure; resync requests a new `sub`
 
 Each successful `sub` begins an authoritative client comparison epoch. Replies
-and append pushes carry that figure version; view-state-only pushes may omit
-it. Clients gate `msg` events until the epoch's payload arrives, then reject
-versions outside that epoch (including stale interaction replies).
+and room-wide pushes carry the FigureEntry version whose data produced them.
+Clients gate `msg` events until the epoch's payload arrives, then reject
+versions outside that epoch (including stale interaction replies and masks).
 
 Every inbound handler is total: malformed input drops or answers `err`,
 never raises (a hostile client must not be able to crash the worker —
@@ -86,6 +86,20 @@ def _build_wire_payload(
     # the figure lock across both builds.
     spec, blob = figure.build_payload(px)
     return spec, [blob]
+
+
+def _build_entry_payload(
+    entry: FigureEntry, px: Optional[int] = None
+) -> tuple[dict[str, Any], list[Any]]:
+    """Build under ``sync_lock``; the async caller already holds ``lock``."""
+    with entry.sync_lock:
+        return _build_wire_payload(entry.figure, px)
+
+
+def _handle_entry_message(entry: FigureEntry, content: Any) -> Any:
+    """Dispatch under ``sync_lock``; the async caller already holds ``lock``."""
+    with entry.sync_lock:
+        return handle_message(entry.figure, content, None)
 
 
 # An async callable(token) -> Figure | None: given a parseable figure token,
@@ -221,8 +235,12 @@ class XYNamespace(AsyncNamespace):
         mid: Optional[str] = None,
     ) -> None:
         """Send one authoritative payload if ``entry`` is still current."""
+        # Global order whenever both generation locks are needed:
+        # async ``entry.lock`` first, then ``entry.sync_lock`` in the worker.
+        # Synchronous view pushes take only the latter, so there is no reverse
+        # edge and payload/message kernels remain off the event loop.
         async with entry.lock:
-            spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure, px)
+            spec, raw = await asyncio.to_thread(_build_entry_payload, entry, px)
         if not self.registry.is_current(token, entry):
             return
         envelope: dict[str, Any] = {
@@ -279,7 +297,10 @@ class XYNamespace(AsyncNamespace):
                 return
             # Kernel work off the event loop: the Rust kernels release the
             # GIL, so a slow view recompute never stalls app-plane traffic.
-            reply = await asyncio.to_thread(handle_message, entry.figure, content, None)
+            # ``entry.lock`` -> ``entry.sync_lock`` is the same order used by
+            # payload builds and wired append; synchronous view pushes take
+            # only the latter and therefore cannot deadlock this path.
+            reply = await asyncio.to_thread(_handle_entry_message, entry, content)
             if not self.registry.is_current(token, entry) or entry.version != operation_version:
                 return
         if reply is None:
@@ -321,16 +342,15 @@ class XYNamespace(AsyncNamespace):
         if len(wire_buffers) > _MAX_WIRE_ATTACHMENTS:
             # This packet goes to a room: one oversized push would close every
             # subscriber's shared websocket at once (see _MAX_WIRE_ATTACHMENTS).
-            # Fail loud instead of emitting it. Versioned append pushes also
-            # ask clients to resubscribe because the figure already advanced.
+            # Fail loud instead of emitting it. Append pushes also ask clients
+            # to resubscribe because the figure advanced; view-state pushes
+            # carry a generation stamp but do not mutate the figure payload.
             await self.emit(
                 "err",
                 {
                     "fig": token,
                     "error": "push exceeds wire attachment limit",
-                    # A versioned push is an append: the figure already
-                    # advanced, so clients need an authoritative full payload.
-                    "resync": version is not None,
+                    "resync": message.get("type") == "append" and version is not None,
                 },
                 room=self._room(token),
             )
@@ -347,7 +367,7 @@ class XYNamespace(AsyncNamespace):
     async def broadcast_payload(self, token: str, entry: FigureEntry) -> None:
         """Push a full refreshed payload (figure rebuilt) to subscribers."""
         async with entry.lock:
-            spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure)
+            spec, raw = await asyncio.to_thread(_build_entry_payload, entry)
         if not self.registry.is_current(token, entry):
             return
         await self.emit(
@@ -418,7 +438,11 @@ class XYNamespace(AsyncNamespace):
         self, token: str
     ) -> asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]:
         """Start and retain one shared cache-miss attempt for ``token``."""
-        task = asyncio.create_task(self._run_rebuild_attempt(token))
+        # Install the guard before publishing the task in ``_rebuild_attempts``.
+        # A concurrent waiter can then distinguish this live attempt from one
+        # invalidated by a newer canonical release/absence.
+        entry, guard = self.registry.begin_rebuild(token)
+        task = asyncio.create_task(self._run_rebuild_attempt(token, entry, guard))
         self._rebuild_attempts[token] = task
 
         def forget(completed: asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]) -> None:
@@ -428,9 +452,13 @@ class XYNamespace(AsyncNamespace):
         task.add_done_callback(forget)
         return task
 
-    async def _run_rebuild_attempt(self, token: str) -> tuple[Optional[FigureEntry], Optional[str]]:
+    async def _run_rebuild_attempt(
+        self,
+        token: str,
+        entry: Optional[FigureEntry],
+        guard: Optional[object],
+    ) -> tuple[Optional[FigureEntry], Optional[str]]:
         """Build, conditionally publish, and fan out one total rebuild attempt."""
-        entry, guard = self.registry.begin_rebuild(token)
         if entry is not None:
             return entry, None
         if guard is None:  # defensive: a miss always receives one bounded guard
@@ -465,7 +493,7 @@ class XYNamespace(AsyncNamespace):
                 # A failed generation must not poison later cache hits. Remove
                 # only the generation this attempt inserted; if a normal
                 # replacement won meanwhile, preserve and return that entry.
-                if not self.registry.remove_if_current(token, entry):
+                if not self.registry.remove_if_current(token, entry, guard=guard):
                     current = self.registry.get(token)
                     if current is not None:
                         return current, None
@@ -503,14 +531,24 @@ class XYNamespace(AsyncNamespace):
             if session.get("client_token") != parsed.client_token:
                 await self._err(sid, token, "figure belongs to another session")
                 return token, None, False
-        entry = self.registry.get(token)
+        entry, rebuild_guarded = self.registry.get_with_rebuild_guard(token)
         attempt = self._rebuild_attempts.get(token)
-        initially_missing = entry is None or attempt is not None
+        # A normal publish invalidates the old attempt's guard atomically with
+        # installing (or re-authorizing) its entry. Requests ordered after that
+        # publish must use the authoritative entry immediately rather than wait
+        # forever for older user rebuild code. An entry whose guard is still
+        # valid remains provisional until its rebuild fan-out completes.
+        initially_missing = entry is None or (attempt is not None and rebuild_guarded)
         if parsed is not None and allow_rebuild and self._rebuild is not None and initially_missing:
             # The task spans builder, conditional insertion, and existing-room
             # fan-out. All requests that observed this in-flight miss share its
             # result and must drop pre-payload interactions, even when another
             # waiter inserted the entry or its version happens to match.
+            # A canonical release can invalidate a hung builder while leaving
+            # the token absent. Its task can no longer publish; later requests
+            # must start from current state instead of joining it forever.
+            if attempt is not None and entry is None and not rebuild_guarded:
+                attempt = None
             if attempt is None:
                 attempt = self._start_rebuild_attempt(token)
             entry, error = await asyncio.shield(attempt)

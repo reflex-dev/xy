@@ -48,9 +48,11 @@ class FigureEntry:
     # Serializes kernel calls per figure; concurrent figures still
     # parallelize (the kernels release the GIL on the Rust side).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # The unwired/headless path cannot use the asyncio lock. Keep its
-    # mutations generation-local so a slow append never holds the map mutex
-    # or blocks unrelated figures.
+    # The unwired/headless path cannot use the asyncio lock. This lock also
+    # makes synchronous message construction atomic with namespace payload/
+    # interaction kernels and append mutation/version bump. Code needing both
+    # locks always takes ``lock`` then ``sync_lock``; sync callers take only
+    # this lock. It remains entry-local, so unrelated figures proceed.
     sync_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
     # Number of registry operations currently using this exact generation.
     # The registry mutex protects this counter; the TTL sweep skips a current
@@ -104,8 +106,8 @@ class FigureRegistry:
         # async callback(token, entry) -> None wired by the namespace so
         # publishes reach subscribed clients without a module cycle.
         self._on_publish: Optional[Callable[[str, FigureEntry], Awaitable[None]]] = None
-        # async callback(token, message, buffers) -> None for incremental
-        # pushes (append) — same seam, message-shaped instead of payload-shaped.
+        # async callback(token, message, buffers, version) -> None for append
+        # and view-state pushes — the message-shaped data-plane seam.
         self._on_push: Optional[
             Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
         ] = None
@@ -132,6 +134,19 @@ class FigureRegistry:
             if entry is not None:
                 entry.touch()
             return entry
+
+    def get_with_rebuild_guard(self, token: str) -> tuple[Optional[FigureEntry], bool]:
+        """Return the current entry and whether a rebuild guard remains valid.
+
+        The snapshot is atomic so namespace requests can distinguish an entry
+        provisionally inserted by the active rebuild from one authorized by a
+        concurrent normal publish, which invalidates every older guard.
+        """
+        with self._mutex:
+            entry = self._entries.get(token)
+            if entry is not None:
+                entry.touch()
+            return entry, bool(self._active_rebuild_guards.get(token))
 
     def is_current(self, token: str, entry: FigureEntry) -> bool:
         """Whether ``entry`` is still the live generation for ``token``."""
@@ -166,11 +181,16 @@ class FigureRegistry:
         which is the signal that subscribers need a new payload.
         """
         with self._mutex:
+            entry = self._entries.get(token)
+            # A cache-miss rebuild inserts its entry before room fan-out. A
+            # canonical same-object publish re-authorizes that provisional
+            # generation without bumping its version, but must still own a
+            # normal broadcast in case the rebuild-owned fan-out fails.
+            reauthorized = entry is not None and bool(self._active_rebuild_guards.get(token))
             # This is a canonical dependency/application publish. Any builder
             # that began from the preceding absence must not overwrite it,
             # even if this entry is released again before that builder ends.
             self._invalidate_rebuild_guards_locked(token)
-            entry = self._entries.get(token)
             if entry is None:
                 version = self._evicted_versions.pop(token, 0) + 1
                 entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
@@ -193,9 +213,12 @@ class FigureRegistry:
                 else:
                     entry.pinned = entry.pinned or pinned
                     entry.touch()
-        if broadcast and changed:
+        if broadcast and (changed or reauthorized):
             # Re-publishing the identical object means nothing moved; a new
-            # figure object is the signal subscribers need a fresh payload.
+            # figure object is normally the signal subscribers need a fresh
+            # payload. Re-authorizing a rebuild-owned entry is the exception:
+            # its original fan-out may still fail, so the canonical publisher
+            # schedules an independently coalesced delivery of the same version.
             self.schedule_broadcast(token)
         return entry
 
@@ -272,15 +295,18 @@ class FigureRegistry:
             entry = self._entries.pop(token, None)
             self._retain_removed_version_locked(token, entry)
 
-    def remove_if_current(self, token: str, expected: FigureEntry) -> bool:
-        """Remove exactly ``expected`` after failed rebuild fan-out.
+    def remove_if_current(self, token: str, expected: FigureEntry, *, guard: object) -> bool:
+        """Remove ``expected`` only while its rebuild guard is still valid.
 
-        This cleanup is not a new canonical mutation, so it does not
-        invalidate other active rebuild guards. Version retention follows the
-        same live-subscriber rule as release/sweep.
+        Entry identity alone is insufficient: a normal same-object publish
+        deliberately preserves the ``FigureEntry`` but invalidates ``guard``.
+        This cleanup is not a new canonical mutation, so it does not invalidate
+        other active rebuild guards. Version retention follows the same live-
+        subscriber rule as release/sweep.
         """
         with self._mutex:
-            if self._entries.get(token) is not expected:
+            guards = self._active_rebuild_guards.get(token)
+            if guards is None or guard not in guards or self._entries.get(token) is not expected:
                 return False
             del self._entries[token]
             self._retain_removed_version_locked(token, expected)
@@ -441,18 +467,25 @@ class FigureRegistry:
                 return
             try:
                 async with entry.lock:
-                    message, buffers = await asyncio.to_thread(
-                        entry.figure.append, trace, x, y, color=color, size=size
-                    )
-                    bumped = self.bump(token, expected=entry)
-                    if bumped is None:
+
+                    def _append_and_bump() -> tuple[dict, list[bytes], Optional[int]]:
+                        with entry.sync_lock:
+                            message, buffers = entry.figure.append(
+                                trace, x, y, color=color, size=size
+                            )
+                            bumped = self.bump(token, expected=entry)
+                            version = None if bumped is None else bumped.version
+                            return message, list(buffers), version
+
+                    message, buffers, operation_version = await asyncio.to_thread(_append_and_bump)
+                    if operation_version is None:
                         return  # a replacement won; never mutate/bump its generation
                     push = self._on_push
                     if push is not None:
                         # Keep append pushes ordered under the generation lock.
                         # The wire version lets the client discard this delta if
                         # a replacement payload overtakes it.
-                        await push(token, message, list(buffers), bumped.version)
+                        await push(token, message, buffers, operation_version)
             finally:
                 self._release_operation(entry)
 
@@ -474,23 +507,34 @@ class FigureRegistry:
         Mirrors `append`'s threading contract: callable from anywhere. The
         message is built (and its input validated — errors raise to the
         caller) in the calling thread; a wired app then fans the finished
-        bytes out on the serving loop as one `msg` event. Unlike `append`
-        there is no figure mutation to serialize, so no lock is held and the
-        figure payload and version are untouched — a view write is not a
-        data write.
+        bytes out on the serving loop as one `msg` event. Construction and
+        version capture share the generation's synchronous lock with append,
+        so row-mask buffers can never describe a post-append figure while
+        carrying its pre-append version. The lock is entry-local and released
+        before fan-out; a view write does not mutate or advance the figure.
         """
-        entry = self.get(token)
+        entry = self._acquire_operation(token)
         if entry is None:
             msg = f"unknown figure token: {token!r}"
             raise KeyError(msg)
-        message, buffers = build(entry.figure)
+        try:
+            # The view write does not advance the figure, but it may carry
+            # generation-specific row-mask buffers. Append mutates and bumps
+            # under this same lock, making the built bytes and captured
+            # version one atomic generation snapshot.
+            with entry.sync_lock:
+                message, built_buffers = build(entry.figure)
+                buffers = list(built_buffers)
+                operation_version = entry.version
+        finally:
+            self._release_operation(entry)
         loop = self._loop
         push = self._on_push
         if loop is None or push is None:
             return  # unwired (tests, headless): validated, nobody to push to
 
         async def _do() -> None:
-            await push(token, message, list(buffers), None)
+            await push(token, message, buffers, operation_version)
 
         try:
             running = asyncio.get_running_loop()

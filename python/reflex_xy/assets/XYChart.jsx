@@ -16,8 +16,8 @@
 //         msg {fig, version?, mid?, message, buffers} — replies carry our mid
 //         err {fig, error, resync?}
 // A subscribe/reconnect starts a version epoch: no msg is applied until its
-// authoritative payload arrives. Replies and append pushes carry versions;
-// view-state-only pushes remain versionless.
+// authoritative payload arrives. Replies and room-wide pushes carry the
+// FigureEntry version whose data they were built against.
 //
 // `src` (static) — the payload was compiled ahead of time into a binary
 // XYBF asset (payload_asset.py). Fetch it, decode the frame, and run the
@@ -414,7 +414,9 @@ export function XYChart(props) {
     let viewTimer = null;
     let pendingView = null;
     let selectionSeq = 0;
+    const pendingSelectionSeqs = new Set();
     const restoreSelectionSeqs = new Set();
+    const invalidatedSelectionSeqs = new Set();
     const viewCallbacks = [];
     const pendingStatePushes = [];
     let awaitingPayload = true;
@@ -433,7 +435,9 @@ export function XYChart(props) {
       payloadVersion = null;
       awaitingPayload = true;
       clickInputs.clear();
+      pendingSelectionSeqs.clear();
       restoreSelectionSeqs.clear();
+      invalidatedSelectionSeqs.clear();
       pendingStatePushes.length = 0;
     };
 
@@ -465,6 +469,7 @@ export function XYChart(props) {
           ? { ...request, include_rows: true }
           : request,
       );
+      pendingSelectionSeqs.add(restore.seq);
       restoreSelectionSeqs.add(restore.seq);
       emitMessage(restore);
     };
@@ -558,6 +563,7 @@ export function XYChart(props) {
         if (awaitingPayload || !socket.connected) return;
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
           m = withSelectionSeq(m);
+          pendingSelectionSeqs.add(m.seq);
           lastSelect = m.type === "select_clear" ? null : m;
           if (cbRef.current.onSelectEnd) m = { ...m, include_rows: true };
         }
@@ -599,46 +605,84 @@ export function XYChart(props) {
     const discardPendingReply = (message) => {
       if (typeof message?.seq !== "string") return;
       if (message.seq.startsWith("click:")) clickInputs.delete(message.seq);
+      pendingSelectionSeqs.delete(message.seq);
       restoreSelectionSeqs.delete(message.seq);
+      invalidatedSelectionSeqs.delete(message.seq);
     };
 
     const dispatchToView = (message, buffers) => {
       for (const cb of [...viewCallbacks]) cb(message, buffers);
     };
 
+    const statePushGeneration = (data, message) => (
+      data.mid == null &&
+      Number.isInteger(data.version) &&
+      DEFERRED_STATE_PUSH_TYPES.has(message.type)
+        ? data.version
+        : null
+    );
+
+    const selectionPushReplacesSelection = (message) =>
+      message.type === "selection_rows" ||
+      (
+        message.type === "state_patch" &&
+        Object.prototype.hasOwnProperty.call(message.state || {}, "selection")
+      );
+
+    const invalidateSelectionReplies = () => {
+      for (const seq of pendingSelectionSeqs) invalidatedSelectionSeqs.add(seq);
+      pendingSelectionSeqs.clear();
+      restoreSelectionSeqs.clear();
+    };
+
     const deferStatePush = (data, message) => {
       // Programmatic view/selection pushes are not part of the authoritative
-      // figure payload. Preserve only those unaddressed, truly versionless
-      // room events; old replies and appends remain unsafe across epochs.
-      if (
-        data.mid == null &&
-        data.version == null &&
-        DEFERRED_STATE_PUSH_TYPES.has(message.type)
-      ) {
-        pendingStatePushes.push({ message, buffers: data.buffers || [] });
+      // figure payload. Preserve only generation-stamped room events; replies
+      // and appends remain unsafe to defer across payload mounts.
+      const generation = statePushGeneration(data, message);
+      if (generation !== null) {
+        pendingStatePushes.push({ generation, message, buffers: data.buffers || [] });
         return true;
       }
       return false;
     };
 
-    const replayPendingStatePushes = () => {
+    const replayPendingStatePushes = (payloadGeneration) => {
       const queued = pendingStatePushes.splice(0);
-      for (const { message, buffers } of queued) dispatchToView(message, buffers);
+      for (const { generation, message, buffers } of queued) {
+        if (generation === payloadGeneration) dispatchToView(message, buffers);
+        else if (generation > payloadGeneration) {
+          pendingStatePushes.push({ generation, message, buffers });
+        }
+      }
     };
 
-    const pendingPushReplacesSelection = () => pendingStatePushes.some(({ message }) =>
-      message.type === "selection_rows" ||
-      (
-        message.type === "state_patch" &&
-        Object.prototype.hasOwnProperty.call(message.state || {}, "selection")
-      )
-    );
+    const pendingPushReplacesSelection = (payloadGeneration) =>
+      pendingStatePushes.some(({ generation, message }) =>
+        generation === payloadGeneration && selectionPushReplacesSelection(message)
+      );
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
       // Direct subscription replies are mount-addressed; room-wide rebuild
       // broadcasts intentionally omit mid and remain visible to every mount.
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
+      const rowsSelectionMounted =
+        view?.root?.xy?.state?.()?.selection?.rows === true;
+      if (
+        Number.isInteger(data.version) &&
+        payloadVersion !== null &&
+        data.version === payloadVersion &&
+        !awaitingPayload &&
+        (data.mid == null || rowsSelectionMounted)
+      ) {
+        // Rebuild recovery can deliver a room payload and an addressed reply
+        // at the same generation. Generic duplicates have no mount-specific
+        // value; an addressed payload may refine px-dependent data, except
+        // when accepting it would rebuild GPU traces and erase an already
+        // replayed rows mask that cannot be reconstructed from durable state.
+        return;
+      }
       if (
         Number.isInteger(data.version)
         && payloadVersion !== null
@@ -649,7 +693,9 @@ export function XYChart(props) {
         // Requests stamped with the preceding version will be dropped by the
         // server. Do not retain their synthetic click/selection bookkeeping.
         clickInputs.clear();
+        pendingSelectionSeqs.clear();
         restoreSelectionSeqs.clear();
+        invalidatedSelectionSeqs.clear();
       }
       // The public durable-state document is the authoritative client mirror:
       // unlike `lastSelect`, it includes linked selections, x/y band mode, and
@@ -669,11 +715,10 @@ export function XYChart(props) {
       // A queued select/clear/rows push is newer than the pre-payload client
       // selection. Do not send a restore request whose later async reply could
       // overwrite that queued replacement after it is replayed below.
-      const selectionMaskRequest = pendingPushReplacesSelection()
+      const selectionMaskRequest = pendingPushReplacesSelection(nextPayloadVersion)
         ? null
         : selectionRequest(selectionToRestore);
       payloadVersion = nextPayloadVersion;
-      awaitingPayload = false;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
       const nextBuffers = toSpans(data.spec, data.buffers);
       const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));
@@ -687,8 +732,9 @@ export function XYChart(props) {
         if (selectionMaskRequest) {
           hydrateSelectionForRepublish(selectionToRestore);
         }
+        awaitingPayload = false;
         restoreSelectionMask(selectionMaskRequest);
-        replayPendingStatePushes();
+        replayPendingStatePushes(nextPayloadVersion);
         return;
       }
       reclaimTooltipSlot();
@@ -710,11 +756,12 @@ export function XYChart(props) {
         // eventual authoritative reply, without replaying the user gesture.
         hydrateSelectionForRepublish(selectionToRestore);
       }
+      awaitingPayload = false;
       restoreSelectionMask(selectionMaskRequest);
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
-      replayPendingStatePushes();
+      replayPendingStatePushes(nextPayloadVersion);
     };
 
     const onMsg = (data) => {
@@ -728,6 +775,19 @@ export function XYChart(props) {
         return;
       }
       const wireVersion = Number.isInteger(data.version) ? data.version : null;
+      const deferredPushGeneration = statePushGeneration(data, message);
+      if (
+        deferredPushGeneration !== null &&
+        payloadVersion !== null &&
+        deferredPushGeneration > payloadVersion
+      ) {
+        // A post-mutation state write can overtake either the matching append
+        // or a replacement payload. Keep it until that generation mounts;
+        // unlike a reply, it remains authoritative room state.
+        if (selectionPushReplacesSelection(message)) invalidateSelectionReplies();
+        deferStatePush(data, message);
+        return;
+      }
       if (wireVersion !== null && payloadVersion !== null) {
         const isAppendPush = message.type === "append" && data.mid == null;
         const expected = isAppendPush
@@ -742,6 +802,11 @@ export function XYChart(props) {
           return;
         }
       }
+      if (
+        data.mid == null &&
+        DEFERRED_STATE_PUSH_TYPES.has(message.type) &&
+        selectionPushReplacesSelection(message)
+      ) invalidateSelectionReplies();
       let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
         const clickInput = clickInputs.get(message.seq);
@@ -757,6 +822,8 @@ export function XYChart(props) {
         if (cbRef.current.onPointHover) dispatchHover(message.row);
       }
       if (message.type === "selection") {
+        if (invalidatedSelectionSeqs.delete(message.seq)) return;
+        pendingSelectionSeqs.delete(message.seq);
         const isRestore = restoreSelectionSeqs.delete(message.seq);
         // The mask reply still has to reach ChartView, but this restore was
         // initiated by a payload swap rather than a new user gesture. Tag the
@@ -789,8 +856,16 @@ export function XYChart(props) {
       }
       if (wireVersion !== null && message.type === "append" && data.mid == null) {
         clickInputs.clear();
+        pendingSelectionSeqs.clear();
         restoreSelectionSeqs.clear();
+        invalidatedSelectionSeqs.clear();
         payloadVersion = wireVersion;
+        // The append establishes the generation whose state writes may have
+        // reached this mount first. Apply the data delta before replaying
+        // those writes so row-backed selections see the new trace lengths.
+        dispatchToView(clientMessage, data.buffers || []);
+        replayPendingStatePushes(wireVersion);
+        return;
       }
       dispatchToView(clientMessage, data.buffers || []);
     };

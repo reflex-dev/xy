@@ -160,21 +160,31 @@ from each applying all M direct subscription responses after a resync. The
 kernel dispatch is byte-for-byte the notebook dispatch —
 `xy.channel.handle_message` (§3.1 of the old draft, now shipped), run off the
 event loop via a worker thread (the Rust kernels release the GIL) under a
-per-figure lock.
+per-figure lock. Namespace payload builds and interaction dispatches take the
+generation's async lock and then its synchronous figure lock, the same order as
+wired append. Caller-thread view-state writes take only the synchronous lock;
+there is no reverse acquisition. Thus payload emitter updates such as
+`shipped_sel`, interaction/drill state, append mutation/version capture, and
+row-mask construction cannot overlap for one generation, while unrelated
+figures remain independent.
 
 Each successful `sub` starts a client version epoch. The wrapper resets its
 comparison state, ignores `msg` events until the authoritative `payload`
 arrives, and then compares versions within that epoch. This permits a
 reconnect to land on a fresh worker whose rebuilt cache starts at version 1.
-Interaction replies and append pushes carry `version`; view-state-only pushes
-may omit it because they do not mutate the figure data generation. Resetting
-an epoch also cancels pending hover/view throttles, and the still-mounted old
-view cannot emit new semantic callbacks while the replacement payload is in
-flight. Versionless programmatic view/selection pushes that arrive before the
-payload mounts are buffered in wire order and replayed after mount; addressed
-or versioned old-epoch messages remain discarded. A queued selection
-replacement suppresses the payload swap's selection-mask restoration, so its
-later stale reply cannot overwrite the newer queued selection.
+Interaction replies, append pushes, and view-state pushes carry `version`.
+View-state pushes stamp the figure generation they were built against without
+advancing it. Resetting an epoch also cancels pending hover/view throttles, and
+the still-mounted old view cannot emit new semantic callbacks while the
+replacement payload is in flight. Generation-stamped programmatic
+view/selection pushes that arrive before the payload mounts are buffered in
+wire order and replayed only after a matching-generation payload or append;
+newer generations remain queued while addressed and older-generation messages
+are discarded. A queued matching-generation selection replacement suppresses
+the payload swap's selection-mask restoration. A replacement that arrives
+after mount invalidates every older outstanding selection sequence, including
+user gestures and payload restores, so their later replies are discarded
+before callbacks or view dispatch rather than overwriting the newer selection.
 
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
@@ -645,11 +655,15 @@ reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
 Every kernel request echoes the last payload version as `v`; the namespace
 silently rejects requests for another figure version and drops an explicitly
 malformed `v`. Omitted `v` remains accepted for compatibility. Replies echo
-the operation version, while room-wide append pushes carry the newly bumped
-version. This prevents an in-flight pick or selection from resolving in a
-replacement coordinate space. On subscribe/reconnect, the client waits for
-the new payload before accepting messages and treats it as a fresh comparison
-epoch, so a different worker may safely begin again at version 1.
+the operation version; room-wide append pushes carry the newly bumped version,
+and view-state pushes carry the current, non-bumped generation. This prevents
+an in-flight pick, selection, or mask from resolving in a replacement
+coordinate space. On subscribe/reconnect, the client waits for the new payload
+before accepting messages and treats it as a fresh comparison epoch, so a
+different worker may safely begin again at version 1. Once a room payload has
+mounted, a duplicate room broadcast at that same generation is ignored; this
+lets canonical rebuild recovery retry delivery without clearing a rows mask
+that was already replayed for the generation.
 While disconnected, the wrapper does not enqueue kernel messages: socket.io
 flushes its send buffer before its `connect` callback, which would otherwise
 send old-epoch requests ahead of the resetting `sub`.

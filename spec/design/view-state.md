@@ -221,16 +221,23 @@ X" flow composes it from what it already has: record the state it cares
 about from `on_view_change`, restore it with `set_view` — an absolute patch,
 which does converge room-wide.
 
-Path: figure lock → one wire message (§8) → pushed room-wide as a `msg`
-event on the `/_xy` namespace → every client in the room applies it through
-the §3 mutation path with `source: "api"`. Multi-client semantics are
-therefore identical to `append` and `registry.publish`: the room converges.
-The token stays the only chart state Reflex holds; setting a view does not
-touch the figure payload or version. Like `append`, a call holds the figure
-lock only long enough to serialize one small message and performs no network
-round-trip in the caller's thread, so it is safe from ordinary event
-handlers as well as background tasks and threads; prefer a background task
-for long programmatic sequences, as for any bulk work in a handler.
+Path: per-generation operation lease plus entry-local synchronous figure lock
+→ one wire message (§8) → pushed room-wide as a `msg` event on the `/_xy`
+namespace → every client in the room applies it through the §3 mutation path
+with `source: "api"`. Message construction and version capture are atomic with
+namespace payload/interaction kernels and an append's mutation and version
+bump, while different figures remain independent. Namespace work that also
+needs the generation's async lock always acquires async then synchronous;
+caller-thread view writes acquire only the synchronous lock, so the order has
+no reverse edge. Multi-client semantics are therefore identical to `append`
+and `registry.publish`: the room converges. The token stays the only chart state
+Reflex holds; setting a view does not mutate the figure payload or advance its
+version, though the message envelope stamps the generation it was built
+against. Like `append`, a call holds the figure lock only long enough to
+serialize one small message and performs no network round-trip in the caller's
+thread, so it is safe from ordinary event handlers as well as background tasks
+and threads; prefer a background task for long programmatic sequences, as for
+any bulk work in a handler.
 
 `on_view_change` handlers still fire for api-sourced changes (an app may
 need to persist them) but carry `source: "api"`, so a state bridge that

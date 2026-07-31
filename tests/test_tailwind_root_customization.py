@@ -184,7 +184,7 @@ def test_live_wrapper_silently_hydrates_durable_selection_and_all_axis_ranges() 
     assert "const viewChanged = changedFromHome(" in jsx
     assert "previousView?.ranges ? { ranges: previousView.ranges } : null" in jsx
     assert "view?.view0," in jsx
-    assert "const selectionMaskRequest = pendingPushReplacesSelection()" in jsx
+    assert "const selectionMaskRequest = pendingPushReplacesSelection(nextPayloadVersion)" in jsx
     assert "? null\n        : selectionRequest(selectionToRestore);" in jsx
     assert 'source: "republish",' in jsx
     assert "dispatch: false," in jsx

@@ -179,9 +179,17 @@ def test_locked_reflex_environment_step_must_be_a_hard_gate(tmp_path: Path) -> N
         "if: false",
         "shell: echo {0}",
         "continue-on-error: true",
+        "working-directory: decoy",
         '"if": false',
         "'shell': echo {0}",
         '"continue-on-error": true',
+        "'working-directory': decoy",
+        '"working\\u002ddirectory": decoy',
+        "!!str working-directory: decoy",
+        "&guard_key working-directory: decoy",
+        "<<: *step_defaults",
+        "? working-directory\n        : decoy",
+        "?\n          working-directory\n        : decoy",
     )
 
     for index, bypass in enumerate(bypasses):
@@ -205,6 +213,9 @@ def test_locked_reflex_environment_job_must_be_a_hard_gate(tmp_path: Path) -> No
         "if: false",
         "continue-on-error: true",
         "defaults:\n      run:\n        shell: echo {0}",
+        'container: { image: "ubuntu:24.04", env: { BASH_ENV: noop } }',
+        "needs: skipped-prerequisite",
+        "strategy:\n      matrix:\n        shard: []",
         '"if": false',
         "'continue-on-error': true",
         '"defaults":\n      run:\n        shell: echo {0}',
@@ -276,6 +287,75 @@ def test_hard_gates_reject_shell_init_environment_overrides(tmp_path: Path) -> N
             "        env:\n"
             "          'ENV': .github/noop-shell-init\n",
         ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env: { BASH_ENV: .github/noop-shell-init }\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            '        env: { "ENV": .github/noop-shell-init }\n',
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            '        env: { "BASH\\u005fENV": .github/noop-shell-init }\n',
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            '        env: { "BASH\\x5fENV": .github/noop-shell-init }\n',
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env: &shell_env { BASH_ENV: .github/noop-shell-init }\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env: { !!str BASH_ENV: .github/noop-shell-init }\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          !!str BASH_ENV: .github/noop-shell-init\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          &shell_key BASH_ENV: .github/noop-shell-init\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          ? BASH_ENV\n"
+            "          : .github/noop-shell-init\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          ?\n"
+            "            BASH_ENV\n"
+            "          : .github/noop-shell-init\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            '          "\\u0045NV": .github/noop-shell-init\n',
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          PATH: .github/fake-bin\n",
+        ),
     )
 
     for index, (old, new) in enumerate(mutations):
@@ -285,6 +365,233 @@ def test_hard_gates_reject_shell_init_environment_overrides(tmp_path: Path) -> N
         errors = verify_ci_workflow.validate_ci_workflow(path)
 
         assert any("shell-init environment variables" in error for error in errors)
+
+
+def test_hard_gates_reject_persistent_environment_file_writes(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Install package + dev deps\n",
+            "      - name: Persist shell setup\n"
+            "        run: |\n"
+            "          printf 'BASH_ENV=%s\\n' noop >> \"$GITHUB_ENV\"\n\n"
+            "          printf '%s\\n' fake-bin >> \"$GITHUB_PATH\"\n\n"
+            "      - name: Install package + dev deps\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("shell-init environment variables" in error for error in errors)
+
+
+def test_multiline_quoted_env_value_does_not_create_a_sibling_key() -> None:
+    text = 'env:\n  SAFE: "start\n  BASH_ENV: harmless"\njobs:\n  test:\n    steps: []\n'
+
+    assert not verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_protected_step_requires_exactly_one_direct_run_key(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "          uv sync --locked --extra reflex --group dev\n"
+    duplicate_run_keys = (
+        "        run: echo bypassed\n",
+        '        "run": echo bypassed\n',
+        "        'run': echo bypassed\n",
+        '        "r\\u0075n": echo bypassed\n',
+        "        !!str run: echo bypassed\n",
+        "        &run_key run: echo bypassed\n",
+        "        <<: *run_defaults\n",
+        "        ? run\n        : echo bypassed\n",
+        "        ?\n          run\n        : echo bypassed\n",
+    )
+
+    for index, duplicate in enumerate(duplicate_run_keys):
+        path = tmp_path / f"ci-duplicate-run-{index}.yml"
+        path.write_text(workflow.replace(required, required + duplicate, 1), encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_shell_init_key_text_in_a_comment_is_not_a_mapping_key(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "jobs:\n",
+            '# Documentation example only: { BASH_ENV: unsafe, "ENV": unsafe }\n'
+            "# Mentioning GITHUB_ENV in a YAML comment is harmless.\n\n"
+            "jobs:\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert verify_ci_workflow.validate_ci_workflow(path) == []
+
+
+def test_shell_init_flow_mapping_on_an_indented_value_line_is_rejected() -> None:
+    text = "env:\n  { BASH_ENV: .github/noop-shell-init }\n"
+
+    assert verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_sequence_mapping_sibling_after_block_scalar_is_still_checked() -> None:
+    text = (
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          echo harmless\n"
+        "        env:\n"
+        "          BASH_ENV: .github/noop-shell-init\n"
+    )
+
+    assert verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_anchored_steps_value_does_not_hide_step_environment() -> None:
+    text = (
+        "jobs:\n"
+        "  test:\n"
+        "    steps: &test_steps\n"
+        "      - name: Protected\n"
+        "        env:\n"
+        "          BASH_ENV: .github/noop-shell-init\n"
+        "        run: true\n"
+    )
+
+    assert verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_plain_scalar_content_cannot_hide_a_later_shell_init_mapping() -> None:
+    prefixes = (
+        "name: Don't\n",
+        'name: Say "hello\n',
+        'run-name:\n  -"unterminated\n',
+        'run-name:\n  name:"unterminated\n',
+        'run-name:\n  CONFIG: plain\n    "unfinished\n',
+    )
+
+    for prefix in prefixes:
+        text = prefix + "env: { BASH_ENV: .github/noop-shell-init }\n"
+        assert verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_scalar_contents_and_github_expressions_are_not_mapping_keys() -> None:
+    harmless_yaml = (
+        "matrix:\n"
+        "  script:\n"
+        "    - |\n"
+        "      BASH_ENV: documentation\n"
+        "anchored: &script |\n"
+        "  ENV: documentation\n"
+        "tagged: !!str >-\n"
+        "  BASH_ENV: documentation\n"
+        'quoted: "documentation starts\n'
+        "  ENV: documentation\n"
+        '  documentation ends"\n'
+        'run-name:\n  &label "CI: run"\n'
+        "condition: ${{ !cancelled() }}\n"
+    )
+
+    assert not verify_ci_workflow._has_shell_init_environment(harmless_yaml)
+
+
+def test_unrelated_actions_env_fields_are_not_environment_mappings() -> None:
+    text = (
+        "run-name: Inspect GITHUB_ENV behavior\n"
+        "jobs:\n"
+        "  test:\n"
+        "    strategy:\n"
+        "      matrix:\n"
+        "        env: [py311, py312]\n"
+        "    steps:\n"
+        "      - uses: example/action@0123456789abcdef\n"
+        "        with:\n"
+        "          env: production\n"
+    )
+
+    assert not verify_ci_workflow._has_shell_init_environment(text)
+
+
+def test_url_like_scalar_values_are_not_mapping_keys() -> None:
+    scalars = (
+        "run-name:\n  ENV:https://example.com\n",
+        "run-name:\n  !!str https://example.com\n",
+        "run-name:\n  &label https://example.com\n",
+    )
+
+    for text in scalars:
+        assert verify_ci_workflow._yaml_mapping_keys(text) == [(0, "run-name", False)]
+
+
+def test_plain_scalar_continuation_cannot_hide_duplicate_run(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "          uv sync --locked --extra reflex --group dev\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            required,
+            required
+            + "        env:\n"
+            + "          NOTE: This is\n"
+            + '            "unfinished\n'
+            + "        run: echo bypassed\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_top_level_scalar_cannot_replace_the_real_job_block(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    original_test = verify_ci_workflow._job_blocks(workflow)["test"]
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("  test:\n", "  test:\n    if: false\n", 1)
+        + "\nrun-name: |2\n"
+        + original_test
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_job_scalar_cannot_replace_the_real_named_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    original_step = verify_ci_workflow._named_step_blocks(
+        verify_ci_workflow._job_blocks(workflow)["test"]
+    )["Install package + dev deps"]
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n        if: false\n",
+            1,
+        ).replace(
+            "  browser_conformance:\n",
+            "    name: |2\n" + original_step + "\n\n  browser_conformance:\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
 
 
 def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> None:
@@ -354,6 +661,11 @@ def test_reference_job_and_steps_must_be_hard_gates(tmp_path: Path) -> None:
             "      - name: Run optional-interoperability and dual-engine corpus tests\n"
             "        shell: echo {0}\n",
         ),
+        (
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n",
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n"
+            "        working-directory: decoy\n",
+        ),
         ("  matplotlib_reference:\n", "  matplotlib_reference:\n    if: false\n"),
         (
             "  matplotlib_reference:\n",
@@ -380,6 +692,49 @@ def test_codspeed_workflow_accepts_current_gates() -> None:
 
 def test_all_workflows_accept_current_gates() -> None:
     assert verify_ci_workflow.validate_all_workflows() == []
+
+
+def test_workflows_reject_normalized_top_level_overrides(tmp_path: Path) -> None:
+    cases = (
+        ("ci", Path(".github/workflows/ci.yml"), verify_ci_workflow.validate_ci_workflow),
+        (
+            "codspeed",
+            Path(".github/workflows/codspeed.yml"),
+            verify_ci_workflow.validate_codspeed_workflow,
+        ),
+        (
+            "release",
+            Path(".github/workflows/release.yml"),
+            verify_ci_workflow.validate_release_workflow,
+        ),
+    )
+
+    for label, source, validate in cases:
+        workflow = source.read_text(encoding="utf-8")
+        for key, value in (("jobs", "  bypass: {}"), ("on", "  workflow_dispatch:")):
+            path = tmp_path / f"{label}-{key}.yml"
+            path.write_text(workflow + f'\n"{key}":\n{value}\n', encoding="utf-8")
+
+            errors = validate(path)
+
+            assert any(f"top-level '{key}' key" in error for error in errors)
+
+
+def test_ci_workflow_rejects_normalized_duplicate_required_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  browser_conformance:\n",
+            '  "test":\n    runs-on: ubuntu-latest\n    steps: []\n\n  browser_conformance:\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("exactly one unambiguous 'test' job" in error for error in errors)
 
 
 def test_workflows_use_consistent_node24_action_pins() -> None:
@@ -1037,6 +1392,21 @@ def test_release_workflow_rejects_missing_dry_run_input(tmp_path: Path) -> None:
     assert any("dry-run input" in error for error in errors)
 
 
+def test_release_workflow_rejects_false_dry_run_default_hidden_by_comment(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("        default: true\n", "        default: false # default: true\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("dry-run input" in error for error in errors)
+
+
 def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> None:
     """A sibling step's `if:` (the dry-run summary) must not mask a missing
     gate on the actual PyPI upload step — regression for a bug where the
@@ -1051,6 +1421,35 @@ def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> N
         ),
         encoding="utf-8",
     )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
+
+
+def test_release_workflow_rejects_duplicate_pypi_publish_condition(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(gate, gate + '        "if": always()\n', 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("is not gated by the dry-run predicate" in error for error in errors)
+
+
+def test_release_job_scalar_cannot_decoy_the_publish_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    gate = (
+        "        if: github.event_name != 'workflow_dispatch' "
+        "|| github.event.inputs.dry_run != 'true'\n"
+    )
+    decoy = "\n    name: |2\n      - uses: pypa/gh-action-pypi-publish@decoy\n" + gate
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(gate, "", 1) + decoy, encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
@@ -1090,6 +1489,28 @@ def test_ci_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("fetch-depth: 0" in error for error in errors)
+
+
+def test_workflows_reject_fetch_depth_hidden_in_scalar_input(tmp_path: Path) -> None:
+    cases = (
+        (Path(".github/workflows/ci.yml"), verify_ci_workflow.validate_ci_workflow),
+        (Path(".github/workflows/codspeed.yml"), verify_ci_workflow.validate_codspeed_workflow),
+        (Path(".github/workflows/release.yml"), verify_ci_workflow.validate_release_workflow),
+    )
+    for index, (source, validate) in enumerate(cases):
+        workflow = source.read_text(encoding="utf-8")
+        path = tmp_path / f"workflow-{index}.yml"
+        path.write_text(
+            workflow.replace(
+                "          fetch-depth: 0",
+                "          decoy: |\n            fetch-depth: 0",
+            ),
+            encoding="utf-8",
+        )
+
+        errors = validate(path)
+
+        assert any("fetch-depth: 0" in error for error in errors)
 
 
 def test_release_workflow_rejects_always_conditioned_pypi_publish(tmp_path: Path) -> None:

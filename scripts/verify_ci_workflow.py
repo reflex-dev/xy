@@ -10,6 +10,7 @@ editing `.github/workflows/ci.yml` or `.github/workflows/release.yml`.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -46,6 +47,8 @@ def _job_blocks(text: str) -> dict[str, str]:
     blocks: dict[str, list[str]] = {}
     current: Optional[str] = None
     for line in lines[start + 1 :]:
+        if line.strip() and len(line) == len(line.lstrip(" ")):
+            break
         match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
         if match:
             current = match.group(1)
@@ -90,29 +93,407 @@ def _missing_needles(block: str, needles: tuple[str, ...]) -> list[str]:
     return [needle for needle in needles if needle not in block]
 
 
+_YAML_KEY_TOKEN = r"""(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)"""
+_DIRECT_YAML_KEY = re.compile(rf"^(?P<key>{_YAML_KEY_TOKEN})\s*:(?=\s|$)(?P<value>.*)$")
+_NODE_PROPERTY_MAPPING_KEY = re.compile(
+    rf"^(?:(?:![^\s]+|&[^\s]+)\s+)+"
+    rf"(?:{_YAML_KEY_TOKEN}|\*[^\s:]+|<<)\s*:(?=\s|$)"
+)
+_ALIAS_OR_MERGE_MAPPING_KEY = re.compile(r"^(?:\*[^\s:]+|<<)\s*:(?=\s|$)")
+_YAML_NODE_PROPERTIES_ONLY = re.compile(r"(?:(?:![^\s]+|&[^\s]+)\s*)+")
+
+
+def _strip_yaml_comment(line: str) -> str:
+    """Remove a YAML comment while preserving ``#`` inside quoted scalars."""
+    quote: Optional[str] = None
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == '"':
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                quote = None
+        elif quote == "'":
+            if char == "'" and index + 1 < len(line) and line[index + 1] == "'":
+                index += 2
+                continue
+            if char == "'":
+                quote = None
+        elif char in {'"', "'"}:
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index].rstrip()
+        index += 1
+    return line.rstrip()
+
+
+def _yaml_code_lines(text: str) -> list[str]:
+    """Return comment-free source lines for indentation-scoped checks.
+
+    The protected keys below are checked only at their exact structural
+    indentation. More deeply indented scalar content is irrelevant; a rare
+    same-indent quoted continuation that resembles a protected structural key
+    deliberately fails closed rather than requiring a full YAML parser.
+    """
+    return [_strip_yaml_comment(line) for line in text.splitlines()]
+
+
+def _decode_yaml_key(token: str) -> tuple[Optional[str], bool]:
+    """Return a simple scalar key and whether its spelling is unsupported.
+
+    JSON decoding covers YAML's common double-quoted escapes, including
+    ``\\u`` spellings used to hide ASCII workflow keys. YAML-only escape forms
+    (for example ``\\x`` or ``\\U``) fail closed rather than attempting to
+    duplicate a complete YAML scalar decoder.
+    """
+    if token.startswith('"'):
+        try:
+            decoded = json.loads(token)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None, True
+        return (decoded, False) if isinstance(decoded, str) else (None, True)
+    if token.startswith("'"):
+        return token[1:-1].replace("''", "'"), False
+    return token, False
+
+
+def _yaml_mapping_keys(text: str) -> list[tuple[Optional[int], Optional[str], bool]]:
+    """Lex block mapping keys as ``(indent, value, unsafe_syntax)``."""
+    lines = _yaml_code_lines(text)
+    keys: list[tuple[Optional[int], Optional[str], bool]] = []
+    explicit = re.compile(rf"^\?\s+(?P<key>{_YAML_KEY_TOKEN})(?:\s*:.*)?\s*$")
+    for line in lines:
+        indent = len(line) - len(line.lstrip(" "))
+        body = line[indent:]
+        match = _DIRECT_YAML_KEY.match(body)
+        if match is not None:
+            value, unsafe = _decode_yaml_key(match.group("key"))
+            keys.append((indent, value, unsafe))
+        elif (match := explicit.match(body)) is not None:
+            value, _unsafe = _decode_yaml_key(match.group("key"))
+            # Explicit keys are valid YAML but unnecessary in these protected
+            # workflow scopes. Treat even a recognized spelling as unsafe so
+            # a following value line cannot alter the reviewed structure.
+            keys.append((indent, value, True))
+        elif body == "?" or body.startswith("? "):
+            # Complex/multiline explicit keys are irrelevant to these
+            # workflow contracts and hard to normalize without a YAML parser.
+            # Treat the explicit key indicator itself as unsafe at this scope.
+            keys.append((indent, None, True))
+        elif body.startswith('"') and "\\" in body:
+            # A double-quoted key can continue onto another source line with a
+            # backslash, hiding the decoded key from a line-local lexer.
+            keys.append((indent, None, True))
+        elif _NODE_PROPERTY_MAPPING_KEY.match(body) or _ALIAS_OR_MERGE_MAPPING_KEY.match(body):
+            # YAML node properties, aliases, and merge keys can normalize or
+            # import an effective mapping key (for example
+            # ``!!str BASH_ENV:``, ``*anchored_key:``, or ``<<: *defaults``).
+            # Protected workflow scopes do not need them, so fail closed.
+            keys.append((indent, None, True))
+    return keys
+
+
+def _direct_yaml_mapping(
+    line: str,
+) -> Optional[tuple[int, Optional[str], bool, str]]:
+    """Return ``(indent, decoded_key, unsafe, raw_value)`` for a block key."""
+    indent = len(line) - len(line.lstrip(" "))
+    match = _DIRECT_YAML_KEY.match(line[indent:])
+    if match is None:
+        return None
+    key, unsafe = _decode_yaml_key(match.group("key"))
+    return indent, key, unsafe, match.group("value")
+
+
+def _environment_block_is_unsafe(lines: list[str], index: int, env_indent: int) -> bool:
+    """Inspect one reviewed block-style Actions ``env`` mapping."""
+    parsed = _direct_yaml_mapping(lines[index])
+    if parsed is None or parsed[3].strip():
+        # Inline flow maps, aliases, and tagged values are unnecessary in the
+        # protected scopes and require full YAML resolution, so fail closed.
+        return True
+
+    descendants: list[str] = []
+    for line in lines[index + 1 :]:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= env_indent:
+            break
+        descendants.append(line)
+    if not descendants:
+        return False
+
+    child_indent = min(len(line) - len(line.lstrip(" ")) for line in descendants)
+    quote: Optional[str] = None
+
+    def closes(value: str, delimiter: str, *, starts_here: bool) -> bool:
+        cursor = 1 if starts_here else 0
+        while cursor < len(value):
+            char = value[cursor]
+            if delimiter == '"' and char == "\\":
+                cursor += 2
+                continue
+            if (
+                delimiter == "'"
+                and char == "'"
+                and cursor + 1 < len(value)
+                and value[cursor + 1] == "'"
+            ):
+                cursor += 2
+                continue
+            if char == delimiter:
+                return True
+            cursor += 1
+        return False
+
+    for line in descendants:
+        if quote is not None:
+            if closes(line, quote, starts_here=False):
+                quote = None
+            continue
+        if len(line) - len(line.lstrip(" ")) != child_indent:
+            continue
+        child = _direct_yaml_mapping(line)
+        if child is None:
+            return True
+        _indent, key, unsafe, value = child
+        if unsafe or key in {"BASH_ENV", "ENV", "PATH"}:
+            return True
+        scalar = value.lstrip()
+        if scalar[:1] in {'"', "'"} and not closes(scalar, scalar[0], starts_here=True):
+            quote = scalar[0]
+    return quote is not None
+
+
+def _has_shell_init_environment(text: str) -> bool:
+    """Reject shell-init state in workflow/job/step environment scopes.
+
+    Exact indentation plus the enclosing job section distinguishes Actions
+    environment mappings from unrelated data keys such as ``matrix.env`` or a
+    ``with.env`` action input. Protected hard-gate jobs also have a simple,
+    reviewable policy of never referencing GitHub's persistent environment
+    file, so earlier steps cannot directly persist shell initialization for a
+    later reviewed command.
+    """
+    lines = _yaml_code_lines(text)
+    protected_jobs = _job_blocks(text)
+    protected_job_text = "\n".join(
+        protected_jobs.get(job, "") for job in ("matplotlib_reference", "test")
+    )
+    if any(
+        re.search(r"\bGITHUB_(?:ENV|PATH)\b", line)
+        for line in _yaml_code_lines(protected_job_text)
+        if line.strip()
+    ):
+        return True
+
+    in_jobs = False
+    in_job = False
+    job_section: Optional[str] = None
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        parsed = _direct_yaml_mapping(line)
+        indent = len(line) - len(line.lstrip(" "))
+
+        relevant_env = False
+        if indent == 0:
+            key = None if parsed is None else parsed[1]
+            value = "" if parsed is None else parsed[3]
+            relevant_env = key == "env"
+            in_jobs = key == "jobs" and not value.strip()
+            in_job = False
+            job_section = None
+        elif in_jobs and indent == 2:
+            in_job = parsed is not None
+            job_section = None
+        elif in_jobs and in_job and indent == 4:
+            key = None if parsed is None else parsed[1]
+            value = "" if parsed is None else parsed[3]
+            relevant_env = key == "env"
+            stripped_value = value.strip()
+            opens_block = not stripped_value or _YAML_NODE_PROPERTIES_ONLY.fullmatch(stripped_value)
+            job_section = key if parsed is not None and opens_block else None
+        elif in_jobs and in_job and indent == 8 and job_section == "steps":
+            relevant_env = parsed is not None and parsed[1] == "env"
+
+        if not relevant_env:
+            continue
+        if parsed is None or parsed[2] or _environment_block_is_unsafe(lines, index, indent):
+            return True
+    return False
+
+
 def _has_yaml_key(text: str, key: str, *, indent: Optional[int] = None) -> bool:
-    """Recognize a bare or quoted YAML mapping key at the requested indent."""
-    prefix = "[ ]*" if indent is None else " " * indent
-    token = rf'(?:{re.escape(key)}|"{re.escape(key)}"|\'{re.escape(key)}\')'
-    return re.search(rf"^{prefix}{token}\s*:", text, flags=re.MULTILINE) is not None
+    """Recognize equivalent YAML mapping-key spellings.
+
+    Unrecognized escape-encoded mapping keys fail closed: allowing one in a
+    protected scope would let the YAML parser reveal ``run``, ``ENV``, or a
+    suppression key only after this stdlib-only verifier had approved it.
+    """
+    return any(
+        (candidate_indent is not None or indent is None)
+        and (indent is None or candidate_indent == indent)
+        and (unsafe or candidate == key)
+        for candidate_indent, candidate, unsafe in _yaml_mapping_keys(text)
+    )
+
+
+def _direct_yaml_key_count(text: str, key: str, *, indent: int) -> int:
+    """Count equivalent direct mapping keys at one block indentation."""
+    return sum(
+        candidate_indent == indent and (unsafe or candidate == key)
+        for candidate_indent, candidate, unsafe in _yaml_mapping_keys(text)
+    )
+
+
+def _direct_yaml_key_values(text: str, key: str, *, indent: int) -> tuple[list[str], bool]:
+    """Return normalized direct values and whether that scope is ambiguous."""
+    values: list[str] = []
+    for line in _yaml_code_lines(text):
+        parsed = _direct_yaml_mapping(line)
+        if parsed is None:
+            continue
+        candidate_indent, candidate, unsafe, value = parsed
+        if candidate_indent == indent and candidate == key and not unsafe:
+            values.append(value.strip())
+    unsafe = any(
+        candidate_indent == indent and candidate_unsafe
+        for candidate_indent, _candidate, candidate_unsafe in _yaml_mapping_keys(text)
+    )
+    return values, unsafe
+
+
+def _unique_mapping_block(text: str, key: str, *, indent: int) -> Optional[str]:
+    """Return one block-style mapping value, bounded by its indentation."""
+    raw_lines = text.splitlines()
+    code_lines = _yaml_code_lines(text)
+    starts: list[int] = []
+    for index, line in enumerate(code_lines):
+        parsed = _direct_yaml_mapping(line)
+        if parsed is None or parsed[0] != indent or parsed[1] != key or parsed[2]:
+            continue
+        value = parsed[3].strip()
+        if not value or _YAML_NODE_PROPERTIES_ONLY.fullmatch(value):
+            starts.append(index)
+    if len(starts) != 1:
+        return None
+    start = starts[0]
+    end = len(raw_lines)
+    for index in range(start + 1, len(code_lines)):
+        line = code_lines[index]
+        if line.strip() and len(line) - len(line.lstrip(" ")) <= indent:
+            end = index
+            break
+    return "\n".join(raw_lines[start + 1 : end])
+
+
+def _has_safe_release_dry_run_input(text: str) -> bool:
+    """Validate the exact nested manual-release dry-run input mapping."""
+    block = _unique_mapping_block(text, "on", indent=0)
+    if block is None:
+        return False
+    block = _unique_mapping_block(block, "workflow_dispatch", indent=2)
+    if block is None:
+        return False
+    block = _unique_mapping_block(block, "inputs", indent=4)
+    if block is None:
+        return False
+    block = _unique_mapping_block(block, "dry_run", indent=6)
+    if block is None:
+        return False
+    type_values, type_unsafe = _direct_yaml_key_values(block, "type", indent=8)
+    default_values, default_unsafe = _direct_yaml_key_values(block, "default", indent=8)
+    return (
+        not type_unsafe
+        and not default_unsafe
+        and type_values == ["boolean"]
+        and default_values == ["true"]
+    )
+
+
+def _require_unique_workflow_structure(
+    errors: list[str],
+    text: str,
+    workflow_label: str,
+    required_jobs: set[str],
+) -> None:
+    """Reject duplicate/encoded overrides of protected workflow mappings."""
+    keys = _yaml_mapping_keys(text)
+    unsafe_top = any(indent == 0 and unsafe for indent, _key, unsafe in keys)
+    top_counts: dict[str, int] = {}
+    for key in ("on", "jobs"):
+        count = sum(
+            indent == 0 and candidate == key and not unsafe for indent, candidate, unsafe in keys
+        )
+        top_counts[key] = count
+        if unsafe_top or count != 1:
+            errors.append(
+                f"{workflow_label} workflow must define exactly one unambiguous top-level "
+                f"{key!r} key"
+            )
+
+    job_keys: list[tuple[Optional[int], Optional[str], bool]] = []
+    if top_counts.get("jobs") == 1:
+        lines = _yaml_code_lines(text)
+        start = next(
+            index
+            for index, line in enumerate(lines)
+            if (parsed := _direct_yaml_mapping(line)) is not None
+            and parsed[0] == 0
+            and parsed[1] == "jobs"
+            and not parsed[2]
+        )
+        end = len(lines)
+        for index in range(start + 1, len(lines)):
+            line = lines[index]
+            if line.strip() and len(line) == len(line.lstrip(" ")):
+                end = index
+                break
+        job_keys = _yaml_mapping_keys("\n".join(lines[start + 1 : end]))
+
+    unsafe_job_key = any(indent == 2 and unsafe for indent, _key, unsafe in job_keys)
+    for job in sorted(required_jobs):
+        count = sum(
+            indent == 2 and candidate == job and not unsafe
+            for indent, candidate, unsafe in job_keys
+        )
+        if unsafe_job_key or count != 1:
+            errors.append(
+                f"{workflow_label} workflow must define exactly one unambiguous {job!r} job"
+            )
+
+
+def _steps_block(job_text: str) -> str:
+    """Return the unique actual ``steps:`` sequence inside one job."""
+    return _unique_mapping_block(job_text, "steps", indent=4) or ""
+
+
+def _step_sequence_blocks(job_text: str) -> list[str]:
+    """Return the actual sequence items under a job's unique ``steps`` key."""
+    blocks: list[list[str]] = []
+    current: Optional[list[str]] = None
+    for line in _steps_block(job_text).splitlines():
+        if re.match(r"^      -(?:\s|$)", line):
+            current = [line]
+            blocks.append(current)
+        elif current is not None:
+            current.append(line)
+    return ["\n".join(block) for block in blocks]
 
 
 def _named_step_blocks(job_text: str) -> dict[str, str]:
-    """Return step-local blocks; comments elsewhere cannot satisfy a gate."""
-    lines = job_text.splitlines()
-    blocks: dict[str, list[str]] = {}
-    current: Optional[str] = None
-    for line in lines:
-        match = re.match(r"^      - name:\s*(.+?)\s*$", line)
-        if match:
-            current = match.group(1)
-            blocks[current] = [line]
-            continue
-        if re.match(r"^      - ", line):
-            current = None
-        elif current is not None:
-            blocks[current].append(line)
-    return {name: "\n".join(lines) for name, lines in blocks.items()}
+    """Return named blocks from the job's actual ``steps:`` sequence."""
+    blocks: dict[str, str] = {}
+    for block in _step_sequence_blocks(job_text):
+        first = _strip_yaml_comment(block.splitlines()[0])
+        match = re.match(r"^      - name:\s*(.+?)\s*$", first)
+        if match is not None:
+            blocks[match.group(1)] = block
+    return blocks
 
 
 def _require_step_contains(
@@ -165,13 +546,26 @@ def _require_step_runs_exactly(
         return
     # Membership is insufficient: a needle could otherwise be heredoc data,
     # an uninvoked function body, or one folded argument to another command.
-    forbidden_step_keys = ("if", "continue-on-error", "shell")
+    forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
     has_forbidden_step_key = any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
-    forbidden_job_keys = ("if", "continue-on-error", "defaults")
+    forbidden_job_keys = (
+        "if",
+        "continue-on-error",
+        "defaults",
+        "container",
+        "needs",
+        "strategy",
+    )
     has_forbidden_job_key = any(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
-    if _step_run_lines(block) != list(commands) or has_forbidden_step_key or has_forbidden_job_key:
+    has_exactly_one_run_key = _direct_yaml_key_count(block, "run", indent=8) == 1
+    if (
+        not has_exactly_one_run_key
+        or _step_run_lines(block) != list(commands)
+        or has_forbidden_step_key
+        or has_forbidden_job_key
+    ):
         errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
@@ -204,7 +598,7 @@ def _step_block(job_text: str, step_needle: str) -> Optional[str]:
     """
     match = re.search(
         rf"( *)- (?:uses|name|run): [^\n]*{re.escape(step_needle)}[^\n]*\n([\s\S]*?)(?=\n\1- |\Z)",
-        job_text,
+        _steps_block(job_text),
     )
     return None if match is None else match.group(0)
 
@@ -227,7 +621,11 @@ PYPI_PUBLISH_GATE = (
 
 def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
     block = _step_block(job_text, step_needle)
-    return block is not None and PYPI_PUBLISH_GATE in block
+    if block is None:
+        return False
+    values, unsafe = _direct_yaml_key_values(block, "if", indent=8)
+    expected = PYPI_PUBLISH_GATE.partition(":")[2].strip()
+    return not unsafe and values == [expected]
 
 
 def _require_workflow_contains(
@@ -253,29 +651,31 @@ def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: s
     bug, not a performance tweak, and it is invisible until someone reads a
     PyPI page. Cheap to require, expensive to notice late.
     """
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        if "uses: actions/checkout@" not in line:
-            continue
-        indent = len(line) - len(line.lstrip())
-        step: list[str] = []
-        for following in lines[index + 1 :]:
-            stripped = following.strip()
-            if not stripped:
-                continue
-            following_indent = len(following) - len(following.lstrip())
-            if following_indent < indent or (
-                following_indent == indent and stripped.startswith("-")
-            ):
-                break
-            step.append(stripped)
-        if "fetch-depth: 0" not in step:
-            errors.append(
-                f"{workflow_label} workflow has an actions/checkout step (line {index + 1}) "
-                "without `fetch-depth: 0` — the distribution version is derived from git "
-                "tags, which a shallow checkout does not fetch, so the build would quietly "
-                "fall back to 0.0.0"
+    checkout_count = 0
+    for job in _job_blocks(text).values():
+        for step in _step_sequence_blocks(job):
+            uses_checkout = any(
+                "uses: actions/checkout@" in line and len(line) - len(line.lstrip(" ")) in {6, 8}
+                for line in _yaml_code_lines(step)
             )
+            if not uses_checkout:
+                continue
+            checkout_count += 1
+            with_block = _unique_mapping_block(step, "with", indent=8)
+            if with_block is not None:
+                values, unsafe = _direct_yaml_key_values(with_block, "fetch-depth", indent=10)
+            else:
+                values, unsafe = [], False
+            if not unsafe and values == ["0"]:
+                continue
+            errors.append(
+                f"{workflow_label} workflow has an actions/checkout step without a unique "
+                "direct `fetch-depth: 0` input — the distribution version is derived from "
+                "git tags, which a shallow checkout does not fetch, so the build would "
+                "quietly fall back to 0.0.0"
+            )
+    if checkout_count == 0:
+        errors.append(f"{workflow_label} workflow has no structurally recognized checkout step")
 
 
 def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
@@ -327,9 +727,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_unique_workflow_structure(errors, text, "CI", REQUIRED_CI_JOBS)
     if _has_yaml_key(text, "defaults", indent=0):
         errors.append("CI workflow must not override the shell for hard-gate run steps")
-    if _has_yaml_key(text, "BASH_ENV") or _has_yaml_key(text, "ENV"):
+    if _has_shell_init_environment(text):
         errors.append("CI workflow must not set shell-init environment variables")
     _require_docs_spec_pr_paths_ignored(errors, text, "CI")
     _require_unshallow_checkouts(errors, text, "CI")
@@ -709,6 +1110,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_unique_workflow_structure(errors, text, "CodSpeed", REQUIRED_CODSPEED_JOBS)
     _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
     _require_unshallow_checkouts(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
@@ -756,6 +1158,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    _require_unique_workflow_structure(errors, text, "release", REQUIRED_RELEASE_JOBS)
     _require_unshallow_checkouts(errors, text, "release")
     missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
     if missing_jobs:
@@ -868,17 +1271,11 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "packages-dir: dist/",
         "skip-existing: true",
     )
-    _require_workflow_contains(
-        errors,
-        text,
-        "release",
-        "a workflow_dispatch dry-run input defaulting to true, so a manual run "
-        "never accidentally publishes",
-        "workflow_dispatch:",
-        "dry_run:",
-        "type: boolean",
-        "default: true",
-    )
+    if not _has_safe_release_dry_run_input(text):
+        errors.append(
+            "release workflow missing a unique boolean workflow_dispatch dry-run input "
+            "defaulting to true, so a manual run never accidentally publishes"
+        )
     publish = jobs.get("publish", "")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
