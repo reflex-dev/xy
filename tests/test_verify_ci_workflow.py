@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -1138,10 +1140,15 @@ def test_release_workflow_reconciles_stale_assets_before_publishing(
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     job = verify_ci_workflow._job_blocks(workflow)["github-release"]
+    prepare_shell = verify_ci_workflow._named_step_run(
+        job,
+        "Prepare release provenance",
+    )
     release_shell = verify_ci_workflow._named_step_run(
         job,
         "Create GitHub Release and attach distributions",
     )
+    assert prepare_shell is not None
     assert release_shell is not None
 
     fake_bin = tmp_path / "bin"
@@ -1149,26 +1156,100 @@ def test_release_workflow_reconciles_stale_assets_before_publishing(
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
-set -eu
+set -euo pipefail
 printf '%s\n' "$*" >> "$GH_LOG"
 state="$(<"$GH_STATE")"
 if [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
   printf '## Changes\n\n- Generated\n'
 elif [[ "$1" == "api" && "$*" == *"/releases/assets/"* ]]; then
+  [[ "$state" == "uploaded" ]]
   [[ "$*" == *"/releases/assets/9003"* ]]
   printf 'deleted' > "$GH_STATE"
 elif [[ "$1" == "release" && "$2" == "upload" ]]; then
   [[ "$state" == "initial" ]]
+  for candidate in "$@"; do
+    case "$candidate" in
+      dist/*.whl|dist/*.tar.gz|*/xy-release-provenance.json)
+        cp "$candidate" "$GH_REMOTE/"
+        ;;
+    esac
+  done
+  [[ -s "$GH_REMOTE/xy-1.2.3-py3-none-any.whl" ]]
+  [[ -s "$GH_REMOTE/xy-1.2.3.tar.gz" ]]
+  [[ -s "$GH_REMOTE/xy-release-provenance.json" ]]
   printf 'uploaded' > "$GH_STATE"
 elif [[ "$1" == "release" && "$2" == "edit" ]]; then
   [[ "$state" == "deleted" ]]
+  notes_file=""
+  while (( $# > 0 )); do
+    if [[ "$1" == "--notes-file" ]]; then
+      shift
+      notes_file="$1"
+      break
+    fi
+    shift
+  done
+  [[ -s "$notes_file" ]]
+  cp "$notes_file" "$GH_NOTES"
   printf 'edited' > "$GH_STATE"
 elif [[ "$1" == "release" && "$2" == "view" ]]; then
   if [[ "$state" == "edited" ]]; then
-    printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"},{"name":"xy-1.2.3.tar.gz","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"},{"name":"checksums.txt","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"}],"body":"## Changes\n\n- Generated\n\n<!-- xy-release-workflow:v1.2.3 -->","isDraft":false,"isImmutable":false,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+    body="$(<"$GH_NOTES")"
+    jq -cn --arg body "$body" '{
+      assets: [
+        {
+          name: "xy-1.2.3-py3-none-any.whl",
+          apiUrl: "https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"
+        },
+        {
+          name: "xy-1.2.3.tar.gz",
+          apiUrl: "https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"
+        },
+        {
+          name: "checksums.txt",
+          apiUrl: "https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"
+        },
+        {
+          name: "xy-release-provenance.json",
+          apiUrl: "https://api.github.com/repos/reflex-dev/xy/releases/assets/9005"
+        }
+      ],
+      body: $body,
+      isDraft: false,
+      isImmutable: false,
+      isPrerelease: false,
+      name: "v1.2.3",
+      publishedAt: "2026-07-31T00:00:00Z",
+      tagName: "v1.2.3"
+    }'
+  elif [[ "$state" == "uploaded" ]]; then
+    printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"},{"name":"xy-1.2.3.tar.gz","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"},{"name":"stale.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9003"},{"name":"checksums.txt","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"},{"name":"xy-release-provenance.json","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9005"}],"body":"manual","isDraft":true,"isImmutable":false,"isPrerelease":false,"name":"manual","publishedAt":null,"tagName":"v1.2.3"}'
   else
     printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"},{"name":"xy-1.2.3.tar.gz","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"},{"name":"stale.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9003"},{"name":"checksums.txt","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"}],"body":"manual","isDraft":true,"isImmutable":false,"isPrerelease":false,"name":"manual","publishedAt":null,"tagName":"v1.2.3"}'
   fi
+elif [[ "$1" == "release" && "$2" == "download" ]]; then
+  [[ "$state" == "edited" ]]
+  download_dir=""
+  while (( $# > 0 )); do
+    if [[ "$1" == "--dir" ]]; then
+      shift
+      download_dir="$1"
+      break
+    fi
+    shift
+  done
+  [[ -n "$download_dir" ]]
+  mkdir -p "$download_dir"
+  cp "$GH_REMOTE/xy-1.2.3-py3-none-any.whl" "$download_dir/"
+  cp "$GH_REMOTE/xy-1.2.3.tar.gz" "$download_dir/"
+  cp "$GH_REMOTE/xy-release-provenance.json" "$download_dir/"
+elif [[ "$1" == "attestation" && "$2" == "verify" ]]; then
+  [[ "$state" == "edited" ]]
+  [[ -s "$3" ]]
+  [[ "$*" == *"--signer-workflow $REPO/.github/workflows/release.yml"* ]]
+  [[ "$*" == *"--source-ref refs/tags/$TAG"* ]]
+  [[ "$*" == *"--source-digest $GITHUB_SHA"* ]]
+  [[ "$*" == *"--deny-self-hosted-runners"* ]]
 else
   printf 'unexpected gh invocation: %s\n' "$*" >&2
   exit 97
@@ -1185,18 +1266,49 @@ fi
     log = tmp_path / "gh.log"
     runner_temp = tmp_path / "runner"
     runner_temp.mkdir()
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    notes = tmp_path / "release-notes.md"
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "GH_LOG": str(log),
+        "GH_NOTES": str(notes),
+        "GH_REMOTE": str(remote),
         "GH_STATE": str(state),
         "GH_TOKEN": "test",
+        "GITHUB_SHA": source_sha,
         "REPO": "reflex-dev/xy",
         "RUNNER_TEMP": str(runner_temp),
         "TAG": "v1.2.3",
     }
 
-    result = subprocess.run(
+    prepare_result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", prepare_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert prepare_result.returncode == 0, f"{prepare_result.stdout}\n{prepare_result.stderr}"
+
+    provenance = runner_temp / "xy-v1.2.3-release-provenance" / "xy-release-provenance.json"
+    prepared_notes = runner_temp / "xy-v1.2.3-release-notes.md"
+    manifest = json.loads(provenance.read_text(encoding="utf-8"))
+    assert manifest["source_sha"] == source_sha
+    assert (
+        manifest["release_notes_sha256"] == hashlib.sha256(b"## Changes\n\n- Generated").hexdigest()
+    )
+    footer = (
+        "<!-- xy-release-provenance:v1:v1.2.3:sha256:"
+        f"{hashlib.sha256(provenance.read_bytes()).hexdigest()} -->"
+    )
+    assert prepared_notes.read_text(encoding="utf-8").endswith(f"\n\n{footer}\n")
+
+    release_result = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", release_shell],
         cwd=tmp_path,
         env=env,
@@ -1206,22 +1318,72 @@ fi
         check=False,
     )
 
-    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert release_result.returncode == 0, f"{release_result.stdout}\n{release_result.stderr}"
     calls = log.read_text(encoding="utf-8")
-    assert "release upload v1.2.3 dist/xy-1.2.3-py3-none-any.whl dist/xy-1.2.3.tar.gz" in calls
+    assert ("release upload v1.2.3 dist/xy-1.2.3-py3-none-any.whl dist/xy-1.2.3.tar.gz") in calls
+    assert str(provenance) in calls
     assert "api --method DELETE repos/reflex-dev/xy/releases/assets/9003" in calls
     assert "releases/assets/9004" not in calls
     assert "release edit v1.2.3" in calls
+    assert "release download v1.2.3" in calls
+    assert "attestation verify" in calls
+    assert notes.read_text(encoding="utf-8").endswith(f"{footer}\n")
     assert state.read_text(encoding="utf-8") == "edited"
 
 
-@pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("jq") is None,
-    reason="release workflow runtime simulation requires bash and jq",
-)
-def test_release_workflow_never_mutates_mismatched_immutable_release(
+def _write_signed_release_fixture(
+    remote: Path,
+    *,
+    source_sha: str,
+    notes: str,
+    github_wheel: bytes = b"wheel",
+    manifest_wheel: bytes = b"wheel",
+) -> dict[str, str]:
+    wheel_name = "xy-1.2.3-py3-none-any.whl"
+    sdist_name = "xy-1.2.3.tar.gz"
+    sdist = b"sdist"
+    remote.mkdir()
+    (remote / wheel_name).write_bytes(github_wheel)
+    (remote / sdist_name).write_bytes(sdist)
+    wheel_sha256 = hashlib.sha256(manifest_wheel).hexdigest()
+    sdist_sha256 = hashlib.sha256(sdist).hexdigest()
+    manifest = {
+        "distributions": sorted(
+            [
+                {"name": wheel_name, "sha256": wheel_sha256},
+                {"name": sdist_name, "sha256": sdist_sha256},
+            ],
+            key=lambda distribution: distribution["name"],
+        ),
+        "release_notes_sha256": hashlib.sha256(notes.encode()).hexdigest(),
+        "schema": "xy-release-provenance/v1",
+        "source_sha": source_sha,
+        "tag": "v1.2.3",
+    }
+    provenance = remote / "xy-release-provenance.json"
+    provenance.write_text(
+        json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    footer = (
+        "<!-- xy-release-provenance:v1:v1.2.3:sha256:"
+        f"{hashlib.sha256(provenance.read_bytes()).hexdigest()} -->"
+    )
+    return {
+        "body": f"{notes}\n\n{footer}",
+        "footer": footer,
+        "sdist_name": sdist_name,
+        "sdist_sha256": sdist_sha256,
+        "wheel_name": wheel_name,
+        "wheel_sha256": wheel_sha256,
+    }
+
+
+def _run_immutable_release(
     tmp_path: Path,
-) -> None:
+    *,
+    github_wheel: bytes,
+) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     release_shell = verify_ci_workflow._named_step_run(
         verify_ci_workflow._job_blocks(workflow)["github-release"],
@@ -1229,17 +1391,70 @@ def test_release_workflow_never_mutates_mismatched_immutable_release(
     )
     assert release_shell is not None
 
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    persisted_notes = "## Changes\n\n- Persisted at publication"
+    current_notes = "## Changes\n\n- Generated after publication"
+    remote = tmp_path / "remote"
+    fixture = _write_signed_release_fixture(
+        remote,
+        source_sha=source_sha,
+        notes=persisted_notes,
+        github_wheel=github_wheel,
+    )
+    release_json = tmp_path / "release.json"
+    release_json.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {"name": fixture["wheel_name"]},
+                    {"name": fixture["sdist_name"]},
+                    {"name": "xy-release-provenance.json"},
+                ],
+                "body": fixture["body"],
+                "isDraft": False,
+                "isImmutable": True,
+                "isPrerelease": False,
+                "name": "v1.2.3",
+                "publishedAt": "2026-07-31T00:00:00Z",
+                "tagName": "v1.2.3",
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
-set -eu
+set -euo pipefail
 printf '%s\n' "$*" >> "$GH_LOG"
-if [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
-  printf '## Changes\n\n- Generated\n'
-elif [[ "$1" == "release" && "$2" == "view" ]]; then
-  printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl"},{"name":"xy-1.2.3.tar.gz"}],"body":"manual notes","isDraft":false,"isImmutable":true,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+if [[ "$1" == "release" && "$2" == "view" ]]; then
+  cat "$GH_RELEASE_JSON"
+elif [[ "$1" == "release" && "$2" == "download" ]]; then
+  download_dir=""
+  while (( $# > 0 )); do
+    if [[ "$1" == "--dir" ]]; then
+      shift
+      download_dir="$1"
+      break
+    fi
+    shift
+  done
+  [[ -n "$download_dir" ]]
+  mkdir -p "$download_dir"
+  cp "$GH_REMOTE/xy-1.2.3-py3-none-any.whl" "$download_dir/"
+  cp "$GH_REMOTE/xy-1.2.3.tar.gz" "$download_dir/"
+  cp "$GH_REMOTE/xy-release-provenance.json" "$download_dir/"
+elif [[ "$1" == "attestation" && "$2" == "verify" ]]; then
+  [[ -s "$3" ]]
+  [[ "$*" == *"--signer-workflow $REPO/.github/workflows/release.yml"* ]]
+  [[ "$*" == *"--source-ref refs/tags/$TAG"* ]]
+  [[ "$*" == *"--source-digest $GITHUB_SHA"* ]]
+  [[ "$*" == *"--deny-self-hosted-runners"* ]]
+elif [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
+  printf '%s\n' "$CURRENT_NOTES"
 else
   printf 'mutation attempted: %s\n' "$*" >&2
   exit 98
@@ -1249,16 +1464,20 @@ fi
     )
     fake_gh.chmod(0o755)
     (tmp_path / "dist").mkdir()
-    (tmp_path / "dist" / "xy-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
-    (tmp_path / "dist" / "xy-1.2.3.tar.gz").write_bytes(b"sdist")
+    (tmp_path / "dist" / fixture["wheel_name"]).write_bytes(b"wheel")
+    (tmp_path / "dist" / fixture["sdist_name"]).write_bytes(b"sdist")
     log = tmp_path / "gh.log"
     runner_temp = tmp_path / "runner"
     runner_temp.mkdir()
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "CURRENT_NOTES": current_notes,
         "GH_LOG": str(log),
+        "GH_RELEASE_JSON": str(release_json),
+        "GH_REMOTE": str(remote),
         "GH_TOKEN": "test",
+        "GITHUB_SHA": source_sha,
         "REPO": "reflex-dev/xy",
         "RUNNER_TEMP": str(runner_temp),
         "TAG": "v1.2.3",
@@ -1273,10 +1492,27 @@ fi
         timeout=30,
         check=False,
     )
+    return result, log.read_text(encoding="utf-8"), fixture["body"], current_notes
 
-    assert result.returncode == 1
-    assert "immutable but does not match" in result.stdout
-    calls = log.read_text(encoding="utf-8")
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_accepts_persisted_signed_immutable_release(
+    tmp_path: Path,
+) -> None:
+    result, calls, persisted_body, current_notes = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+    )
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "is immutable and already matches the verified release" in result.stdout
+    assert current_notes not in persisted_body
+    assert "generate-notes" not in calls
+    assert "release download v1.2.3" in calls
+    assert "attestation verify" in calls
     assert "release upload" not in calls
     assert "release edit" not in calls
     assert "/releases/assets/" not in calls
@@ -1285,11 +1521,33 @@ fi
 
 @pytest.mark.skipif(
     shutil.which("bash") is None or shutil.which("jq") is None,
-    reason="docs promotion runtime simulation requires bash and jq",
+    reason="release workflow runtime simulation requires bash and jq",
 )
-def test_docs_promotion_accepts_only_matching_ready_distribution_set(
+def test_release_workflow_rejects_mismatched_immutable_release_bytes(
     tmp_path: Path,
 ) -> None:
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"altered GitHub wheel",
+    )
+
+    assert result.returncode == 1
+    assert "release bytes do not match the verified build" in result.stdout
+    assert "immutable but does not match" in result.stdout
+    assert "attestation verify" in calls
+    assert "release upload" not in calls
+    assert "release edit" not in calls
+    assert "/releases/assets/" not in calls
+    assert "release create" not in calls
+
+
+def _run_docs_promotion(
+    tmp_path: Path,
+    *,
+    release_notes: str | None = None,
+    github_wheel: bytes = b"wheel",
+    pypi_yanked: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], str, str]:
     workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
     gate_shell = verify_ci_workflow._named_step_run(
         verify_ci_workflow._job_blocks(workflow)["verify-library-release"],
@@ -1297,13 +1555,94 @@ def test_docs_promotion_accepts_only_matching_ready_distribution_set(
     )
     assert gate_shell is not None
 
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    signed_notes = "## Changes\n\n- Signed release"
+    remote = tmp_path / "remote"
+    fixture = _write_signed_release_fixture(
+        remote,
+        source_sha=source_sha,
+        notes=signed_notes,
+        github_wheel=github_wheel,
+    )
+    body = fixture["body"]
+    if release_notes is not None:
+        body = f"{release_notes}\n\n{fixture['footer']}"
+    release_json = tmp_path / "release.json"
+    release_json.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {"name": fixture["wheel_name"]},
+                    {"name": fixture["sdist_name"]},
+                    {"name": "xy-release-provenance.json"},
+                ],
+                "body": body,
+                "isDraft": False,
+                "isPrerelease": False,
+                "name": "v1.2.3",
+                "publishedAt": "2026-07-31T00:00:00Z",
+                "tagName": "v1.2.3",
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    pypi_json = tmp_path / "pypi.json"
+    pypi_json.write_text(
+        json.dumps(
+            {
+                "urls": [
+                    {
+                        "digests": {"sha256": fixture["sdist_sha256"]},
+                        "filename": fixture["sdist_name"],
+                        "yanked": False,
+                    },
+                    {
+                        "digests": {"sha256": fixture["wheel_sha256"]},
+                        "filename": fixture["wheel_name"],
+                        "yanked": pypi_yanked,
+                    },
+                ]
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
-set -eu
-printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl"},{"name":"xy-1.2.3.tar.gz"},{"name":"checksums.txt"}],"body":"## Changes\n\n<!-- xy-release-workflow:v1.2.3 -->","isDraft":false,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+set -euo pipefail
+printf '%s\n' "$*" >> "$GH_LOG"
+if [[ "$1" == "release" && "$2" == "view" ]]; then
+  cat "$GH_RELEASE_JSON"
+elif [[ "$1" == "release" && "$2" == "download" ]]; then
+  download_dir=""
+  while (( $# > 0 )); do
+    if [[ "$1" == "--dir" ]]; then
+      shift
+      download_dir="$1"
+      break
+    fi
+    shift
+  done
+  [[ -n "$download_dir" ]]
+  mkdir -p "$download_dir"
+  cp "$GH_REMOTE/xy-1.2.3-py3-none-any.whl" "$download_dir/"
+  cp "$GH_REMOTE/xy-1.2.3.tar.gz" "$download_dir/"
+  cp "$GH_REMOTE/xy-release-provenance.json" "$download_dir/"
+elif [[ "$1" == "attestation" && "$2" == "verify" ]]; then
+  [[ -s "$3" ]]
+  [[ "$*" == *"--signer-workflow $REPO/.github/workflows/release.yml"* ]]
+  [[ "$*" == *"--source-ref refs/tags/$VERSION"* ]]
+  [[ "$*" == *"--source-digest $SOURCE_SHA"* ]]
+  [[ "$*" == *"--deny-self-hosted-runners"* ]]
+else
+  printf 'unexpected gh invocation: %s\n' "$*" >&2
+  exit 97
+fi
 """,
         encoding="utf-8",
     )
@@ -1311,8 +1650,9 @@ printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl"},{"name":"xy-1.2.3
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         r"""#!/usr/bin/env bash
-set -eu
-printf '%s\n' '{"urls":[{"filename":"xy-1.2.3.tar.gz"},{"filename":"xy-1.2.3-py3-none-any.whl"}]}'
+set -euo pipefail
+printf '%s\n' "$*" >> "$CURL_LOG"
+cat "$PYPI_JSON"
 """,
         encoding="utf-8",
     )
@@ -1320,11 +1660,22 @@ printf '%s\n' '{"urls":[{"filename":"xy-1.2.3.tar.gz"},{"filename":"xy-1.2.3-py3
     fake_sleep = fake_bin / "sleep"
     fake_sleep.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
     fake_sleep.chmod(0o755)
+    gh_log = tmp_path / "gh.log"
+    curl_log = tmp_path / "curl.log"
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "CURL_LOG": str(curl_log),
+        "GH_LOG": str(gh_log),
+        "GH_RELEASE_JSON": str(release_json),
+        "GH_REMOTE": str(remote),
         "GH_TOKEN": "test",
+        "PYPI_JSON": str(pypi_json),
         "REPO": "reflex-dev/xy",
+        "RUNNER_TEMP": str(runner_temp),
+        "SOURCE_SHA": source_sha,
         "VERSION": "v1.2.3",
     }
 
@@ -1337,9 +1688,72 @@ printf '%s\n' '{"urls":[{"filename":"xy-1.2.3.tar.gz"},{"filename":"xy-1.2.3-py3
         timeout=30,
         check=False,
     )
+    return result, gh_log.read_text(encoding="utf-8"), source_sha
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="docs promotion runtime simulation requires bash and jq",
+)
+def test_docs_promotion_accepts_only_matching_ready_distribution_set(
+    tmp_path: Path,
+) -> None:
+    result, calls, source_sha = _run_docs_promotion(tmp_path)
 
     assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    assert "v1.2.3 is on GitHub Releases and PyPI" in result.stdout
+    assert "has signed release provenance and byte-identical" in result.stdout
+    assert "release download v1.2.3" in calls
+    assert "attestation verify" in calls
+    assert f"--source-digest {source_sha}" in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="docs promotion runtime simulation requires bash and jq",
+)
+@pytest.mark.parametrize(
+    ("release_notes", "github_wheel", "pypi_yanked", "expected_state"),
+    [
+        pytest.param(
+            "## Changes\n\n- Altered after signing",
+            b"wheel",
+            False,
+            "provenance=false",
+            id="altered-notes",
+        ),
+        pytest.param(
+            None,
+            b"altered GitHub wheel",
+            False,
+            "provenance=true assets=false",
+            id="altered-github-bytes",
+        ),
+        pytest.param(
+            None,
+            b"wheel",
+            True,
+            "pypi=false provenance=false assets=false",
+            id="yanked-pypi-file",
+        ),
+    ],
+)
+def test_docs_promotion_fails_closed_on_unready_signed_release(
+    tmp_path: Path,
+    release_notes: str | None,
+    github_wheel: bytes,
+    pypi_yanked: bool,
+    expected_state: str,
+) -> None:
+    result, _, _ = _run_docs_promotion(
+        tmp_path,
+        release_notes=release_notes,
+        github_wheel=github_wheel,
+        pypi_yanked=pypi_yanked,
+    )
+
+    assert result.returncode == 99
+    assert expected_state in result.stdout
+    assert "has signed release provenance and byte-identical" not in result.stdout
 
 
 def test_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
