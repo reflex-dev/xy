@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import textwrap
 
 import reflex as rx
 import ruff_format
-from reflex_base.vars import get_unique_variable_name
-from reflex_base.vars.base import Var
 from reflex_components_code.shiki_code_block import code_block as shiki_code_block
 
 EXPAND_THRESHOLD_LINES = 20
@@ -19,73 +16,117 @@ _LANGUAGE_ALIASES = {
 }
 
 
-def _copy_hook_lines(identifier: str, code: str) -> tuple[str, ...]:
-    """Return the local React hooks for one independently stateful copy button."""
-    status = f"copyStatus_{identifier}"
-    set_status = f"setCopyStatus_{identifier}"
-    timer = f"copyTimer_{identifier}"
-    handler = f"copyCode_{identifier}"
-    return (
-        f'const [{status}, {set_status}] = useState("idle");',
-        f"const {timer} = useRef(null);",
-        f"""
-const {handler} = () => {{
-  {set_status}("copied");
-  window.clearTimeout({timer}.current);
-  {timer}.current = window.setTimeout(() => {set_status}("idle"), 1500);
-  const write = navigator.clipboard?.writeText?.({json.dumps(code)});
-  if (!write) {{
-    {set_status}("failed");
+def code_copy_feedback_script() -> str:
+    """Install accessible, settle-aware clipboard feedback for code blocks."""
+    return r"""
+(() => {
+  if (
+    typeof document === "undefined" ||
+    window.__xyCodeCopyFeedbackInstalled
+  ) {
     return;
-  }}
-  write.catch(() => {set_status}("failed"));
-}};
-""".strip(),
-    )
+  }
+  window.__xyCodeCopyFeedbackInstalled = true;
+
+  const resetTimers = new WeakMap();
+  const copyAttempts = new WeakMap();
+
+  const renderCopyStatus = (button, state, label, announcement) => {
+    button.dataset.xyCodeCopyState = state;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    const control = button.closest("[data-xy-code-copy-control]");
+    const liveRegion = control?.querySelector("[data-xy-code-copy-status]");
+    if (liveRegion) {
+      liveRegion.textContent = announcement;
+    }
+  };
+
+  const settleCopy = (button, attempt, state, label) => {
+    if (copyAttempts.get(button) !== attempt) {
+      return;
+    }
+    const previousTimer = resetTimers.get(button);
+    if (previousTimer !== undefined) {
+      window.clearTimeout(previousTimer);
+    }
+    renderCopyStatus(button, state, label, label);
+    const resetTimer = window.setTimeout(() => {
+      if (copyAttempts.get(button) !== attempt) {
+        return;
+      }
+      renderCopyStatus(button, "idle", "Copy code", "");
+      resetTimers.delete(button);
+    }, 1500);
+    resetTimers.set(button, resetTimer);
+  };
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const button = target.closest("[data-xy-code-copy]");
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const attempt = (copyAttempts.get(button) ?? 0) + 1;
+    copyAttempts.set(button, attempt);
+    const previousTimer = resetTimers.get(button);
+    if (previousTimer !== undefined) {
+      window.clearTimeout(previousTimer);
+      resetTimers.delete(button);
+    }
+    renderCopyStatus(button, "idle", "Copy code", "");
+
+    let write;
+    try {
+      write = navigator.clipboard?.writeText?.(
+        button.dataset.xyCodeCopyText ?? "",
+      );
+    } catch {
+      settleCopy(button, attempt, "failed", "Copy failed");
+      return;
+    }
+    if (!write) {
+      settleCopy(button, attempt, "failed", "Copy failed");
+      return;
+    }
+    Promise.resolve(write).then(
+      () => settleCopy(button, attempt, "copied", "Copied"),
+      () => settleCopy(button, attempt, "failed", "Copy failed"),
+    );
+  });
+})();
+""".strip()
 
 
-def code_copy_feedback_script(code: str = "print('hello')") -> str:
-    """Return representative client-side copy behavior for tests and review."""
-    return "\n".join(_copy_hook_lines("test", code))
-
-
-class _CopyButton(rx.el.Button):
-    """A native button with component-local clipboard feedback state."""
-
-    @classmethod
-    def create(cls, code: str) -> rx.Component:
-        """Create one independently stateful copy control."""
-        identifier = get_unique_variable_name()
-        status = Var(_js_expr=f"copyStatus_{identifier}", _var_type=str)
-        copied = status == "copied"
-        failed = status == "failed"
-        label = rx.cond(copied, "Copied", rx.cond(failed, "Copy failed", "Copy code"))
-
-        component = super().create(
+def _copy_button(code: str) -> rx.Component:
+    """Render a named native button with client-only copied feedback."""
+    return rx.el.span(
+        rx.el.button(
             rx.icon(
                 "copy",
                 size=16,
                 aria_hidden="true",
-                class_name="group-data-[copy-state=copied]:hidden",
                 custom_attrs={"data-xy-code-copy-icon": "copy"},
             ),
             rx.icon(
                 "check",
                 size=16,
                 aria_hidden="true",
-                class_name="hidden group-data-[copy-state=copied]:block",
+                class_name="hidden",
                 custom_attrs={"data-xy-code-copy-icon": "copied"},
             ),
             type="button",
-            title=label,
-            aria_label=label,
-            aria_live="polite",
-            aria_atomic="true",
-            on_click=rx.run_script(Var(_js_expr=f"copyCode_{identifier}()")),
+            title="Copy code",
+            aria_label="Copy code",
             custom_attrs={
                 "data-xy-code-copy": "true",
-                "data-xy-code-copy-implementation": "stateful",
-                "data-xy-code-copy-state": status,
+                "data-xy-code-copy-implementation": "delegated",
+                "data-xy-code-copy-state": "idle",
+                "data-xy-code-copy-text": code,
             },
             style={
                 '&[data-xy-code-copy-state="copied"] [data-xy-code-copy-icon="copy"]': {
@@ -96,29 +137,23 @@ class _CopyButton(rx.el.Button):
                 },
             },
             class_name=(
-                "group absolute right-1 top-1 inline-flex size-7 items-center justify-center "
+                "inline-flex size-7 items-center justify-center "
                 "rounded-md border border-secondary-5 bg-secondary-3 text-secondary-11 "
                 "transition hover:bg-secondary-4 hover:text-secondary-12 "
                 "active:bg-secondary-5 focus:outline-none "
                 "focus-visible:ring-2 focus-visible:ring-primary-7"
             ),
-        )
-        component._copy_identifier = identifier
-        component._copy_code = code
-        return component
-
-    def add_imports(self) -> dict[str, list[str]]:
-        """Import the React hooks used by the local copied state."""
-        return {"react": ["useRef", "useState"]}
-
-    def add_hooks(self) -> list[str]:
-        """Render the local status, timer, and clipboard handler hooks."""
-        return list(_copy_hook_lines(self._copy_identifier, self._copy_code))
-
-
-def _copy_button(code: str) -> rx.Component:
-    """Render a named native button with client-only copied feedback."""
-    return _CopyButton.create(code)
+        ),
+        rx.el.span(
+            "",
+            aria_live="polite",
+            aria_atomic="true",
+            class_name="sr-only",
+            custom_attrs={"data-xy-code-copy-status": "true"},
+        ),
+        class_name="absolute right-1 top-1",
+        custom_attrs={"data-xy-code-copy-control": "true"},
+    )
 
 
 def _plain_code_block(code: str, language: str) -> rx.Component:
