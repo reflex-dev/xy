@@ -400,11 +400,25 @@ Before tagging a release:
   publishing succeeded. `release.yml` downloads the same verified wheel and
   sdist batch into a least-privilege `contents: write` job, attaches every
   distribution with generated notes, and marks canonical alpha, beta, and
-  release-candidate tags as prereleases. The job is retry-safe: an existing
-  release has its assets refreshed with `--clobber`, while every
-  `workflow_dispatch` run (including `dry_run=false`) skips GitHub Release
-  creation. The production docs workflow polls for both this release and the
-  matching PyPI version before promotion.
+  release-candidate tags as prereleases. It also publishes a signed
+  `xy-release-provenance.json` manifest whose attestation is bound to
+  `release.yml`, the release tag, and the exact source commit. The manifest
+  binds the generated release-note body by SHA-256, and a hidden footer in the
+  release body binds those notes back to the exact manifest. The workflow
+  re-resolves the tag to the triggering commit before PyPI publication, before
+  attestation, at every GitHub Release mutation/success boundary, and again
+  after production approval; network probes are time-bounded so the release
+  gates fail closed instead of hanging past their diagnostic deadline. The job
+  is retry-safe: an existing mutable release has its assets refreshed with
+  `--clobber`, while an immutable release is re-verified as-is against its
+  signed manifest and PyPI bytes instead of requiring a later rebuild to be
+  archive-byte-identical. Every `workflow_dispatch` run (including
+  `dry_run=false`) skips GitHub Release creation. Before production promotion,
+  the docs workflow verifies that
+  signed provenance and note binding, rejects yanked or unsupported PyPI
+  uploads, and requires the exact distribution filename set and SHA-256
+  digests to agree across the downloaded GitHub Release assets, manifest, and
+  PyPI metadata.
 
 ### reflex-xy releases
 

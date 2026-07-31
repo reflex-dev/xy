@@ -58,6 +58,42 @@ def test_named_step_run_stops_before_following_step_metadata() -> None:
     assert verify_ci_workflow._named_step_run(job, "Guard") == 'echo "$VALUE"'
 
 
+def test_shell_success_termination_scan_models_bash_status_wrapping() -> None:
+    logical_lines = [
+        "exit 1",
+        "return -1",
+        "exit 256",
+        "return 512",
+        "exit",
+        'return "$status"',
+        "guard() { return 0; }",
+        "command -- exit 0",
+        "builtin -- return 256",
+        "command -p exit 512",
+        "time exit 0",
+        "time -p return 256",
+        "exec true",
+        "command -- exec true",
+    ]
+
+    records = verify_ci_workflow._shell_maybe_successful_terminations(logical_lines)
+
+    assert [(position, command, status) for position, _, command, status in records] == [
+        (2, "exit", "256"),
+        (3, "return", "512"),
+        (4, "exit", None),
+        (5, "return", "$status"),
+        (6, "return", "0"),
+        (7, "exit", "0"),
+        (8, "return", "256"),
+        (9, "exit", "512"),
+        (10, "exit", "0"),
+        (11, "return", "256"),
+        (12, "exec", "true"),
+        (13, "exec", "true"),
+    ]
+
+
 def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_workflow() == []
     assert verify_ci_workflow.validate_ci_workflow() == []
@@ -834,6 +870,90 @@ def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> N
     assert any("--clobber" in error and "--verify-tag" in error for error in errors)
 
 
+def test_release_workflow_requires_publication_options_as_actual_tokens(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    upload = (
+        '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --clobber\n'
+    )
+    create = (
+        '          gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --verify-tag --title "$TAG" --notes-file "$notes_file" '
+        '"${prerelease[@]}"\n'
+    )
+    assert upload in workflow
+    assert create in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            upload,
+            '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+            "'--description=--repo \"$REPO\" --clobber'\n",
+        ).replace(
+            create,
+            '          gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
+            '\'--title=--repo "$REPO" --verify-tag --notes-file "$notes_file"\' '
+            '"${prerelease[@]}"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact `--repo" in error and "`--verify-tag`" in error for error in errors)
+
+
+def test_release_workflow_rejects_option_terminator_and_ignored_create_failure(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    upload = (
+        '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --clobber\n'
+    )
+    create = (
+        '          gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --verify-tag --title "$TAG" --notes-file "$notes_file" '
+        '"${prerelease[@]}"\n'
+    )
+    assert upload in workflow
+    assert create in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(upload, upload.replace(" --repo", " -- --repo")).replace(
+            create,
+            create.rstrip() + " || true\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "one active upload command" in error and "one active create" in error for error in errors
+    )
+
+
+def test_release_workflow_allows_inline_comments_on_protected_step_gates(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    condition = "        if: steps.release_state.outputs.immutable != 'true'\n"
+    assert workflow.count(condition) == 2
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            condition,
+            condition.rstrip() + " # immutable releases are already signed\n",
+        ),
+        encoding="utf-8",
+    )
+
+    assert verify_ci_workflow.validate_release_workflow(path) == []
+
+
 def test_release_workflow_rejects_missing_github_release_artifact_guard(
     tmp_path: Path,
 ) -> None:
@@ -868,16 +988,15 @@ def test_release_workflow_rejects_unvalidated_existing_github_release(
     tmp_path: Path,
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    final_view = """\
-              gh release view "$TAG" \\
-                --repo "$REPO" \\
-                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
-"""
+    final_view = '                gh release view "$TAG" \\\n'
     assert workflow.count(final_view) == 2
     path = tmp_path / "release.yml"
     before, separator, after = workflow.rpartition(final_view)
     assert separator
-    path.write_text(before + '              echo "validation removed"\n' + after, encoding="utf-8")
+    path.write_text(
+        before + '                printf "%s\\n" "validation removed"\n' + after,
+        encoding="utf-8",
+    )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
@@ -886,6 +1005,327 @@ def test_release_workflow_rejects_unvalidated_existing_github_release(
         and ("after normalization" in error or "validate again" in error)
         for error in errors
     )
+
+
+def test_release_workflow_rejects_missing_post_create_payload_validation(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    validation = (
+        '             ! verify_release_payload "$release_json" "$expected_hashes_json"; then\n'
+    )
+    before, separator, after = workflow.rpartition(validation)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + "             ! true; then\n" + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("creation must re-read" in error and "signed-payload" in error for error in errors)
+
+
+def test_release_workflow_rejects_disabled_post_create_payload_condition(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    validation = (
+        '             ! verify_release_payload "$release_json" "$expected_hashes_json"; then\n'
+    )
+    before, separator, after = workflow.rpartition(validation)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + '             ! verify_release_payload "$release_json" '
+        '"$expected_hashes_json" && false; then\n' + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("creation must re-read" in error and "signed-payload" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_tag_source_binding(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    resolution = "                gh api \"repos/${REPO}/commits/${TAG}\" --jq '.sha'\n"
+    assert resolution in workflow
+    before, separator, after = workflow.rpartition(resolution)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + '                printf "%s\\n" "$GITHUB_SHA"\n' + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("timeout-bounded tag guard" in error for error in errors)
+
+
+def test_release_workflow_rejects_overwritten_tag_source_guard(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guard = '            if [[ "$tag_source_sha" != "$GITHUB_SHA" ]]; then\n'
+    before, separator, after = workflow.rpartition(guard)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + '            tag_source_sha="$GITHUB_SHA"\n' + separator + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("timeout-bounded tag guard" in error for error in errors)
+
+
+def test_release_workflow_rejects_redefined_tag_source_guard(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          # PyPI filenames are immutable."
+    assert marker in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            marker,
+            "          verify_tag_source() { return 0; }\n\n" + marker,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("timeout-bounded tag guard" in error for error in errors)
+
+
+def test_release_workflow_rejects_redefined_preparation_tag_guard(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    boundary = '          verify_tag_source\n\n          pypi_version="${TAG#v}"\n'
+    assert boundary in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            boundary,
+            "          verify_tag_source\n"
+            "          verify_tag_source() { return 0; }\n\n"
+            '          pypi_version="${TAG#v}"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("provenance preparation" in error for error in errors)
+
+
+def test_release_workflow_rejects_sibling_release_mutation(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    assert marker in workflow
+    sibling = """\
+      - name: Unverified release upload
+        run: gh release upload "$TAG" dist/*.whl --clobber
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "every GitHub Release mutation" in error and "Unverified release upload" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_sibling_release_api_mutation(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    assert marker in workflow
+    sibling = """\
+      - name: Unverified release API write
+        run: gh api --method DELETE "repos/${REPO}/releases/assets/42"
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "every GitHub Release mutation" in error and "Unverified release API write" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_forced_immutable_pypi_bypass(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          # PyPI filenames are immutable."
+    assert marker in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, "          is_immutable=true\n\n" + marker, 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact non-yanked all-file PyPI gate" in error for error in errors)
+
+
+def test_release_workflow_rejects_pre_mutation_pypi_equality_bypass(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    equality = (
+        '                if [[ "$is_immutable" == true || '
+        '"$pypi_hashes_json" == "$expected_hashes_json" ]]; then\n'
+    )
+    assert equality in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(equality, "                if [[ true == true ]]; then\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("malformed-response-safe exact non-yanked" in error for error in errors)
+
+
+def test_release_workflow_rejects_forced_pypi_match_before_guard(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guard = '          if [[ "$pypi_matches" != true ]]; then\n'
+    before, separator, after = workflow.rpartition(guard)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + "          pypi_matches=true\n" + separator + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("malformed-response-safe exact non-yanked" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "termination",
+    [
+        "exit 0",
+        "exit",
+        "exit 256",
+        "command -- exit 0",
+        "exec true",
+        "time exit 0",
+    ],
+)
+def test_release_workflow_rejects_early_success_after_pypi_gate(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          prerelease=()\n"
+    assert workflow.count(marker) == 1
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, f"          {termination}\n{marker}", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("two exact tag-guarded `exit 0` sites" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "termination",
+    ["return 0", "return", "builtin -- return 0"],
+)
+def test_release_workflow_rejects_payload_helper_early_success(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          verify_release_payload() {\n"
+    assert workflow.count(marker) == 1
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, f"{marker}            {termination}\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("no additional potentially successful termination" in error for error in errors)
+
+
+@pytest.mark.parametrize("termination", ["return 0", "return"])
+def test_release_workflow_rejects_metadata_helper_early_success(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          release_metadata_matches() {\n"
+    assert workflow.count(marker) == 1
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, f"{marker}            {termination}\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("no additional potentially successful termination" in error for error in errors)
+
+
+@pytest.mark.parametrize("termination", ["exit 0", "exit"])
+def test_release_workflow_rejects_immutable_branch_early_success(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = '            if [[ "$is_immutable" == "true" ]]; then\n'
+    assert workflow.count(marker) == 1
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, f"{marker}              {termination}\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("two exact tag-guarded `exit 0` sites" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "early_write",
+    [
+        '          gh api --method POST "repos/${REPO}/releases" -f tag_name="$TAG"\n',
+        '          gh release delete "$TAG" --repo "$REPO" --yes\n',
+    ],
+)
+def test_release_workflow_rejects_unclassified_pre_pypi_release_write(
+    tmp_path: Path,
+    early_write: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          # PyPI filenames are immutable."
+    assert marker in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, early_write + marker, 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("reject pre-gate API writes" in error for error in errors)
 
 
 def test_release_workflow_rejects_extra_github_release_write_scope(
@@ -907,6 +1347,90 @@ def test_release_workflow_rejects_extra_github_release_write_scope(
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("permissions must be exactly" in error and "issues" in error for error in errors)
+
+
+def test_release_publish_requires_read_permission_and_tag_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    permission = (
+        "      contents: read\n"
+        "      id-token: write # PyPI trusted publishing (OIDC) — no API token stored\n"
+    )
+    step_name = "      - name: Verify release tag source before PyPI\n"
+    assert permission in workflow
+    assert step_name in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            permission, permission.replace("contents: read", "contents: write")
+        ).replace(step_name, "      - name: Publish without tag verification\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("publish job permissions must be exactly" in error for error in errors)
+    assert any("verify the current tag source before PyPI" in error for error in errors)
+
+
+def test_release_pre_attestation_gate_requires_final_tag_recheck(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    boundary = "          verify_tag_source\n\n      - name: Attest release provenance\n"
+    assert boundary in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(boundary, "\n      - name: Attest release provenance\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("fresh final tag guard before attesting" in error for error in errors)
+
+
+def test_release_pypi_gate_retries_malformed_json_projection(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guarded_projection = '              if pypi_hashes_json="$(\n'
+    before, separator, after = workflow.rpartition(guarded_projection)
+    assert separator
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + '              pypi_hashes_json="$(\n' + after,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("malformed-response-safe exact non-yanked" in error for error in errors)
+
+
+def test_release_mutations_and_probes_require_adjacent_guards_and_timeouts(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guarded_delete = """\
+                verify_tag_source
+                gh api \\
+                  --method DELETE \\
+"""
+    bounded_download = "            if ! timeout --signal=TERM --kill-after=5s 180s \\\n"
+    assert guarded_delete in workflow
+    assert bounded_download in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            guarded_delete,
+            """\
+                gh api \\
+                  --method DELETE \\
+""",
+        ).replace(bounded_download, bounded_download.replace("180s", "181s")),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("every mutation/success boundary" in error for error in errors)
+    assert any("bound every release read/verification" in error for error in errors)
 
 
 def test_release_workflow_rejects_removed_prerelease_classifier(
@@ -1111,6 +1635,242 @@ def test_docs_deploy_rejects_yanked_file_guard_removal(tmp_path: Path) -> None:
     assert any("non-yanked PyPI files" in error for error in errors)
 
 
+def test_docs_deploy_rejects_polling_deadline_without_timeout_headroom(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    timeout = "    timeout-minutes: 45\n"
+    assert workflow.count(timeout) == 1
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(timeout, "    timeout-minutes: 35\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any(
+        "30-minute polling deadline" in error and "45-minute timeout" in error for error in errors
+    )
+
+
+def test_docs_deploy_rejects_overwritten_polling_deadline(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    deadline = "          POLL_DEADLINE=$((SECONDS + 30 * 60))\n"
+    assert workflow.count(deadline) == 1
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            deadline,
+            deadline + "          POLL_DEADLINE=$((SECONDS + 60 * 60))\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("30-minute polling deadline" in error for error in errors)
+
+
+def test_docs_deploy_rejects_redefined_tag_source_guard(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "          EXPECTED_PRERELEASE=false\n"
+    assert marker in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            marker,
+            "          verify_tag_source() { return 0; }\n" + marker,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("timeout-bounded release/tag/attestation calls" in error for error in errors)
+
+
+def test_docs_deploy_rejects_sleep_after_final_poll_attempt(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    final_attempt_guard = """\
+            if (( attempt == MAX_ATTEMPTS )); then
+              echo "${status}; no retries remain"
+              break
+            fi
+"""
+    assert final_attempt_guard in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            final_attempt_guard,
+            '            echo "${status}; retry budget not checked"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("break before its only bounded sleep" in error for error in errors)
+
+
+def test_docs_deploy_rejects_disguised_sleep_after_poll_loop(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    final_error = '          echo "::error::${VERSION} did not become release-ready'
+    assert final_error in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            final_error,
+            "          command sleep 3600\n" + final_error,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("only bounded sleep" in error and "final diagnostic" in error for error in errors)
+
+
+def test_docs_deploy_rejects_filtered_or_unsupported_pypi_file_sets(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    supported_policy = """\
+                 all(.urls[];
+                   .filename |
+                     endswith(".whl") or endswith(".tar.gz")) and
+"""
+    projection = """\
+                      '[.urls[] |
+                        {name: .filename, sha256: .digests.sha256}] |
+"""
+    assert supported_policy in workflow
+    assert projection in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(supported_policy, "").replace(
+            projection,
+            """\
+                      '[.urls[] |
+                        select(.filename | endswith(".whl")) |
+                        {name: .filename, sha256: .digests.sha256}] |
+""",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("unsupported PyPI filenames" in error and "unfiltered" in error for error in errors)
+
+
+def test_docs_deploy_rejects_prefiltered_fetched_pypi_json(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    fetch = """\
+            if pypi_json="$(
+              curl -fsS \\
+                --connect-timeout 5 \\
+                --max-time 20 \\
+                "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" \\
+                2>/dev/null
+            )"; then
+"""
+    assert fetch in workflow
+    filtered = """\
+              pypi_json="$(
+                jq -c '{urls: [.urls[] |
+                  select(.filename | endswith(".whl") or endswith(".tar.gz"))]}' \\
+                  <<<"$pypi_json"
+              )"
+"""
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(fetch, fetch + filtered),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("one unfiltered bounded PyPI response" in error for error in errors)
+
+
+def test_docs_deploy_rejects_unbounded_network_probe(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    max_time = "                --max-time 20 \\\n"
+    assert workflow.count(max_time) == 1
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(max_time, max_time.replace("20", "200")),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("timeout-bounded release/tag/attestation calls" in error for error in errors)
+
+
+def test_docs_deploy_rejects_forced_readiness_flags_before_success(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    success = '            if [[ "$RELEASED" == true &&\n'
+    assert workflow.count(success) == 2
+    before, separator, after = workflow.rpartition(success)
+    assert separator
+    forced = """\
+            RELEASED=true
+            PUBLISHED=true
+            PROVENANCE_VALID=true
+            ASSETS_MATCH=true
+            TAG_MATCH=true
+"""
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(before + forced + separator + after, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("fresh readiness flag" in error for error in errors)
+
+
+@pytest.mark.parametrize("termination", ["exit 0", "exit", "exec true", "time exit 0"])
+def test_docs_deploy_rejects_early_success_before_poll_loop(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "          EXPECTED_PRERELEASE=false\n"
+    assert workflow.count(marker) == 1
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(marker, f"          {termination}\n{marker}", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exactly one readiness-bound `exit 0`" in error for error in errors)
+
+
+@pytest.mark.parametrize("termination", ["exit 0", "exit", "exec true", "time exit 0"])
+def test_docs_deploy_rejects_early_success_in_poll_attempt(
+    tmp_path: Path,
+    termination: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "            RELEASED=false\n"
+    assert workflow.count(marker) == 1
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(marker, f"            {termination}\n{marker}", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exactly one readiness-bound `exit 0`" in error for error in errors)
+
+
 def test_docs_deploy_rejects_bypassed_production_release_gate(
     tmp_path: Path,
 ) -> None:
@@ -1129,6 +1889,23 @@ def test_docs_deploy_rejects_bypassed_production_release_gate(
     errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
 
     assert any("production Helm promotion" in error for error in errors)
+
+
+def _write_passthrough_timeout(fake_bin: Path) -> None:
+    """Install a deterministic GNU-timeout stand-in for shell simulations."""
+    fake_timeout = fake_bin / "timeout"
+    fake_timeout.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+while [[ "$1" == --* ]]; do
+  shift
+done
+shift
+exec "$@"
+""",
+        encoding="utf-8",
+    )
+    fake_timeout.chmod(0o755)
 
 
 @pytest.mark.skipif(
@@ -1153,6 +1930,7 @@ def test_release_workflow_reconciles_stale_assets_before_publishing(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _write_passthrough_timeout(fake_bin)
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
@@ -1161,6 +1939,8 @@ printf '%s\n' "$*" >> "$GH_LOG"
 state="$(<"$GH_STATE")"
 if [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
   printf '## Changes\n\n- Generated\n'
+elif [[ "$1" == "api" && "$*" == *"/commits/$TAG"* ]]; then
+  printf '%s\n' "$GITHUB_SHA"
 elif [[ "$1" == "api" && "$*" == *"/releases/assets/"* ]]; then
   [[ "$state" == "uploaded" ]]
   [[ "$*" == *"/releases/assets/9003"* ]]
@@ -1258,9 +2038,49 @@ fi
         encoding="utf-8",
     )
     fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        r"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$(<"$CURL_STATE")" == "malformed" ]]; then
+  printf 'valid' > "$CURL_STATE"
+  printf '{not-json\n'
+  exit 0
+fi
+cat "$PYPI_JSON"
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_sleep.chmod(0o755)
     (tmp_path / "dist").mkdir()
     (tmp_path / "dist" / "xy-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
     (tmp_path / "dist" / "xy-1.2.3.tar.gz").write_bytes(b"sdist")
+    pypi_json = tmp_path / "pypi.json"
+    pypi_json.write_text(
+        json.dumps(
+            {
+                "urls": [
+                    {
+                        "digests": {"sha256": hashlib.sha256(b"wheel").hexdigest()},
+                        "filename": "xy-1.2.3-py3-none-any.whl",
+                        "yanked": False,
+                    },
+                    {
+                        "digests": {"sha256": hashlib.sha256(b"sdist").hexdigest()},
+                        "filename": "xy-1.2.3.tar.gz",
+                        "yanked": False,
+                    },
+                ]
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    curl_state = tmp_path / "curl-state"
+    curl_state.write_text("malformed", encoding="utf-8")
     state = tmp_path / "state"
     state.write_text("initial", encoding="utf-8")
     log = tmp_path / "gh.log"
@@ -1273,12 +2093,14 @@ fi
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "CURL_STATE": str(curl_state),
         "GH_LOG": str(log),
         "GH_NOTES": str(notes),
         "GH_REMOTE": str(remote),
         "GH_STATE": str(state),
         "GH_TOKEN": "test",
         "GITHUB_SHA": source_sha,
+        "PYPI_JSON": str(pypi_json),
         "REPO": "reflex-dev/xy",
         "RUNNER_TEMP": str(runner_temp),
         "TAG": "v1.2.3",
@@ -1294,6 +2116,8 @@ fi
         check=False,
     )
     assert prepare_result.returncode == 0, f"{prepare_result.stdout}\n{prepare_result.stderr}"
+    assert "attempt 1/12" in prepare_result.stdout
+    assert curl_state.read_text(encoding="utf-8") == "valid"
 
     provenance = runner_temp / "xy-v1.2.3-release-provenance" / "xy-release-provenance.json"
     prepared_notes = runner_temp / "xy-v1.2.3-release-notes.md"
@@ -1329,6 +2153,107 @@ fi
     assert "attestation verify" in calls
     assert notes.read_text(encoding="utf-8").endswith(f"{footer}\n")
     assert state.read_text(encoding="utf-8") == "edited"
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_preparation_rechecks_tag_immediately_before_attestation(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    prepare_shell = verify_ci_workflow._named_step_run(
+        verify_ci_workflow._job_blocks(workflow)["github-release"],
+        "Prepare release provenance",
+    )
+    assert prepare_shell is not None
+
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    moved_sha = "fedcba9876543210fedcba9876543210fedcba98"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_passthrough_timeout(fake_bin)
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        r"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "api" && "$*" == *"/commits/$TAG"* ]]; then
+  if [[ "$(<"$TAG_STATE")" == "initial" ]]; then
+    printf 'moved' > "$TAG_STATE"
+    printf '%s\n' "$GITHUB_SHA"
+  else
+    printf '%s\n' "$MOVED_SHA"
+  fi
+elif [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
+  printf '## Changes\n\n- Generated\n'
+else
+  exit 97
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\ncat "$PYPI_JSON"\n',
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "xy-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
+    (tmp_path / "dist" / "xy-1.2.3.tar.gz").write_bytes(b"sdist")
+    pypi_json = tmp_path / "pypi.json"
+    pypi_json.write_text(
+        json.dumps(
+            {
+                "urls": [
+                    {
+                        "digests": {"sha256": hashlib.sha256(b"wheel").hexdigest()},
+                        "filename": "xy-1.2.3-py3-none-any.whl",
+                        "yanked": False,
+                    },
+                    {
+                        "digests": {"sha256": hashlib.sha256(b"sdist").hexdigest()},
+                        "filename": "xy-1.2.3.tar.gz",
+                        "yanked": False,
+                    },
+                ]
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    tag_state = tmp_path / "tag-state"
+    tag_state.write_text("initial", encoding="utf-8")
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GH_TOKEN": "test",
+        "GITHUB_SHA": source_sha,
+        "MOVED_SHA": moved_sha,
+        "PYPI_JSON": str(pypi_json),
+        "REPO": "reflex-dev/xy",
+        "RUNNER_TEMP": str(runner_temp),
+        "TAG": "v1.2.3",
+        "TAG_STATE": str(tag_state),
+    }
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", prepare_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert f"resolves to {moved_sha}, not workflow source" in result.stdout
+    assert tag_state.read_text(encoding="utf-8") == "moved"
 
 
 def _write_signed_release_fixture(
@@ -1383,6 +2308,9 @@ def _run_immutable_release(
     tmp_path: Path,
     *,
     github_wheel: bytes,
+    local_wheel: bytes = b"wheel",
+    pypi_wheel: bytes = b"wheel",
+    tag_source_sha: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     release_shell = verify_ci_workflow._named_step_run(
@@ -1425,12 +2353,15 @@ def _run_immutable_release(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _write_passthrough_timeout(fake_bin)
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$GH_LOG"
-if [[ "$1" == "release" && "$2" == "view" ]]; then
+if [[ "$1" == "api" && "$*" == *"/commits/$TAG"* ]]; then
+  printf '%s\n' "$TAG_SOURCE_SHA"
+elif [[ "$1" == "release" && "$2" == "view" ]]; then
   cat "$GH_RELEASE_JSON"
 elif [[ "$1" == "release" && "$2" == "download" ]]; then
   download_dir=""
@@ -1463,8 +2394,41 @@ fi
         encoding="utf-8",
     )
     fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        r"""#!/usr/bin/env bash
+set -euo pipefail
+cat "$PYPI_JSON"
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_sleep.chmod(0o755)
+    pypi_json = tmp_path / "pypi.json"
+    pypi_json.write_text(
+        json.dumps(
+            {
+                "urls": [
+                    {
+                        "digests": {"sha256": hashlib.sha256(pypi_wheel).hexdigest()},
+                        "filename": fixture["wheel_name"],
+                        "yanked": False,
+                    },
+                    {
+                        "digests": {"sha256": fixture["sdist_sha256"]},
+                        "filename": fixture["sdist_name"],
+                        "yanked": False,
+                    },
+                ]
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
     (tmp_path / "dist").mkdir()
-    (tmp_path / "dist" / fixture["wheel_name"]).write_bytes(b"wheel")
+    (tmp_path / "dist" / fixture["wheel_name"]).write_bytes(local_wheel)
     (tmp_path / "dist" / fixture["sdist_name"]).write_bytes(b"sdist")
     log = tmp_path / "gh.log"
     runner_temp = tmp_path / "runner"
@@ -1478,9 +2442,11 @@ fi
         "GH_REMOTE": str(remote),
         "GH_TOKEN": "test",
         "GITHUB_SHA": source_sha,
+        "PYPI_JSON": str(pypi_json),
         "REPO": "reflex-dev/xy",
         "RUNNER_TEMP": str(runner_temp),
         "TAG": "v1.2.3",
+        "TAG_SOURCE_SHA": tag_source_sha or source_sha,
     }
 
     result = subprocess.run(
@@ -1492,7 +2458,8 @@ fi
         timeout=30,
         check=False,
     )
-    return result, log.read_text(encoding="utf-8"), fixture["body"], current_notes
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    return result, calls, fixture["body"], current_notes
 
 
 @pytest.mark.skipif(
@@ -1523,6 +2490,30 @@ def test_release_workflow_accepts_persisted_signed_immutable_release(
     shutil.which("bash") is None or shutil.which("jq") is None,
     reason="release workflow runtime simulation requires bash and jq",
 )
+def test_release_workflow_accepts_immutable_release_after_nonidentical_rebuild(
+    tmp_path: Path,
+) -> None:
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+        local_wheel=b"same-source rebuild with different archive bytes",
+        pypi_wheel=b"wheel",
+    )
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "is immutable and already matches the verified release" in result.stdout
+    assert "release view v1.2.3" in calls
+    assert "release download v1.2.3" in calls
+    assert "attestation verify" in calls
+    assert "release upload" not in calls
+    assert "release edit" not in calls
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
 def test_release_workflow_rejects_mismatched_immutable_release_bytes(
     tmp_path: Path,
 ) -> None:
@@ -1532,12 +2523,57 @@ def test_release_workflow_rejects_mismatched_immutable_release_bytes(
     )
 
     assert result.returncode == 1
-    assert "release bytes do not match the verified build" in result.stdout
+    assert "release bytes do not match the trusted distribution set" in result.stdout
     assert "immutable but does not match" in result.stdout
     assert "attestation verify" in calls
     assert "release upload" not in calls
     assert "release edit" not in calls
     assert "/releases/assets/" not in calls
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_rejects_moved_tag_before_release_mutation(
+    tmp_path: Path,
+) -> None:
+    moved_sha = "fedcba9876543210fedcba9876543210fedcba98"
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+        tag_source_sha=moved_sha,
+    )
+
+    assert result.returncode == 1
+    assert f"resolves to {moved_sha}, not workflow source" in result.stdout
+    assert "release view" not in calls
+    assert "release upload" not in calls
+    assert "release edit" not in calls
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_rejects_pypi_mismatch_before_release_mutation(
+    tmp_path: Path,
+) -> None:
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+        pypi_wheel=b"different immutable PyPI wheel",
+    )
+
+    assert result.returncode == 1
+    assert "release bytes do not match the trusted distribution set" in result.stdout
+    assert "release view v1.2.3" in calls
+    assert "release download v1.2.3" in calls
+    assert "attestation verify" in calls
+    assert "release upload" not in calls
+    assert "release edit" not in calls
     assert "release create" not in calls
 
 
@@ -1547,6 +2583,9 @@ def _run_docs_promotion(
     release_notes: str | None = None,
     github_wheel: bytes = b"wheel",
     pypi_yanked: bool = False,
+    pypi_extra_file: bool = False,
+    max_attempts: int | None = None,
+    tag_source_sha: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str, str]:
     workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
     gate_shell = verify_ci_workflow._named_step_run(
@@ -1554,6 +2593,13 @@ def _run_docs_promotion(
         "Await GitHub Release and PyPI availability",
     )
     assert gate_shell is not None
+    if max_attempts is not None:
+        assert "MAX_ATTEMPTS=30" in gate_shell
+        gate_shell = gate_shell.replace(
+            "MAX_ATTEMPTS=30",
+            f"MAX_ATTEMPTS={max_attempts}",
+            1,
+        )
 
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     signed_notes = "## Changes\n\n- Signed release"
@@ -1587,36 +2633,43 @@ def _run_docs_promotion(
         ),
         encoding="utf-8",
     )
+    pypi_urls = [
+        {
+            "digests": {"sha256": fixture["sdist_sha256"]},
+            "filename": fixture["sdist_name"],
+            "yanked": False,
+        },
+        {
+            "digests": {"sha256": fixture["wheel_sha256"]},
+            "filename": fixture["wheel_name"],
+            "yanked": pypi_yanked,
+        },
+    ]
+    if pypi_extra_file:
+        pypi_urls.append(
+            {
+                "digests": {"sha256": hashlib.sha256(b"extra").hexdigest()},
+                "filename": "xy-1.2.3.zip",
+                "yanked": False,
+            }
+        )
     pypi_json = tmp_path / "pypi.json"
     pypi_json.write_text(
-        json.dumps(
-            {
-                "urls": [
-                    {
-                        "digests": {"sha256": fixture["sdist_sha256"]},
-                        "filename": fixture["sdist_name"],
-                        "yanked": False,
-                    },
-                    {
-                        "digests": {"sha256": fixture["wheel_sha256"]},
-                        "filename": fixture["wheel_name"],
-                        "yanked": pypi_yanked,
-                    },
-                ]
-            },
-            separators=(",", ":"),
-        ),
+        json.dumps({"urls": pypi_urls}, separators=(",", ":")),
         encoding="utf-8",
     )
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    _write_passthrough_timeout(fake_bin)
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         r"""#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$GH_LOG"
-if [[ "$1" == "release" && "$2" == "view" ]]; then
+if [[ "$1" == "api" && "$*" == *"/commits/$VERSION"* ]]; then
+  printf '%s\n' "$TAG_SOURCE_SHA"
+elif [[ "$1" == "release" && "$2" == "view" ]]; then
   cat "$GH_RELEASE_JSON"
 elif [[ "$1" == "release" && "$2" == "download" ]]; then
   download_dir=""
@@ -1676,6 +2729,7 @@ cat "$PYPI_JSON"
         "REPO": "reflex-dev/xy",
         "RUNNER_TEMP": str(runner_temp),
         "SOURCE_SHA": source_sha,
+        "TAG_SOURCE_SHA": tag_source_sha or source_sha,
         "VERSION": "v1.2.3",
     }
 
@@ -1712,11 +2766,18 @@ def test_docs_promotion_accepts_only_matching_ready_distribution_set(
     reason="docs promotion runtime simulation requires bash and jq",
 )
 @pytest.mark.parametrize(
-    ("release_notes", "github_wheel", "pypi_yanked", "expected_state"),
+    (
+        "release_notes",
+        "github_wheel",
+        "pypi_yanked",
+        "pypi_extra_file",
+        "expected_state",
+    ),
     [
         pytest.param(
             "## Changes\n\n- Altered after signing",
             b"wheel",
+            False,
             False,
             "provenance=false",
             id="altered-notes",
@@ -1725,6 +2786,7 @@ def test_docs_promotion_accepts_only_matching_ready_distribution_set(
             None,
             b"altered GitHub wheel",
             False,
+            False,
             "provenance=true assets=false",
             id="altered-github-bytes",
         ),
@@ -1732,8 +2794,17 @@ def test_docs_promotion_accepts_only_matching_ready_distribution_set(
             None,
             b"wheel",
             True,
+            False,
             "pypi=false provenance=false assets=false",
             id="yanked-pypi-file",
+        ),
+        pytest.param(
+            None,
+            b"wheel",
+            False,
+            True,
+            "pypi=false provenance=false assets=false",
+            id="unsupported-extra-pypi-file",
         ),
     ],
 )
@@ -1742,6 +2813,7 @@ def test_docs_promotion_fails_closed_on_unready_signed_release(
     release_notes: str | None,
     github_wheel: bytes,
     pypi_yanked: bool,
+    pypi_extra_file: bool,
     expected_state: str,
 ) -> None:
     result, _, _ = _run_docs_promotion(
@@ -1749,10 +2821,47 @@ def test_docs_promotion_fails_closed_on_unready_signed_release(
         release_notes=release_notes,
         github_wheel=github_wheel,
         pypi_yanked=pypi_yanked,
+        pypi_extra_file=pypi_extra_file,
     )
 
     assert result.returncode == 99
     assert expected_state in result.stdout
+    assert "has signed release provenance and byte-identical" not in result.stdout
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="docs promotion runtime simulation requires bash and jq",
+)
+def test_docs_promotion_does_not_sleep_after_final_attempt(tmp_path: Path) -> None:
+    result, _, _ = _run_docs_promotion(
+        tmp_path,
+        pypi_extra_file=True,
+        max_attempts=1,
+    )
+
+    assert result.returncode == 1
+    assert "attempt 1/1" in result.stdout
+    assert "no retries remain" in result.stdout
+    assert "did not become release-ready" in result.stdout
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="docs promotion runtime simulation requires bash and jq",
+)
+def test_docs_promotion_rejects_tag_moved_after_production_approval(
+    tmp_path: Path,
+) -> None:
+    moved_sha = "fedcba9876543210fedcba9876543210fedcba98"
+    result, _, _ = _run_docs_promotion(
+        tmp_path,
+        max_attempts=1,
+        tag_source_sha=moved_sha,
+    )
+
+    assert result.returncode == 1
+    assert "tag=false release=true pypi=true provenance=true assets=true" in result.stdout
     assert "has signed release provenance and byte-identical" not in result.stdout
 
 

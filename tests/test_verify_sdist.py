@@ -4,6 +4,7 @@ import importlib.util
 import io
 import sys
 import tarfile
+import types
 from pathlib import Path
 from typing import Optional, Union
 
@@ -139,6 +140,52 @@ def _load_sdist_module():
 
 
 verify_sdist = _load_sdist_module()
+
+
+def test_archived_workflow_verifier_uses_normal_import_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "_xy_sdist_ci_verifier"
+    previous = types.ModuleType(module_name)
+    monkeypatch.setitem(sys.modules, module_name, previous)
+
+    class AssertingLoader:
+        def create_module(self, spec):  # noqa: ANN001
+            return None
+
+        def exec_module(self, module):  # noqa: ANN001
+            assert sys.modules.get(module_name) is module
+
+            def validate_docs_deploy_workflow(path: Path) -> list[str]:
+                assert path.name == "deploy-docs-stg.yml"
+                assert sys.modules.get(module_name) is module
+                return []
+
+            module.validate_docs_deploy_workflow = validate_docs_deploy_workflow
+
+    def fake_spec_from_file_location(name: str, path: Path):  # noqa: ARG001
+        return importlib.util.spec_from_loader(name, AssertingLoader())
+
+    monkeypatch.setattr(
+        verify_sdist.importlib.util,
+        "spec_from_file_location",
+        fake_spec_from_file_location,
+    )
+    archive = tmp_path / "fixture.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        _add_file(
+            tf,
+            "xy-0.0.1/.github/workflows/deploy-docs-stg.yml",
+            b"# workflow\n" + b"x" * 1100,
+        )
+
+    verify_sdist._require_valid_docs_deploy_workflow(
+        str(archive),
+        "xy-0.0.1",
+    )
+
+    assert sys.modules[module_name] is previous
 
 
 def _add_file(tf: tarfile.TarFile, name: str, data: bytes = b"") -> None:

@@ -127,7 +127,10 @@ jobs:
     name: Verify Library Release Published
     needs: [prepare, await-prod-approval]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The poll loop has a 30-minute deadline. Its longest bounded network
+    # attempt is under six minutes, leaving at least nine more minutes for
+    # the final diagnostic and runner cleanup before the job timeout.
+    timeout-minutes: 45
     permissions:
       contents: read
       attestations: read
@@ -145,19 +148,39 @@ jobs:
           shopt -s nullglob
           PYPI_VERSION="${VERSION#v}"
           PROVENANCE_NAME="xy-release-provenance.json"
+          MAX_ATTEMPTS=30
+          POLL_INTERVAL_SECONDS=60
+          POLL_DEADLINE=$((SECONDS + 30 * 60))
+          verify_tag_source() {
+            local current_tag_sha
+            if ! current_tag_sha="$(
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh api "repos/${REPO}/commits/${VERSION}" --jq '.sha'
+            )"; then
+              return 1
+            fi
+            [[ "$current_tag_sha" == "$SOURCE_SHA" ]]
+          }
           EXPECTED_PRERELEASE=false
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
             EXPECTED_PRERELEASE=true
           fi
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            if (( SECONDS >= POLL_DEADLINE )); then
+              echo "::warning::release-readiness polling deadline reached before attempt ${attempt}"
+              break
+            fi
             RELEASED=false
             PUBLISHED=false
             PROVENANCE_VALID=false
             ASSETS_MATCH=false
+            TAG_MATCH=false
             if release_json="$(
-              gh release view "$VERSION" \
-                --repo "$REPO" \
-                --json assets,body,isDraft,isPrerelease,name,publishedAt,tagName 2>/dev/null
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh release view "$VERSION" \
+                  --repo "$REPO" \
+                  --json assets,body,isDraft,isPrerelease,name,publishedAt,tagName \
+                  2>/dev/null
             )"; then
               if jq -e \
                 --arg name "$VERSION" \
@@ -176,13 +199,21 @@ jobs:
               fi
             fi
             if pypi_json="$(
-              curl -fsS "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null
+              curl -fsS \
+                --connect-timeout 5 \
+                --max-time 20 \
+                "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" \
+                2>/dev/null
             )"; then
               # A yank is a withdrawal signal, not a usable release. Reject
-              # the entire version if any uploaded file has been yanked.
+              # the entire version if any uploaded file has been yanked or is
+              # not one of the signed wheel/sdist distribution formats.
               if jq -e \
                 '(.urls | length > 1) and
                  all(.urls[]; .yanked == false) and
+                 all(.urls[];
+                   .filename |
+                     endswith(".whl") or endswith(".tar.gz")) and
                  any(.urls[]; .filename | endswith(".whl")) and
                  ([.urls[] | select(.filename | endswith(".tar.gz"))] |
                    length) == 1' \
@@ -192,20 +223,22 @@ jobs:
             fi
             if [[ "$RELEASED" == true && "$PUBLISHED" == true ]]; then
               verify_dir="$(mktemp -d "${RUNNER_TEMP}/xy-promotion-verify.XXXXXX")"
-              if gh release download "$VERSION" \
-                --repo "$REPO" \
-                --dir "$verify_dir" \
-                --pattern '*.whl' \
-                --pattern '*.tar.gz' \
-                --pattern "$PROVENANCE_NAME"; then
+              if timeout --signal=TERM --kill-after=5s 180s \
+                gh release download "$VERSION" \
+                  --repo "$REPO" \
+                  --dir "$verify_dir" \
+                  --pattern '*.whl' \
+                  --pattern '*.tar.gz' \
+                  --pattern "$PROVENANCE_NAME"; then
                 provenance_file="${verify_dir}/${PROVENANCE_NAME}"
                 if [[ -s "$provenance_file" ]] &&
-                   gh attestation verify "$provenance_file" \
-                     --repo "$REPO" \
-                     --signer-workflow "${REPO}/.github/workflows/release.yml" \
-                     --source-ref "refs/tags/${VERSION}" \
-                     --source-digest "$SOURCE_SHA" \
-                     --deny-self-hosted-runners >/dev/null &&
+                   timeout --signal=TERM --kill-after=5s 60s \
+                     gh attestation verify "$provenance_file" \
+                       --repo "$REPO" \
+                       --signer-workflow "${REPO}/.github/workflows/release.yml" \
+                       --source-ref "refs/tags/${VERSION}" \
+                       --source-digest "$SOURCE_SHA" \
+                       --deny-self-hosted-runners >/dev/null &&
                    jq -e \
                      --arg tag "$VERSION" \
                      --arg source_sha "$SOURCE_SHA" \
@@ -263,8 +296,6 @@ jobs:
                   pypi_hashes_json="$(
                     jq -c \
                       '[.urls[] |
-                        select(.filename |
-                          endswith(".whl") or endswith(".tar.gz")) |
                         {name: .filename, sha256: .digests.sha256}] |
                        sort_by(.name)' \
                       <<<"$pypi_json"
@@ -283,21 +314,44 @@ jobs:
                   fi
                 fi
               fi
-              # A failed candidate can be retried up to 30 times. Remove the
-              # downloaded wheel set before polling again to bound disk use.
+              # A failed candidate can be attempted up to MAX_ATTEMPTS times.
+              # Remove the downloaded wheel set before polling again to bound
+              # disk use.
               rm -rf -- "$verify_dir"
             fi
             if [[ "$RELEASED" == true &&
                   "$PUBLISHED" == true &&
                   "$PROVENANCE_VALID" == true &&
-                  "$ASSETS_MATCH" == true ]]; then
+                  "$ASSETS_MATCH" == true ]] &&
+               verify_tag_source; then
+              TAG_MATCH=true
+            fi
+            if [[ "$RELEASED" == true &&
+                  "$PUBLISHED" == true &&
+                  "$PROVENANCE_VALID" == true &&
+                  "$ASSETS_MATCH" == true &&
+                  "$TAG_MATCH" == true ]]; then
               echo "::notice::${VERSION} has signed release provenance and byte-identical, non-yanked GitHub/PyPI distributions"
               exit 0
             fi
-            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED} provenance=${PROVENANCE_VALID} assets=${ASSETS_MATCH}; retrying in 60s"
-            sleep 60
+            status="attempt ${attempt}/${MAX_ATTEMPTS} — tag=${TAG_MATCH} release=${RELEASED} pypi=${PUBLISHED} provenance=${PROVENANCE_VALID} assets=${ASSETS_MATCH}"
+            if (( attempt == MAX_ATTEMPTS )); then
+              echo "${status}; no retries remain"
+              break
+            fi
+            remaining_seconds=$((POLL_DEADLINE - SECONDS))
+            if (( remaining_seconds <= 0 )); then
+              echo "${status}; polling deadline reached"
+              break
+            fi
+            sleep_seconds=$POLL_INTERVAL_SECONDS
+            if (( sleep_seconds > remaining_seconds )); then
+              sleep_seconds=$remaining_seconds
+            fi
+            echo "${status}; retrying in ${sleep_seconds}s"
+            sleep "$sleep_seconds"
           done
-          echo "::error::${VERSION} did not become release-ready (metadata, signed notes provenance, non-yanked PyPI files, or exact asset hashes missing/mismatched) — refusing to promote prod"
+          echo "::error::${VERSION} did not become release-ready (current tag source, metadata, signed notes provenance, non-yanked PyPI files, or exact asset hashes missing/mismatched) — refusing to promote prod"
           exit 1
 
   helm-pr-prod:

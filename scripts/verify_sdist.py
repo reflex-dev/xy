@@ -280,12 +280,23 @@ def _require_valid_docs_deploy_workflow(path: str, root: str) -> None:
     if spec is None or spec.loader is None:
         raise AssertionError(f"cannot load workflow verifier from {verifier_path}")
     verifier = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(verifier)
+    had_previous = spec.name in sys.modules
+    previous = sys.modules.get(spec.name)
+    sys.modules[spec.name] = verifier
+    try:
+        spec.loader.exec_module(verifier)
+        with tempfile.TemporaryDirectory(prefix="xy-sdist-workflow-") as temp_dir:
+            archived_path = Path(temp_dir) / "deploy-docs-stg.yml"
+            archived_path.write_text(workflow, encoding="utf-8")
+            errors = verifier.validate_docs_deploy_workflow(archived_path)
+    finally:
+        if had_previous:
+            # Preserve an existing import rather than leaking this one-off
+            # archive validator into global interpreter state.
+            sys.modules[spec.name] = previous  # type: ignore[assignment]
+        else:
+            sys.modules.pop(spec.name, None)
 
-    with tempfile.TemporaryDirectory(prefix="xy-sdist-workflow-") as temp_dir:
-        archived_path = Path(temp_dir) / "deploy-docs-stg.yml"
-        archived_path.write_text(workflow, encoding="utf-8")
-        errors = verifier.validate_docs_deploy_workflow(archived_path)
     if errors:
         raise AssertionError(f"{member} fails structural release-gate validation: {errors}")
 

@@ -262,6 +262,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read
       id-token: write # PyPI trusted publishing (OIDC) — no API token stored
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -292,6 +293,24 @@ jobs:
         run: |
           echo "::notice::Dry run — built and verified $(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ') artifacts across the full release matrix. Skipping PyPI publish."
           echo "Re-run this workflow with dry_run=false, or push a v* tag, to publish for real."
+      - name: Verify release tag source before PyPI
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! tag_source_sha="$(
+            timeout --signal=TERM --kill-after=5s 30s \
+              gh api "repos/${REPO}/commits/${TAG}" --jq '.sha'
+          )"; then
+            echo "::error::Could not resolve ${TAG} to its source commit"
+            exit 1
+          fi
+          if [[ "$tag_source_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::${TAG} resolves to ${tag_source_sha}, not workflow source ${GITHUB_SHA}"
+            exit 1
+          fi
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         with:
@@ -307,6 +326,7 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       # Keep repository write access out of every build and PyPI job.
       contents: write
@@ -330,10 +350,11 @@ jobs:
         run: |
           immutable=false
           if release_json="$(
-            gh release view "$TAG" \
-              --repo "$REPO" \
-              --json isImmutable \
-              2>/dev/null
+            timeout --signal=TERM --kill-after=5s 30s \
+              gh release view "$TAG" \
+                --repo "$REPO" \
+                --json isImmutable \
+                2>/dev/null
           )" && [[ "$(jq -r '.isImmutable' <<<"$release_json")" == "true" ]]; then
             immutable=true
           fi
@@ -373,12 +394,73 @@ jobs:
             exit 1
           fi
 
+          # Refuse to mint an attestation until both the mutable tag and
+          # PyPI's immutable file set agree with this workflow run.
+          verify_tag_source() {
+            local tag_source_sha
+            if ! tag_source_sha="$(
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh api "repos/${REPO}/commits/${TAG}" --jq '.sha'
+            )"; then
+              echo "::error::Could not resolve ${TAG} to its source commit"
+              return 1
+            fi
+            if [[ "$tag_source_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::${TAG} resolves to ${tag_source_sha}, not workflow source ${GITHUB_SHA}"
+              return 1
+            fi
+          }
+          verify_tag_source
+
+          pypi_version="${TAG#v}"
+          pypi_matches=false
+          for attempt in $(seq 1 12); do
+            if pypi_json="$(
+              curl -fsS \
+                --connect-timeout 5 \
+                --max-time 20 \
+                "https://pypi.org/pypi/xy/${pypi_version}/json" \
+                2>/dev/null
+            )"; then
+              if pypi_hashes_json="$(
+                   jq -c \
+                     '[.urls[] |
+                       {name: .filename, sha256: .digests.sha256}] |
+                      sort_by(.name)' \
+                     <<<"$pypi_json"
+                 )" &&
+                 jq -e \
+                   '(.urls | length > 1) and
+                    all(.urls[];
+                      .yanked == false and
+                      (.filename |
+                        endswith(".whl") or endswith(".tar.gz")) and
+                      (.digests.sha256 |
+                        type == "string" and
+                        test("^[0-9a-f]{64}$")))' \
+                   <<<"$pypi_json" >/dev/null &&
+                 [[ "$pypi_hashes_json" == "$distributions_json" ]]; then
+                pypi_matches=true
+                break
+              fi
+            fi
+            if (( attempt < 12 )); then
+              echo "attempt ${attempt}/12 — waiting for exact, non-yanked PyPI files before attestation"
+              sleep 10
+            fi
+          done
+          if [[ "$pypi_matches" != true ]]; then
+            echo "::error::PyPI files for ${TAG} do not exactly match the verified build"
+            exit 1
+          fi
+
           notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
-          gh api \
-            --method POST \
-            "repos/${REPO}/releases/generate-notes" \
-            -f tag_name="$TAG" \
-            --jq '.body' > "$notes_file"
+          timeout --signal=TERM --kill-after=5s 30s \
+            gh api \
+              --method POST \
+              "repos/${REPO}/releases/generate-notes" \
+              -f tag_name="$TAG" \
+              --jq '.body' > "$notes_file"
           generated_notes="$(<"$notes_file")"
           if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
             echo "::error::GitHub generated empty release notes for ${TAG}"
@@ -409,6 +491,9 @@ jobs:
           )"
           printf '%s\n\n<!-- xy-release-provenance:v1:%s:sha256:%s -->\n' \
             "$generated_notes" "$TAG" "$provenance_sha256" > "$notes_file"
+          # Close the tag-movement window before the immediately following
+          # attestation action persists a signature for this manifest.
+          verify_tag_source
 
       - name: Attest release provenance
         if: steps.release_state.outputs.immutable != 'true'
@@ -431,6 +516,41 @@ jobs:
             exit 1
           fi
 
+          verify_tag_source() {
+            local tag_source_sha
+            if ! tag_source_sha="$(
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh api "repos/${REPO}/commits/${TAG}" --jq '.sha'
+            )"; then
+              echo "::error::Could not resolve ${TAG} to its source commit"
+              return 1
+            fi
+            if [[ "$tag_source_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::${TAG} resolves to ${tag_source_sha}, not workflow source ${GITHUB_SHA}"
+              return 1
+            fi
+          }
+          verify_tag_source
+
+          # Read the release before selecting the PyPI comparison source. An
+          # immutable release is already bound to its signed persisted
+          # manifest, so a same-source rebuild need not reproduce archive bytes
+          # exactly. Mutable and new releases still have to match this run's
+          # verified artifacts before any release write.
+          release_exists=false
+          release_json=""
+          is_immutable=false
+          if release_json="$(
+            timeout --signal=TERM --kill-after=5s 30s \
+              gh release view "$TAG" \
+                --repo "$REPO" \
+                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName \
+                2>/dev/null
+          )"; then
+            release_exists=true
+            is_immutable="$(jq -r '.isImmutable' <<<"$release_json")"
+          fi
+
           provenance_name="xy-release-provenance.json"
           provenance_file="${RUNNER_TEMP}/xy-${TAG}-release-provenance/${provenance_name}"
           notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
@@ -448,6 +568,54 @@ jobs:
                 '{name: $name, sha256: $sha256}'
             done | jq -sc 'sort_by(.name)'
           )"
+
+          # PyPI filenames are immutable. A retry may rebuild the same version
+          # after some files were already accepted by `skip-existing`; never
+          # clobber GitHub with candidate bytes that differ from those users
+          # can install. Poll briefly for PyPI's API cache to expose the full
+          # set after the publish job completes.
+          pypi_version="${TAG#v}"
+          pypi_matches=false
+          for attempt in $(seq 1 12); do
+            if pypi_json="$(
+              curl -fsS \
+                --connect-timeout 5 \
+                --max-time 20 \
+                "https://pypi.org/pypi/xy/${pypi_version}/json" \
+                2>/dev/null
+            )"; then
+              if pypi_hashes_json="$(
+                   jq -c \
+                     '[.urls[] |
+                       {name: .filename, sha256: .digests.sha256}] |
+                      sort_by(.name)' \
+                     <<<"$pypi_json"
+                 )" &&
+                 jq -e \
+                   '(.urls | length > 1) and
+                    all(.urls[];
+                      .yanked == false and
+                      (.filename |
+                        endswith(".whl") or endswith(".tar.gz")) and
+                      (.digests.sha256 |
+                        type == "string" and
+                        test("^[0-9a-f]{64}$")))' \
+                   <<<"$pypi_json" >/dev/null; then
+                if [[ "$is_immutable" == true || "$pypi_hashes_json" == "$expected_hashes_json" ]]; then
+                  pypi_matches=true
+                  break
+                fi
+              fi
+            fi
+            if (( attempt < 12 )); then
+              echo "attempt ${attempt}/12 — waiting for exact, non-yanked PyPI files"
+              sleep 10
+            fi
+          done
+          if [[ "$pypi_matches" != true ]]; then
+            echo "::error::PyPI files for ${TAG} do not exactly match the verified build"
+            exit 1
+          fi
 
           prerelease=()
           edit_prerelease=(--prerelease=false)
@@ -473,6 +641,7 @@ jobs:
 
           verify_release_payload() {
             local release_json="$1"
+            local reference_hashes_json="$2"
             local actual_assets_json
             local actual_hashes_json
             local actual_notes_sha256
@@ -481,31 +650,36 @@ jobs:
             local manifest_notes_sha256
             local manifest_sha256
             local notes_body
+            local reference_assets_json
             local release_notes
             local verify_dir
             local verified_provenance
 
+            reference_assets_json="$(
+              jq -c '[.[].name] | sort' <<<"$reference_hashes_json"
+            )"
             actual_assets_json="$(
               jq -c \
                 '[.assets[]?.name |
                   select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
                 <<<"$release_json"
             )"
-            if [[ "$actual_assets_json" != "$expected_assets_json" ]] ||
+            if [[ "$actual_assets_json" != "$reference_assets_json" ]] ||
                ! jq -e --arg name "$provenance_name" \
                  '[.assets[]? | select(.name == $name)] | length == 1' \
                  <<<"$release_json" >/dev/null; then
-              echo "::error::${TAG} release asset names do not match the verified build"
+              echo "::error::${TAG} release asset names do not match the trusted distribution set"
               return 1
             fi
 
             verify_dir="$(mktemp -d "${RUNNER_TEMP}/xy-release-verify.XXXXXX")"
-            if ! gh release download "$TAG" \
-              --repo "$REPO" \
-              --dir "$verify_dir" \
-              --pattern '*.whl' \
-              --pattern '*.tar.gz' \
-              --pattern "$provenance_name"; then
+            if ! timeout --signal=TERM --kill-after=5s 180s \
+              gh release download "$TAG" \
+                --repo "$REPO" \
+                --dir "$verify_dir" \
+                --pattern '*.whl' \
+                --pattern '*.tar.gz' \
+                --pattern "$provenance_name"; then
               echo "::error::Could not download ${TAG} release assets for verification"
               return 1
             fi
@@ -515,12 +689,13 @@ jobs:
               return 1
             fi
 
-            if ! gh attestation verify "$verified_provenance" \
-              --repo "$REPO" \
-              --signer-workflow "${REPO}/.github/workflows/release.yml" \
-              --source-ref "refs/tags/${TAG}" \
-              --source-digest "$GITHUB_SHA" \
-              --deny-self-hosted-runners >/dev/null; then
+            if ! timeout --signal=TERM --kill-after=5s 60s \
+              gh attestation verify "$verified_provenance" \
+                --repo "$REPO" \
+                --signer-workflow "${REPO}/.github/workflows/release.yml" \
+                --source-ref "refs/tags/${TAG}" \
+                --source-digest "$GITHUB_SHA" \
+                --deny-self-hosted-runners >/dev/null; then
               echo "::error::${TAG} release provenance was not signed by this tag workflow"
               return 1
             fi
@@ -556,9 +731,9 @@ jobs:
                 '[.distributions[] | {name, sha256}] | sort_by(.name)' \
                 "$verified_provenance"
             )"
-            if [[ "$actual_hashes_json" != "$expected_hashes_json" ||
-                  "$manifest_hashes_json" != "$expected_hashes_json" ]]; then
-              echo "::error::${TAG} release bytes do not match the verified build"
+            if [[ "$actual_hashes_json" != "$reference_hashes_json" ||
+                  "$manifest_hashes_json" != "$reference_hashes_json" ]]; then
+              echo "::error::${TAG} release bytes do not match the trusted distribution set"
               return 1
             fi
 
@@ -589,19 +764,15 @@ jobs:
           # the verified files instead of failing an otherwise safe retry. A
           # manually created draft or mismatched prerelease is normalized and
           # then re-read before docs promotion is allowed to observe it.
-          if release_json="$(
-            gh release view "$TAG" \
-              --repo "$REPO" \
-              --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName \
-              2>/dev/null
-          )"; then
-            is_immutable="$(jq -r '.isImmutable' <<<"$release_json")"
+          if [[ "$release_exists" == true ]]; then
             if [[ "$is_immutable" == "true" ]]; then
               # GitHub's generated-note inputs can change after publication.
               # Verify the persisted body against its signed manifest instead
-              # of comparing it with freshly regenerated notes.
+              # of comparing it with freshly regenerated notes or rebuilt
+              # archive bytes.
               if release_metadata_matches "$release_json" &&
-                 verify_release_payload "$release_json"; then
+                 verify_release_payload "$release_json" "$pypi_hashes_json"; then
+                verify_tag_source
                 echo "::notice::${TAG} is immutable and already matches the verified release"
                 exit 0
               fi
@@ -614,11 +785,13 @@ jobs:
               exit 1
             fi
             echo "::notice::${TAG} already exists; refreshing distribution assets"
+            verify_tag_source
             gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" --repo "$REPO" --clobber
             release_json="$(
-              gh release view "$TAG" \
-                --repo "$REPO" \
-                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh release view "$TAG" \
+                  --repo "$REPO" \
+                  --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
             )"
 
             while IFS= read -r asset_json; do
@@ -631,6 +804,7 @@ jobs:
                   exit 1
                 fi
                 echo "::notice::Removing stale distribution asset ${asset_name}"
+                verify_tag_source
                 gh api \
                   --method DELETE \
                   "repos/${REPO}/releases/assets/${asset_id}"
@@ -642,6 +816,7 @@ jobs:
             )
 
             echo "::notice::Normalizing ${TAG} metadata and generated notes"
+            verify_tag_source
             gh release edit "$TAG" \
               --repo "$REPO" \
               --draft=false \
@@ -650,16 +825,18 @@ jobs:
               "${edit_prerelease[@]}"
 
             release_json="$(
-              gh release view "$TAG" \
-                --repo "$REPO" \
-                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+              timeout --signal=TERM --kill-after=5s 30s \
+                gh release view "$TAG" \
+                  --repo "$REPO" \
+                  --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
             )"
             if ! release_metadata_matches "$release_json" ||
-               ! verify_release_payload "$release_json"; then
+               ! verify_release_payload "$release_json" "$expected_hashes_json"; then
               echo "::error::${TAG} release metadata, notes, or assets are invalid after normalization"
               exit 1
             fi
 
+            verify_tag_source
             exit 0
           fi
 
@@ -667,14 +844,17 @@ jobs:
             echo "::error::Prepared release notes or provenance are missing"
             exit 1
           fi
+          verify_tag_source
           gh release create "$TAG" "${artifacts[@]}" "$provenance_file" --repo "$REPO" --verify-tag --title "$TAG" --notes-file "$notes_file" "${prerelease[@]}"
           release_json="$(
-            gh release view "$TAG" \
-              --repo "$REPO" \
-              --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+            timeout --signal=TERM --kill-after=5s 30s \
+              gh release view "$TAG" \
+                --repo "$REPO" \
+                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
           )"
           if ! release_metadata_matches "$release_json" ||
-             ! verify_release_payload "$release_json"; then
+             ! verify_release_payload "$release_json" "$expected_hashes_json"; then
             echo "::error::${TAG} release metadata, notes, or assets are invalid after creation"
             exit 1
           fi
+          verify_tag_source
