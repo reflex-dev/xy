@@ -109,6 +109,42 @@ def test_chromium_session_cleans_files_when_browser_exits_during_launch(
     assert not temp_paths[0].exists()
 
 
+def test_chromium_session_cleans_running_browser_when_devtools_endpoint_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_paths = _track_tempdirs(monkeypatch)
+    process = _FakeProcess()
+    stderr_files = []
+    now = 0.0
+
+    def popen(_args, *, stdout, stderr):  # noqa: ANN001, ANN202
+        del stdout
+        stderr_files.append(stderr)
+        return process
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    monkeypatch.setattr(_chromium.subprocess, "Popen", popen)
+    monkeypatch.setattr(_chromium.time, "monotonic", monotonic)
+    monkeypatch.setattr(_chromium.time, "sleep", sleep)
+
+    with pytest.raises(_chromium.ChromiumError, match="did not report a DevTools endpoint"):
+        _chromium.ChromiumSession("/fake/chromium", launch_timeout_s=0.1)
+
+    assert now == pytest.approx(0.1)
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 0
+    assert process.wait_calls == [10]
+    assert stderr_files[0].closed
+    assert len(temp_paths) == 1
+    assert not temp_paths[0].exists()
+
+
 def test_websocket_closes_socket_when_handshake_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeSocket:
         def __init__(self) -> None:
