@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import reflex as rx
-from reflex_site_shared.components.blocks.demo import doccode
+
+from xy_docs.code import doccode
 
 _EXAMPLES_LAYOUT_CSS = """
 main:has(#xy-chart-examples) > div:has(#toc-navigation) {

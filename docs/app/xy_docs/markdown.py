@@ -6,7 +6,7 @@ import json
 from dataclasses import replace
 
 import reflex as rx
-from reflex_docgen.markdown import HeadingBlock, parse_document
+from reflex_docgen.markdown import CodeBlock, HeadingBlock, parse_document
 from reflex_site_shared.docs.markdown import ReflexDocTransformer, _spans_to_plaintext
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.hosting_banner import HostingBannerState
@@ -18,6 +18,7 @@ from xy_docs.api_reference import (
     component_page_api,
     split_faq_section,
 )
+from xy_docs.code import code_block
 from xy_docs.examples import chart_example_demo
 
 # A demo fence may split its hardcoded data from the chart code with this
@@ -103,6 +104,14 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
     def heading(self, block: HeadingBlock) -> rx.Component:
         """Render one route-local Markdown heading."""
         return _heading_link(_spans_to_plaintext(block.children), block.level)
+
+    def code_block(self, block: CodeBlock) -> rx.Component:
+        """Use the accessible XY code block for every visible source fence."""
+        flags = set(block.flags)
+        language = block.language or "plain"
+        if language == "python" and flags.intersection({"demo", "demo-only", "exec", "eval"}):
+            return super().code_block(block)
+        return code_block(block.content, language)
 
     def _render_demo(self, content: str, flags: set[str]) -> rx.Component:
         """Render public chart demos with consistent Preview/Code/Data tabs."""
