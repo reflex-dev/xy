@@ -7,6 +7,7 @@ from email.message import Message
 
 BASE_DEPENDENCY_FLOORS = (("anywidget", "0.9"), ("numpy", "1.24"))
 REFLEX_REQUIREMENT = "Requires-Dist: reflex>=0.9.6; extra == 'reflex'"
+_EXTRA_NAME = r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -15,15 +16,21 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
-        )
+def _is_valid_base_requirement(requirement: str, package: str, minimum: str) -> bool:
+    """Require one stable numeric lower bound, without markers or conflicts."""
+    match = re.fullmatch(
+        rf"\s*{re.escape(package)}\s*"
+        rf"(?:\[\s*{_EXTRA_NAME}(?:\s*,\s*{_EXTRA_NAME})*\s*\])?\s*"
+        rf">=\s*(?P<version>\d+(?:\.\d+)*)\s*",
+        requirement,
+        flags=re.IGNORECASE,
     )
+    if match is None:
+        return False
+    version = tuple(int(part) for part in match.group("version").split("."))
+    floor = tuple(int(part) for part in minimum.split("."))
+    width = max(len(version), len(floor))
+    return version + (0,) * (width - len(version)) >= floor + (0,) * (width - len(floor))
 
 
 def _is_exact_reflex_extra(requirement: str) -> bool:
@@ -43,11 +50,18 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
     errors: list[str] = []
 
     for package, minimum in BASE_DEPENDENCY_FLOORS:
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
+        package_requirements = [
+            requirement
             for requirement in requirements
+            if _dependency_name(requirement) == package
+        ]
+        if len(package_requirements) != 1 or not _is_valid_base_requirement(
+            package_requirements[0], package, minimum
         ):
-            errors.append(f"Requires-Dist: {package}>={minimum}")
+            errors.append(
+                f"Requires-Dist: {package}>={minimum} "
+                "(exactly one requirement, with no conflicts; stable lower bound required)"
+            )
 
     reflex_requirements = [
         requirement for requirement in requirements if _dependency_name(requirement) == "reflex"
@@ -55,10 +69,14 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
     if len(reflex_requirements) != 1 or not _is_exact_reflex_extra(reflex_requirements[0]):
         errors.append(f"{REFLEX_REQUIREMENT} (exactly one requirement, with no conflicts)")
 
+    base_floors = dict(BASE_DEPENDENCY_FLOORS)
     unexpected_requirements = []
     for requirement in requirements:
         name = _dependency_name(requirement)
-        if name in {"anywidget", "numpy"} and ";" not in requirement:
+        base_minimum = base_floors.get(name)
+        if base_minimum is not None and _is_valid_base_requirement(
+            requirement, name, base_minimum
+        ):
             continue
         if _is_exact_reflex_extra(requirement):
             continue

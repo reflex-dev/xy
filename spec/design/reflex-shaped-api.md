@@ -740,9 +740,11 @@ Now part of the core alpha contract:
 - DOM `CustomEvent`s for standalone host integration (see Phase 4 for the
   dispatched set).
 
-Can add:
+Future dependency refinement:
 
-- A separate adapter package with optional/minimal Reflex integration.
+- Keep the adapter bundled as `reflex_xy` in the `xy` distribution and
+  available through `xy[reflex]`; if Reflex exposes a smaller supported
+  core/component package, use that package instead of the full framework.
 
 Should avoid:
 

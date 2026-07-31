@@ -137,7 +137,7 @@ jobs:
 
       - name: Install package + dev deps
         run: |
-          uv sync --extra reflex --group dev
+          uv sync --locked --extra reflex --group dev
 
       - name: Verify bundled Reflex integration import
         run: |

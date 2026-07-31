@@ -227,6 +227,16 @@ def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
     verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+def test_verify_wheel_accepts_stronger_stable_dependency_floors(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    metadata = DEFAULT_METADATA.replace("anywidget>=0.9", "anywidget>=1.0").replace(
+        "numpy>=1.24", "numpy>=2.0"
+    )
+    _write_wheel(whl, metadata=metadata)
+
+    verify_wheel.verify_wheel(whl, expect_native=True)
+
+
 def test_verify_native_wheel_rejects_filename_tag_mismatch(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-macosx_11_0_arm64")
@@ -273,6 +283,28 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
         (
             DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),
             r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=0.9.dev0"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24.dev0"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: numpy<2",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"
+            ),
+            "with no conflicts",
         ),
         (
             DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.8",

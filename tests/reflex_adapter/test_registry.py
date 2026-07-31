@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -64,6 +66,17 @@ def test_ttl_sweep(_fresh_registry):
     dropped = registry.sweep(now=registry.get(token).last_access + 1.0)
     assert dropped == [token]
     assert registry.get(token) is None
+
+
+def test_rebuild_after_ttl_sweep_keeps_wire_version_monotonic(_fresh_registry):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    first = registry.publish("tok", make_figure(), broadcast=False)
+    assert registry.bump("tok", expected=first).version == 2
+
+    assert registry.sweep(now=first.last_access + 1.0) == ["tok"]
+    rebuilt = registry.publish("tok", make_figure(), broadcast=False)
+
+    assert rebuilt.version == 3
 
 
 def test_sweep_keeps_recently_touched(_fresh_registry):
@@ -154,6 +167,37 @@ def test_entry_lock_serializes(_fresh_registry):
 
     asyncio.run(main())
     assert order in ([1, 1, 2, 2], [2, 2, 1, 1])
+
+
+def test_unwired_slow_append_does_not_hold_the_registry_mutex(_fresh_registry):
+    registry = _fresh_registry
+    started = threading.Event()
+    resume = threading.Event()
+
+    class BlockingFigure:
+        def append(self, *args, **kwargs):
+            started.set()
+            assert resume.wait(2.0)
+            return {"type": "append"}, []
+
+    registry.publish("slow", BlockingFigure(), broadcast=False)
+    replacement = make_figure()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        append_future = pool.submit(registry.append, "slow", [1.0], [2.0])
+        assert started.wait(1.0)
+        try:
+            replaced = pool.submit(
+                registry.publish, "slow", replacement, broadcast=False
+            ).result(timeout=0.5)
+        finally:
+            resume.set()
+        append_future.result(timeout=1.0)
+
+    current = registry.get("slow")
+    assert current is replaced
+    assert current.figure is replacement
+    assert current.version == 2
 
 
 @pytest.mark.parametrize("n", [1, 3])

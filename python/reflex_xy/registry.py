@@ -31,7 +31,7 @@ __all__ = ["FigureEntry", "FigureRegistry", "registry"]
 
 # Idle figures are swept after this long without a subscribe/message/publish.
 # Deterministic (state-backed) figures rebuild transparently on the next
-# subscribe, so the TTL only bounds memory, not correctness. Imperative
+# subscribe, so the TTL bounds large figure/data memory, not correctness. Imperative
 # `register()` figures do not come back — the sweep is their documented limit.
 DEFAULT_TTL_SECONDS = 30 * 60.0
 _SWEEP_INTERVAL_SECONDS = 60.0
@@ -48,6 +48,12 @@ class FigureEntry:
     # Serializes kernel calls per figure; concurrent figures still
     # parallelize (the kernels release the GIL on the Rust side).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # The unwired/headless path cannot use the asyncio lock. Keep its
+    # mutations generation-local so a slow append never holds the map mutex
+    # or blocks unrelated figures.
+    sync_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
     # Pinned entries are exempt from the TTL sweep: figures with no rebuild
     # recipe elsewhere (module-level `inline()` charts) live as long as the
     # process, or a sweep would break them permanently after idling.
@@ -62,6 +68,10 @@ class FigureRegistry:
 
     def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> None:
         self._entries: dict[str, FigureEntry] = {}
+        # A mounted client remains in its socket room when a TTL sweep evicts
+        # the figure. Retain only the evicted scalar version so a state-driven
+        # rebuild on this worker cannot regress the client's wire version.
+        self._evicted_versions: dict[str, int] = {}
         self._mutex = threading.RLock()
         self._ttl = float(ttl_seconds)
         # Tokens with a broadcast scheduled but not yet started. Publishes
@@ -121,7 +131,10 @@ class FigureRegistry:
         with self._mutex:
             entry = self._entries.get(token)
             if entry is None:
-                entry = FigureEntry(figure=figure, token=token, pinned=pinned)
+                version = self._evicted_versions.pop(token, 0) + 1
+                entry = FigureEntry(
+                    figure=figure, token=token, version=version, pinned=pinned
+                )
                 self._entries[token] = entry
                 changed = True
             else:
@@ -161,6 +174,7 @@ class FigureRegistry:
     def release(self, token: str) -> None:
         with self._mutex:
             self._entries.pop(token, None)
+            self._evicted_versions.pop(token, None)
 
     def tokens(self) -> list[str]:
         with self._mutex:
@@ -233,17 +247,16 @@ class FigureRegistry:
         """
         loop = self._loop
         if loop is None:
-            # With no serving loop there are no namespace handlers, so hold
-            # the map mutex across the mutation and version bump. A concurrent
-            # publish cannot replace the generation between those operations.
-            with self._mutex:
-                entry = self._entries.get(token)
-                if entry is None:
-                    msg = f"unknown figure token: {token!r}"
-                    raise KeyError(msg)
+            entry = self.get(token)
+            if entry is None:
+                msg = f"unknown figure token: {token!r}"
+                raise KeyError(msg)
+            # Serialize only this immutable generation. A publish may replace
+            # it while append is running; the identity-checked bump below then
+            # discards the obsolete result without touching the replacement.
+            with entry.sync_lock:
                 entry.figure.append(trace, x, y, color=color, size=size)
-                entry.version += 1
-                entry.touch()
+                self.bump(token, expected=entry)
             return
 
         async def _do() -> None:
@@ -364,6 +377,9 @@ class FigureRegistry:
         with self._mutex:
             for token, entry in list(self._entries.items()):
                 if not entry.pinned and now - entry.last_access > self._ttl:
+                    self._evicted_versions[token] = max(
+                        entry.version, self._evicted_versions.get(token, 0)
+                    )
                     del self._entries[token]
                     dropped.append(token)
         return dropped
@@ -383,6 +399,7 @@ registry: FigureRegistry = FigureRegistry()
 def reset_registry_for_tests() -> FigureRegistry:
     """Reset the process registry in place (test isolation only)."""
     registry._entries.clear()
+    registry._evicted_versions.clear()
     registry._pending_broadcasts.clear()
     registry._loop = None
     registry._on_publish = None

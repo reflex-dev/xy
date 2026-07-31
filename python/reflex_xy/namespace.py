@@ -17,12 +17,17 @@ socket.io protocol already delimits attachments.
 Events, client -> server:
     sub     {fig, px?}    subscribe; joins the figure room, replies `payload`
     unsub   {fig}         leave the figure room
-    msg     {fig, m}      one channel.handle_message dispatch, reply `msg`
+    msg     {fig, v?, mid?, m}  one channel.handle_message dispatch, reply `msg`
 
 Events, server -> client:
     payload {fig, version, spec, buffers}   first paint / full refresh
-    msg     {fig, message, buffers}         handle_message reply or push
+    msg     {fig, version?, mid?, message, buffers}  reply or room-wide push
     err     {fig, error}                    token unknown/foreign, rebuild failed
+
+Each payload begins an authoritative client comparison epoch. Replies and
+append pushes carry that figure version; view-state-only pushes may omit it.
+Clients gate `msg` events until the epoch's payload arrives, then reject
+versions outside that epoch (including stale interaction replies).
 
 Every inbound handler is total: malformed input drops or answers `err`,
 never raises (a hostile client must not be able to crash the worker —
@@ -153,11 +158,16 @@ class XYNamespace(AsyncNamespace):
     # -- subscription ----------------------------------------------------------
 
     async def on_sub(self, sid: str, data: Any) -> None:
-        token, entry = await self._entry_for(sid, data, allow_rebuild=True)
+        token, entry, _rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
-        px = self._px_hint(data)
         await self.enter_room(sid, self._room(token))
+        await self._send_payload(sid, token, entry, px=self._px_hint(data))
+
+    async def _send_payload(
+        self, sid: str, token: str, entry: FigureEntry, *, px: Optional[int] = None
+    ) -> None:
+        """Send one authoritative payload if ``entry`` is still current."""
         async with entry.lock:
             spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure, px)
         if not self.registry.is_current(token, entry):
@@ -181,15 +191,21 @@ class XYNamespace(AsyncNamespace):
     # -- interaction round-trips ----------------------------------------------
 
     async def on_msg(self, sid: str, data: Any) -> None:
-        token, entry = await self._entry_for(sid, data, allow_rebuild=True)
+        message_version: Optional[int] = None
+        if isinstance(data, dict) and "v" in data:
+            raw_version = data["v"]
+            if isinstance(raw_version, bool) or not isinstance(raw_version, int):
+                return
+            message_version = raw_version
+        token, entry, rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
-        message_version: Optional[int] = None
-        if isinstance(data, dict) and data.get("v") is not None:
-            try:
-                message_version = int(data["v"])
-            except (TypeError, ValueError):
-                message_version = None
+        if rebuilt:
+            # The request was made against the evicted generation. Re-prime
+            # this still-connected mount and let it retry in the new version;
+            # never resolve old coordinates against the rebuilt figure.
+            await self._send_payload(sid, token, entry)
+            return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
             if not self.registry.is_current(token, entry):
@@ -299,7 +315,7 @@ class XYNamespace(AsyncNamespace):
 
     async def _entry_for(
         self, sid: str, data: Any, *, allow_rebuild: bool
-    ) -> tuple[Optional[str], Optional[FigureEntry]]:
+    ) -> tuple[Optional[str], Optional[FigureEntry], bool]:
         """Resolve a message's figure token to a registry entry.
 
         Enforces token affinity: a state-derived figure token embeds the
@@ -310,14 +326,15 @@ class XYNamespace(AsyncNamespace):
         """
         token = self._token_of(data)
         if token is None:
-            return None, None
+            return None, None, False
         parsed = parse_token(token)
         if parsed is not None:
             session = await self.get_session(sid)
             if session.get("client_token") != parsed.client_token:
                 await self._err(sid, token, "figure belongs to another session")
-                return token, None
+                return token, None, False
         entry = self.registry.get(token)
+        rebuilt = False
         if entry is None and parsed is not None and allow_rebuild and self._rebuild is not None:
             # Registry miss: worker restarted, or the reconnect landed on a
             # node that never built this figure. Reflex state is the durable
@@ -329,10 +346,11 @@ class XYNamespace(AsyncNamespace):
                 figure = None
             if figure is not None:
                 entry = self.registry.publish(token, figure, broadcast=False)
+                rebuilt = True
         if entry is None:
             await self._err(sid, token, "unknown figure token")
-            return token, None
-        return token, entry
+            return token, None, False
+        return token, entry, rebuilt
 
     async def _err(self, sid: str, token: Optional[str], error: str) -> None:
         await self.emit("err", {"fig": token, "error": error}, to=sid)

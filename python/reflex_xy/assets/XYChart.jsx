@@ -11,10 +11,13 @@
 // same lifecycle, same auth surface, same proxy config.
 //
 // Live data protocol (namespace.py):
-//   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, mid, m}
+//   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, v?, mid, m}
 //   in:   payload {fig, version, spec, buffers} — buffers are ArrayBuffers
-//         msg {fig, mid?, message, buffers}     — replies carry our mid
+//         msg {fig, version?, mid?, message, buffers} — replies carry our mid
 //         err {fig, error}
+// A subscribe/reconnect starts a version epoch: no msg is applied until its
+// authoritative payload arrives. Replies and append pushes carry versions;
+// view-state-only pushes remain versionless.
 //
 // `src` (static) — the payload was compiled ahead of time into a binary
 // XYBF asset (payload_asset.py). Fetch it, decode the frame, and run the
@@ -412,12 +415,20 @@ export function XYChart(props) {
     let selectionSeq = 0;
     const restoreSelectionSeqs = new Set();
     const viewCallbacks = [];
+    let awaitingPayload = true;
 
     const subscribe = () => {
+      // A reconnect can land on a fresh worker whose rebuilt figure starts at
+      // version 1. Versions are monotonic only within this subscription epoch.
+      payloadVersion = null;
+      awaitingPayload = true;
+      clickInputs.clear();
+      restoreSelectionSeqs.clear();
       socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
     };
 
     const emitMessage = (m) => {
+      if (awaitingPayload) return;
       const envelope = { fig: token, mid, m };
       if (payloadVersion !== null) envelope.v = payloadVersion;
       socket.emit("msg", envelope);
@@ -516,6 +527,7 @@ export function XYChart(props) {
           dispatchView(m);
           return;
         }
+        if (awaitingPayload) return;
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
           m = withSelectionSeq(m);
           lastSelect = m.type === "select_clear" ? null : m;
@@ -556,6 +568,12 @@ export function XYChart(props) {
       return spec.buffer_layout === "split" ? spans : spans[0];
     };
 
+    const discardPendingReply = (message) => {
+      if (typeof message?.seq !== "string") return;
+      if (message.seq.startsWith("click:")) clickInputs.delete(message.seq);
+      restoreSelectionSeqs.delete(message.seq);
+    };
+
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
       if (
@@ -563,6 +581,13 @@ export function XYChart(props) {
         && payloadVersion !== null
         && data.version < payloadVersion
       ) return;
+      const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
+      if (payloadVersion !== null && nextPayloadVersion !== payloadVersion) {
+        // Requests stamped with the preceding version will be dropped by the
+        // server. Do not retain their synthetic click/selection bookkeeping.
+        clickInputs.clear();
+        restoreSelectionSeqs.clear();
+      }
       // The public durable-state document is the authoritative client mirror:
       // unlike `lastSelect`, it includes linked selections, x/y band mode, and
       // every named axis range. Fall back only for an older client bundle that
@@ -579,7 +604,8 @@ export function XYChart(props) {
         ? durableState.selection
         : selectionFromRequest(lastSelect);
       const selectionMaskRequest = selectionRequest(selectionToRestore);
-      payloadVersion = Number.isInteger(data.version) ? data.version : null;
+      payloadVersion = nextPayloadVersion;
+      awaitingPayload = false;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
       const nextBuffers = toSpans(data.spec, data.buffers);
       const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));
@@ -627,12 +653,19 @@ export function XYChart(props) {
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
       if (!message) return;
+      if (awaitingPayload) {
+        discardPendingReply(message);
+        return;
+      }
       const wireVersion = Number.isInteger(data.version) ? data.version : null;
       if (wireVersion !== null && payloadVersion !== null) {
         const expected = message.type === "append" && data.mid == null
           ? payloadVersion + 1
           : payloadVersion;
-        if (wireVersion !== expected) return;
+        if (wireVersion !== expected) {
+          discardPendingReply(message);
+          return;
+        }
       }
       let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
@@ -679,10 +712,12 @@ export function XYChart(props) {
           });
         }
       }
-      for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
       if (wireVersion !== null && message.type === "append" && data.mid == null) {
+        clickInputs.clear();
+        restoreSelectionSeqs.clear();
         payloadVersion = wireVersion;
       }
+      for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
     };
 
     const onErr = (data) => {

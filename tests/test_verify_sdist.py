@@ -195,6 +195,16 @@ def test_verify_sdist_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
     verify_sdist.verify_sdist(str(sdist))
 
 
+def test_verify_sdist_accepts_stronger_stable_dependency_floors(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    pkg_info = DEFAULT_PKG_INFO.replace("anywidget>=0.9", "anywidget>=1.0").replace(
+        "numpy>=1.24", "numpy>=2.0"
+    )
+    _write_sdist(sdist, pkg_info=pkg_info)
+
+    verify_sdist.verify_sdist(str(sdist))
+
+
 def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(sdist, pkg_info=None)
@@ -225,6 +235,28 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
         (
             DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),
             r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=0.9.dev0"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24.dev0"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: numpy<2\n",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"
+            ),
+            "with no conflicts",
         ),
         (
             DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.8\n",

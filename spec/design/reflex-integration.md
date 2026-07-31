@@ -144,11 +144,11 @@ in `spec/design/wire-protocol.md`.
 client -> server (namespace /_xy)
   sub     {fig, px?, mid}       subscribe; join figure room; reply `payload`
   unsub   {fig, mid}            leave the room
-  msg     {fig, mid, m}         one xy.channel.handle_message dispatch
+  msg     {fig, v?, mid, m}     one xy.channel.handle_message dispatch
 
 server -> client
   payload {fig, version, spec, buffers}   first paint / full refresh
-  msg     {fig, mid?, message, buffers}   reply (mid echoed) or push (no mid)
+  msg     {fig, version?, mid?, message, buffers}   reply or push (no mid)
   err     {fig, error}                    unknown/foreign token, rebuild failed
 ```
 
@@ -157,6 +157,13 @@ are mount-addressed, pushes are room-wide. The kernel dispatch is byte-for-
 byte the notebook dispatch — `xy.channel.handle_message` (§3.1 of the
 old draft, now shipped), run off the event loop via a worker thread (the
 Rust kernels release the GIL) under a per-figure lock.
+
+Each successful `sub` starts a client version epoch. The wrapper resets its
+comparison state, ignores `msg` events until the authoritative `payload`
+arrives, and then compares versions within that epoch. This permits a
+reconnect to land on a fresh worker whose rebuilt cache starts at version 1.
+Interaction replies and append pushes carry `version`; view-state-only pushes
+may omit it because they do not mutate the figure data generation.
 
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
@@ -352,9 +359,14 @@ not stable across workers — documented as dev-only, not deployment-safe.
 Rooms track subscriptions; disconnects clean rooms, never figures (a page
 reload must not destroy what its reconnect will re-request). The TTL sweep
 (30 min idle, lifespan task) bounds leaked figures; state-derived figures
-transparently rebuild after a sweep, so the TTL is a memory bound, not a
-correctness bound. Rapid re-publishes coalesce: an un-started broadcast
-absorbs newer publishes and always ships the latest payload.
+transparently rebuild after a sweep, so the TTL bounds large figure/data
+memory, not correctness. The registry retains only an evicted token's scalar
+version so a rebuild on the same worker remains monotonic for a still-mounted
+client; the figure and its data buffers are released. If an interaction is the
+first touch after eviction, the namespace rebuilds, sends that mount a
+replacement payload, and drops the old-generation interaction for the client
+to retry. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
+publishes and always ships the latest payload.
 
 ## 4. Updates and streaming
 
@@ -383,8 +395,10 @@ absorbs newer publishes and always ships the latest payload.
   thread) → the same `append` message the kernel builds for the notebook
   widget (which delivers it as its spec/buffers trait update, wire-protocol
   §4), pushed room-wide as a `msg` event with split-layout buffers. The
-  client applies it with the existing follow policy (refit at home, slide
-  when pinned to the live edge, hold when inspecting history).
+  push carries the post-append figure version; the client applies it only when
+  it is the next version in the active payload epoch, using the existing
+  follow policy (refit at home, slide when pinned to the live edge, hold when
+  inspecting history).
 - **Interaction** (pan/zoom/hover/select): `msg` round-trips into the
   kernel, exactly the anywidget flow — tier updates, density re-bins, exact
   f64 pick rows, selection masks as binary buffers.
@@ -586,10 +600,14 @@ def remember_view(self, event: dict):
 reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
 ```
 
-Every kernel message echoes the last payload version as `v`; the namespace
-silently rejects messages for an older figure version. This prevents an
-in-flight pick or selection from resolving in a replacement coordinate space,
-while clients that omit `v` remain compatible.
+Every kernel request echoes the last payload version as `v`; the namespace
+silently rejects requests for another figure version and drops an explicitly
+malformed `v`. Omitted `v` remains accepted for compatibility. Replies echo
+the operation version, while room-wide append pushes carry the newly bumped
+version. This prevents an in-flight pick or selection from resolving in a
+replacement coordinate space. On subscribe/reconnect, the client waits for
+the new payload before accepting messages and treats it as a fresh comparison
+epoch, so a different worker may safely begin again at version 1.
 
 ## 6. Latency budget
 

@@ -334,6 +334,24 @@ def test_stale_message_versions_are_dropped(_fresh_registry):
             with pytest.raises(asyncio.TimeoutError):
                 await Collector.next(collector.messages, timeout=0.15)
 
+            for seq, malformed_version in enumerate(
+                (None, True, 2.0, "2", {}, []), start=23
+            ):
+                message["seq"] = seq
+                await client.emit(
+                    "msg",
+                    {
+                        "fig": token,
+                        "mid": "m1",
+                        "v": malformed_version,
+                        "m": message,
+                    },
+                    namespace="/_xy",
+                )
+                with pytest.raises(asyncio.TimeoutError):
+                    await Collector.next(collector.messages, timeout=0.1)
+
+            message["seq"] = 21
             await client.emit(
                 "msg", {"fig": token, "mid": "m1", "v": 2, "m": message}, namespace="/_xy"
             )
@@ -436,6 +454,56 @@ def test_registry_miss_rebuilds_from_hook(_fresh_registry):
             await client.disconnect()
         assert rebuilt == [state_token]
         assert registry.get(state_token) is not None
+
+    run(main())
+
+
+def test_interaction_after_ttl_rebuild_receives_new_payload(_fresh_registry):
+    rebuilt = []
+
+    async def rebuild(token_str):
+        rebuilt.append(token_str)
+        return make_figure(32)
+
+    async def main():
+        state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+        registry.publish(state_token, make_figure(16), broadcast=False)
+        async with data_plane_server(rebuild=rebuild) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": state_token, "mid": "m1"}, namespace="/_xy")
+            first = await collector.next(collector.payloads)
+            assert first["version"] == 1
+
+            registry.append(state_token, x=[2.0], y=[6.0])
+            append = await collector.next(collector.messages)
+            assert append["version"] == 2
+            evicted = registry.get(state_token)
+            assert registry.sweep(now=evicted.last_access + 1_000_000.0) == [state_token]
+
+            message = {"type": "pick", "trace": 0, "index": 2, "seq": 31}
+            await client.emit(
+                "msg",
+                {"fig": state_token, "mid": "m1", "v": 2, "m": message},
+                namespace="/_xy",
+            )
+            replacement = await collector.next(collector.payloads)
+            assert replacement["version"] == 3
+            with pytest.raises(asyncio.TimeoutError):
+                await Collector.next(collector.messages, timeout=0.15)
+
+            message["seq"] = 32
+            await client.emit(
+                "msg",
+                {"fig": state_token, "mid": "m1", "v": 3, "m": message},
+                namespace="/_xy",
+            )
+            reply = await collector.next(collector.messages)
+            assert reply["version"] == 3
+            assert reply["message"]["seq"] == 32
+            await client.disconnect()
+
+        assert rebuilt == [state_token]
 
     run(main())
 

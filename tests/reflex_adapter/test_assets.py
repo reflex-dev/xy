@@ -64,6 +64,21 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "new Uint8Array(b)" in jsx
     assert "data.version < payloadVersion" in jsx
     assert 'message.type === "append"' in jsx
+    # Each subscription is a fresh comparison epoch (a reconnect may land on
+    # a worker whose rebuilt cache starts at version 1). Kernel traffic is
+    # gated until its authoritative payload arrives.
+    subscribe = jsx.split("const subscribe = () => {", 1)[1].split("};", 1)[0]
+    assert "payloadVersion = null" in subscribe
+    assert "awaitingPayload = true" in subscribe
+    assert "clickInputs.clear()" in subscribe
+    assert "restoreSelectionSeqs.clear()" in subscribe
+    assert "if (awaitingPayload) return" in jsx
+    assert "awaitingPayload = false" in jsx
+    # Rejected replies and accepted generation advances both reclaim pending
+    # synthetic click/selection bookkeeping.
+    assert "discardPendingReply(message)" in jsx
+    assert jsx.count("clickInputs.clear()") >= 3
+    assert jsx.count("restoreSelectionSeqs.clear()") >= 3
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render
