@@ -58,6 +58,125 @@ def test_named_step_run_stops_before_following_step_metadata() -> None:
     assert verify_ci_workflow._named_step_run(job, "Guard") == 'echo "$VALUE"'
 
 
+@pytest.mark.parametrize("indicator", ["|", "|-", "|+"])
+def test_step_run_accepts_literal_yaml_blocks(indicator: str) -> None:
+    step = f"""\
+      - name: Guard
+        run: {indicator}
+          first
+          second
+"""
+
+    assert verify_ci_workflow._step_run(step) == "first\nsecond"
+
+
+@pytest.mark.parametrize("indicator", [">", ">-", ">+"])
+def test_step_run_rejects_folded_yaml_blocks(indicator: str) -> None:
+    step = f"""\
+      - name: Guard
+        run: {indicator}
+          first
+          second
+"""
+
+    assert verify_ci_workflow._step_run(step) is None
+
+
+@pytest.mark.parametrize("indicator", [">2-", ">-2", "|2-", "|-2"])
+def test_step_run_rejects_explicit_indentation_blocks(indicator: str) -> None:
+    step = f"""\
+      - name: Guard
+        run: {indicator}
+          first
+          second
+"""
+
+    assert verify_ci_workflow._step_run(step) is None
+
+
+@pytest.mark.parametrize(
+    "shell",
+    [
+        "eval 'exit 0'",
+        "command eval 'exit 0'",
+        "source hidden.sh",
+        ". hidden.sh",
+        "bash -c 'exit 0'",
+        "env bash hidden.sh",
+        "env -u UNUSED eval 'exit 0'",
+        "timeout 5s bash -c 'exit 0'",
+        "printf '%s\\n' true | xargs bash -c",
+        "find . -exec bash -c 'exit 0' \\;",
+        "trap 'exit 0' EXIT",
+        '$DYNAMIC_COMMAND "exit 0"',
+        "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+        'VALUE=1 $DYNAMIC_COMMAND "exit 0"',
+        "function exit { :; }",
+        "gh() { :; }",
+    ],
+)
+def test_indirect_shell_execution_is_detected(shell: str) -> None:
+    assert verify_ci_workflow._has_indirect_shell_execution(shell)
+
+
+@pytest.mark.parametrize("kind", ["eval", "source", "dot", "bash"])
+def test_indirect_shell_commands_execute_hidden_code(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    marker = tmp_path / "hidden"
+    hidden = tmp_path / "hidden.sh"
+    hidden.write_text(f'printf hidden > "{marker}"\nexit 0\n', encoding="utf-8")
+    commands = {
+        "eval": f"eval 'printf hidden > \"{marker}\"; exit 0'",
+        "source": f'source "{hidden}"',
+        "dot": f'. "{hidden}"',
+        "bash": f"bash -c 'printf hidden > \"{marker}\"'",
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", f'{commands[kind]}\ntest -s "{marker}"'],
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert marker.read_text(encoding="utf-8") == "hidden"
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        "declare TAG_MATCH=true",
+        "typeset TAG_MATCH=true",
+        "export TAG_MATCH=true",
+        "local TAG_MATCH=true",
+        "readonly TAG_MATCH=true",
+        "printf -v TAG_MATCH %s true",
+        "read TAG_MATCH",
+        "read -a TAG_MATCH",
+        "mapfile -t TAG_MATCH",
+        "mapfile -t TAG_MATCH < file",
+        "readarray TAG_MATCH",
+        "TAG_MATCH[0]=true",
+        "TAG_MATCH+=(true)",
+        "declare -n alias=TAG_MATCH",
+        "(( TAG_MATCH = 1 ))",
+        "target=TAG_MATCH; (( $target = 1 ))",
+        "let TAG_MATCH=1",
+        'target=TAG_MATCH; let "$target=1"',
+        'target=TAG_MATCH; printf -v "$target" %s true',
+        'target=TAG_MATCH; read "$target"',
+        "for TAG_MATCH in false true; do :; done",
+        "select TAG_MATCH in true; do break; done",
+        "{ select TAG_MATCH in true; do break; done; }",
+        "getopts x TAG_MATCH",
+        ': "${TAG_MATCH:=true}"',
+    ],
+)
+def test_assignment_scan_detects_builtin_and_array_writes(write: str) -> None:
+    assert verify_ci_workflow._assignment_lines([write], "TAG_MATCH") == [write]
+
+
 def test_shell_success_termination_scan_models_bash_status_wrapping() -> None:
     logical_lines = [
         "exit 1",
@@ -1163,6 +1282,217 @@ def test_release_workflow_rejects_sibling_release_api_mutation(tmp_path: Path) -
     )
 
 
+@pytest.mark.parametrize(
+    "api_command",
+    [
+        'gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'gh api "repos/${REPO}/releases" -F tag_name="$TAG"',
+        'gh api "repos/${REPO}/releases" --field tag_name="$TAG"',
+        'gh api "repos/${REPO}/releases" --raw-field tag_name="$TAG"',
+        'gh api "repos/${REPO}/releases" --input payload.json',
+        'gh api "repos/${REPO}/releases" --input=payload.json',
+        'gh api --method=DELETE "repos/${REPO}/releases/assets/42"',
+        'gh api -XDELETE "repos/${REPO}/releases/assets/42"',
+        'gh api -X=DELETE "repos/${REPO}/releases/assets/42"',
+        'gh api --method GET --method DELETE "repos/${REPO}/releases/assets/42"',
+        'gh --repo "$REPO" api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'timeout 5s /usr/bin/gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'nice -n 5 gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'nohup gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'stdbuf -oL gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'gh api "/graphql" -f query=mutation',
+        'gh api "https://api.github.com/graphql" -f query=mutation',
+        'gh api "repos/${REPO}/${RESOURCE}" -f tag_name="$TAG"',
+        'gh release --repo "$REPO" create "$TAG"',
+        'gh --repo "$REPO" release create "$TAG"',
+        'env -u UNUSED gh release create "$TAG"',
+        '/usr/bin/gh release new "$TAG"',
+        'gh release -R "$REPO" delete-asset "$TAG" 42 --yes',
+    ],
+)
+def test_release_workflow_rejects_sibling_mutation_forms(
+    tmp_path: Path,
+    api_command: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    sibling = f"""\
+      - name: Hidden release API write
+        run: {api_command}
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("every GitHub Release mutation" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "api_command",
+    [
+        'gh api "repos/${REPO}/releases"',
+        'gh api --method GET "repos/${REPO}/releases" -f per_page=1',
+        'gh api --method DELETE --method GET "repos/${REPO}/releases" -f per_page=1',
+        'gh api "repos/${REPO}/releases/generate-notes" -f tag_name="$TAG"',
+        'gh api --method=POST "repos/${REPO}/releases/generate-notes?x=1" -f tag_name="$TAG"',
+        'gh api --method POST "repos/${REPO}/issues" -f body="/repos/${REPO}/releases/1"',
+        'echo gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'gh release view create --repo "$REPO"',
+    ],
+)
+def test_release_api_classifier_ignores_non_mutating_or_non_release_calls(
+    api_command: str,
+) -> None:
+    assert not verify_ci_workflow._has_gh_release_mutation(api_command)
+
+
+def test_release_workflow_rejects_folded_publication_run(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    step = "      - name: Create GitHub Release and attach distributions\n"
+    before, separator, after = workflow.partition(step)
+    assert separator and "        run: |\n" in after
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + separator + after.replace("        run: |\n", "        run: >\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("missing the active release publication shell step" in error for error in errors)
+
+
+def test_release_workflow_rejects_folded_sibling_run(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    sibling = """\
+      - name: Hidden release API write
+        run: >-
+          gh api "repos/${REPO}/releases"
+          -f tag_name="$TAG"
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("every shell step can be inspected" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        """>2-
+          gh api "repos/${REPO}/releases"
+          -f tag_name="$TAG"
+""",
+        """'gh api "repos/${REPO}/releases" -f tag_name="$TAG"'
+""",
+    ],
+)
+def test_release_workflow_rejects_other_uninspectable_sibling_runs(
+    tmp_path: Path,
+    run: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    sibling = f"""\
+      - name: Hidden release API write
+        run: {run}"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("every shell step can be inspected" in error for error in errors)
+
+
+def test_release_workflow_rejects_indirect_sibling_shell(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    sibling = """\
+      - name: Hidden release API write
+        run: bash -c 'gh api "repos/${REPO}/releases" -f tag_name="$TAG"'
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("hide release behavior" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "indirect_command",
+    [
+        "eval 'exit 0'",
+        "source hidden.sh",
+        ". hidden.sh",
+        "bash -c 'exit 0'",
+        "timeout 5s bash -c 'exit 0'",
+        "printf '%s\\n' true | xargs bash -c",
+        "trap 'exit 0' EXIT",
+        '$DYNAMIC_COMMAND "exit 0"',
+        "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+    ],
+)
+def test_release_workflow_rejects_indirect_publication_shell(
+    tmp_path: Path,
+    indirect_command: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          prerelease=()\n"
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, f"          {indirect_command}\n{marker}", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "publication step must not use indirect shell execution" in error for error in errors
+    )
+
+
+@pytest.mark.parametrize(
+    "builtin_write",
+    [
+        "declare is_immutable=true",
+        "export is_immutable=true",
+        "printf -v is_immutable %s true",
+        "read is_immutable <<< true",
+        "mapfile is_immutable",
+        "mapfile -t is_immutable < file",
+        "(( is_immutable = 1 ))",
+        'target=is_immutable; printf -v "$target" %s true',
+        'target=is_immutable; read "$target" <<< true',
+        "target=is_immutable; (( $target = 1 ))",
+        "for is_immutable in true; do :; done",
+        "select is_immutable in true; do break; done <<< 1",
+        "{ select is_immutable in true; do break; done; } <<< 1",
+        "getopts x is_immutable",
+        ': "${is_immutable:=true}"',
+    ],
+)
+def test_release_workflow_rejects_builtin_security_state_writes(
+    tmp_path: Path,
+    builtin_write: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          is_immutable=false\n"
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(marker, marker + f"          {builtin_write}\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact non-yanked all-file PyPI gate" in error for error in errors)
+
+
 def test_release_workflow_rejects_forced_immutable_pypi_bypass(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     marker = "          # PyPI filenames are immutable."
@@ -1594,6 +1924,94 @@ def test_release_workflow_rejects_non_failing_empty_notes_guard(
 
 def test_docs_deploy_workflow_accepts_release_contract() -> None:
     assert verify_ci_workflow.validate_docs_deploy_workflow() == []
+
+
+def test_docs_deploy_rejects_folded_release_gate_run(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    step = "      - name: Await GitHub Release and PyPI availability\n"
+    before, separator, after = workflow.partition(step)
+    assert separator and "        run: |\n" in after
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        before + separator + after.replace("        run: |\n", "        run: >-\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("missing its active polling shell step" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "indirect_command",
+    [
+        "eval 'exit 0'",
+        "source hidden.sh",
+        ". hidden.sh",
+        "bash -c 'exit 0'",
+        "timeout 5s bash -c 'exit 0'",
+        "printf '%s\\n' true | xargs bash -c",
+        "trap 'exit 0' EXIT",
+        '$DYNAMIC_COMMAND "exit 0"',
+        "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+    ],
+)
+def test_docs_deploy_rejects_indirect_release_gate_shell(
+    tmp_path: Path,
+    indirect_command: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "          EXPECTED_PRERELEASE=false\n"
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(marker, f"          {indirect_command}\n{marker}", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("release gate must not use indirect shell execution" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "builtin_write",
+    [
+        "declare TAG_MATCH=true",
+        "typeset TAG_MATCH=true",
+        "export TAG_MATCH=true",
+        "readonly TAG_MATCH=true",
+        "printf -v TAG_MATCH %s true",
+        "read TAG_MATCH <<< true",
+        "read -a TAG_MATCH <<< true",
+        "mapfile TAG_MATCH",
+        "mapfile -t TAG_MATCH < file",
+        "TAG_MATCH[0]=true",
+        "(( TAG_MATCH = 1 ))",
+        "target=TAG_MATCH; (( $target = 1 ))",
+        'target=TAG_MATCH; printf -v "$target" %s true',
+        'target=TAG_MATCH; read "$target" <<< true',
+        "for TAG_MATCH in true; do :; done",
+        "select TAG_MATCH in true; do break; done <<< 1",
+        "{ select TAG_MATCH in true; do break; done; } <<< 1",
+        "getopts x TAG_MATCH",
+        ': "${TAG_MATCH:=true}"',
+    ],
+)
+def test_docs_deploy_rejects_builtin_readiness_state_writes(
+    tmp_path: Path,
+    builtin_write: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "            TAG_MATCH=false\n"
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(marker, marker + f"            {builtin_write}\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("fresh readiness flag" in error for error in errors)
 
 
 def test_docs_deploy_rejects_existence_only_release_gate(tmp_path: Path) -> None:

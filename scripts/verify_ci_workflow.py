@@ -136,14 +136,26 @@ def _step_name(step_text: str) -> str | None:
 
 
 def _step_run(step_text: str) -> str | None:
-    """Return one step's shell, supporting block and one-line ``run`` values."""
+    """Return one step's shell from a literal block or one-line ``run`` value.
+
+    Folded YAML scalars replace source newlines with spaces according to YAML
+    folding rules. Treating their indented source as separate shell commands
+    validates different code from what Actions executes, so protected callers
+    must fail closed instead of attempting to reconstruct folded semantics.
+    """
     lines = step_text.splitlines()
     for start, line in enumerate(lines):
         match = re.match(r"^        run:\s*(.*?)\s*$", line)
         if match is None:
             continue
         value = _strip_yaml_inline_comment(match.group(1))
-        if not re.fullmatch(r"[|>][+-]?", value):
+        block_scalar = re.fullmatch(
+            r"[|>](?:(?:[1-9][+-]?)|(?:[+-][1-9]?))?",
+            value,
+        )
+        if block_scalar is not None and not re.fullmatch(r"\|[+-]?", value):
+            return None
+        if not re.fullmatch(r"\|[+-]?", value):
             return value or None
         shell_lines: list[str] = []
         for body_line in lines[start + 1 :]:
@@ -156,6 +168,16 @@ def _step_run(step_text: str) -> str | None:
             )
         return "\n".join(shell_lines)
     return None
+
+
+def _step_uses_uninspectable_run(step_text: str) -> bool:
+    """Return whether a shell step is not a supported literal YAML block."""
+    for line in step_text.splitlines():
+        match = re.match(r"^        run:\s*(.*?)\s*$", line)
+        if match is not None:
+            value = _strip_yaml_inline_comment(match.group(1))
+            return re.fullmatch(r"\|[+-]?", value) is None
+    return False
 
 
 def _job_scalar(job_text: str, key: str) -> str | None:
@@ -266,6 +288,213 @@ def _shell_command_records(shell: str) -> list[tuple[int, str, list[str]]]:
     return records
 
 
+_SHELL_COMMAND_BOUNDARIES = {
+    "&",
+    "&&",
+    "(",
+    ")",
+    ";",
+    ";;",
+    "do",
+    "elif",
+    "else",
+    "if",
+    "then",
+    "until",
+    "while",
+    "|",
+    "||",
+    "{",
+    "}",
+    "!",
+}
+_SHELL_ASSIGNMENT_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _shell_prefix_is_wrappers(prefix: list[str]) -> bool:
+    """Return whether ``prefix`` only wraps the command that follows it."""
+    index = 0
+    while index < len(prefix) and _SHELL_ASSIGNMENT_TOKEN.match(prefix[index]):
+        index += 1
+
+    while index < len(prefix):
+        wrapper = prefix[index].rsplit("/", 1)[-1]
+        index += 1
+        if wrapper in {"builtin", "command"}:
+            while index < len(prefix) and (prefix[index] == "--" or prefix[index].startswith("-")):
+                index += 1
+            continue
+        if wrapper == "env":
+            value_options = {
+                "--argv0",
+                "--chdir",
+                "--split-string",
+                "--unset",
+                "-C",
+                "-S",
+                "-a",
+                "-u",
+            }
+            while index < len(prefix):
+                token = prefix[index]
+                if _SHELL_ASSIGNMENT_TOKEN.match(token):
+                    index += 1
+                elif token == "--":
+                    index += 1
+                    break
+                elif token in value_options:
+                    index += 2
+                elif token.startswith("-"):
+                    index += 1
+                else:
+                    break
+            continue
+        if wrapper == "time":
+            while index < len(prefix) and (prefix[index] == "--" or prefix[index].startswith("-")):
+                index += 1
+            continue
+        if wrapper == "nohup":
+            while index < len(prefix) and prefix[index].startswith("-"):
+                index += 1
+            continue
+        if wrapper == "nice":
+            while index < len(prefix):
+                token = prefix[index]
+                if token in {"--adjustment", "-n"}:
+                    index += 2
+                elif token.startswith("-"):
+                    index += 1
+                else:
+                    break
+            continue
+        if wrapper == "stdbuf":
+            value_options = {"--error", "--input", "--output", "-e", "-i", "-o"}
+            while index < len(prefix):
+                token = prefix[index]
+                if token in value_options:
+                    index += 2
+                elif token.startswith("-"):
+                    index += 1
+                else:
+                    break
+            continue
+        if wrapper == "timeout":
+            value_options = {"--kill-after", "--signal", "-k", "-s"}
+            while index < len(prefix):
+                token = prefix[index]
+                if token == "--":
+                    index += 1
+                    continue
+                if token in value_options:
+                    index += 2
+                elif token.startswith("-"):
+                    index += 1
+                else:
+                    # The first positional value is timeout's duration.
+                    index += 1
+                    break
+            continue
+        return False
+    return True
+
+
+def _shell_token_starts_command(tokens: list[str], token_position: int) -> bool:
+    """Return whether one token is executable at a shell command boundary."""
+    command_start = 0
+    for prefix_position in range(token_position - 1, -1, -1):
+        if tokens[prefix_position] in _SHELL_COMMAND_BOUNDARIES:
+            command_start = prefix_position + 1
+            break
+    return _shell_prefix_is_wrappers(tokens[command_start:token_position])
+
+
+def _shell_command_arguments(tokens: list[str], token_position: int) -> list[str]:
+    """Return arguments up to the next shell control boundary."""
+    command_end = len(tokens)
+    for suffix_position in range(token_position + 1, len(tokens)):
+        if tokens[suffix_position] in _SHELL_COMMAND_BOUNDARIES:
+            command_end = suffix_position
+            break
+    return tokens[token_position + 1 : command_end]
+
+
+def _has_indirect_shell_execution(shell: str) -> bool:
+    """Reject commands that can hide unparsed shell from protected validators."""
+    shell_interpreters = {
+        "$SHELL",
+        "${SHELL}",
+        "ash",
+        "bash",
+        "dash",
+        "fish",
+        "ksh",
+        "mksh",
+        "sh",
+        "zsh",
+    }
+    double_bracket_open = False
+    for _, line, tokens in _shell_command_records(shell):
+        expression_positions: set[int] = set()
+        arithmetic_open = False
+        for position, token in enumerate(tokens):
+            if token == "[[":
+                double_bracket_open = True
+            elif token == "((":
+                arithmetic_open = True
+            if double_bracket_open or arithmetic_open:
+                expression_positions.add(position)
+            if token == "]]":
+                double_bracket_open = False
+            elif token == "))":
+                arithmetic_open = False
+
+        function_definition = re.match(
+            r"^(?:function\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+            r"(?:\s*\(\))?\s*\{(?:\s|$)",
+            line,
+        )
+        if function_definition is not None and function_definition.group(1) not in {
+            "release_metadata_matches",
+            "verify_release_payload",
+            "verify_tag_source",
+        }:
+            return True
+        for token_position, token in enumerate(tokens):
+            if token_position in expression_positions:
+                continue
+            if not _shell_token_starts_command(tokens, token_position):
+                continue
+            command = token.rsplit("/", 1)[-1]
+            dynamic_command = token.startswith(("$", "`")) and not (
+                len(tokens) > 1 and _SHELL_ASSIGNMENT_TOKEN.match(tokens[0]) and tokens[1] == "("
+            )
+            if (
+                command
+                in {
+                    ".",
+                    "alias",
+                    "enable",
+                    "eval",
+                    "find",
+                    "hash",
+                    "parallel",
+                    "source",
+                    "trap",
+                    "xargs",
+                }
+                or command in shell_interpreters
+                or dynamic_command
+            ):
+                return True
+            if command == "env" and any(
+                argument in {"-S", "--split-string"}
+                or argument.startswith(("-S", "--split-string="))
+                for argument in _shell_command_arguments(tokens, token_position)
+            ):
+                return True
+    return False
+
+
 def _shell_maybe_successful_terminations(
     logical_lines: list[str],
 ) -> list[tuple[int, int, str, str | None]]:
@@ -283,29 +512,6 @@ def _shell_maybe_successful_terminations(
     ``command``/``builtin`` wrappers without mistaking text such as
     ``printf '%s' exit`` for an active termination.
     """
-    boundary_tokens = {
-        "&",
-        "&&",
-        "(",
-        ")",
-        ";",
-        ";;",
-        "do",
-        "elif",
-        "else",
-        "if",
-        "then",
-        "until",
-        "while",
-        "|",
-        "||",
-        "{",
-        "}",
-        "!",
-    }
-    command_wrappers = {"builtin", "command", "time"}
-    executing_wrapper_options = {"--", "-p"}
-    assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
     explicit_status = re.compile(r"^[+-]?[0-9]+$")
     terminations: list[tuple[int, int, str, str | None]] = []
 
@@ -316,26 +522,9 @@ def _shell_maybe_successful_terminations(
         for token_position, token in enumerate(tokens):
             if token not in {"exec", "exit", "return"}:
                 continue
-
-            command_start = 0
-            for prefix_position in range(token_position - 1, -1, -1):
-                if tokens[prefix_position] in boundary_tokens:
-                    command_start = prefix_position + 1
-                    break
-            prefix = tokens[command_start:token_position]
-            while prefix and assignment.match(prefix[0]):
-                prefix = prefix[1:]
-            if prefix and not all(
-                item in command_wrappers or item in executing_wrapper_options for item in prefix
-            ):
+            if not _shell_token_starts_command(tokens, token_position):
                 continue
-
-            command_end = len(tokens)
-            for suffix_position in range(token_position + 1, len(tokens)):
-                if tokens[suffix_position] in boundary_tokens:
-                    command_end = suffix_position
-                    break
-            arguments = tokens[token_position + 1 : command_end]
+            arguments = _shell_command_arguments(tokens, token_position)
             status = arguments[0] if len(arguments) == 1 else None
             if (
                 token != "exec"
@@ -355,48 +544,157 @@ def _shell_function_definition_count(shell: str, name: str) -> int:
     return sum(bool(pattern.match(line)) for line in _shell_logical_lines(shell))
 
 
+def _normalized_api_endpoint(endpoint: str) -> str:
+    """Normalize one REST/GraphQL endpoint without inspecting option values."""
+    endpoint = endpoint.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+    endpoint = re.sub(r"^https://[^/]+/(?:api/v3/)?", "", endpoint)
+    return endpoint.lstrip("/")
+
+
+def _normalized_release_api_endpoint(endpoint: str) -> tuple[bool, bool]:
+    """Return ``(is_release_endpoint, is_generate_notes_endpoint)``."""
+    endpoint = _normalized_api_endpoint(endpoint)
+    release_path = re.fullmatch(
+        r"repos/(?:\$\{REPO\}|\$REPO|[^/]+/[^/]+)/releases(?:/(.*))?",
+        endpoint,
+    )
+    if release_path is None:
+        return False, False
+    return True, release_path.group(1) == "generate-notes"
+
+
+def _gh_api_request(api_tokens: list[str]) -> tuple[str, str | None]:
+    """Return the effective method and positional endpoint of ``gh api``."""
+    method: str | None = None
+    has_payload = False
+    endpoint: str | None = None
+    value_options = {
+        "--cache",
+        "--header",
+        "--hostname",
+        "--jq",
+        "--preview",
+        "--template",
+        "-H",
+        "-p",
+        "-q",
+        "-t",
+    }
+    payload_options = {"--field", "--input", "--raw-field", "-F", "-f"}
+    index = 0
+    while index < len(api_tokens):
+        token = api_tokens[index]
+        if token in {"--method", "-X"}:
+            method = api_tokens[index + 1] if index + 1 < len(api_tokens) else ""
+            index += 2
+            continue
+        if token.startswith("--method="):
+            method = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token.startswith("-X") and len(token) > 2:
+            method = token[2:].removeprefix("=")
+            index += 1
+            continue
+        if token in payload_options:
+            has_payload = True
+            index += 2
+            continue
+        if (
+            token.startswith("--field=")
+            or token.startswith("--input=")
+            or token.startswith("--raw-field=")
+            or (token.startswith("-F") and len(token) > 2)
+            or (token.startswith("-f") and len(token) > 2)
+        ):
+            has_payload = True
+            index += 1
+            continue
+        if token in value_options:
+            index += 2
+            continue
+        if any(
+            token.startswith(f"{option}=") for option in value_options if option.startswith("--")
+        ):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        if endpoint is None:
+            endpoint = token
+        index += 1
+    return (method.upper() if method is not None else ("POST" if has_payload else "GET")), endpoint
+
+
+def _gh_subcommand(arguments: list[str]) -> tuple[str | None, list[str]]:
+    """Return the first positional gh command after persistent options."""
+    value_options = {"--config-dir", "--hostname", "--repo", "-R"}
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--":
+            index += 1
+            break
+        if token in value_options:
+            index += 2
+            continue
+        if token.startswith(("--config-dir=", "--hostname=", "--repo=")):
+            index += 1
+            continue
+        if token.startswith("-R") and len(token) > 2:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token, arguments[index + 1 :]
+    if index < len(arguments):
+        return arguments[index], arguments[index + 1 :]
+    return None, []
+
+
 def _has_gh_release_mutation(shell: str) -> bool:
     """Return whether shell directly invokes a GitHub Release write command."""
-    mutations = {"create", "delete", "edit", "upload"}
-    write_methods = {"DELETE", "PATCH", "POST", "PUT"}
+    mutations = {"create", "delete", "delete-asset", "edit", "new", "upload"}
     for _, _, tokens in _shell_command_records(shell):
-        for index in range(len(tokens) - 2):
-            if tokens[index : index + 2] == ["gh", "release"] and tokens[index + 2] in mutations:
+        for index, token in enumerate(tokens):
+            if token.rsplit("/", 1)[-1] != "gh" or not _shell_token_starts_command(tokens, index):
+                continue
+            gh_arguments = _shell_command_arguments(tokens, index)
+            subcommand, subcommand_arguments = _gh_subcommand(gh_arguments)
+            if subcommand == "release":
+                release_command, _ = _gh_subcommand(subcommand_arguments)
+                if release_command in mutations or (
+                    release_command is not None and release_command.startswith(("$", "`"))
+                ):
+                    return True
+                continue
+            if subcommand != "api":
+                continue
+            method, endpoint = _gh_api_request(subcommand_arguments)
+            if method in {"GET", "HEAD"}:
+                continue
+            if endpoint is None:
                 return True
-            if tokens[index : index + 2] != ["gh", "api"]:
-                continue
-            api_tokens = tokens[index + 2 :]
-            methods = [
-                api_tokens[position + 1].upper()
-                for position, token in enumerate(api_tokens[:-1])
-                if token in {"--method", "-X"}
-            ]
-            if not any(method in write_methods for method in methods):
-                continue
-            release_endpoints = [
-                token for token in api_tokens if re.search(r"(?:^|/)releases(?:/|$)", token)
-            ]
-            if any(
-                not endpoint.endswith("/releases/generate-notes") for endpoint in release_endpoints
-            ):
+            normalized_endpoint = _normalized_api_endpoint(endpoint)
+            if normalized_endpoint == "graphql":
+                return True
+            is_release, is_generate_notes = _normalized_release_api_endpoint(endpoint)
+            if is_release and not (is_generate_notes and method == "POST"):
+                return True
+            endpoint_without_repo = normalized_endpoint.replace("${REPO}", "REPO").replace(
+                "$REPO", "REPO"
+            )
+            if "$" in endpoint_without_repo or "`" in endpoint_without_repo:
+                # A computed write endpoint can resolve to Releases at runtime.
+                return True
+            if normalized_endpoint.startswith("graphql/"):
+                # Fail closed on non-canonical GraphQL spellings as well.
+                return True
+            if endpoint.startswith(("$", "`")):
                 return True
     return False
-
-
-def _option_values(tokens: list[str], option: str) -> list[str | None]:
-    """Return every value supplied to an exact long option token."""
-    values: list[str | None] = []
-    for index, token in enumerate(tokens):
-        if token == option:
-            values.append(tokens[index + 1] if index + 1 < len(tokens) else None)
-        elif token.startswith(f"{option}="):
-            values.append(token.removeprefix(f"{option}="))
-    return values
-
-
-def _has_exact_option(tokens: list[str], option: str, value: str) -> bool:
-    """Require one unambiguous long option whose value is exactly expected."""
-    return _option_values(tokens, option) == [value]
 
 
 def _is_release_metadata_read(tokens: list[str]) -> bool:
@@ -476,10 +774,154 @@ def _has_guarded_release_validation(logical_lines: list[str], metadata_position:
     )
 
 
+def _assignment_target_is(token: str, name: str) -> bool:
+    """Return whether an assignment/declaration token targets ``name``."""
+    target = token.split("=", 1)[0].removesuffix("+")
+    target = target.split("[", 1)[0]
+    return target == name
+
+
+def _assignment_target_is_dynamic(token: str) -> bool:
+    """Return whether a variable-writing command computes its target name."""
+    target = token.split("=", 1)[0]
+    return "$" in target or "`" in target
+
+
+def _shell_command_writes_variable(tokens: list[str], position: int, name: str) -> bool:
+    """Recognize shell builtins that can overwrite a protected variable."""
+    if not _shell_token_starts_command(tokens, position):
+        return False
+    command = tokens[position]
+    arguments = _shell_command_arguments(tokens, position)
+
+    if command in {"declare", "export", "local", "readonly", "typeset", "unset"}:
+        nameref = any(argument.startswith("-") and "n" in argument[1:] for argument in arguments)
+        if nameref:
+            # A nameref can redirect later ordinary assignments to a protected
+            # variable, including when its target name is computed indirectly.
+            return True
+        for argument in arguments:
+            if argument == "--" or argument.startswith("-"):
+                continue
+            if _assignment_target_is(argument, name) or _assignment_target_is_dynamic(argument):
+                return True
+        return False
+
+    if command == "printf":
+        for index, argument in enumerate(arguments):
+            if argument == "-v" and index + 1 < len(arguments):
+                target = arguments[index + 1]
+                return _assignment_target_is(target, name) or _assignment_target_is_dynamic(target)
+            if argument.startswith("-v") and len(argument) > 2:
+                target = argument[2:]
+                return _assignment_target_is(target, name) or _assignment_target_is_dynamic(target)
+        return False
+
+    if command == "read":
+        value_options = {"-d", "-i", "-n", "-N", "-p", "-t", "-u"}
+        index = 0
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument == "--":
+                return any(
+                    _assignment_target_is(target, name) or _assignment_target_is_dynamic(target)
+                    for target in arguments[index + 1 :]
+                )
+            if argument == "-a" and index + 1 < len(arguments):
+                target = arguments[index + 1]
+                if _assignment_target_is(target, name) or _assignment_target_is_dynamic(target):
+                    return True
+                index += 2
+                continue
+            if argument.startswith("-a") and len(argument) > 2:
+                target = argument[2:]
+                if _assignment_target_is(target, name) or _assignment_target_is_dynamic(target):
+                    return True
+                index += 1
+                continue
+            if argument in value_options:
+                index += 2
+                continue
+            if argument.startswith("-"):
+                index += 1
+                continue
+            return any(
+                _assignment_target_is(target, name) or _assignment_target_is_dynamic(target)
+                for target in arguments[index:]
+            )
+        return False
+
+    if command in {"mapfile", "readarray"}:
+        value_options = {"-C", "-O", "-c", "-n", "-s", "-u"}
+        index = 0
+        while index < len(arguments):
+            argument = arguments[index]
+            if argument in value_options:
+                index += 2
+                continue
+            if argument.startswith("-"):
+                index += 1
+                continue
+            if re.match(r"^(?:[0-9]*)[<>]", argument):
+                redirection_only = re.fullmatch(
+                    r"[0-9]*(?:<<<|<<|<>|<&|>>|>&|>\||<|>)",
+                    argument,
+                )
+                index += 2 if redirection_only is not None else 1
+                continue
+            return _assignment_target_is(argument, name) or _assignment_target_is_dynamic(argument)
+        return name == "MAPFILE"
+
+    if command == "let":
+        if any("$" in argument or "`" in argument for argument in arguments):
+            return True
+        arithmetic_write = re.compile(
+            rf"^{re.escape(name)}(?:\[[^]]+\])?\s*"
+            r"(?:\+\+|--|(?:<<|>>|[+\-*/%&|^])?=(?!=))"
+        )
+        return any(arithmetic_write.search(argument) for argument in arguments)
+
+    if command == "getopts" and len(arguments) >= 2:
+        target = arguments[1]
+        return _assignment_target_is(target, name) or _assignment_target_is_dynamic(target)
+
+    return False
+
+
 def _assignment_lines(logical_lines: list[str], name: str) -> list[str]:
-    """Return active direct assignments to one protected shell variable."""
-    pattern = re.compile(rf"^(?:if (?:! )?)?{re.escape(name)}=")
-    return [line for line in logical_lines if pattern.match(line)]
+    """Return every direct or builtin write to a protected shell variable."""
+    pattern = re.compile(rf"^(?:if (?:! )?)?{re.escape(name)}(?:\[[^]]+\])?\+?=")
+    arithmetic_write = re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(name)}(?:\[[^]]+\])?\s*"
+        r"(?:\+\+|--|(?:<<|>>|[+\-*/%&|^])?=(?!=))"
+    )
+    parameter_write = re.compile(rf"\$\{{{re.escape(name)}(?::?=)")
+    iteration_write = re.compile(
+        rf"(?:^|[;&|{{}}()]\s*|\b(?:do|then)\s+)"
+        rf"(?:for|select)\s+{re.escape(name)}\b"
+    )
+    dynamic_arithmetic_write = re.compile(
+        r"\(\([^)]*\$(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)\s*"
+        r"(?:\+\+|--|(?:<<|>>|[+\-*/%&|^])?=(?!=))"
+    )
+    assignments: list[str] = []
+    for line in logical_lines:
+        if (
+            pattern.match(line)
+            or arithmetic_write.search(line)
+            or parameter_write.search(line)
+            or iteration_write.search(line)
+            or dynamic_arithmetic_write.search(line)
+        ):
+            assignments.append(line)
+            continue
+        tokens = _shell_tokens(line)
+        if tokens is not None and any(
+            _shell_command_writes_variable(tokens, position, name)
+            for position in range(len(tokens))
+        ):
+            assignments.append(line)
+    return assignments
 
 
 def _logical_line_is(logical_lines: list[str], position: int, expected: str) -> bool:
@@ -1387,6 +1829,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     if publish_tag_block is None or publish_tag_shell is None:
         errors.append("release publish job must verify the current tag source before PyPI")
     else:
+        if _has_indirect_shell_execution(publish_tag_shell):
+            errors.append("release publish tag guard must not use indirect shell execution")
         publish_tag_lines = _shell_logical_lines(publish_tag_shell)
         lookup_tokens = [
             "timeout",
@@ -1463,6 +1907,27 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 "release github-release job must declare each protected step exactly once: "
                 f"{duplicate_protected_steps}"
             )
+        uninspectable_run_steps = [
+            _step_name(step) or "<unnamed>"
+            for step in job_steps
+            if _step_uses_uninspectable_run(step)
+        ]
+        if uninspectable_run_steps:
+            errors.append(
+                "release github-release job must use literal `run: |` blocks so every "
+                "shell step can be inspected for release mutations; found unsupported "
+                f"`run` scalars in {uninspectable_run_steps}"
+            )
+        indirect_shell_steps = [
+            _step_name(step) or "<unnamed>"
+            for step in job_steps
+            if (shell := _step_run(step)) is not None and _has_indirect_shell_execution(shell)
+        ]
+        if indirect_shell_steps:
+            errors.append(
+                "release github-release job must not hide release behavior behind "
+                f"indirect shell execution; found it in {indirect_shell_steps}"
+            )
         sibling_release_mutations = [
             _step_name(step) or "<unnamed>"
             for step in job_steps
@@ -1507,6 +1972,10 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         if inspect_shell is None:
             errors.append("release github-release job is missing immutable-release preflight")
         else:
+            if _has_indirect_shell_execution(inspect_shell):
+                errors.append(
+                    "release immutable-release preflight must not use indirect shell execution"
+                )
             missing = _missing_needles(
                 inspect_shell,
                 (
@@ -1548,6 +2017,10 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         if prepare_block is None or prepare_shell is None:
             errors.append("release github-release job is missing active provenance preparation")
         else:
+            if _has_indirect_shell_execution(prepare_shell):
+                errors.append(
+                    "release provenance preparation must not use indirect shell execution"
+                )
             if _step_scalar(prepare_block, "if") != immutable_skip:
                 errors.append(
                     "release provenance preparation must skip pre-existing immutable releases"
@@ -1655,7 +2128,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 if line == "verify_tag_source"
             ]
             if not (
-                _assignment_lines(prepare_lines, "tag_source_sha") == ['if ! tag_source_sha="$(']
+                _assignment_lines(prepare_lines, "tag_source_sha")
+                == ["local tag_source_sha", 'if ! tag_source_sha="$(']
                 and _shell_function_definition_count(prepare_shell, "verify_tag_source") == 1
                 and len(tag_lookup_positions) == 1
                 and _has_exact_tag_source_function(
@@ -1725,6 +2199,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 "release github-release job is missing the active release publication shell step"
             )
         else:
+            if _has_indirect_shell_execution(release_shell):
+                errors.append("release publication step must not use indirect shell execution")
             required_shell = (
                 "shopt -s nullglob",
                 "wheels=(dist/*.whl)",
@@ -2178,8 +2654,10 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             if not (
                 len(tag_resolution_positions) == 1
                 and _assignment_lines(logical_lines, "tag_source_sha")
-                == ['if ! tag_source_sha="$(']
+                == ["local tag_source_sha", 'if ! tag_source_sha="$(']
                 and _shell_function_definition_count(release_shell, "verify_tag_source") == 1
+                and _shell_function_definition_count(release_shell, "release_metadata_matches") == 1
+                and _shell_function_definition_count(release_shell, "verify_release_payload") == 1
                 and _has_exact_tag_source_function(
                     logical_lines,
                     tag_resolution_positions[0] if tag_resolution_positions else -1,
@@ -2270,6 +2748,8 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
     if gate_step is None or gate_shell is None:
         errors.append("docs deploy release gate is missing its active polling shell step")
         return errors
+    if _has_indirect_shell_execution(gate_shell):
+        errors.append("docs deploy release gate must not use indirect shell execution")
     if not re.search(
         r"^          SOURCE_SHA:\s*"
         r"\$\{\{ needs\.prepare\.outputs\.source_sha \}\}\s*$",
