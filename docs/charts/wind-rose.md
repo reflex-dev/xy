@@ -148,7 +148,7 @@ annual_rose = xy.wind_rose(
     xy.legend(loc="right", title="speed (m/s)"),
     sectors=32,
     speed_bins=[2, 4, 6, 8, 11, 14, 18, 25],
-    title="Annual wind rose, 8,000 hourly observations",
+    title="Wind rose, 8,000 hourly observations",
 )
 
 
