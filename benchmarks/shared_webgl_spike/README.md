@@ -1,0 +1,100 @@
+# Shared WebGL host experiment
+
+This is a dependency-free architecture spike for
+[`reflex-dev/xy#407`](https://github.com/reflex-dev/xy/issues/407). It isolates the
+browser-level question behind Phase 3 of that proposal: can one WebGL2 context keep 50
+independent DOM chart surfaces live without importing `virtual-webgl` or another renderer?
+
+This directory does **not** integrate the host with xy's production `ChartView`. It uses a
+small synthetic line renderer so context sharing, state boundaries, presentation copies,
+picking, and recovery can be measured independently before the production refactor.
+
+It implements two rendering backends over the same chart model and shaders:
+
+- **Shared GLHost:** one detached WebGL2 canvas/context renders every chart, then
+  synchronously presents each completed frame into that chart's visible 2D canvas with
+  `drawImage`.
+- **Native contexts:** each visible chart canvas owns a separate WebGL2 context, exposing
+  the browser's live-context ceiling.
+
+The page exercises:
+
+- 50 continuously streaming, independently colored line charts;
+- one VBO/VAO and one lazy pick framebuffer per chart;
+- explicit WebGL state reset at every shared-client boundary;
+- deliberately poisoned state between charts;
+- asymmetric pixel canaries for blank, stale, flipped, cropped, or cross-chart frames;
+- three exact encoded-ID checks on every live chart (150 checks at the default count);
+- a forced 17-pixel host crop offset, so verification covers a grown backing canvas;
+- GPU hit-buffer picking (the interactive path returns the last covered sample, not the
+  mathematically nearest sample);
+- grow-only host backing dimensions and responsive chart resizing;
+- shared and per-chart `WEBGL_lose_context` recovery;
+- JavaScript-side batch, upload, draw, and 2D presentation submission timing.
+
+## Run
+
+From the repository root:
+
+```sh
+python3 -m http.server 4173 --directory benchmarks/shared_webgl_spike
+```
+
+Then open <http://localhost:4173/>.
+
+The renderer and chart count are encoded in the query string so A/B changes reload the
+document and cannot accidentally retain contexts from the previous variant:
+
+```text
+?mode=shared&count=50
+?mode=native&count=50
+```
+
+## Automation surface
+
+Once `window.__EXPERIMENT_READY === true`:
+
+```js
+await window.__sharedWebglExperiment.verify();
+await window.__sharedWebglExperiment.benchmark(3000);
+await window.__sharedWebglExperiment.cycleContext();
+window.__sharedWebglExperiment.snapshot();
+```
+
+Results are also exposed as `window.__LAST_CHECK` and `window.__LAST_BENCHMARK`.
+The captured run used for this spike is preserved as both a
+[readable report](./RESULTS.md) and a
+[machine-readable result summary](./results/chromium-2026-07-31.json).
+
+Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
+Native mode can look faster after browser eviction because it is rendering fewer live charts;
+compare `fullyLive` and `chartPresentationsPerSecond`, not frame time alone.
+
+The default benchmark profile leaves **State stress** off to approximate production. The
+correctness check always enables state poisoning regardless of that toggle. Enable the toggle
+to benchmark the torture profile.
+
+## Scope of the result
+
+The spike demonstrates that the proposed blit architecture can keep 50 synthetic chart
+surfaces live while owning one WebGL2 context. It does not establish production xy performance
+or satisfy issue #407's acceptance criteria by itself. Integration still requires `ChartView`
+to accept a host-owned context and render target, invalidate renderer caches at chart switches,
+coalesce dirty clients, and preserve xy view state through a host-wide context rebuild.
+
+The experiment intentionally leaves the dossier's §18 shared-context option marked
+unimplemented. A later production phase must update the specification when the runtime behavior
+actually ships.
+
+## Deliberate limits
+
+- The renderer is synthetic: there is no `ChartView`, LOD, kernel, export, selection, or shared
+  column-cache integration.
+- The spike implements only per-chart `drawImage` blits, not the single full-page-canvas mode.
+- State reset covers the WebGL state touched by this renderer; xy integration must audit every
+  production state dependency and cache.
+- Exact-ID checks isolate one requested vertex. Interactive dense hit testing retains
+  last-covered-sample semantics rather than a nearest-point oracle.
+- Context recovery rebuilds the synthetic GPU resources; it does not exercise xy pan/zoom state.
+- Timings are one local run of JavaScript submission cost, not completed GPU work or an xy
+  speedup claim.

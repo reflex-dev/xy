@@ -804,6 +804,12 @@ release is a deliberate context loss put through the same restore path.
   one 10M-row table holds the data **once**, which is a memory win Plotly cannot
   express at all.
 
+The dependency-free [`benchmarks/shared_webgl_spike/`](../benchmarks/shared_webgl_spike/)
+harness records feasibility evidence for mode (b) with a synthetic renderer: 50 DOM chart
+surfaces rendered through one detached WebGL2 context and synchronously copied into 2D canvases.
+It does not change this option's **unimplemented** status; production `ChartView` integration,
+view-state recovery, scheduling, and shared data caches remain future work (#407).
+
 ## 19. Nulls, NaN, and gaps
 
 - Arrow **validity bitmaps** are the single source of null truth, carried through

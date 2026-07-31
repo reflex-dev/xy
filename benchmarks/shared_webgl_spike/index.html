@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Shared WebGL Host Experiment</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./experiment.js"></script>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero__copy">
+        <p class="eyebrow">xy issue #407 · dependency-free spike</p>
+        <h1>One WebGL context.<br /><span>Fifty live charts.</span></h1>
+        <p class="lede">
+          Compare native one-context-per-chart rendering with an in-tree-style
+          <code>GLHost</code> that draws every chart through one real WebGL2 context and
+          immediately presents into independent 2D canvases.
+        </p>
+      </div>
+
+      <div class="hero__diagram" aria-label="Shared renderer architecture">
+        <div class="diagram-node diagram-node--source">50 chart views</div>
+        <div class="diagram-arrow">→</div>
+        <div class="diagram-node diagram-node--host">1 GLHost</div>
+        <div class="diagram-arrow">→</div>
+        <div class="diagram-node diagram-node--target">50 DOM canvases</div>
+      </div>
+    </header>
+
+    <section class="control-deck" aria-label="Experiment controls">
+      <label class="control">
+        <span>Renderer</span>
+        <select id="mode">
+          <option value="shared" selected>Shared GLHost</option>
+          <option value="native">Native contexts</option>
+        </select>
+      </label>
+
+      <label class="control control--range">
+        <span>Charts <output id="count-output" for="count">50</output></span>
+        <input id="count" type="range" min="1" max="50" step="1" value="50" />
+      </label>
+
+      <label class="control">
+        <span>Target rate</span>
+        <select id="fps-target">
+          <option value="60" selected>60 fps</option>
+          <option value="30">30 fps</option>
+          <option value="15">15 fps</option>
+        </select>
+      </label>
+
+      <label class="switch">
+        <input id="streaming" type="checkbox" checked />
+        <span class="switch__track" aria-hidden="true"></span>
+        <span>Streaming</span>
+      </label>
+
+      <label class="switch">
+        <input id="poison-state" type="checkbox" />
+        <span class="switch__track" aria-hidden="true"></span>
+        <span title="Benchmark toggle; correctness checks always poison state">State stress</span>
+      </label>
+
+      <label class="switch">
+        <input id="dense" type="checkbox" checked />
+        <span class="switch__track" aria-hidden="true"></span>
+        <span>Dense viewport</span>
+      </label>
+
+      <div class="button-group">
+        <button id="verify" class="button button--primary" type="button">Run checks</button>
+        <button id="benchmark" class="button" type="button">Benchmark 3s</button>
+        <button id="cycle-context" class="button" type="button">Lose + restore</button>
+      </div>
+    </section>
+
+    <main>
+      <section class="metrics" aria-label="Live experiment metrics">
+        <article class="metric metric--accent">
+          <p>Real WebGL contexts</p>
+          <strong id="metric-contexts">—</strong>
+          <small id="metric-contexts-note">one document-level host</small>
+        </article>
+        <article class="metric">
+          <p>Live charts</p>
+          <strong id="metric-live">—</strong>
+          <small id="metric-live-note">waiting for first frame</small>
+        </article>
+        <article class="metric">
+          <p>Observed rate</p>
+          <strong id="metric-fps">—</strong>
+          <small>frames / second</small>
+        </article>
+        <article class="metric">
+          <p>CPU batch p95</p>
+          <strong id="metric-frame">—</strong>
+          <small>all chart draws</small>
+        </article>
+        <article class="metric">
+          <p>2D copy p95 / chart</p>
+          <strong id="metric-present">—</strong>
+          <small>WebGL canvas → 2D canvas</small>
+        </article>
+        <article class="metric">
+          <p>GPU object sets</p>
+          <strong id="metric-resources">—</strong>
+          <small>program + geometry ownership</small>
+        </article>
+      </section>
+
+      <section class="result-strip" aria-live="polite">
+        <div id="health-dot" class="health-dot" data-state="working"></div>
+        <p id="status">Building the shared renderer…</p>
+        <p id="last-check" class="result-strip__aside">Checks not run yet</p>
+      </section>
+
+      <section class="grid-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Live presentation targets</p>
+            <h2>Every card is an independent DOM canvas</h2>
+          </div>
+          <p>
+            Hover a trace to exercise its per-chart pick framebuffer. In shared mode the
+            plot canvas is 2D; WebGL lives only on the hidden host canvas.
+          </p>
+        </div>
+        <div id="chart-grid" class="chart-grid chart-grid--dense"></div>
+      </section>
+
+      <details class="lab-notes">
+        <summary>Experiment log</summary>
+        <pre id="log"></pre>
+      </details>
+    </main>
+
+    <footer>
+      No framework, no rendering library, no package dependencies. Browser-native WebGL2,
+      Canvas 2D, ResizeObserver, and requestAnimationFrame only.
+    </footer>
+  </body>
+</html>

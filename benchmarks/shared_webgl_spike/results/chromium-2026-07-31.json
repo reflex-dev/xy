@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "kind": "shared-webgl-spike",
+  "source_issue": "https://github.com/reflex-dev/xy/issues/407",
+  "base_commit": "d505ef57",
+  "environment": {
+    "date": "2026-07-31",
+    "browser": "Codex in-app browser",
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    "platform": "MacIntel",
+    "webgl": {
+      "vendor": "Google Inc. (Apple)",
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "shading_language_version": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+    },
+    "viewport_css_pixels": {
+      "width": 2259,
+      "height": 1294
+    },
+    "device_pixel_ratio": 1.1,
+    "canvas_pixels": {
+      "width": 163,
+      "height": 73
+    }
+  },
+  "profiles": {
+    "shared": {
+      "requested_charts": 50,
+      "live_charts": 50,
+      "live_contexts": 1,
+      "fully_live": true,
+      "correctness": {
+        "pass": true,
+        "canary_checks": 50,
+        "canary_failures": 0,
+        "pick_checks": 150,
+        "pick_failures": 0,
+        "crop_offset_pixels": 17,
+        "state_stress": true
+      },
+      "recovery": {
+        "context_losses": 1,
+        "context_restores": 1,
+        "live_charts_after_restore": 50,
+        "correctness_after_restore": "pass"
+      },
+      "benchmark": {
+        "duration_ms": 3014.0,
+        "target_fps": 60,
+        "observed_fps": 53.74917053749171,
+        "productive_batches": 162,
+        "expected_batches": 180,
+        "dropped_intervals": 18,
+        "chart_presentations": 8100,
+        "chart_presentations_per_second": 2687.4585268745855,
+        "frame_ms": {
+          "p50": 1.3000000715255737,
+          "p95": 16.5,
+          "p99": 16.700000047683716
+        },
+        "present_ms_per_chart": {
+          "p50": 0.0,
+          "p95": 0.10000002384185791
+        },
+        "state_stress": false,
+        "context_losses_during_run": 0,
+        "context_restores_during_run": 0
+      }
+    },
+    "native": {
+      "requested_charts": 50,
+      "created_contexts": 50,
+      "live_charts": 16,
+      "live_contexts": 16,
+      "fully_live": false,
+      "correctness": {
+        "pass": false,
+        "availability_failure": "34 charts unavailable",
+        "canary_checks": 16,
+        "canary_failures": 0,
+        "pick_checks": 48,
+        "pick_failures": 0,
+        "state_stress": true
+      },
+      "benchmark": {
+        "duration_ms": 3001.4000000953674,
+        "target_fps": 60,
+        "observed_fps": 59.972013058666164,
+        "productive_batches": 180,
+        "expected_batches": 180,
+        "dropped_intervals": 0,
+        "chart_presentations": 2880,
+        "chart_presentations_per_second": 959.5522089386586,
+        "frame_ms": {
+          "p50": 0.30000007152557373,
+          "p95": 0.40000009536743164,
+          "p99": 0.7999999523162842
+        },
+        "state_stress": false,
+        "context_losses_during_run": 0,
+        "context_restores_during_run": 0
+      }
+    }
+  },
+  "timing_scope": "JavaScript CPU submission; not completed GPU execution"
+}
