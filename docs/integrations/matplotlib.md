@@ -209,7 +209,7 @@ the shared coordinate system. Focused guides cover
 In compat mode, browser pointer, keyboard, scroll, resize, and close input is
 translated back into Matplotlib event objects on a live Python canvas.
 `mpl_connect`, picking, Matplotlib widgets, timers, `draw`, `draw_idle`, and
-full-redraw `blit` use Matplotlib's callback machinery. In IPython,
+display-list background `blit` use Matplotlib's callback machinery. In IPython,
 `plt.show()` displays a kernel-connected anywidget. In a Python script it opens
 an authenticated, loopback-only live browser host and dispatches queued input
 on Matplotlib's event-loop thread. Arbitrary Python callbacks require that

@@ -43,6 +43,22 @@ def test_stable_ast_dump_includes_empty_fields_and_canonical_type_params() -> No
     assert _ast_dump_show_empty_fallback(tree) == dumped
 
 
+def test_stable_ast_dump_ignores_redundant_empty_fstring_literals() -> None:
+    tree = ast.parse('text = f"{value:>{width}}"\n')
+    parser_variant = copy.deepcopy(tree)
+    format_spec = next(
+        node.format_spec
+        for node in ast.walk(parser_variant)
+        if isinstance(node, ast.FormattedValue) and node.format_spec is not None
+    )
+    assert isinstance(format_spec, ast.JoinedStr)
+    format_spec.values.append(ast.Constant(value=""))
+
+    assert _stable_ast_dump(parser_variant) == _stable_ast_dump(tree)
+    assert isinstance(format_spec.values[-1], ast.Constant)
+    assert format_spec.values[-1].value == ""
+
+
 def test_normalized_script_ast_matches_equivalent_notebook_code() -> None:
     script = '"""Gallery prose."""\nvalue = call()\n'
     notebook_code = "value = call()\n"

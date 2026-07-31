@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import hashlib
 import inspect
 import json
@@ -195,9 +196,33 @@ def _ast_dump_show_empty_fallback(value: object) -> str:
     return repr(value)
 
 
+class _CanonicalAstTransformer(ast.NodeTransformer):
+    """Remove parser-version artifacts that do not affect Python semantics."""
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:  # noqa: N802
+        self.generic_visit(node)
+        # CPython 3.12.0-3.12.3 retained a redundant empty literal at the end
+        # of some dynamic f-string format specifications.  Later 3.12 patch
+        # releases, 3.11, and 3.13+ omit it.  Empty literals have no runtime
+        # effect, so exclude them from the immutable source/notebook contract.
+        node.values = [
+            value
+            for value in node.values
+            if not (isinstance(value, ast.Constant) and value.value == "")
+        ]
+        return node
+
+
+def _canonical_ast(tree: ast.AST) -> ast.AST:
+    """Return a canonical AST without mutating the caller's parsed tree."""
+
+    return _CanonicalAstTransformer().visit(copy.deepcopy(tree))
+
+
 def _stable_ast_dump(tree: ast.AST) -> str:
     """Serialize an AST identically on supported CPython versions."""
 
+    tree = _canonical_ast(tree)
     if "show_empty" in inspect.signature(ast.dump).parameters:
         kwargs: dict[str, Any] = {"include_attributes": False, "show_empty": True}
         return ast.dump(tree, **kwargs)

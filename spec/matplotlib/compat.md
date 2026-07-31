@@ -163,8 +163,9 @@ transforms, layout, `mplot3d` projection/depth ordering, `axes_grid1`,
 `axisartist`, widget, callback, and animation semantics; XY renders the
 resulting paths, collections, images, text outlines, clips, and meshes. The
 live canvas maps browser input to Matplotlib event objects and supports timers,
-`draw`, `draw_idle`, and full-redraw `blit`. Standalone HTML has no live Python
-callback process, although it may contain precomputed animation frames.
+`draw`, `draw_idle`, and display-list background `blit`. Standalone HTML has no
+live Python callback process, although it may contain precomputed animation
+frames.
 
 The advanced families remain subject to the same 485-case gallery gate.
 Architecture support must not be reported as final corpus completion.

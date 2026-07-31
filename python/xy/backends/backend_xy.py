@@ -862,13 +862,35 @@ class TimerXY(TimerBase):
 
 
 class _RegionXY:
-    """Opaque canvas-region token used by the full-redraw blit protocol."""
+    """Opaque snapshot used by XY's display-list blit protocol."""
 
-    __slots__ = ("bbox", "generation")
+    __slots__ = (
+        "bbox",
+        "commands",
+        "fallback_reason",
+        "fallback_used",
+        "generation",
+        "renderer_key",
+        "resources",
+    )
 
-    def __init__(self, bbox: tuple[float, float, float, float], generation: int) -> None:
+    def __init__(
+        self,
+        bbox: tuple[float, float, float, float],
+        generation: int,
+        renderer_key: tuple[float, float, float],
+        display_list: DisplayList,
+    ) -> None:
         self.bbox = bbox
         self.generation = generation
+        self.renderer_key = renderer_key
+        # Commands and resources are immutable JSON values after insertion.
+        # Copy only their outer containers so even a 100,000-point path gets a
+        # constant-time background snapshot instead of a deep copy.
+        self.commands = tuple(display_list.commands)
+        self.resources = dict(display_list.resources)
+        self.fallback_used = display_list.fallback_used
+        self.fallback_reason = display_list.fallback_reason
 
 
 class FigureCanvasXY(FigureCanvasBase):
@@ -991,18 +1013,30 @@ class FigureCanvasXY(FigureCanvasBase):
         self._sync_browser_ui()
 
     def copy_from_bbox(self, bbox: Any) -> _RegionXY:
-        """Return an opaque region token for Matplotlib's blitting protocol.
+        """Snapshot the current display list for Matplotlib's blit protocol.
 
-        XY currently resolves blits with a complete redraw, so no pixel buffer
-        is copied.  Retaining the requested bounds and draw generation still
-        gives widgets and cursors the standard copy/restore lifecycle.
+        XY restores the complete display-list background rather than copying a
+        pixel rectangle.  Animated Artists can then append their current
+        device-space operations and publish that frame without re-rendering
+        every static Artist in the Figure.
         """
         if self.renderer is None:
             self.draw()
+        assert self.renderer is not None
         extents = tuple(float(value) for value in bbox.extents)
         if len(extents) != 4:
             raise ValueError("copy_from_bbox requires four bbox extents")
-        return _RegionXY(cast(tuple[float, float, float, float], extents), self._draw_generation)
+        renderer_key = (
+            float(self.renderer.width),
+            float(self.renderer.height),
+            float(self.renderer.dpi),
+        )
+        return _RegionXY(
+            cast(tuple[float, float, float, float], extents),
+            self._draw_generation,
+            renderer_key,
+            self.renderer.display_list,
+        )
 
     def restore_region(
         self,
@@ -1010,13 +1044,39 @@ class FigureCanvasXY(FigureCanvasBase):
         bbox: Any = None,
         xy: tuple[float, float] | None = None,
     ) -> None:
-        """Accept a saved region; the following :meth:`blit` redraws fully."""
+        """Restore a display-list background before animated Artists draw."""
         if not isinstance(region, _RegionXY):
             raise TypeError("restore_region requires a region returned by copy_from_bbox")
+        renderer = self.renderer
+        if renderer is None:
+            self.draw()
+            renderer = self.renderer
+        assert renderer is not None
+        renderer_key = (float(renderer.width), float(renderer.height), float(renderer.dpi))
+        if renderer_key != region.renderer_key:
+            # A resize invalidates a device-space background.  A normal draw
+            # also refreshes Matplotlib's widget background caches through its
+            # draw-event callbacks.
+            self.draw()
+            return
+        display_list = renderer.display_list
+        display_list.commands[:] = region.commands
+        display_list.resources.clear()
+        display_list.resources.update(region.resources)
+        display_list.fallback_used = region.fallback_used
+        display_list.fallback_reason = region.fallback_reason
 
     def blit(self, bbox: Any = None) -> None:
-        """Honor blit requests as a complete redraw until region copies land."""
-        self.draw()
+        """Publish the restored background plus freshly drawn animated Artists."""
+        if self.renderer is None:
+            self.draw()
+            return
+        self._draw_generation += 1
+        if self._widget is not None:
+            self._widget.refresh(self.renderer.display_list)
+        manager = getattr(self, "manager", None)
+        if isinstance(manager, FigureManagerXY) and manager._browser_host is not None:
+            manager._refresh_browser_host()
 
     def new_timer(
         self,
@@ -1256,30 +1316,53 @@ class FigureManagerXY(FigureManagerBase):
     def __init__(self, canvas: FigureCanvasXY, num: int) -> None:
         defer_toolbar2 = matplotlib.rcParams["toolbar"] == "toolbar2"
         toolbar2_class = self._toolbar2_class
+        self._toolbar: Any | None = None
+        self._toolbar_access_enabled = False
+        self._deferred_toolbar2_class = toolbar2_class if defer_toolbar2 else None
         if defer_toolbar2:
-            # Figure hooks run after manager creation but before the first
-            # draw.  Match non-GUI backends during that window so hooks which
-            # only support native GUI toolbars safely see ``toolbar=None``.
+            # Figure hooks inspect ``figure.canvas.toolbar`` after manager
+            # creation.  Match non-GUI backends during that window so hooks
+            # which only support native GUI toolbars safely see ``None``.
             self._toolbar2_class = None
         try:
             super().__init__(canvas, num)
         finally:
             self._toolbar2_class = toolbar2_class
-        self._deferred_toolbar2_class = toolbar2_class if defer_toolbar2 else None
-        self.vbox = ContainerXY(canvas, self.toolbar)
+        self.vbox = ContainerXY(canvas, self._toolbar)
+        # Embedding examples access ``manager.toolbar`` immediately after
+        # ``plt.subplots``.  That first manager-level access is late enough to
+        # be outside figure hooks and now materializes the XY toolbar lazily.
+        self._toolbar_access_enabled = True
         self._widget_displayed = False
         self._browser_host: LoopbackHost | None = None
         self._browser_opened = False
 
+    @property
+    def toolbar(self) -> Any | None:
+        if self._toolbar_access_enabled and self._toolbar is None:
+            self._activate_deferred_toolbar()
+        return self._toolbar
+
+    @toolbar.setter
+    def toolbar(self, value: Any | None) -> None:
+        self._toolbar = value
+
     def _activate_deferred_toolbar(self) -> None:
-        """Expose the browser navigation toolbar on the first canvas draw."""
+        """Expose the navigation toolbar on first manager access or draw."""
         toolbar_class = self._deferred_toolbar2_class
         if toolbar_class is None:
             return
-        toolbar = toolbar_class(cast(FigureCanvasXY, self.canvas))
-        self.toolbar = toolbar
+        # Clear the factory before construction so a future toolbar
+        # implementation that consults ``manager.toolbar`` cannot recurse.
         self._deferred_toolbar2_class = None
-        self.vbox.children.append(toolbar)
+        try:
+            toolbar = toolbar_class(cast(FigureCanvasXY, self.canvas))
+        except BaseException:
+            self._deferred_toolbar2_class = toolbar_class
+            raise
+        self._toolbar = toolbar
+        if toolbar not in self.vbox.children:
+            self.vbox.children.append(toolbar)
 
     def show(self) -> None:
         self.canvas.draw()

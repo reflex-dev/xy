@@ -592,23 +592,31 @@ def test_manager_main_loop_advances_timers_until_idle(monkeypatch) -> None:
     manager.destroy()
 
 
-def test_canvas_region_copy_restore_uses_deterministic_full_redraw() -> None:
+def test_canvas_region_copy_restore_publishes_incremental_display_list() -> None:
     figure = Figure(figsize=(2, 2), dpi=72)
     canvas = FigureCanvasXY(figure)
     axes = figure.subplots()
     (line,) = axes.plot([0, 1], [0, 1])
     canvas.draw()
     generation = canvas._draw_generation
+    assert canvas.renderer is not None
+    background_commands = tuple(canvas.renderer.display_list.commands)
 
     region = canvas.copy_from_bbox(axes.bbox)
     line.set_ydata([1, 0])
+    axes.draw_artist(line)
+    assert tuple(canvas.renderer.display_list.commands) != background_commands
     canvas.restore_region(region)
+    assert tuple(canvas.renderer.display_list.commands) == background_commands
+    axes.draw_artist(line)
+    animated_commands = tuple(canvas.renderer.display_list.commands)
+    assert animated_commands != background_commands
     canvas.blit(axes.bbox)
 
     assert region.bbox == tuple(float(value) for value in axes.bbox.extents)
     assert region.generation == generation
     assert canvas._draw_generation == generation + 1
-    assert canvas.renderer is not None
+    assert tuple(canvas.renderer.display_list.commands) == animated_commands
     assert canvas.fallback_used is False
 
 
@@ -688,11 +696,11 @@ def test_toolmanager_toolbar_add_remove_toggle_and_message_protocol() -> None:
     assert all(item["name"] != "Probe" for item in manager.toolbar.items)
 
 
-def test_toolbar2_is_hidden_from_figure_hooks_until_first_canvas_draw() -> None:
-    observed: list[tuple[object | None, object | None]] = []
+def test_toolbar2_is_hidden_from_figure_hooks_until_first_manager_access() -> None:
+    observed: list[object | None] = []
 
     def backend_specific_hook(figure: Figure) -> None:
-        observed.append((figure.canvas.toolbar, figure.canvas.manager.toolbar))
+        observed.append(figure.canvas.toolbar)
         if figure.canvas.toolbar is not None:
             raise NotImplementedError("The current backend is not supported")
 
@@ -702,14 +710,36 @@ def test_toolbar2_is_hidden_from_figure_hooks_until_first_canvas_draw() -> None:
         manager = backend_xy.FigureManagerXY(canvas, 2)
         backend_specific_hook(figure)
 
-    assert observed == [(None, None)]
+    assert observed == [None]
     assert manager.vbox.children == [canvas]
+
+    toolbar = manager.toolbar
+
+    assert isinstance(toolbar, NavigationToolbar2XY)
+    assert canvas.toolbar is toolbar
+    assert manager.vbox.children == [canvas, toolbar]
+    assert manager.toolbar is toolbar
 
     canvas.draw()
 
-    assert isinstance(manager.toolbar, NavigationToolbar2XY)
-    assert canvas.toolbar is manager.toolbar
-    assert manager.vbox.children == [canvas, manager.toolbar]
+    assert manager.toolbar is toolbar
+    assert manager.vbox.children == [canvas, toolbar]
+
+
+def test_toolbar2_is_materialized_by_first_canvas_draw() -> None:
+    with matplotlib.rc_context({"toolbar": "toolbar2"}):
+        figure = Figure()
+        canvas = FigureCanvasXY(figure)
+        manager = backend_xy.FigureManagerXY(canvas, 2)
+
+    assert canvas.toolbar is None
+    assert manager._toolbar is None
+
+    canvas.draw()
+
+    assert isinstance(canvas.toolbar, NavigationToolbar2XY)
+    assert manager._toolbar is canvas.toolbar
+    assert manager.vbox.children == [canvas, canvas.toolbar]
 
 
 def test_foreign_toolbar_and_vbox_reference_methods_retain_callbacks_and_order() -> None:
@@ -730,7 +760,7 @@ def test_foreign_toolbar_and_vbox_reference_methods_retain_callbacks_and_order()
         canvas = FigureCanvasXY(figure)
         manager = backend_xy.FigureManagerXY(canvas, 2)
     figure.subplots()  # Exercises the manager's axes-change update hook.
-    canvas.draw()
+    assert canvas._draw_generation == 0
     clicked: list[object] = []
     first = ForeignWidget()
     second = ForeignWidget()
@@ -749,6 +779,7 @@ def test_foreign_toolbar_and_vbox_reference_methods_retain_callbacks_and_order()
     assert manager.vbox.children[-1] is manager.toolbar
     assert clicked == [first]
     assert isinstance(manager.toolbar, NavigationToolbar2XY)
+    assert canvas._draw_generation == 0
     assert canvas.toolbar is manager.toolbar
 
 
@@ -869,3 +900,50 @@ print(type(fig.canvas).__name__)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "FigureCanvasXY"
+
+
+def test_pyplot_figure_hook_precedes_lazy_toolbar_materialization(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    script = """
+import sys
+from types import ModuleType
+
+import matplotlib
+
+matplotlib.use("module://xy.backends.backend_xy", force=True)
+observed = []
+hook_module = ModuleType("xy_toolbar_hook_probe")
+
+def setup(figure):
+    observed.append((figure.canvas.toolbar, figure.canvas.manager._toolbar))
+
+hook_module.setup = setup
+sys.modules[hook_module.__name__] = hook_module
+matplotlib.rcParams["toolbar"] = "toolbar2"
+matplotlib.rcParams["figure.hooks"] = ["xy_toolbar_hook_probe:setup"]
+
+import matplotlib.pyplot as plt
+from xy.backends.backend_xy import NavigationToolbar2XY
+
+figure, _axes = plt.subplots()
+manager = figure.canvas.manager
+assert observed == [(None, None)]
+assert isinstance(manager.toolbar, NavigationToolbar2XY)
+assert figure.canvas.toolbar is manager.toolbar
+assert manager.vbox.children.count(manager.toolbar) == 1
+plt.close("all")
+"""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(repository / "python")
+    environment["MPLCONFIGDIR"] = str(tmp_path / "mplconfig")
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repository,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr

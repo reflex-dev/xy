@@ -24,8 +24,14 @@ The initial canvas supports:
   `flush_events`, including a deterministic `fire` method for tests;
 - a `NavigationToolbar2`-compatible controller for keyboard and pointer
   pan/zoom plus home/back/forward history;
-- `copy_from_bbox`, `restore_region`, and full-redraw `blit`;
+- `copy_from_bbox`, `restore_region`, and display-list background `blit`;
 - static standalone PNG, SVG, HTML, and JSON output.
+
+Blit backgrounds retain the immutable command/resource containers from the
+last draw. Restoring a background replaces only those outer containers;
+animated Artists then append their current device-space operations before the
+widget or loopback host publishes the new generation. Large static paths are
+therefore not rebuilt for every pointer move or animation frame.
 
 PNG consumes the same display list through XY's native raster command stream
 and PNG encoder. It does not instantiate Agg, Cairo, another Matplotlib

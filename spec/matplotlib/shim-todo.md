@@ -508,7 +508,7 @@ semantic systems that would be unbounded to reimplement.
   WebAgg, PDF, PS, SVG, or PGF backends are not goals.
 - Compat mode does provide the public
   `module://xy.backends.backend_xy` canvas, manager, timers, callback registry,
-  full-redraw blit, and display-list renderer. Its HTML, SVG, and native raster
+  display-list background blit, and display-list renderer. Its HTML, SVG, and native raster
   consumers must handle accepted output directly.
 - Agg or another Matplotlib renderer may be used as a development oracle only.
   Any gallery result marked `fallback_used` fails.
@@ -521,7 +521,7 @@ semantic systems that would be unbounded to reimplement.
   Matplotlib GUI event loops.
 - Compat mode maps live browser pointer, keyboard, scroll, resize, and close
   input to standard Matplotlib event objects. `mpl_connect`, picking, widgets,
-  timers, `draw`, `draw_idle`, and full-redraw `blit` are in scope.
+  timers, `draw`, `draw_idle`, and display-list background `blit` are in scope.
 - Deterministic input drivers cover gallery calls such as `ginput`,
   `waitforbuttonpress`, and manual contour labeling. A standalone HTML file has
   no live Python callbacks after its process exits.
@@ -552,7 +552,7 @@ semantic systems that would be unbounded to reimplement.
 - Native applications continue to use XY's streaming and declarative animation
   APIs.
 - Compat mode includes Matplotlib `FuncAnimation`, `ArtistAnimation`, timers,
-  widgets, and full-redraw blitting. Gallery tests drive initial, middle, and
+  widgets, and display-list background blitting. Gallery tests drive initial, middle, and
   final states plus timer/callback evidence. Standalone output may embed
   precomputed frames but cannot promise arbitrary Python callbacks.
 
