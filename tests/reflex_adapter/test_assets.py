@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 
 import reflex_xy
 import xy
@@ -21,10 +22,21 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    # The installed bundle is minified; its stable public markers are export
-    # aliases rather than source-level function/class declarations.
-    for marker in ("as renderStandalone", "as decodeFrame", "as ChartView"):
-        assert marker in text
+    # Production builds minify local declarations, so verify the stable ESM
+    # surface rather than implementation names that the minifier may rewrite.
+    export_blocks = re.findall(r"\bexport\s*\{([^}]*)\}", text)
+    exported = {
+        match.group(1)
+        for block in export_blocks
+        for item in block.split(",")
+        if (
+            match := re.fullmatch(
+                r"(?:[A-Za-z_$][\w$]*\s+as\s+)?([A-Za-z_$][\w$]*)",
+                item.strip(),
+            )
+        )
+    }
+    assert {"renderStandalone", "decodeFrame", "ChartView"} <= exported
 
 
 def test_link_client_creates_and_repairs(tmp_path):
