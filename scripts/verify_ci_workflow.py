@@ -118,6 +118,12 @@ def _job_scalar(job_text: str, key: str) -> str | None:
     return None if match is None else match.group(1)
 
 
+def _step_scalar(step_text: str, key: str) -> str | None:
+    """Return an active named-step scalar, ignoring comments and nested keys."""
+    match = re.search(rf"^        {re.escape(key)}:\s*(.*?)\s*$", step_text, re.MULTILINE)
+    return None if match is None else match.group(1)
+
+
 def _job_mapping(job_text: str, key: str) -> dict[str, str] | None:
     """Return an active job-level mapping with direct scalar children."""
     lines = job_text.splitlines()
@@ -149,11 +155,16 @@ def _named_step_run(job_text: str, step: str) -> str | None:
         start = lines.index("        run: |")
     except ValueError:
         return None
-    shell_lines = [
-        line[10:] if line.startswith("          ") else line.lstrip()
-        for line in lines[start + 1 :]
-        if not line.lstrip().startswith("#")
-    ]
+    shell_lines: list[str] = []
+    for line in lines[start + 1 :]:
+        # A step key may legally follow `run:` (for example `shell:` or
+        # `timeout-minutes:`). It is metadata, not part of the block scalar.
+        # Stop at the first non-empty line indented no deeper than `run:`.
+        if line.strip() and len(line) - len(line.lstrip()) <= 8:
+            break
+        if line.lstrip().startswith("#"):
+            continue
+        shell_lines.append(line[10:] if line.startswith("          ") else line.lstrip())
     return "\n".join(shell_lines)
 
 
@@ -880,6 +891,9 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "pattern: dist-*",
         "merge-multiple: true",
         "GH_TOKEN: ${{ github.token }}",
+        "Inspect existing release",
+        "Prepare release provenance",
+        "Attest release provenance",
         "Create GitHub Release and attach distributions",
     )
     github_release = jobs.get("github-release")
@@ -893,11 +907,104 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         if _job_scalar(github_release, "needs") != "publish":
             errors.append("release github-release job must actively declare `needs: publish`")
         permissions = _job_mapping(github_release, "permissions")
-        if permissions != {"contents": "write"}:
+        expected_permissions = {
+            "attestations": "write",
+            "artifact-metadata": "write",
+            "contents": "write",
+            "id-token": "write",
+        }
+        if permissions != expected_permissions:
             errors.append(
                 "release github-release job permissions must be exactly "
-                f"`contents: write`, found {permissions!r}"
+                f"{expected_permissions!r}, found {permissions!r}"
             )
+
+        step_blocks = _named_step_blocks(github_release)
+        inspect_shell = _named_step_run(github_release, "Inspect existing release")
+        if inspect_shell is None:
+            errors.append("release github-release job is missing immutable-release preflight")
+        else:
+            missing = _missing_needles(
+                inspect_shell,
+                (
+                    'gh release view "$TAG"',
+                    "--json isImmutable",
+                    'immutable=true',
+                    'echo "immutable=${immutable}" >> "$GITHUB_OUTPUT"',
+                ),
+            )
+            if missing:
+                errors.append(
+                    "release immutable-release preflight is incomplete: "
+                    f"{missing}"
+                )
+
+        immutable_skip = "steps.release_state.outputs.immutable != 'true'"
+        prepare_block = step_blocks.get("Prepare release provenance")
+        prepare_shell = _named_step_run(github_release, "Prepare release provenance")
+        if prepare_block is None or prepare_shell is None:
+            errors.append("release github-release job is missing active provenance preparation")
+        else:
+            if _step_scalar(prepare_block, "if") != immutable_skip:
+                errors.append(
+                    "release provenance preparation must skip pre-existing immutable releases"
+                )
+            required_prepare_shell = (
+                "shopt -s nullglob",
+                "wheels=(dist/*.whl)",
+                "sdists=(dist/*.tar.gz)",
+                'artifacts=("${wheels[@]}" "${sdists[@]}")',
+                "if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then\n"
+                '  echo "::error::Expected at least one wheel and exactly one sdist"\n'
+                "  exit 1\n"
+                "fi",
+                "distributions_json=",
+                'sha256sum "$artifact"',
+                '"repos/${REPO}/releases/generate-notes"',
+                '-f tag_name="$TAG"',
+                'generated_notes="$(<"$notes_file")"',
+                'if [[ -z "${generated_notes//[[:space:]]/}" ]]; then\n'
+                '  echo "::error::GitHub generated empty release notes for ${TAG}"\n'
+                "  exit 1\n"
+                "fi",
+                '"xy-release-provenance/v1"',
+                '--arg source_sha "$GITHUB_SHA"',
+                "release_notes_sha256:",
+                "distributions:",
+                "xy-release-provenance.json",
+                "<!-- xy-release-provenance:v1:%s:sha256:%s -->",
+            )
+            missing = _missing_needles(prepare_shell, required_prepare_shell)
+            if missing:
+                errors.append(
+                    "release provenance preparation must bind generated notes and exact "
+                    f"distribution hashes to the tag source: {missing}"
+                )
+
+        attest_block = step_blocks.get("Attest release provenance")
+        attest_pin = "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d"
+        if attest_block is None:
+            errors.append("release github-release job is missing provenance attestation")
+        else:
+            if _step_scalar(attest_block, "if") != immutable_skip:
+                errors.append(
+                    "release provenance attestation must skip pre-existing immutable releases"
+                )
+            attest_uses = _step_scalar(attest_block, "uses")
+            if attest_uses is None or attest_uses.split(" #", 1)[0] != attest_pin:
+                errors.append(
+                    "release provenance attestation must use the pinned actions/attest v4 action"
+                )
+            if not re.search(
+                r"^          subject-path:\s*"
+                r"\$\{\{ runner\.temp \}\}/xy-\$\{\{ github\.ref_name \}\}"
+                r"-release-provenance/xy-release-provenance\.json\s*$",
+                attest_block,
+                re.MULTILINE,
+            ):
+                errors.append(
+                    "release provenance attestation must sign the prepared manifest path"
+                )
 
         release_shell = _named_step_run(
             github_release,
@@ -924,24 +1031,32 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 '"${edit_prerelease[@]}"',
                 '"${prerelease[@]}"',
                 "expected_assets_json=",
-                'gh release upload "$TAG" "${artifacts[@]}"',
-                'gh release create "$TAG" "${artifacts[@]}"',
+                "expected_hashes_json=",
+                'provenance_name="xy-release-provenance.json"',
+                'gh release upload "$TAG" "${artifacts[@]}" "$provenance_file"',
+                'gh release create "$TAG" "${artifacts[@]}" "$provenance_file"',
                 "--verify-tag",
                 "--prerelease=false",
                 "index($name) != null",
                 '.assets[] | select(.name | endswith(".whl") or endswith(".tar.gz"))',
                 '"repos/${REPO}/releases/assets/${asset_id}"',
-                '"repos/${REPO}/releases/generate-notes"',
-                '-f tag_name="$TAG"',
                 '--notes-file "$notes_file"',
-                "<!-- xy-release-workflow:%s -->",
-                'generated_notes="$(<"$notes_file")"',
-                'if [[ -z "${generated_notes//[[:space:]]/}" ]]; then',
                 "isImmutable",
                 "publishedAt",
                 "tagName",
                 "actual_assets_json=",
-                '"$actual_assets_json" != "$expected_assets_json"',
+                'gh release download "$TAG"',
+                'gh attestation verify "$verified_provenance"',
+                '--signer-workflow "${REPO}/.github/workflows/release.yml"',
+                '--source-ref "refs/tags/${TAG}"',
+                '--source-digest "$GITHUB_SHA"',
+                "--deny-self-hosted-runners",
+                "actual_hashes_json=",
+                "manifest_hashes_json=",
+                '"$actual_hashes_json" != "$expected_hashes_json"',
+                '"$manifest_hashes_json" != "$expected_hashes_json"',
+                "<!-- xy-release-provenance:v1:${TAG}:sha256:${manifest_sha256} -->",
+                '"$actual_notes_sha256" != "$manifest_notes_sha256"',
                 "--draft=false",
                 "--clobber",
             )
@@ -949,7 +1064,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             if missing:
                 errors.append(
                     "release github-release job missing retry-safe artifact, metadata, "
-                    f"prerelease, or generated-notes behavior: {missing}"
+                    f"prerelease, hash, or signed-provenance behavior: {missing}"
                 )
 
             active_lines = [
@@ -961,25 +1076,34 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             release_json_fields = (
                 "--json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName"
             )
-            if active_lines.count(release_view) < 3 or active_lines.count(release_json_fields) < 3:
+            if active_lines.count(release_view) < 4 or active_lines.count(release_json_fields) < 4:
                 errors.append(
                     "release github-release job must inspect full release metadata and "
-                    "assets before recovery, after upload, and after normalization"
+                    "assets before recovery, after upload, after normalization, "
+                    "and after creation"
                 )
             upload_lines = [
                 line
                 for line in active_lines
-                if line.startswith('gh release upload "$TAG" "${artifacts[@]}" ')
+                if line.startswith(
+                    'gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+                )
+                and line.endswith(" --clobber")
             ]
             create_lines = [
                 line
                 for line in active_lines
-                if line == 'gh release create "$TAG" "${artifacts[@]}"'
+                if line.startswith(
+                    'gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
+                )
+                and '--verify-tag ' in line
+                and '--notes-file "$notes_file" ' in line
             ]
             if len(upload_lines) != 1 or len(create_lines) != 1:
                 errors.append(
-                    "release github-release job must pass the verified artifact array "
-                    "directly to one active upload command and one active create command"
+                    "release github-release job must pass verified distributions and "
+                    "provenance directly to one active upload command (with --clobber) "
+                    "and one active create command"
                 )
 
             classifier = f'if [[ "$TAG" =~ {CORE_PRERELEASE_TAG_PATTERN} ]]; then'
@@ -1052,9 +1176,11 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
             "docs deploy verify-library-release job must actively depend on "
             "prepare and production approval"
         )
-    if _job_mapping(release_gate, "permissions") != {"contents": "read"}:
+    expected_permissions = {"attestations": "read", "contents": "read"}
+    if _job_mapping(release_gate, "permissions") != expected_permissions:
         errors.append(
-            "docs deploy verify-library-release permissions must be exactly `contents: read`"
+            "docs deploy verify-library-release permissions must be exactly "
+            f"{expected_permissions!r}"
         )
 
     production = jobs.get("helm-pr-prod")
@@ -1067,15 +1193,27 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
             "docs deploy production Helm promotion must actively depend on verify-library-release"
         )
 
+    gate_step = _named_step_blocks(release_gate).get(
+        "Await GitHub Release and PyPI availability"
+    )
     gate_shell = _named_step_run(
         release_gate,
         "Await GitHub Release and PyPI availability",
     )
-    if gate_shell is None:
+    if gate_step is None or gate_shell is None:
         errors.append("docs deploy release gate is missing its active polling shell step")
         return errors
+    if not re.search(
+        r"^          SOURCE_SHA:\s*"
+        r"\$\{\{ needs\.prepare\.outputs\.source_sha \}\}\s*$",
+        gate_step,
+        re.MULTILINE,
+    ):
+        errors.append("docs deploy release gate must use the prepared exact source SHA")
 
     required = (
+        "shopt -s nullglob",
+        'PROVENANCE_NAME="xy-release-provenance.json"',
         "EXPECTED_PRERELEASE=false",
         f'if [[ "$VERSION" =~ {CORE_PRERELEASE_TAG_PATTERN} ]]; then',
         "EXPECTED_PRERELEASE=true",
@@ -1086,21 +1224,37 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
         ".tagName == $name",
         ".publishedAt != null",
         ".isPrerelease == $prerelease",
-        '(.body | endswith("<!-- xy-release-workflow:" + $name + " -->"))',
         'any(.assets[]?; .name | endswith(".whl"))',
         '([.assets[]? | select(.name | endswith(".tar.gz"))] | length) == 1',
-        "[.assets[]?.name |",
-        "[.urls[]?.filename |",
-        '[[ "$github_assets" == "$pypi_assets" ]]; then',
+        'select(.name == "xy-release-provenance.json")',
+        "all(.urls[]; .yanked == false)",
+        'gh release download "$VERSION"',
+        'gh attestation verify "$provenance_file"',
+        '--signer-workflow "${REPO}/.github/workflows/release.yml"',
+        '--source-ref "refs/tags/${VERSION}"',
+        '--source-digest "$SOURCE_SHA"',
+        "--deny-self-hosted-runners",
+        "xy-release-provenance/v1",
+        "release_notes_sha256",
+        "manifest_sha256=",
+        "<!-- xy-release-provenance:v1:${VERSION}:sha256:${manifest_sha256} -->",
+        "github_hashes_json=",
+        "manifest_hashes_json=",
+        "pypi_hashes_json=",
+        ".digests.sha256",
+        '"$github_hashes_json" == "$manifest_hashes_json"',
+        '"$github_hashes_json" == "$pypi_hashes_json"',
         'if [[ "$RELEASED" == true &&',
         '"$PUBLISHED" == true &&',
+        '"$PROVENANCE_VALID" == true &&',
         '"$ASSETS_MATCH" == true ]]; then',
+        'rm -rf -- "$verify_dir"',
     )
     missing = _missing_needles(gate_shell, required)
     if missing:
         errors.append(
             "docs deploy release gate must require expected non-draft metadata, "
-            f"generated notes, wheel/sdist assets, and PyPI: {missing}"
+            f"signed notes provenance, non-yanked PyPI files, and exact asset hashes: {missing}"
         )
     return errors
 

@@ -15,6 +15,7 @@ import pytest
 # must not silently turn these negative tests into no-ops.
 _UPLOAD_ARTIFACT_USES = re.compile(r" *- uses: actions/upload-artifact@\S+.*\n")
 _NODE24_ACTION_PINS = {
+    "actions/attest": "508db95dd578ae2727ebd6217d5ba78e4fbda05d",
     "actions/cache": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "actions/download-artifact": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
@@ -36,6 +37,23 @@ def _load_verify_module():
 
 
 verify_ci_workflow = _load_verify_module()
+
+
+def test_named_step_run_stops_before_following_step_metadata() -> None:
+    job = """\
+  example:
+    steps:
+      - name: Guard
+        env:
+          VALUE: safe
+        run: |
+          echo "$VALUE"
+          # ignored shell comment
+        shell: echo "metadata is not shell"
+        timeout-minutes: 5
+"""
+
+    assert verify_ci_workflow._named_step_run(job, "Guard") == 'echo "$VALUE"'
 
 
 def test_ci_workflow_accepts_current_gates() -> None:
@@ -804,7 +822,7 @@ def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> N
     path.write_text(
         workflow.replace("      contents: write\n", "      contents: read\n", 1)
         .replace(" --clobber\n", "\n", 1)
-        .replace("            --verify-tag \\\n", "", 1),
+        .replace(" --verify-tag ", " --no-verify-tag ", 1),
         encoding="utf-8",
     )
 
@@ -914,25 +932,60 @@ def test_release_workflow_rejects_detached_release_artifacts(
     tmp_path: Path,
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    upload = '            gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber\n'
-    create = '          gh release create "$TAG" "${artifacts[@]}" \\\n'
+    upload = (
+        '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --clobber\n'
+    )
+    create = (
+        '          gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --verify-tag --title "$TAG" --notes-file "$notes_file" '
+        '"${prerelease[@]}"\n'
+    )
     assert upload in workflow
     assert create in workflow
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
             upload,
-            '            gh release upload "$TAG" --repo "$REPO" --clobber\n',
+            '            gh release upload "$TAG" "$provenance_file" '
+            '--repo "$REPO" --clobber\n',
         ).replace(
             create,
-            '          gh release create "$TAG" \\\n',
+            '          gh release create "$TAG" "$provenance_file" '
+            '--repo "$REPO" --verify-tag --title "$TAG" '
+            '--notes-file "$notes_file" "${prerelease[@]}"\n',
         ),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("pass the verified artifact array directly" in error for error in errors)
+    assert any("pass verified distributions and provenance directly" in error for error in errors)
+
+
+def test_release_workflow_binds_clobber_to_artifact_upload(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    upload = (
+        '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+        '--repo "$REPO" --clobber\n'
+    )
+    assert upload in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            upload,
+            '            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
+            '--repo "$REPO"\n'
+            '            unused_retry_flag="--clobber"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("pass verified distributions and provenance directly" in error for error in errors)
 
 
 def test_release_workflow_rejects_missing_stale_asset_reconciliation(
@@ -952,18 +1005,69 @@ def test_release_workflow_rejects_missing_stale_asset_reconciliation(
     )
 
 
-def test_release_workflow_rejects_missing_generated_notes_marker(
+def test_release_workflow_rejects_missing_signed_provenance_footer(
     tmp_path: Path,
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    marker = "<!-- xy-release-workflow:%s -->"
+    marker = "<!-- xy-release-provenance:v1:%s:sha256:%s -->"
     assert marker in workflow
     path = tmp_path / "release.yml"
     path.write_text(workflow.replace(marker, "<!-- marker removed -->"), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("generated-notes behavior" in error and marker in error for error in errors)
+    assert any("provenance preparation" in error and marker in error for error in errors)
+
+
+def test_release_workflow_rejects_unattested_provenance(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    action = (
+        "        uses: actions/attest@"
+        "508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1\n"
+    )
+    assert action in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(action, '        uses: example/untrusted-attest@v1\n'),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("pinned actions/attest" in error for error in errors)
+
+
+def test_release_workflow_rejects_non_failing_empty_notes_guard(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    guard = """\
+          if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
+            echo "::error::GitHub generated empty release notes for ${TAG}"
+            exit 1
+          fi
+"""
+    assert guard in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            guard,
+            """\
+          if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
+            echo "::error::GitHub generated empty release notes for ${TAG}"
+            true
+          fi
+          unused_empty_notes_exit="exit 1"
+""",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("provenance preparation" in error for error in errors)
 
 
 def test_docs_deploy_workflow_accepts_release_contract() -> None:
@@ -984,17 +1088,29 @@ def test_docs_deploy_rejects_existence_only_release_gate(tmp_path: Path) -> None
 
 def test_docs_deploy_rejects_asset_set_check_removal(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
-    comparison = '                 [[ "$github_assets" == "$pypi_assets" ]]; then\n'
+    comparison = '                     [[ "$github_hashes_json" == "$manifest_hashes_json" &&\n'
     assert comparison in workflow
     path = tmp_path / "deploy-docs-stg.yml"
     path.write_text(
-        workflow.replace(comparison, "                 [[ true == true ]]; then\n"),
+        workflow.replace(comparison, "                     [[ true == true &&\n"),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
 
-    assert any("wheel/sdist assets" in error for error in errors)
+    assert any("exact asset hashes" in error for error in errors)
+
+
+def test_docs_deploy_rejects_yanked_file_guard_removal(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    guard = "                 all(.urls[]; .yanked == false) and\n"
+    assert guard in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(workflow.replace(guard, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("non-yanked PyPI files" in error for error in errors)
 
 
 def test_docs_deploy_rejects_bypassed_production_release_gate(

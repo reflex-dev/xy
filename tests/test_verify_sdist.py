@@ -83,17 +83,8 @@ CODSPEED_YML = (
     + ("codspeed workflow padding\n" * 100)
 )
 DOCS_DEPLOY_YML = (
-    "name: Deploy docs\n"
-    "jobs:\n"
-    "  verify-library-release:\n"
-    "    steps:\n"
-    "      - run: gh release view --json assets,body,isDraft,isPrerelease,name,publishedAt,tagName\n"
-    "      - run: curl https://pypi.org/pypi/xy/version/json\n"
-    "      - run: echo '<!-- xy-release-workflow:tag -->'\n"
-    "  helm-pr-prod:\n"
-    "    needs: [prepare, await-prod-approval, verify-library-release]\n"
-    + ("docs deploy workflow padding\n" * 100)
-)
+    Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy-docs-stg.yml"
+).read_text(encoding="utf-8")
 RELEASE_YML = (
     "name: Release\n"
     "jobs:\n"
@@ -464,6 +455,26 @@ def test_verify_sdist_rejects_missing_docs_deploy_workflow(tmp_path: Path) -> No
     _write_sdist(sdist, omit={".github/workflows/deploy-docs-stg.yml"})
 
     with pytest.raises(AssertionError, match=r"deploy-docs-stg\.yml"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_commented_out_docs_release_gate(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    active_command = '              gh release view "$VERSION" \\\n'
+    assert active_command in DOCS_DEPLOY_YML
+    commented_workflow = DOCS_DEPLOY_YML.replace(
+        active_command,
+        '              # gh release view "$VERSION" \\\n',
+        1,
+    )
+    # The legacy raw-substring check would still see every marker.
+    assert 'gh release view "$VERSION"' in commented_workflow
+    _write_sdist(
+        sdist,
+        replacements={".github/workflows/deploy-docs-stg.yml": commented_workflow},
+    )
+
+    with pytest.raises(AssertionError, match=r"structural release-gate validation"):
         verify_sdist.verify_sdist(str(sdist))
 
 

@@ -12,12 +12,14 @@ before installing anything.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
 import tarfile
+import tempfile
 from email.parser import Parser
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 REQUIRED_FILES = {
@@ -257,6 +259,37 @@ def _require_file_contains(path: str, root: str, member: str, needles: set[str])
         raise AssertionError(f"{member} missing expected markers: {missing}")
 
 
+def _require_valid_docs_deploy_workflow(path: str, root: str) -> None:
+    """Structurally validate the archived production-release gate.
+
+    Raw substring checks accept commented-out jobs and shell commands. Load the
+    trusted verifier beside this script and run it against the workflow bytes
+    from the archive instead.
+    """
+    member = ".github/workflows/deploy-docs-stg.yml"
+    with tarfile.open(path, "r:gz") as tf:
+        data = tf.extractfile(f"{root}/{member}")
+        if data is None:
+            raise AssertionError(f"{member} is missing")
+        workflow = data.read().decode("utf-8")
+    if len(workflow) < 1000:
+        raise AssertionError(f"{member} is suspiciously small")
+
+    verifier_path = Path(__file__).with_name("verify_ci_workflow.py")
+    spec = importlib.util.spec_from_file_location("_xy_sdist_ci_verifier", verifier_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"cannot load workflow verifier from {verifier_path}")
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+
+    with tempfile.TemporaryDirectory(prefix="xy-sdist-workflow-") as temp_dir:
+        archived_path = Path(temp_dir) / "deploy-docs-stg.yml"
+        archived_path.write_text(workflow, encoding="utf-8")
+        errors = verifier.validate_docs_deploy_workflow(archived_path)
+    if errors:
+        raise AssertionError(f"{member} fails structural release-gate validation: {errors}")
+
+
 def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/{member}")
@@ -412,18 +445,7 @@ def verify_sdist(path: str) -> None:
         ".github/workflows/codspeed.yml",
         {"CodSpeedHQ/action@", "pytest-codspeed", 'k.BACKEND == "native"'},
     )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/deploy-docs-stg.yml",
-        {
-            "verify-library-release",
-            "--json assets,body,isDraft,isPrerelease,name,publishedAt,tagName",
-            "xy-release-workflow:",
-            "pypi.org/pypi/xy/",
-            "verify-library-release]",
-        },
-    )
+    _require_valid_docs_deploy_workflow(path, root)
     _require_file_contains(
         path,
         root,
