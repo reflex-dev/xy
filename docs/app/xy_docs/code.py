@@ -88,12 +88,10 @@ class _CopyButton(rx.el.Button):
                 "data-xy-code-copy-state": status,
             },
             style={
-                '&[data-xy-code-copy-state="copied"] '
-                '[data-xy-code-copy-icon="copy"]': {
+                '&[data-xy-code-copy-state="copied"] [data-xy-code-copy-icon="copy"]': {
                     "display": "none",
                 },
-                '&[data-xy-code-copy-state="copied"] '
-                '[data-xy-code-copy-icon="copied"]': {
+                '&[data-xy-code-copy-state="copied"] [data-xy-code-copy-icon="copied"]': {
                     "display": "block",
                 },
             },
