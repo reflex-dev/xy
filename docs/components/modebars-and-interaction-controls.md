@@ -31,7 +31,7 @@ zoom, selection, brushing, and crosshairs do not yet have polar semantics and
 stay disabled even when a general interaction flag is enabled. The polar
 modebar therefore omits the Pan button.
 
-### The default toolbar
+## The default toolbar
 
 Every interactive chart gets the modebar for free — hover over the top-right
 corner of this chart to see the pan, zoom, reset, and export controls:
@@ -84,7 +84,7 @@ decimated or density-tier chart that is not necessarily every canonical source
 row; export the source table from Python when a complete data extract is
 required.
 
-### Styling or removing the toolbar
+## Styling or removing the toolbar
 
 The left chart restyles the toolbar surface and every button, while the right
 chart removes the toolbar entirely with `modebar(show=False)`:
