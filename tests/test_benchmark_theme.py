@@ -1,5 +1,7 @@
 """Shared benchmark theme contract."""
 
+from __future__ import annotations
+
 from benchmarks.plot_ux import build
 
 from xy._benchmark_theme import (
