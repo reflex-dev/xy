@@ -116,6 +116,14 @@ Wind roses support hover, fixed-minimum radial zoom, reset, and browser/static
 export through the shared polar renderer. Theta rotation, box zoom, selection,
 brushing, and crosshairs are not available.
 
+A wind rose is the one polar chart that keeps zoom **on** by default. Its radius
+is a frequency count, so pulling the outer ring in magnifies the short sectors of
+a rose dominated by one prevailing direction; the radial minimum stays pinned at
+zero, so the disc never becomes an annulus. Every other polar chart type defaults
+to zoom off because its radius is layout rather than data. Pass
+`xy.interaction_config(zoom=False)` to opt a rose out — for instance when it is
+embedded in a scrolling page and should not capture the wheel.
+
 See the [polar overview](/docs/xy/charts/polar-chart/) for the full interaction,
 renderer, annotation, and large-data boundary.
 

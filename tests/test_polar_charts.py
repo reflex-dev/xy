@@ -1758,3 +1758,92 @@ def test_time_radius_is_exempt_from_the_centre_origin_default() -> None:
     # Numeric radii keep the centre-origin contract untouched.
     numeric, _ = xy.polar_chart(xy.line(angles, [5.0, 5.0, 5.0])).figure().build_payload_split()
     assert numeric["y_axis"]["range"] == [0.0, 5.0]
+
+
+def _polar_zoom_flag(chart) -> object:
+    spec, _ = chart.figure().build_payload_split()
+    return spec.get("interaction", {}).get("zoom", "absent")
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        ("polar_chart", lambda *c, **k: xy.polar_chart(xy.line([0.0, 1.0], [1.0, 2.0]), *c, **k)),
+        (
+            "polar_bar_chart",
+            lambda *c, **k: xy.polar_bar_chart(xy.bar([0.0], [1.0], width=1.0), *c, **k),
+        ),
+        ("pie_chart", lambda *c, **k: xy.pie_chart(["a", "b"], [1.0, 2.0], *c, **k)),
+        (
+            "radar_chart",
+            lambda *c, **k: xy.radar_chart(["a", "b", "c"], xy.area([1.0, 2.0, 3.0]), *c, **k),
+        ),
+    ],
+)
+def test_polar_ships_zoom_disabled_by_default(label, build) -> None:
+    """Polar zoom is OFF by default and says so on the wire (§8).
+
+    The centre is a fixed point of the transform and r_lo is pinned, so a
+    zoom-in crops the rim while the geometry stays welded to the middle of the
+    disc — on a pie, radial bar, or radar (constant rim, or a fixed 0..1 frame)
+    that reads as broken rather than as navigation. The flag must be *explicit*
+    rather than omitted: the client cannot re-derive it, because `Chart.kind`
+    never reaches the payload and every polar figure looks identical to it.
+    """
+    assert _polar_zoom_flag(build()) is False, label
+    # Both opt-in spellings win over the default.
+    assert _polar_zoom_flag(build(zoom=True)) is True, label
+    assert _polar_zoom_flag(build(xy.interaction_config(zoom=True))) is True, label
+
+
+def test_wind_rose_is_the_polar_composition_that_keeps_zoom() -> None:
+    """A wind rose's radius is a frequency COUNT, so scaling the outer ring
+    against a pinned zero is the useful gesture — it magnifies the short
+    sectors of a rose dominated by one prevailing direction. It is the one
+    exception the polar zoom-off default is written around, and an author can
+    still turn it off."""
+    directions = [0.0, 45.0, 90.0, 180.0, 270.0]
+    speeds = [1.0, 4.0, 9.0, 3.0, 6.0]
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds)) is True
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds, zoom=False)) is False
+    assert (
+        _polar_zoom_flag(xy.wind_rose(directions, speeds, xy.interaction_config(zoom=False)))
+        is False
+    )
+
+
+def test_interaction_config_opts_a_polar_chart_back_into_zoom() -> None:
+    """The documented escape hatch: an `interaction_config` child is applied
+    after chart props, so it is the last word on either side of the default."""
+    theta, r = _rose()
+    assert _polar_zoom_flag(xy.polar_chart(xy.line(theta, r))) is False
+    assert (
+        _polar_zoom_flag(xy.polar_chart(xy.line(theta, r), xy.interaction_config(zoom=True)))
+        is True
+    )
+    assert _polar_zoom_flag(xy.pie_chart(["a", "b"], [1.0, 2.0], zoom=True)) is True
+    # A cartesian figure is untouched: its zoom stays absent so the client keeps
+    # resolving the ordinary `True` default (pan-and-zoom-configuration §5.2).
+    assert _polar_zoom_flag(xy.line_chart(xy.line([0.0, 1.0], [1.0, 2.0]))) == "absent"
+
+
+def test_pyplot_polar_projection_inherits_the_zoom_default() -> None:
+    """`coords="polar"` carries the default, not the helper factories, so a
+    hand-built `xy.chart(coords="polar")` and the shim's `projection="polar"`
+    get it too — the rule belongs to the coordinate system, and there is one of
+    it rather than one per factory."""
+    import xy.pyplot as plt
+
+    theta, r = _rose()
+    assert _polar_zoom_flag(xy.chart(xy.line(theta, r), coords="polar")) is False
+
+    figure, ax = plt.subplots(subplot_kw={"projection": "polar"})
+    ax.plot([0.0, 1.0, 2.0], [1.0, 2.0, 3.0])
+    try:
+        charts = figure._charts()
+        assert charts
+        for chart in charts:
+            spec, _ = chart.figure().build_payload_split()
+            assert spec["interaction"]["zoom"] is False
+    finally:
+        plt.close(figure)

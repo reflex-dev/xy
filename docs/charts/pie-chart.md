@@ -669,10 +669,16 @@ bar mark per category.
 
 Pie blocks use the shared polar renderer. These examples set
 `xy.modebar(show=False)` to keep the presentation clean. The underlying
-interactions and APIs remain intact: sector hover, radial wheel zoom,
-double-click reset, and browser/static exports remain available. A hovered slice
-reads its own label and value; the layout angle and the constant rim radius stay
-out of the readout.
+interactions and APIs remain intact: sector hover, double-click reset, and
+browser/static exports remain available. A hovered slice reads its own label and
+value; the layout angle and the constant rim radius stay out of the readout.
+
+Zoom is off by default here, as on every polar chart except the wind rose. A pie
+carries its value in the *angle* and uses the radius as a constant rim, so
+zooming would crop that rim around a fixed center rather than reveal anything —
+and leaving the wheel free means a page scrolls normally over the chart. Add
+`xy.interaction_config(zoom=True)` if you want it anyway; see
+[why zoom is off by default](/docs/xy/charts/polar-chart/#why-zoom-is-off-by-default).
 Center labels and legends composed in Reflex are browser UI; annotations placed
 with `xy.text()` are part of the chart and are preserved in SVG and native
 raster exports.

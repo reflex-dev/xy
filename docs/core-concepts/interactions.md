@@ -48,13 +48,23 @@ is no separate transport configuration flag.
 
 ### Polar interaction boundary
 
-Polar charts keep hover, radial wheel/modebar zoom, and reset. Radial zoom
-changes the maximum radius while holding the minimum fixed, so zooming a disc
-does not unexpectedly create a hole and an authored `hole` or `origin` remains
-stable. Authored sectors are supported, but theta rotation/panning, interactive
-sector zoom, box zoom, selection, brushing, and crosshairs are disabled until
-those gestures have polar-native geometry. Polar charts do not expose the Pan
-button, and interaction flags cannot opt one into an unsupported gesture.
+Polar charts keep hover and reset. Zoom is the one default that differs from
+Cartesian charts: `zoom` resolves to `False` under `coords="polar"`, because the
+center of a disc is a fixed point and zooming a pie, radial bar, gauge, or radar
+crops its rim instead of navigating it. `xy.wind_rose()` is the exception and
+ships with zoom on, since its radius is a frequency count.
+
+Opt back in per chart with `xy.interaction_config(zoom=True)` (or `zoom=True` on
+the chart). Radial zoom then changes the maximum radius while holding the minimum
+fixed, so zooming a disc does not unexpectedly create a hole and an authored
+`hole` or `origin` remains stable. While zoom is off, the chart leaves wheel
+events uncancelled so the surrounding page keeps scrolling, and the modebar shows
+no zoom controls.
+
+Authored sectors are supported, but theta rotation/panning, interactive sector
+zoom, box zoom, selection, brushing, and crosshairs are disabled until those
+gestures have polar-native geometry. Polar charts do not expose the Pan button,
+and interaction flags cannot opt one into an unsupported gesture.
 
 See the [polar chart guide](/docs/xy/charts/polar-chart/#hover-and-zoom) for the
 complete coordinate-system boundary.

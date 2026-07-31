@@ -3400,8 +3400,12 @@ def interaction_config(
             the axis's home extents (plain drag keeps working on a zoomed-in
             view) but never extends past them, on any mutation path.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
-            box zoom, double-click reset, and modebar zoom controls. The
-            default keeps zooming enabled.
+            box zoom and hides the modebar zoom controls. The default keeps
+            zooming enabled on Cartesian charts. Polar charts default it OFF —
+            the centre of a disc is a fixed point, so zooming a pie, radial bar,
+            gauge, or radar crops its rim instead of navigating it — except
+            `wind_rose`, whose radius is a frequency count. Pass ``True`` here to
+            opt a polar chart back in.
         default_drag_action: Initial action performed by a plain plot drag.
             ``"auto"`` is the default and chooses pan first; ``"zoom"`` draws
             a rectangle and zooms to its bounds. Selection actions make their
@@ -3592,7 +3596,9 @@ class Chart(Component):
             navigation: Whether browser pan and zoom navigation is enabled.
             pan: Whether plain-drag panning is enabled.
             pan_axes: Declared axis IDs translated by pan gestures.
-            zoom: Whether viewport zoom is enabled.
+            zoom: Whether viewport zoom is enabled. Defaults to on for
+                Cartesian charts and off for polar ones (`wind_rose` excepted);
+                see :func:`interaction_config`.
             default_drag_action: Initial action performed by a plain plot drag.
             zoom_axes: Declared axis IDs changed by zoom gestures and controls.
             zoom_limits: Minimum and maximum magnification globally or by axis.
@@ -6405,6 +6411,11 @@ def polar_chart(*children: Component, **props: Any) -> Chart:
     `xy.radar_chart` for categorical spider plots, `xy.polar_bar_chart`
     for radial bars, and `xy.wind_rose` for directional distributions. Other
     details and deferred geometry are tracked in spec/design/polar-axes.md.
+
+    Zoom is off by default on every polar chart but `xy.wind_rose` (the centre is
+    a fixed point of the transform, so zooming crops the rim rather than
+    navigating). Add `xy.interaction_config(zoom=True)` when the radius is a
+    measured quantity worth magnifying.
     """
     _require_polar_coords(props)
     return Chart("polar_chart", children, **props)
@@ -6842,6 +6853,16 @@ def wind_rose(
         *defaults,
         *children_in,
     )
+    # Polar defaults to zoom OFF (polar-axes.md §8): the centre is a fixed point
+    # of the transform, so on a composition whose radius is a constant rim or a
+    # fixed frame — a pie, a radial bar, a radar — zooming crops the rim and
+    # reads as broken. A wind rose is the exception this default is written
+    # around: its radius is a FREQUENCY COUNT, so scaling the outer ring against
+    # a pinned zero is exactly the useful gesture (it magnifies the short
+    # sectors of a rose dominated by one prevailing direction). `setdefault`, so
+    # an author's own `zoom=` — or an `xy.interaction_config(zoom=False)` child,
+    # which is applied after chart props — still wins.
+    props.setdefault("zoom", True)
     return Chart("wind_rose", children, **props)
 
 

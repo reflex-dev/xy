@@ -125,7 +125,7 @@ keeps policy in one visible node.
 | `default_drag_action` | `"auto"` | Choose pan when available, then another enabled drag tool. |
 | `pan` | `True` | Drag panning is available. |
 | `pan_axes` | all declared axes | Pan every axis unless explicitly narrowed. A narrowed-out zoom axis is contained to its home window (§7.1). |
-| `zoom` | `True` | Zoom actions are available. |
+| `zoom` | `True` (`False` under `coords="polar"`) | Zoom actions are available. |
 | `zoom_axes` | all declared axes | Zoom every axis unless explicitly narrowed. |
 | `zoom_limits` | `(1.0, None)` on every axis in `zoom_axes` | Do not zoom out past home; allow zoom-in to bounds/precision. |
 | `wheel_zoom` | `True` | Wheel and trackpad zoom. |
@@ -141,6 +141,16 @@ to `{"x": (1.0, None), "y": (1.0, None)}`. A declared `y2` also receives
 
 Unspecified keys should remain absent from the payload. The client resolves defaults,
 keeping exports compact and compatibility explicit.
+
+**One exception: `zoom` under `coords="polar"`.** A polar figure resolves `zoom` in
+Python and always ships the flag, because the client cannot make the decision — a pie
+and a wind rose are the same figure to it (`Chart.kind` never reaches the wire) and
+they want opposite answers. The centre is a fixed point of the polar transform, so
+zooming a constant-rim composition crops it rather than navigating it; the default is
+therefore `False`, `wind_rose` ships `True` because its radius is a frequency count,
+and `xy.interaction_config(zoom=…)` overrides either. With the flag off, the polar
+modebar carries no zoom controls and the wheel is left uncancelled so the page keeps
+scrolling. See [`polar-axes.md`](polar-axes.md) §8.
 
 ### 5.3 Precedence
 

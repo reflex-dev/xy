@@ -1261,8 +1261,6 @@ Object.assign(ChartView.prototype, {
     const canZoomButtons = canZoom && this._interactionFlag("zoom_buttons", true);
     const canBoxZoom = canZoom && this._interactionFlag("box_zoom", true);
     const canReset = canNavigate && this._resetAxisPolicy().length > 0;
-    const canHistory = canNavigate && this._historyEnabled();
-    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
     // Pickability is dynamic for density traces (§5: drill-in grants it,
     // drill-out revokes it), so the Select trigger is built whenever the
     // interaction flags allow selection and its *visibility* tracks
@@ -1270,6 +1268,16 @@ Object.assign(ChartView.prototype, {
     // at whatever pickability held when the toolbar was first built.
     const canSelect = this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
+    // History replays the durable state — axis ranges and the selection (§2 of
+    // view-state.md) — so a chart that can move neither can never record an
+    // entry. Without this, an enabled `history` flag alone was enough to build
+    // the "100%" zoom trigger, and a polar chart with zoom off (its default,
+    // polar-axes.md §8: pan and box select are off by geometry) grew a menu
+    // holding nothing but two permanently dead Back/Next items.
+    const canRecordHistory = canPan || canSelect
+      || (canZoom && this._axisPolicy("zoom_axes").length > 0);
+    const canHistory = canNavigate && this._historyEnabled() && canRecordHistory;
+    const hasZoomMenu = canHistory || canZoomButtons || canBoxZoom || canReset;
     // Declarative export config (spec.export, from xy.export_config): the
     // formats list governs menu availability and order. Only the client-safe
     // subset renders here — pdf/html entries are Python-side formats.

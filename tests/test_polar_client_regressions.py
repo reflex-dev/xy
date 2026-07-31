@@ -390,6 +390,11 @@ def test_polar_wheel_zoom_is_alive_and_keeps_r_lo_fixed(tmp_path: Path) -> None:
     made radial wheel zoom (polar's only navigation) dead on arrival. Second,
     the assertion is on the §8 contract itself — r_lo fixed, r_hi scaled —
     not just `after != before`.
+
+    Zoom is opted into explicitly because polar now defaults it OFF (§8); this
+    probe is about the shape of the gesture once it IS enabled, and
+    `test_polar_zoom_is_off_by_default_and_releases_page_scroll` covers the
+    default.
     """
     chromium = find_chromium()
     if chromium is None:
@@ -397,7 +402,12 @@ def test_polar_wheel_zoom_is_alive_and_keeps_r_lo_fixed(tmp_path: Path) -> None:
 
     theta = [i * 2.0 * math.pi / 40.0 for i in range(40)]
     r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
-    chart = xy.polar_chart(xy.line(theta, r, animation=False), width=420, height=420)
+    chart = xy.polar_chart(
+        xy.line(theta, r, animation=False),
+        xy.interaction_config(zoom=True),
+        width=420,
+        height=420,
+    )
     probe = """
 <script>
 setTimeout(() => {
@@ -452,6 +462,92 @@ setTimeout(() => {
     assert before[0] == 0.0
     assert after[0] == 0.0, f"radial zoom moved r_lo: {after}"
     assert after[1] < before[1] * 0.9, f"wheel did not zoom: {before} -> {after}"
+
+
+def test_polar_zoom_is_off_by_default_and_releases_page_scroll(tmp_path: Path) -> None:
+    """A default polar chart must ignore the wheel end to end (§8).
+
+    The Python default (`zoom=False` on the wire) only pays off if the client
+    honours it all the way down, so this asserts the three consequences a user
+    actually meets: the radial range does not move, the wheel event is left
+    UNCANCELLED so the page keeps scrolling under the cursor, and the modebar
+    grows no zoom menu — history alone used to build a "100%" trigger over two
+    permanently dead Back/Next items.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    theta = [i * 2.0 * math.pi / 40.0 for i in range(40)]
+    r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
+    chart = xy.polar_chart(xy.line(theta, r, animation=False), width=420, height=420)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const before = view._axisRange("y").slice();
+    const canvas = view.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width * 0.62;
+    const cy = rect.top + rect.height * 0.42;
+
+    view._raf = null;
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 4 && frames.length; round++) {
+        const queued = frames;
+        frames = [];
+        for (const fn of queued) fn();
+      }
+    };
+
+    let cancelled = false;
+    for (let i = 0; i < 5; i++) {
+      const event = new WheelEvent("wheel", {
+        deltaY: -120, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
+      });
+      canvas.dispatchEvent(event);
+      if (event.defaultPrevented) cancelled = true;
+    }
+    flush();
+    const after = view._axisRange("y").slice();
+    window.requestAnimationFrame = realRaf;
+    document.body.setAttribute("data-xy-polar-nozoom", JSON.stringify({
+      before,
+      after,
+      cancelled,
+      zoomMenu: !!view.root.querySelector('[data-xy-modebar-menu-trigger]'),
+      zoomIn: !!view.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      historyBack: !!view.root.querySelector('[data-xy-modebar-history="back"]'),
+      modebar: !!view.root.querySelector('[data-xy-slot="modebar"]'),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-polar-nozoom-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_no_zoom.html",
+        "data-xy-polar-nozoom",
+        label="polar default zoom off",
+    )
+    assert result["after"] == pytest.approx(result["before"]), (
+        f"wheel moved the radial range with zoom off: {result['before']} -> {result['after']}"
+    )
+    assert result["cancelled"] is False, "wheel was cancelled, swallowing page scroll"
+    # The modebar itself still renders (export lives there); only the zoom
+    # controls are gone.
+    assert result["modebar"] is True
+    assert result["zoomIn"] is False
+    assert result["historyBack"] is False
+    assert result["zoomMenu"] is False
 
 
 def test_polar_bar_hover_wraps_across_the_seam(tmp_path: Path) -> None:

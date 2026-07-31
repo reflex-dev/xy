@@ -265,9 +265,10 @@ benchmark tracks this as part of the core 2D payload budget.
   mark-blind. A new kind inherits them without writing any interaction code, but
   they are not unconditional: `navigation`/`pan`/`zoom` default to on and can be
   turned off — or scoped to specific axes — per figure.
-  Polar is coordinate-system-specific: hover, fixed-minimum radial zoom, and
-  reset ship, while theta pan/rotation, box zoom, selection, brush, and
-  crosshair are disabled.
+  Polar is coordinate-system-specific: hover and reset ship, fixed-minimum
+  radial zoom is opt-in (`zoom` resolves to `False` under `coords="polar"`;
+  `wind_rose` ships `True`), and theta pan/rotation, box zoom, selection, brush,
+  and crosshair are disabled.
   [interaction.md](interaction.md) is the authority on the switches, per-axis
   policy, defaults, gesture map, and event payloads.
 - **Responsive sizing**: `width/height:"100%"` + ResizeObserver.

@@ -1575,7 +1575,13 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
     )
 
     for fragment in (
-        "radial maximum while keeping the radial",
+        "scales the radial maximum",
+        "keeps the radial minimum fixed",
+        # Zoom is off by default on polar (polar-axes.md §8), and the guide has
+        # to carry both halves of that: why, and the exact way back in.
+        "**Zoom is off by default.**",
+        "xy.interaction_config(zoom=True)",
+        "def zoomable_polar_demo():",
         "authored fractional degree",
         "splits a line into visible runs",
         "`line`, `scatter`, and `area` are limited to",

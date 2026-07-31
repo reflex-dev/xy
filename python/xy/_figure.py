@@ -1721,6 +1721,23 @@ class Figure(AnnotationsMixin, PayloadMixin):
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        if self.coords == "polar" and "zoom" not in self.interaction:
+            # Polar zoom is OFF by default (polar-axes.md §8). The centre is a
+            # fixed point of the transform and r_lo is pinned, so zooming in
+            # only crops the rim while the geometry stays welded to the middle
+            # of the disc — on a pie, radial bar, or radar, whose radius is a
+            # constant rim or a fixed 0..1 frame, that reads as broken rather
+            # than as navigation. A composition whose RADIUS is a measured
+            # quantity (`wind_rose`, where it is a frequency count) opts back in
+            # by shipping `zoom=True`, as does any author via
+            # `xy.interaction_config(zoom=True)`.
+            #
+            # Resolved HERE and shipped explicitly, against §5.2's "unspecified
+            # keys stay absent" rule, for two reasons: the client cannot make
+            # this decision (`Chart.kind` never reaches the wire — every polar
+            # figure looks identical to it), and §28 requires the choice to be
+            # on the wire rather than re-derived per renderer.
+            spec["zoom"] = False
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
                 spec[name] = self._axis_policy(self.interaction[name], name)
