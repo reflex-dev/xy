@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["codespell", "pre-commit", "pytest", "ruff"]
+dev = ["codespell", "playwright==1.61.0", "pre-commit", "pytest", "ruff"]
 
 [tool.uv.sources]
 reflex-xy = { path = "../../python/reflex-xy", editable = true }

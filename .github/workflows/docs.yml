@@ -102,9 +102,14 @@ jobs:
         env:
           REFLEX_TELEMETRY_ENABLED: "false"
         run: uv run --no-sync reflex init
+      - name: Install Chromium for the production-DOM accessibility check
+        if: matrix.python-version == '3.12'
+        working-directory: docs/app
+        run: uv run --no-sync playwright install --with-deps chromium
       - name: Run production docs and check the public route
         working-directory: docs/app
         env:
+          DOCS_PYTHON_VERSION: ${{ matrix.python-version }}
           REFLEX_TELEMETRY_ENABLED: "false"
         run: |
           set -euo pipefail
@@ -152,6 +157,13 @@ jobs:
             http://127.0.0.1:3000/docs/xy/core-concepts/data/ \
             --output "$nested_response"
           grep -Fq '<title>Data and Columns · XY</title>' "$nested_response"
+
+          if [[ "$DOCS_PYTHON_VERSION" == "3.12" ]]; then
+            XY_DOCS_BASE_URL=http://127.0.0.1:3000/docs/xy/ \
+              uv run --no-sync pytest \
+                tests/test_code_copy.py::test_production_copy_buttons_have_accessible_names \
+                -v
+          fi
 
           if grep -Eiq "traceback|uncaught|unhandled|fatal error" "$server_log"; then
             cat "$server_log"

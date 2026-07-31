@@ -1,6 +1,14 @@
 """Accessibility contracts for documentation code-copy controls."""
 
+import os
+import re
+from urllib.parse import urljoin
+
+import pytest
 from xy_docs.code import code_block, code_copy_feedback_script
+
+_COPY_BUTTON_SELECTOR = 'button[data-xy-code-copy="true"], button:has(svg.lucide-copy)'
+_PRODUCTION_DOCS_URL_ENV = "XY_DOCS_BASE_URL"
 
 
 def test_xy_code_blocks_name_copy_actions_and_announce_success() -> None:
@@ -56,3 +64,57 @@ def test_xy_docs_install_copy_feedback_on_mount() -> None:
     rendered = str(on_mount)
     assert "setupTableOfContentsHighlight" in rendered
     assert "__xyCodeCopyFeedbackInstalled" in rendered
+
+
+def test_production_copy_buttons_have_accessible_names() -> None:
+    """Reject unnamed visible copy controls across every built docs route."""
+    base_url = os.environ.get(_PRODUCTION_DOCS_URL_ENV)
+    if base_url is None:
+        pytest.skip(f"{_PRODUCTION_DOCS_URL_ENV} is only set for the production-DOM check")
+
+    from playwright.sync_api import sync_playwright
+    from xy_docs.xy_docs import _DOCS_ROUTES
+
+    unnamed_controls: list[str] = []
+    audited_controls = 0
+    named_button_pattern = re.compile(r"\S")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context()
+        page = context.new_page()
+
+        for route in _DOCS_ROUTES:
+            route_url = urljoin(
+                f"{base_url.rstrip('/')}/",
+                route.path.lstrip("/"),
+            )
+            static_response = context.request.get(route_url)
+            assert static_response.ok, (
+                f"Production docs route returned {static_response.status}: {route_url}"
+            )
+            static_html = static_response.text()
+            if "data-xy-code-copy-control" not in static_html and "lucide-copy" not in static_html:
+                continue
+
+            navigation = page.goto(route_url, wait_until="domcontentloaded")
+            assert navigation is not None and navigation.ok, (
+                f"Browser could not load production docs route: {route_url}"
+            )
+
+            copy_buttons = page.locator(f"{_COPY_BUTTON_SELECTOR}:visible")
+            for index in range(copy_buttons.count()):
+                button = copy_buttons.nth(index)
+                audited_controls += 1
+                named_button = button.and_(page.get_by_role("button", name=named_button_pattern))
+                if named_button.count() == 0:
+                    unnamed_controls.append(
+                        f"{route.path} button {index + 1}: {button.aria_snapshot()}"
+                    )
+
+        browser.close()
+
+    assert audited_controls > 0, "Production docs exposed no visible code-copy controls"
+    assert not unnamed_controls, "Unnamed visible code-copy controls:\n" + "\n".join(
+        unnamed_controls
+    )
