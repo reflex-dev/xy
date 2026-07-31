@@ -19,6 +19,14 @@ check_heading_outline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(check_heading_outline)
 
 
+def _heading(level: int) -> SimpleNamespace:
+    """Return one minimal rendered heading for validator unit tests."""
+    return SimpleNamespace(
+        tag="Heading",
+        as_=SimpleNamespace(_var_value=f"h{level}"),
+    )
+
+
 def test_public_docs_have_ordered_heading_levels() -> None:
     """Keep every rendered public route free of heading-level jumps."""
     result = subprocess.run(
@@ -33,15 +41,22 @@ def test_public_docs_have_ordered_heading_levels() -> None:
     assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
 
 
-def test_heading_outline_validator_rejects_first_h3() -> None:
-    """Reject a page whose first semantic section skips from H1 to H3."""
-    h3 = SimpleNamespace(
-        tag="Heading",
-        as_=SimpleNamespace(_var_value="h3"),
-    )
-    h4 = SimpleNamespace(
-        tag="Heading",
-        as_=SimpleNamespace(_var_value="h4"),
+def test_heading_outline_validator_rejects_no_headings() -> None:
+    """Reject a page with no semantic headings."""
+    assert check_heading_outline.heading_outline_errors(()) == (
+        "missing H1 (page has no headings)",
     )
 
-    assert check_heading_outline.heading_jumps((h3, h4)) == ((1, 3),)
+
+def test_heading_outline_validator_rejects_first_h2() -> None:
+    """Reject a page whose first semantic heading is not H1."""
+    assert check_heading_outline.heading_outline_errors((_heading(2),)) == (
+        "first heading is H2, expected H1",
+    )
+
+
+def test_heading_outline_validator_rejects_adjacent_jump() -> None:
+    """Reject adjacent headings that skip an outline level."""
+    assert check_heading_outline.heading_outline_errors((_heading(1), _heading(3))) == (
+        "heading level jumps from H1 to H3",
+    )

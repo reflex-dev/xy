@@ -35,30 +35,35 @@ def _heading_level(component: object) -> int | None:
     return None
 
 
-def heading_jumps(components: Sequence[object]) -> tuple[tuple[int, int], ...]:
-    """Return adjacent heading levels that skip an outline level."""
+def heading_outline_errors(components: Sequence[object]) -> tuple[str, ...]:
+    """Return missing-H1 and adjacent heading-level errors."""
     levels = tuple(
         level for component in components if (level := _heading_level(component)) is not None
     )
-    # A public page must begin with its H1. Seeding with level 1 also makes a
-    # malformed first H3 fail if a future renderer accidentally omits H1.
-    return tuple(
-        (current, following)
-        for current, following in pairwise((1, *levels))
+    if not levels:
+        return ("missing H1 (page has no headings)",)
+
+    errors = []
+    if levels[0] != 1:
+        errors.append(f"first heading is H{levels[0]}, expected H1")
+    errors.extend(
+        f"heading level jumps from H{current} to H{following}"
+        for current, following in pairwise(levels)
         if following > current + 1
     )
+    return tuple(errors)
 
 
 def validate_public_page_headings() -> None:
-    """Raise when a public page skips a semantic heading level."""
-    failures: dict[str, tuple[tuple[int, int], ...]] = {}
+    """Raise when a public page omits H1 or skips a semantic heading level."""
+    failures: dict[str, tuple[str, ...]] = {}
     for page in discover_docs(DOCS_CONFIG):
         components = tuple(_walk_component_tree(render_xy_markdown_page(page)))
-        jumps = heading_jumps(components)
-        if jumps:
-            failures[page.route] = jumps
+        errors = heading_outline_errors(components)
+        if errors:
+            failures[page.route] = errors
     if failures:
-        raise RuntimeError(f"heading level jumps: {failures}")
+        raise RuntimeError(f"heading outline errors: {failures}")
 
 
 def main() -> None:
