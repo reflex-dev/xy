@@ -29,6 +29,13 @@ STYLE: dict[str, dict[str, Any]] = {
     "datashader": {"name": "Datashader (Bokeh server)", "color": "#7FB3A6", "width": 2.0},
 }
 ORDER = ("xy", "xy-exact", "plotly", "matplotlib", "datashader")
+DARK_THEME = {
+    "background": "#09090b",
+    "plot_background": "#111113",
+    "grid_color": "#27272a",
+    "axis_color": "#3f3f46",
+    "text_color": "#d4d4d8",
+}
 
 
 def label(n: int) -> str:
@@ -68,6 +75,7 @@ def build(
     sizes: list[int],
     arms: list[str],
     metric: str,
+    color_scheme: str = "light",
 ) -> xy.Chart:
     marks: list[Any] = []
     notes: list[Any] = []
@@ -149,9 +157,11 @@ def build(
         domain = (0.0, 5.8)
 
     decades = [1e4, 1e5, 1e6, 1e7, 1e8]
+    theme = [xy.theme(**DARK_THEME)] if color_scheme == "dark" else []
     return xy.line_chart(
         *marks,
         *notes,
+        *theme,
         xy.legend(show=True, loc="upper left"),
         xy.modebar(show=False),
         xy.tooltip(format={"y": ".3f"}),
@@ -183,6 +193,7 @@ def main() -> None:
     parser.add_argument("--arms", default="", help="comma-separated subset")
     parser.add_argument("--suffix", default="")
     parser.add_argument("--scale", type=int, default=2)
+    parser.add_argument("--color-scheme", choices=("light", "dark"), default="light")
     args = parser.parse_args()
 
     rows: dict[tuple[str, int], dict[str, Any]] = {}
@@ -198,7 +209,7 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     for metric, stem in (("time", "render-time"), ("memory", "python-memory")):
-        chart = build(rows, sizes, arms, metric)
+        chart = build(rows, sizes, arms, metric, color_scheme=args.color_scheme)
         path = args.out_dir / f"ux-{stem}{args.suffix}.png"
         chart.to_png(str(path), scale=args.scale)
         print(f"wrote {path}")
