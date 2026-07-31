@@ -143,8 +143,8 @@ in `spec/design/wire-protocol.md`.
 ```
 client -> server (namespace /_xy)
   sub     {fig, px?, mid?}      subscribe; join figure room; reply `payload`
-  unsub   {fig, mid}            leave the room
-  msg     {fig, v?, mid, m}     one xy.channel.handle_message dispatch
+  unsub   {fig}                 leave the room
+  msg     {fig, v?, mid?, m}    one xy.channel.handle_message dispatch
 
 server -> client
   payload {fig, version, spec, buffers, mid?}   first paint / full refresh
