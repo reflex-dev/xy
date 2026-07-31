@@ -14,6 +14,8 @@ SLOT_CLASSES = {
     "colorbar_extension": "tw-colorbar-extension",
     "colorbar_line": "tw-colorbar-line",
     "colorbar_minor_tick": "tw-colorbar-minor-tick",
+    "modebar": "tw-modebar",
+    "modebar_button": "tw-modebar-button",
     "modebar_drag_handle": "tw-modebar-drag-handle",
     "modebar_control_group": "tw-modebar-control-group",
     "modebar_separator": "tw-modebar-separator",
@@ -38,40 +40,75 @@ UTILITY_CSS = """
   .tw-colorbar-extension { fill: #f97316; stroke: #fed7aa; stroke-width: 2px; }
   .tw-colorbar-line { border-color: #22d3ee; }
   .tw-colorbar-minor-tick { border-color: #a78bfa; }
+  .tw-modebar {
+    background: linear-gradient(135deg, rgb(12 74 110 / 96%), rgb(23 37 84 / 98%));
+    color: #e0f2fe;
+    border: 1px solid #38bdf8;
+    box-shadow:
+      0 0 0 1px rgb(56 189 248 / 25%),
+      0 0 22px rgb(14 165 233 / 45%),
+      0 10px 30px rgb(2 132 199 / 28%);
+  }
+  .tw-modebar-button {
+    color: #bae6fd;
+    border-color: rgb(125 211 252 / 18%);
+    background: rgb(8 47 73 / 45%);
+  }
+  .tw-modebar-button:hover,
+  .tw-modebar-button[aria-expanded="true"] {
+    color: #f0f9ff;
+    background: rgb(14 165 233 / 28%);
+    box-shadow: inset 0 0 12px rgb(34 211 238 / 20%);
+  }
   .tw-modebar-drag-handle {
-    background: #db2777;
-    color: #fff;
-    border: 2px solid #f9a8d4;
+    background: linear-gradient(135deg, #0284c7, #1d4ed8);
+    color: #f0f9ff;
+    border: 2px solid #67e8f9;
     border-radius: 9999px;
-    box-shadow: 0 0 0 4px rgb(219 39 119 / 22%);
+    box-shadow:
+      0 0 0 4px rgb(14 165 233 / 22%),
+      0 0 22px rgb(34 211 238 / 72%);
   }
   .tw-modebar-control-group {
     gap: 5px;
     padding: 2px;
-    border: 1px solid rgb(56 189 248 / 35%);
+    border: 1px solid rgb(103 232 249 / 55%);
     border-radius: 8px;
+    background: rgb(8 47 73 / 32%);
+    box-shadow: inset 0 0 12px rgb(34 211 238 / 12%);
   }
-  .tw-modebar-separator { width: 2px; background: #38bdf8; }
-  .tw-modebar-icon { color: #facc15; }
+  .tw-modebar-separator {
+    width: 2px;
+    background: #67e8f9;
+    box-shadow: 0 0 8px rgb(34 211 238 / 70%);
+  }
+  .tw-modebar-icon { color: #7dd3fc; }
   .tw-modebar-zoom-value { color: #f8fafc; font-weight: 800; }
-  .tw-modebar-indicator { color: #38bdf8; }
-  .tw-modebar-selection-icon { color: #f472b6; }
+  .tw-modebar-indicator { color: #67e8f9; }
+  .tw-modebar-selection-icon { color: #38bdf8; }
   .tw-modebar-menu {
     width: 176px;
-    background: #172554;
+    background: linear-gradient(180deg, #172554, #0c4a6e);
     color: #e0f2fe;
     border: 2px solid #38bdf8;
     border-radius: 14px;
     padding: 7px;
-    box-shadow: 0 16px 40px rgb(8 47 73 / 45%);
+    box-shadow:
+      0 0 24px rgb(34 211 238 / 35%),
+      0 16px 40px rgb(8 47 73 / 45%);
   }
-  .tw-modebar-menu-separator { background: #38bdf8; margin-block: 6px; }
-  .tw-modebar-menu-icon { color: #f472b6; }
+  .tw-modebar-menu-separator {
+    background: #67e8f9;
+    margin-block: 6px;
+    box-shadow: 0 0 8px rgb(34 211 238 / 55%);
+  }
+  .tw-modebar-menu-icon { color: #7dd3fc; }
   .tw-modebar-menu-label { color: #e0f2fe; font-weight: 700; letter-spacing: .01em; }
   .tw-modebar-history-controls {
     padding: 3px;
     border-radius: 8px;
-    background: rgb(14 116 144 / 30%);
+    background: rgb(14 116 144 / 42%);
+    box-shadow: inset 0 0 12px rgb(34 211 238 / 16%);
   }
   .tw-axis-band { cursor: crosshair; }
   .tw-axis-line { background: #fb7185; }
