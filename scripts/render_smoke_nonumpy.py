@@ -17,9 +17,8 @@ import math
 import re
 import shutil
 import struct
-import subprocess
 import sys
-import tempfile
+import time
 from array import array
 from pathlib import Path
 
@@ -27,6 +26,10 @@ from _protocol import PROTOCOL_VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "python" / "xy" / "static"
+sys.path.insert(0, str(ROOT / "python"))
+
+from xy._chromium import ChromiumSession  # noqa: E402
+
 CHROMIUM_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -45,6 +48,45 @@ def find_chromium() -> str:
         if Path(c).is_file() or shutil.which(c):
             return c
     raise SystemExit("no chromium found")
+
+
+def run_probe(page: str, *, timeout_s: float = 300.0) -> str:
+    """Run the page until its probe replaces the sentinel title.
+
+    CDP lets the smoke stop as soon as the assertions finish. In contrast,
+    Chromium's ``--dump-dom`` waits for the entire page to become idle, which
+    can leave a successful WebGL page running until the subprocess timeout.
+    """
+    with ChromiumSession(find_chromium(), gl="software", sandbox=False) as session:
+        _, sid, page_path = session._page_session(page, timeout_s)
+        session._call(
+            "Page.navigate",
+            {"url": page_path.as_uri()},
+            session_id=sid,
+            timeout_s=timeout_s,
+        )
+        session._wait_event("Page.loadEventFired", session_id=sid, timeout_s=timeout_s)
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            reply = session._call(
+                "Runtime.evaluate",
+                {"expression": "document.title", "returnByValue": True},
+                session_id=sid,
+                # The page's deliberately broad synchronous WebGL probe can
+                # occupy one renderer task for well over 30 seconds on a
+                # software-only CI runner. The overall deadline still catches
+                # a real hang without imposing a shorter per-poll timeout.
+                timeout_s=max(1.0, remaining),
+            )
+            if reply.get("exceptionDetails"):
+                raise RuntimeError(f"probe page exception: {reply['exceptionDetails']}")
+            title = str(reply.get("result", {}).get("value", ""))
+            if title != "pending":
+                return title
+            time.sleep(0.1)
+    raise TimeoutError(f"render probe did not finish within {timeout_s:g} seconds")
 
 
 def encode_f32(vals, offset):  # noqa: ANN001
@@ -943,13 +985,10 @@ try{{
       return hsh;
     }};
     // NOTE: the standalone density re-bin worker is deliberately NOT exercised
-    // here. This harness renders under Chromium `--virtual-time-budget
-    // --dump-dom`; a real Web Worker runs on wall-clock, not virtual time, so a
-    // pending worker message keeps the page from settling and `--dump-dom`
-    // hangs to the subprocess timeout. Worker source is asserted in
-    // tests/test_static_client_security.py; runtime behavior is verified
-    // interactively. Every probe chart sets `_sampleRebinDisabled = true` so no
-    // worker ever spawns during the smoke.
+    // here. This deterministic probe hand-feeds its density updates; worker
+    // source is asserted in tests/test_static_client_security.py and runtime
+    // behavior is covered separately. Probe charts that can schedule a re-bin
+    // set `_sampleRebinDisabled = true`.
     const dv1 = xy.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
     const dv2 = xy.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
@@ -1312,39 +1351,9 @@ try{{
 }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}
 </script></body></html>"""
 
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "s.html"
-        p.write_text(page, encoding="utf-8")
-        out = subprocess.run(
-            [
-                find_chromium(),
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--virtual-time-budget=4000",
-                "--dump-dom",
-                p.as_uri(),
-            ],
-            capture_output=True,
-            text=True,
-            # This probe is the widest one in the tree — a single page that
-            # exercises every mark family, LOD drill-in, picking, selection,
-            # the modebar, context-loss recovery and the DPR watch — and it
-            # SOFTWARE-rasterizes all of it through SwiftShader. On a GitHub
-            # runner it measured 98 s against the 120 s it used to allow, so a
-            # slightly slower runner timed the whole job out with nothing
-            # broken. Sized for headroom instead: a real hang still fails,
-            # 22 s of jitter no longer does. `append_stream_smoke.py` already
-            # allows 180 s for a far smaller page.
-            timeout=300,
-        )
-    m = re.search(r"<title>([^<]*)</title>", out.stdout)
-    title = m.group(1) if m else "(none)"
+    title = run_probe(page)
     print("probe:", title)
     if not title.startswith("XY_OK"):
-        print(out.stderr[-2000:], file=sys.stderr)
         raise SystemExit("render failed")
     lit = int(re.search(r"lit=(\d+)", title).group(1))
     total = int(re.search(r"total=(\d+)", title).group(1))
