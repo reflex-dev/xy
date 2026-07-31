@@ -96,13 +96,6 @@ path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
-    # The adapter's release workflow rides along (repo infra, like release.yml)
-    # even though the adapter *package* stays out of this sdist: the shipped
-    # test suite validates all four workflows via scripts/verify_ci_workflow.py.
-    ".github/workflows/release-reflex-xy.yml",
     # The xy package only — python/reflex-xy is its own distributable
     # (own pyproject, depends on reflex) and must not ride in this sdist;
     # scripts/verify_sdist.py enforces both the no-reflex-dependency rule
@@ -115,22 +108,9 @@ include = [
     "js",
     "package.json",
     "package-lock.json",
-    "benchmarks",
-    "docs",
-    "spec",
-    "examples/fastapi/*.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/README.md",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/README.md",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/*.py",
-    "scripts",
-    "tests",
     "Cargo.toml",
     "Cargo.lock",
     "hatch_build.py",
-    "Makefile",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -138,7 +118,15 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
-    "/docs/app/**",
+    # Repository-only development, CI, documentation, and evidence material.
+    "/.github/**",
+    "/benchmarks/**",
+    "/docs/**",
+    "/examples/**",
+    "/Makefile",
+    "/scripts/**",
+    "/spec/**",
+    "/tests/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -149,9 +137,6 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
-    # Adapter tests ship with the reflex-xy package's repo checkout, not
-    # with the xy sdist (whose package they can't exercise anyway).
-    "/tests/reflex_adapter/**",
     # Belt and braces for the include narrowing above: hatchling auto-admits
     # readme-named files, which would smuggle adapter docs back in.
     "/python/reflex-xy/**",
