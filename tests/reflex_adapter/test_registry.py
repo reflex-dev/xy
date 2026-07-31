@@ -26,6 +26,22 @@ def test_register_release_roundtrip(_fresh_registry):
     registry.release(token)  # idempotent
 
 
+def test_release_preserves_version_while_rebuildable_subscriber_remains(
+    _fresh_registry,
+):
+    registry = _fresh_registry
+    registry.subscribe("tok", "sid-1", rebuildable=True)
+    first = registry.publish("tok", make_figure(), broadcast=False)
+    assert registry.bump("tok", expected=first).version == 2
+
+    registry.release("tok")
+    assert registry.get("tok") is None
+    assert registry._evicted_versions == {"tok": 2}
+
+    republished = registry.publish("tok", make_figure(32), broadcast=False)
+    assert republished.version == 3
+
+
 def test_publish_versioning(_fresh_registry):
     registry = _fresh_registry
     fig1 = make_figure()
@@ -41,16 +57,70 @@ def test_publish_if_missing_preserves_a_concurrent_current_generation(
     _fresh_registry,
 ):
     registry = _fresh_registry
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
     current_figure = make_figure(8)
     current = registry.publish("tok", current_figure, broadcast=False)
 
-    entry, inserted = registry.publish_if_missing("tok", make_figure(32))
+    entry, inserted = registry.publish_if_missing("tok", make_figure(32), guard=guard)
+    registry.finish_rebuild("tok", guard)
 
     assert not inserted
     assert entry is current
     assert entry.figure is current_figure
     assert entry.version == 1
     assert registry.is_current("tok", entry)
+    assert registry._active_rebuild_guards == {}
+
+
+def test_release_invalidates_an_active_rebuild_without_unbounded_revision_state(
+    _fresh_registry,
+):
+    registry = _fresh_registry
+    registry.subscribe("tok", "sid-1", rebuildable=True)
+    first = registry.publish("tok", make_figure(), broadcast=False)
+    assert registry.bump("tok", expected=first).version == 2
+    registry.release("tok")
+
+    missing, guard = registry.begin_rebuild("tok")
+    assert missing is None
+    assert guard is not None
+    registry.release("tok")  # a newer canonical absence while the builder awaits
+
+    entry, inserted = registry.publish_if_missing("tok", make_figure(32), guard=guard)
+    registry.finish_rebuild("tok", guard)
+
+    assert entry is None
+    assert not inserted
+    assert registry.get("tok") is None
+    assert registry._evicted_versions == {"tok": 2}
+    assert registry._active_rebuild_guards == {}
+    assert registry.publish("tok", make_figure(32), broadcast=False).version == 3
+
+
+def test_failed_rebuild_cleanup_is_identity_checked_and_keeps_version(
+    _fresh_registry,
+):
+    registry = _fresh_registry
+    registry.subscribe("tok", "sid-1", rebuildable=True)
+    inserted = registry.publish("tok", make_figure(), broadcast=False)
+    replacement = registry.publish("tok", make_figure(32), broadcast=False)
+
+    assert not registry.remove_if_current("tok", inserted)
+    assert registry.is_current("tok", replacement)
+    assert registry.remove_if_current("tok", replacement)
+    assert registry._evicted_versions == {"tok": 2}
+    assert registry.publish("tok", make_figure(64), broadcast=False).version == 3
+
+
+def test_failed_rebuild_cleanup_without_subscriber_drops_version(_fresh_registry):
+    registry = _fresh_registry
+    inserted = registry.publish("tok", make_figure(), broadcast=False)
+
+    assert registry.remove_if_current("tok", inserted)
+    assert registry._evicted_versions == {}
+    assert registry.publish("tok", make_figure(32), broadcast=False).version == 1
 
 
 def test_publish_replacement_creates_a_consistent_generation(_fresh_registry):

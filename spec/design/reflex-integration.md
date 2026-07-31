@@ -170,7 +170,11 @@ Interaction replies and append pushes carry `version`; view-state-only pushes
 may omit it because they do not mutate the figure data generation. Resetting
 an epoch also cancels pending hover/view throttles, and the still-mounted old
 view cannot emit new semantic callbacks while the replacement payload is in
-flight.
+flight. Versionless programmatic view/selection pushes that arrive before the
+payload mounts are buffered in wire order and replayed after mount; addressed
+or versioned old-epoch messages remain discarded. A queued selection
+replacement suppresses the payload swap's selection-mask restoration, so its
+later stale reply cannot overwrite the newer queued selection.
 
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
@@ -275,9 +279,12 @@ figure before. **Reflex prod-mode multi-worker works without a figure
 server, sticky routing, or chart data in Redis** — the state that was going
 to be in Redis anyway is the recovery record.
 
-Failure stays closed: unparseable tokens, unknown states/vars, or builders
-that raise all answer `err {fig, error}`; the client logs and shows an empty
-mount rather than crashing the page.
+Failure stays closed: unparseable tokens, unknown states/vars, and builders
+that raise answer `err {fig, error}`; the client logs and shows an empty mount
+rather than crashing the page. During rebuild, payload construction or room
+fan-out failures likewise answer `err` and remove only the generation that
+attempt inserted, so a later subscription retries; a concurrent normal
+replacement is never removed.
 
 ### 3.3 Access control
 
@@ -371,9 +378,10 @@ reload still never destroys a live figure that its reconnect will re-request.
 The TTL sweep (30 min idle, lifespan task) bounds leaked figures; state-derived
 figures transparently rebuild after a sweep, so the TTL bounds large
 figure/data memory, not correctness. While at least one rebuildable subscriber
-remains, the registry retains only an evicted token's scalar version so a
-rebuild on the same worker stays monotonic; the figure and its data buffers are
-released. If an interaction is the first touch after eviction, the namespace
+remains, both the sweep and an explicit release retain only the removed token's
+scalar version so a republish on the same worker stays monotonic; the figure
+and its data buffers are released. If an interaction is the first touch after
+eviction, the namespace
 rebuilds, sends every subscribed mount a replacement payload room-wide, and
 drops the old-generation interaction for the triggering client to retry. If a
 new `sub` is first, the namespace broadcasts the rebuild to existing room
@@ -381,13 +389,19 @@ members before joining the requester, then sends that mount one `mid`-addressed
 payload built for its own `px` hint. The direct path re-reads the current entry
 after joining the room: a normal replacement that landed before the join is
 sent directly, while a replacement after the join reaches the mount through
-the room broadcast. Concurrent same-token misses are single-flight: one state
-builder publishes and broadcasts one current generation, while the remaining
-mounts wait and receive direct responses from that entry. The rebuild's final
-insertion is conditional: if a normal
-dependency-driven publish populated the token while user builder code was
-awaiting, that newer current entry wins and the stale rebuild result is
-discarded. Subscribe/unsubscribe handlers for one SID/token are serialized,
+the room broadcast. Concurrent same-token misses share the complete rebuild
+attempt, including failure and room fan-out: one state builder publishes and
+broadcasts one current generation, while the remaining mounts wait for that
+same result. Every interaction that observed the miss is dropped until its
+authoritative payload arrives, even when another waiter inserted the entry or
+the rebuilt version happens to match. One failed attempt answers every current
+waiter with `err`; a later arrival may start a fresh retry. The rebuild's final
+insertion carries a bounded guard that exists only for the active attempt. A
+normal dependency-driven publish or release invalidates that guard while user
+builder code is awaiting: a populated newer entry wins, and a newer absence
+rejects the stale result so a later request rebuilds from current state. No
+process-lifetime per-token revision map is retained. Subscribe/unsubscribe
+handlers for one SID/token are serialized,
 and a handler rechecks live Socket.IO membership after every await-heavy phase
 so a slow rebuild cannot restore bookkeeping after disconnect. Active append
 generations are leased; the sweep skips them until the mutation and version

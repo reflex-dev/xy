@@ -16,10 +16,10 @@ def _dependency_name(requirement: str) -> str:
 
 
 def _is_valid_base_requirement(requirement: str, package: str, minimum: str) -> bool:
-    """Require one stable numeric lower bound, without markers or conflicts."""
+    """Require the exact stable numeric floor, without markers or conflicts."""
     match = re.fullmatch(
         rf"\s*{re.escape(package)}\s*"
-        rf">=\s*(?P<version>\d+(?:\.\d+)*)\s*",
+        rf">=\s*(?P<version>[0-9]+(?:\.[0-9]+)*)\s*",
         requirement,
         flags=re.IGNORECASE,
     )
@@ -28,7 +28,7 @@ def _is_valid_base_requirement(requirement: str, package: str, minimum: str) -> 
     version = tuple(int(part) for part in match.group("version").split("."))
     floor = tuple(int(part) for part in minimum.split("."))
     width = max(len(version), len(floor))
-    return version + (0,) * (width - len(version)) >= floor + (0,) * (width - len(floor))
+    return version + (0,) * (width - len(version)) == floor + (0,) * (width - len(floor))
 
 
 def _is_exact_reflex_extra(requirement: str) -> bool:
@@ -56,7 +56,7 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
         ):
             errors.append(
                 f"Requires-Dist: {package}>={minimum} "
-                "(exactly one requirement, with no conflicts; stable lower bound required)"
+                "(exactly one requirement, with no conflicts; exact stable lower bound required)"
             )
 
     reflex_requirements = [

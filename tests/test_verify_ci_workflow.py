@@ -54,6 +54,239 @@ def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
     assert any("uv sync --locked --extra reflex --group dev" in error for error in errors)
 
 
+def test_locked_reflex_environment_must_be_in_named_install_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "          uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            required,
+            "          uv sync --extra reflex --group dev\n\n"
+            "      - name: Unrelated example\n"
+            f"        run: {required.strip()}",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_cannot_be_commented_out(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "          uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(required, f"          # {required.strip()}"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_cannot_hide_in_step_env(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            f"          FAKE_GATE: {required}\n",
+        ).replace(f"          {required}", "          uv sync --extra reflex --group dev"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_requires_an_exact_command_line(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(f"          {required}", f"          echo '{required}'"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_cannot_be_heredoc_data(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            f"          {required}",
+            "          cat <<'EOF'\n"
+            f"          {required}\n"
+            "          EOF\n"
+            "          uv sync --extra reflex --group dev",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_cannot_be_folded_echo_data(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            f"        run: |\n          {required}",
+            f"        run: >\n          echo ignored\n          {required}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_cannot_be_folded_comment_data(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    required = "uv sync --locked --extra reflex --group dev"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            f"        run: |\n          {required}",
+            f"        run: >\n          # disabled\n          {required}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_step_must_be_a_hard_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    bypasses = (
+        "if: false",
+        "shell: echo {0}",
+        "continue-on-error: true",
+        '"if": false',
+        "'shell': echo {0}",
+        '"continue-on-error": true',
+    )
+
+    for index, bypass in enumerate(bypasses):
+        path = tmp_path / f"ci-{index}.yml"
+        path.write_text(
+            workflow.replace(
+                "      - name: Install package + dev deps\n",
+                f"      - name: Install package + dev deps\n        {bypass}\n",
+            ),
+            encoding="utf-8",
+        )
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_job_must_be_a_hard_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    bypasses = (
+        "if: false",
+        "continue-on-error: true",
+        "defaults:\n      run:\n        shell: echo {0}",
+        '"if": false',
+        "'continue-on-error': true",
+        '"defaults":\n      run:\n        shell: echo {0}',
+    )
+
+    for index, bypass in enumerate(bypasses):
+        path = tmp_path / f"ci-job-{index}.yml"
+        path.write_text(
+            workflow.replace(
+                "  test:\n",
+                f"  test:\n    {bypass}\n",
+            ),
+            encoding="utf-8",
+        )
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("Install package + dev deps" in error for error in errors)
+
+
+def test_locked_reflex_environment_rejects_workflow_shell_override(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "jobs:\n",
+            "defaults:\n  run:\n    shell: echo {0}\n\njobs:\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("hard-gate run steps" in error for error in errors)
+
+
+def test_locked_reflex_environment_rejects_quoted_workflow_shell_override(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "jobs:\n",
+            '"defaults":\n  run:\n    shell: echo {0}\n\njobs:\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("hard-gate run steps" in error for error in errors)
+
+
+def test_hard_gates_reject_shell_init_environment_overrides(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    mutations = (
+        (
+            "jobs:\n",
+            "env:\n  BASH_ENV: .github/noop-shell-init\n\njobs:\n",
+        ),
+        (
+            "  test:\n",
+            "  test:\n    env:\n      BASH_ENV: .github/noop-shell-init\n",
+        ),
+        (
+            "      - name: Install package + dev deps\n",
+            "      - name: Install package + dev deps\n"
+            "        env:\n"
+            "          'ENV': .github/noop-shell-init\n",
+        ),
+    )
+
+    for index, (old, new) in enumerate(mutations):
+        path = tmp_path / f"ci-shell-init-{index}.yml"
+        path.write_text(workflow.replace(old, new), encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("shell-init environment variables" in error for error in errors)
+
+
 def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     command = "          .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py\n"
@@ -63,6 +296,82 @@ def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> No
     path.write_text(workflow.replace(command, "") + f"\n# {command.strip()}\n", encoding="utf-8")
     errors = verify_ci_workflow.validate_ci_workflow(path)
     assert any("reference test commands" in error for error in errors)
+
+
+def test_reference_gate_commands_cannot_hide_in_inline_comments(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    commands = (
+        ".venv/bin/pytest -q tests/pyplot/test_launch_compat.py",
+        ".venv/bin/pytest -q tests/pyplot/test_reference_corpus.py",
+        ".venv/bin/pytest -q tests/pyplot/test_reference_semantics.py",
+    )
+    for command in commands:
+        workflow = workflow.replace(f"          {command}", f"          echo ignored # {command}")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reference test commands" in error for error in errors)
+
+
+def test_reference_gate_commands_cannot_be_heredoc_data(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    first = ".venv/bin/pytest -q tests/pyplot/test_launch_compat.py"
+    last = ".venv/bin/pytest -q tests/pyplot/test_reference_semantics.py"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            f"          {first}",
+            "          cat <<'EOF'",
+        ).replace(
+            f"          {last}",
+            f"          {last}\n          EOF",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("reference test commands" in error for error in errors)
+
+
+def test_reference_job_and_steps_must_be_hard_gates(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    mutations = (
+        (
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n",
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n"
+            "        if: false\n",
+        ),
+        (
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n",
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n"
+            "        continue-on-error: true\n",
+        ),
+        (
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n",
+            "      - name: Run optional-interoperability and dual-engine corpus tests\n"
+            "        shell: echo {0}\n",
+        ),
+        ("  matplotlib_reference:\n", "  matplotlib_reference:\n    if: false\n"),
+        (
+            "  matplotlib_reference:\n",
+            "  matplotlib_reference:\n    continue-on-error: true\n",
+        ),
+        (
+            "  matplotlib_reference:\n",
+            "  matplotlib_reference:\n    defaults:\n      run:\n        shell: echo {0}\n",
+        ),
+    )
+
+    for index, (old, new) in enumerate(mutations):
+        path = tmp_path / f"ci-reference-hard-gate-{index}.yml"
+        path.write_text(workflow.replace(old, new), encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("Run optional-interoperability" in error for error in errors)
 
 
 def test_codspeed_workflow_accepts_current_gates() -> None:

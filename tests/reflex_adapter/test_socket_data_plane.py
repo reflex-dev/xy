@@ -461,9 +461,7 @@ def test_registry_miss_rebuilds_from_hook(_fresh_registry):
 
 
 def test_concurrent_registry_misses_share_one_current_rebuild(_fresh_registry, monkeypatch):
-    """Same-token mounts arriving together must never publish competing
-    generations or leave one caller holding an already-stale entry.
-    """
+    """Same-token misses share one generation and one resync epoch."""
     registry = _fresh_registry
     state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
     started = asyncio.Event()
@@ -503,10 +501,276 @@ def test_concurrent_registry_misses_share_one_current_rebuild(_fresh_registry, m
         assert rebuild_calls == 1
         assert entries[0] is entries[1]
         assert registry.is_current(state_token, entries[0])
-        assert sorted(result[2] for result in results) == [False, True]
+        assert all(result[2] for result in results)
         assert broadcasts == [(state_token, entries[0])]
-        assert namespace._rebuild_locks == {}
-        assert namespace._rebuild_lock_users == {}
+        assert namespace._rebuild_attempts == {}
+
+    run(main())
+
+
+def test_concurrent_messages_that_miss_drop_old_coordinates(_fresh_registry, monkeypatch):
+    """Every request in a shared miss epoch waits for payload and retries."""
+    registry = _fresh_registry
+    state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+    started = asyncio.Event()
+    resume = asyncio.Event()
+    rebuild_calls = 0
+    handled = []
+
+    async def rebuild(token_str):
+        nonlocal rebuild_calls
+        assert token_str == state_token
+        rebuild_calls += 1
+        started.set()
+        await resume.wait()
+        return make_figure(32)
+
+    namespace = XYNamespace(registry, rebuild=rebuild)
+
+    async def get_session(sid):
+        return {"client_token": CLIENT_TOKEN}
+
+    async def broadcast(token, entry):
+        assert token == state_token
+        assert registry.is_current(token, entry)
+
+    def handle(figure, message, buffers):
+        handled.append((figure, message, buffers))
+        return None
+
+    monkeypatch.setattr(namespace, "get_session", get_session)
+    monkeypatch.setattr(namespace, "broadcast_payload", broadcast)
+    monkeypatch.setattr("reflex_xy.namespace.handle_message", handle)
+
+    async def main():
+        first = asyncio.create_task(
+            namespace.on_msg(
+                "sid-1",
+                {"fig": state_token, "m": {"type": "pick", "trace": 0, "index": 1}},
+            )
+        )
+        await started.wait()
+        # Version 1 also matches a fresh worker's rebuilt version. The request
+        # must still drop because it was sent before that worker's payload.
+        second = asyncio.create_task(
+            namespace.on_msg(
+                "sid-2",
+                {
+                    "fig": state_token,
+                    "v": 1,
+                    "m": {"type": "pick", "trace": 0, "index": 2},
+                },
+            )
+        )
+        await asyncio.sleep(0)
+        resume.set()
+        await asyncio.gather(first, second)
+        await asyncio.sleep(0)
+
+        assert rebuild_calls == 1
+        assert handled == []
+        assert namespace._rebuild_attempts == {}
+
+    run(main())
+
+
+def test_failed_rebuild_attempt_is_shared_then_later_request_retries(_fresh_registry, monkeypatch):
+    registry = _fresh_registry
+    state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+    started = asyncio.Event()
+    resume = asyncio.Event()
+    rebuild_calls = 0
+    errors = []
+    broadcasts = []
+
+    async def rebuild(token_str):
+        nonlocal rebuild_calls
+        assert token_str == state_token
+        rebuild_calls += 1
+        if rebuild_calls == 1:
+            started.set()
+            await resume.wait()
+            return None
+        return make_figure(32)
+
+    namespace = XYNamespace(registry, rebuild=rebuild)
+
+    async def get_session(sid):
+        return {"client_token": CLIENT_TOKEN}
+
+    async def send_error(sid, token, error):
+        errors.append((sid, token, error))
+
+    async def broadcast(token, entry):
+        broadcasts.append((token, entry))
+
+    monkeypatch.setattr(namespace, "get_session", get_session)
+    monkeypatch.setattr(namespace, "_err", send_error)
+    monkeypatch.setattr(namespace, "broadcast_payload", broadcast)
+
+    async def main():
+        data = {"fig": state_token}
+        first = asyncio.create_task(namespace._entry_for("sid-1", data, allow_rebuild=True))
+        await started.wait()
+        second = asyncio.create_task(namespace._entry_for("sid-2", data, allow_rebuild=True))
+        await asyncio.sleep(0)
+        resume.set()
+        first_results = await asyncio.gather(first, second)
+        await asyncio.sleep(0)
+
+        assert rebuild_calls == 1
+        assert all(result == (state_token, None, True) for result in first_results)
+        assert sorted(sid for sid, _, _ in errors) == ["sid-1", "sid-2"]
+        assert all(token == state_token for _, token, _ in errors)
+        assert all(error == "unknown figure token" for _, _, error in errors)
+        assert namespace._rebuild_attempts == {}
+
+        retried = await namespace._entry_for("sid-3", data, allow_rebuild=True)
+        await asyncio.sleep(0)
+        assert rebuild_calls == 2
+        assert retried[0] == state_token
+        assert retried[1] is not None
+        assert retried[2]
+        assert registry.is_current(state_token, retried[1])
+        assert broadcasts == [(state_token, retried[1])]
+        assert namespace._rebuild_attempts == {}
+
+    run(main())
+
+
+def test_rebuild_broadcast_failure_removes_generation_and_later_sub_retries(
+    _fresh_registry, monkeypatch
+):
+    registry = _fresh_registry
+    state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+    registry.subscribe(state_token, "sid-existing", rebuildable=True)
+    prior = registry.publish(state_token, make_figure(8), broadcast=False)
+    assert registry.bump(state_token, expected=prior).version == 2
+    registry.release(state_token)
+
+    errors = []
+    broadcasts = []
+    joined = []
+    sent = []
+    rebuild_calls = 0
+
+    async def rebuild(token_str):
+        nonlocal rebuild_calls
+        assert token_str == state_token
+        rebuild_calls += 1
+        return make_figure(32)
+
+    namespace = XYNamespace(registry, rebuild=rebuild)
+    namespace._set_server(
+        SimpleNamespace(manager=SimpleNamespace(is_connected=lambda sid, _namespace: True))
+    )
+
+    async def get_session(sid):
+        return {"client_token": CLIENT_TOKEN}
+
+    async def broadcast(token, entry):
+        assert token == state_token
+        assert registry.is_current(token, entry)
+        broadcasts.append(entry)
+        if len(broadcasts) == 1:
+            raise RuntimeError("transport failed")
+
+    async def send_error(sid, token, error):
+        errors.append((sid, token, error))
+
+    async def enter_room(sid, room):
+        joined.append((sid, room))
+
+    async def send_payload(sid, token, entry, **kwargs):
+        sent.append((sid, token, entry, kwargs))
+
+    monkeypatch.setattr(namespace, "get_session", get_session)
+    monkeypatch.setattr(namespace, "broadcast_payload", broadcast)
+    monkeypatch.setattr(namespace, "_err", send_error)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+    monkeypatch.setattr(namespace, "_send_payload", send_payload)
+
+    async def main():
+        await namespace.on_sub("sid-1", {"fig": state_token, "mid": "m1"})
+        await asyncio.sleep(0)
+
+        assert errors == [("sid-1", state_token, "rebuild failed")]
+        assert registry.get(state_token) is None
+        assert registry._evicted_versions == {state_token: 3}
+        assert joined == []
+        assert sent == []
+        assert namespace._rebuild_attempts == {}
+        assert registry._active_rebuild_guards == {}
+
+        await namespace.on_sub("sid-2", {"fig": state_token, "mid": "m2", "px": 321})
+        await asyncio.sleep(0)
+
+        assert rebuild_calls == 2
+        assert [entry.version for entry in broadcasts] == [3, 4]
+        assert joined == [("sid-2", namespace._room(state_token))]
+        assert len(sent) == 1
+        sid, token, entry, kwargs = sent[0]
+        assert (sid, token, entry.version, kwargs) == (
+            "sid-2",
+            state_token,
+            4,
+            {"px": 321, "mid": "m2"},
+        )
+        assert registry.is_current(state_token, entry)
+        assert namespace._rebuild_attempts == {}
+        assert registry._active_rebuild_guards == {}
+
+    run(main())
+
+
+def test_rebuild_failure_cleanup_does_not_remove_a_concurrent_replacement(
+    _fresh_registry, monkeypatch
+):
+    registry = _fresh_registry
+    state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+    replacement_figure = make_figure(48)
+    replacement = None
+    errors = []
+
+    async def rebuild(token_str):
+        assert token_str == state_token
+        return make_figure(16)
+
+    namespace = XYNamespace(registry, rebuild=rebuild)
+
+    async def get_session(sid):
+        return {"client_token": CLIENT_TOKEN}
+
+    async def fail_after_replacement(token, entry):
+        nonlocal replacement
+        assert token == state_token
+        assert registry.is_current(token, entry)
+        replacement = registry.publish(token, replacement_figure, broadcast=False)
+        raise RuntimeError("old generation transport failed")
+
+    async def send_error(sid, token, error):
+        errors.append((sid, token, error))
+
+    monkeypatch.setattr(namespace, "get_session", get_session)
+    monkeypatch.setattr(namespace, "broadcast_payload", fail_after_replacement)
+    monkeypatch.setattr(namespace, "_err", send_error)
+
+    async def main():
+        token, entry, initially_missing = await namespace._entry_for(
+            "sid-1", {"fig": state_token}, allow_rebuild=True
+        )
+        await asyncio.sleep(0)
+
+        assert token == state_token
+        assert initially_missing
+        assert replacement is not None
+        assert entry is replacement
+        assert entry.figure is replacement_figure
+        assert entry.version == 2
+        assert registry.is_current(state_token, entry)
+        assert errors == []
+        assert namespace._rebuild_attempts == {}
+        assert registry._active_rebuild_guards == {}
 
     run(main())
 
@@ -547,16 +811,91 @@ def test_rebuild_completion_does_not_replace_a_concurrent_state_publish(
         await started.wait()
         published = registry.publish(state_token, current_figure, broadcast=False)
         resume.set()
-        token, entry, rebuilt = await pending
+        token, entry, initially_missing = await pending
 
         assert token == state_token
-        assert not rebuilt
+        assert initially_missing
         assert entry is published
         assert entry.figure is current_figure
         assert registry.is_current(state_token, entry)
         assert broadcasts == []
-        assert namespace._rebuild_locks == {}
-        assert namespace._rebuild_lock_users == {}
+        assert namespace._rebuild_attempts == {}
+
+    run(main())
+
+
+def test_rebuild_completion_does_not_resurrect_after_a_newer_release(_fresh_registry, monkeypatch):
+    """An explicit canonical absence invalidates the awaited rebuild CAS."""
+    registry = _fresh_registry
+    state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
+    registry.subscribe(state_token, "sid-existing", rebuildable=True)
+    prior = registry.publish(state_token, make_figure(8), broadcast=False)
+    assert registry.bump(state_token, expected=prior).version == 2
+    registry.release(state_token)
+
+    started = asyncio.Event()
+    resume = asyncio.Event()
+    rebuild_calls = 0
+    errors = []
+    broadcasts = []
+
+    async def rebuild(token_str):
+        nonlocal rebuild_calls
+        assert token_str == state_token
+        rebuild_calls += 1
+        if rebuild_calls == 1:
+            started.set()
+            await resume.wait()
+        return make_figure(32)
+
+    namespace = XYNamespace(registry, rebuild=rebuild)
+
+    async def get_session(sid):
+        return {"client_token": CLIENT_TOKEN}
+
+    async def send_error(sid, token, error):
+        errors.append((sid, token, error))
+
+    async def broadcast(token, entry):
+        broadcasts.append((token, entry))
+
+    monkeypatch.setattr(namespace, "get_session", get_session)
+    monkeypatch.setattr(namespace, "_err", send_error)
+    monkeypatch.setattr(namespace, "broadcast_payload", broadcast)
+
+    async def main():
+        data = {"fig": state_token}
+        pending = asyncio.create_task(namespace._entry_for("sid-1", data, allow_rebuild=True))
+        await started.wait()
+
+        # The canonical builder evaluated to None after this rebuild began.
+        # Even though the entry was already absent, this release is a newer
+        # mutation and must invalidate the active compare-and-insert guard.
+        registry.release(state_token)
+        resume.set()
+        first = await pending
+        await asyncio.sleep(0)
+
+        assert first == (state_token, None, True)
+        assert errors == [("sid-1", state_token, "unknown figure token")]
+        assert registry.get(state_token) is None
+        assert registry._evicted_versions == {state_token: 2}
+        assert broadcasts == []
+        assert namespace._rebuild_attempts == {}
+        assert registry._active_rebuild_guards == {}
+
+        retried = await namespace._entry_for("sid-2", data, allow_rebuild=True)
+        await asyncio.sleep(0)
+
+        assert rebuild_calls == 2
+        assert retried[0] == state_token
+        assert retried[1] is not None
+        assert retried[1].version == 3
+        assert retried[2]
+        assert registry.is_current(state_token, retried[1])
+        assert broadcasts == [(state_token, retried[1])]
+        assert namespace._rebuild_attempts == {}
+        assert registry._active_rebuild_guards == {}
 
     run(main())
 

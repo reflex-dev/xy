@@ -227,10 +227,10 @@ def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
     verify_wheel.verify_wheel(whl, expect_native=True)
 
 
-def test_verify_wheel_accepts_stronger_stable_dependency_floors(tmp_path: Path) -> None:
+def test_verify_wheel_accepts_zero_padded_dependency_floors(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
-    metadata = DEFAULT_METADATA.replace("anywidget>=0.9", "anywidget>=1.0").replace(
-        "numpy>=1.24", "numpy>=2.0"
+    metadata = DEFAULT_METADATA.replace("anywidget>=0.9", "anywidget>=0.9.0").replace(
+        "numpy>=1.24", "numpy>=1.24.0"
     )
     _write_wheel(whl, metadata=metadata)
 
@@ -282,6 +282,30 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=999"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=999"),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9",
+                "Requires-Dist: anywidget>=\u0660.\u0669",
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24",
+                "Requires-Dist: numpy>=\u0661.\u0662\u0664",
+            ),
             r"numpy>=1\.24",
         ),
         (

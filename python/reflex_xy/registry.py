@@ -84,6 +84,13 @@ class FigureRegistry:
         # connections.
         self._rebuildable_subscribers: dict[str, set[str]] = {}
         self._rebuildable_tokens_by_sid: dict[str, set[str]] = {}
+        # Compare-and-insert guards exist only while cache-miss builders are
+        # active. A normal publish/release/sweep invalidates the token's
+        # current guards, preventing an older awaited builder from
+        # resurrecting state that has since changed. Unlike a revision map,
+        # this structure is bounded by live rebuild attempts and is removed
+        # when they finish.
+        self._active_rebuild_guards: dict[str, set[object]] = {}
         self._mutex = threading.RLock()
         self._ttl = float(ttl_seconds)
         # Tokens with a broadcast scheduled but not yet started. Publishes
@@ -159,6 +166,10 @@ class FigureRegistry:
         which is the signal that subscribers need a new payload.
         """
         with self._mutex:
+            # This is a canonical dependency/application publish. Any builder
+            # that began from the preceding absence must not overwrite it,
+            # even if this entry is released again before that builder ends.
+            self._invalidate_rebuild_guards_locked(token)
             entry = self._entries.get(token)
             if entry is None:
                 version = self._evicted_versions.pop(token, 0) + 1
@@ -188,25 +199,56 @@ class FigureRegistry:
             self.schedule_broadcast(token)
         return entry
 
+    def begin_rebuild(self, token: str) -> tuple[Optional[FigureEntry], Optional[object]]:
+        """Atomically return the current entry or guard this missing generation."""
+        with self._mutex:
+            entry = self._entries.get(token)
+            if entry is not None:
+                entry.touch()
+                return entry, None
+            guard = object()
+            self._active_rebuild_guards.setdefault(token, set()).add(guard)
+            return None, guard
+
+    def finish_rebuild(self, token: str, guard: object) -> None:
+        """Release one bounded rebuild guard, whether valid or invalidated."""
+        with self._mutex:
+            guards = self._active_rebuild_guards.get(token)
+            if guards is None:
+                return
+            guards.discard(guard)
+            if not guards:
+                self._active_rebuild_guards.pop(token, None)
+
     def publish_if_missing(
-        self, token: str, figure: "Figure", *, pinned: bool = False
-    ) -> tuple[FigureEntry, bool]:
-        """Atomically insert one rebuilt generation unless another producer won.
+        self,
+        token: str,
+        figure: "Figure",
+        *,
+        guard: object,
+        pinned: bool = False,
+    ) -> tuple[Optional[FigureEntry], bool]:
+        """Conditionally insert one rebuilt generation if its guard is current.
 
         State builders run outside the registry mutex. A normal dependency-
-        driven publish may therefore populate ``token`` while a cache-miss
-        rebuild is awaiting user code. The completed rebuild must use that
-        newer current entry rather than replace it with its older snapshot.
+        driven publish or release may therefore change ``token`` while a
+        cache-miss rebuild is awaiting user code. A current entry wins; if a
+        newer mutation left the token absent, the invalid guard rejects the
+        stale rebuild so a later request can retry from current state.
 
-        Returns ``(entry, inserted)``. The caller owns any fan-out for an
-        inserted rebuild; an existing entry's original publisher owns its
-        broadcast.
+        Returns ``(entry, inserted)``. ``entry`` is ``None`` only when a newer
+        mutation invalidated ``guard`` and left the token absent. The caller
+        owns fan-out for an inserted rebuild; an existing entry's original
+        publisher owns its broadcast.
         """
         with self._mutex:
             entry = self._entries.get(token)
             if entry is not None:
                 entry.touch()
                 return entry, False
+            guards = self._active_rebuild_guards.get(token)
+            if guards is None or guard not in guards:
+                return None, False
             version = self._evicted_versions.pop(token, 0) + 1
             entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
             self._entries[token] = entry
@@ -224,8 +266,36 @@ class FigureRegistry:
         return token
 
     def release(self, token: str) -> None:
+        """Drop a figure while preserving live subscribers' wire continuity."""
         with self._mutex:
-            self._entries.pop(token, None)
+            self._invalidate_rebuild_guards_locked(token)
+            entry = self._entries.pop(token, None)
+            self._retain_removed_version_locked(token, entry)
+
+    def remove_if_current(self, token: str, expected: FigureEntry) -> bool:
+        """Remove exactly ``expected`` after failed rebuild fan-out.
+
+        This cleanup is not a new canonical mutation, so it does not
+        invalidate other active rebuild guards. Version retention follows the
+        same live-subscriber rule as release/sweep.
+        """
+        with self._mutex:
+            if self._entries.get(token) is not expected:
+                return False
+            del self._entries[token]
+            self._retain_removed_version_locked(token, expected)
+            return True
+
+    def _invalidate_rebuild_guards_locked(self, token: str) -> None:
+        self._active_rebuild_guards.pop(token, None)
+
+    def _retain_removed_version_locked(self, token: str, entry: Optional[FigureEntry]) -> None:
+        if self._rebuildable_subscribers.get(token):
+            version = 0 if entry is None else entry.version
+            prior_version = self._evicted_versions.get(token, 0)
+            if version or prior_version:
+                self._evicted_versions[token] = max(version, prior_version)
+        else:
             self._evicted_versions.pop(token, None)
 
     # -- subscription lifecycle -------------------------------------------
@@ -490,12 +560,8 @@ class FigureRegistry:
                     and not entry.active_operations
                     and now - entry.last_access > self._ttl
                 ):
-                    if self._rebuildable_subscribers.get(token):
-                        self._evicted_versions[token] = max(
-                            entry.version, self._evicted_versions.get(token, 0)
-                        )
-                    else:
-                        self._evicted_versions.pop(token, None)
+                    self._invalidate_rebuild_guards_locked(token)
+                    self._retain_removed_version_locked(token, entry)
                     del self._entries[token]
                     dropped.append(token)
         return dropped
@@ -518,6 +584,7 @@ def reset_registry_for_tests() -> FigureRegistry:
     registry._evicted_versions.clear()
     registry._rebuildable_subscribers.clear()
     registry._rebuildable_tokens_by_sid.clear()
+    registry._active_rebuild_guards.clear()
     registry._pending_broadcasts.clear()
     registry._loop = None
     registry._on_publish = None

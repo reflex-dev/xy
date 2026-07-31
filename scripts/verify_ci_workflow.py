@@ -90,6 +90,13 @@ def _missing_needles(block: str, needles: tuple[str, ...]) -> list[str]:
     return [needle for needle in needles if needle not in block]
 
 
+def _has_yaml_key(text: str, key: str, *, indent: Optional[int] = None) -> bool:
+    """Recognize a bare or quoted YAML mapping key at the requested indent."""
+    prefix = "[ ]*" if indent is None else " " * indent
+    token = rf'(?:{re.escape(key)}|"{re.escape(key)}"|\'{re.escape(key)}\')'
+    return re.search(rf"^{prefix}{token}\s*:", text, flags=re.MULTILINE) is not None
+
+
 def _named_step_blocks(job_text: str) -> dict[str, str]:
     """Return step-local blocks; comments elsewhere cannot satisfy a gate."""
     lines = job_text.splitlines()
@@ -118,6 +125,54 @@ def _require_step_contains(
     missing = _missing_needles(block, needles)
     if missing:
         errors.append(f"CI step {step!r} missing {description}: {missing}")
+
+
+def _step_run_lines(step_block: str) -> list[str]:
+    """Return executable lines from one named step's ``run`` value only."""
+    lines = step_block.splitlines()
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"        run:\s*(.*?)\s*", line)
+        if match is None:
+            continue
+        value = match.group(1)
+        # Folded scalars concatenate adjacent source lines before the shell
+        # sees them. That makes a visually separate ``# disabled`` line turn
+        # the following command into comment text, so this exact-command gate
+        # accepts only a one-line value or a literal block.
+        if value.startswith(">"):
+            return []
+        if value not in {"|", "|-", "|+"}:
+            return [value] if value and not value.startswith("#") else []
+
+        commands: list[str] = []
+        for command in lines[index + 1 :]:
+            if command.strip() and len(command) - len(command.lstrip()) <= 8:
+                break
+            stripped = command.strip()
+            if stripped and not stripped.startswith("#"):
+                commands.append(stripped)
+        return commands
+    return []
+
+
+def _require_step_runs_exactly(
+    errors: list[str], job_text: str, step: str, description: str, *commands: str
+) -> None:
+    """Require the exact active command list in a hard-gate named step."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    # Membership is insufficient: a needle could otherwise be heredoc data,
+    # an uninvoked function body, or one folded argument to another command.
+    forbidden_step_keys = ("if", "continue-on-error", "shell")
+    has_forbidden_step_key = any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
+    forbidden_job_keys = ("if", "continue-on-error", "defaults")
+    has_forbidden_job_key = any(
+        _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
+    )
+    if _step_run_lines(block) != list(commands) or has_forbidden_step_key or has_forbidden_job_key:
+        errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
 def _require_job_contains(
@@ -272,6 +327,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    if _has_yaml_key(text, "defaults", indent=0):
+        errors.append("CI workflow must not override the shell for hard-gate run steps")
+    if _has_yaml_key(text, "BASH_ENV") or _has_yaml_key(text, "ENV"):
+        errors.append("CI workflow must not set shell-init environment variables")
     _require_docs_spec_pr_paths_ignored(errors, text, "CI")
     _require_unshallow_checkouts(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
@@ -293,22 +352,24 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "MPLBACKEND: Agg",
     )
     reference = jobs.get("matplotlib_reference", "")
-    _require_step_contains(
+    _require_step_runs_exactly(
         errors,
         reference,
         "Install xy and released reference wheel",
         "released reference installation",
+        "uv venv .venv",
+        "uv pip install -p .venv/bin/python -e . --group dev",
         'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
     )
-    _require_step_contains(
+    _require_step_runs_exactly(
         errors,
         reference,
         "Verify released reference and reviewed snapshot",
         "version and snapshot checks",
-        "matplotlib.__version__ == '3.11.0'",
-        "scripts/sync_matplotlib_compat.py --check",
+        ".venv/bin/python -c \"import matplotlib; assert matplotlib.__version__ == '3.11.0'\"",
+        ".venv/bin/python scripts/sync_matplotlib_compat.py --check",
     )
-    _require_step_contains(
+    _require_step_runs_exactly(
         errors,
         reference,
         "Run optional-interoperability and dual-engine corpus tests",
@@ -326,7 +387,6 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "hard production gates",
         "scripts/verify_ci_workflow.py",
         "scripts/check_public_api.py",
-        "uv sync --locked --extra reflex --group dev",
         "Verify bundled Reflex integration import",
         "importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
@@ -360,6 +420,14 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
         "spec/benchmarks/metrics.md",
         "transport.json",
+    )
+    test_job = jobs.get("test", "")
+    _require_step_runs_exactly(
+        errors,
+        test_job,
+        "Install package + dev deps",
+        "locked Reflex development environment",
+        "uv sync --locked --extra reflex --group dev",
     )
     _require_job_contains(
         errors,

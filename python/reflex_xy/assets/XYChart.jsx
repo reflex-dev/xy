@@ -46,6 +46,7 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
 const HOVER_THROTTLE_MS = 120;
 const VIEW_THROTTLE_MS = 120;
+const DEFERRED_STATE_PUSH_TYPES = new Set(["state_patch", "view_nav", "selection_rows"]);
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -415,6 +416,7 @@ export function XYChart(props) {
     let selectionSeq = 0;
     const restoreSelectionSeqs = new Set();
     const viewCallbacks = [];
+    const pendingStatePushes = [];
     let awaitingPayload = true;
 
     const resetEpoch = () => {
@@ -432,6 +434,7 @@ export function XYChart(props) {
       awaitingPayload = true;
       clickInputs.clear();
       restoreSelectionSeqs.clear();
+      pendingStatePushes.length = 0;
     };
 
     const subscribe = () => {
@@ -599,6 +602,38 @@ export function XYChart(props) {
       restoreSelectionSeqs.delete(message.seq);
     };
 
+    const dispatchToView = (message, buffers) => {
+      for (const cb of [...viewCallbacks]) cb(message, buffers);
+    };
+
+    const deferStatePush = (data, message) => {
+      // Programmatic view/selection pushes are not part of the authoritative
+      // figure payload. Preserve only those unaddressed, truly versionless
+      // room events; old replies and appends remain unsafe across epochs.
+      if (
+        data.mid == null &&
+        data.version == null &&
+        DEFERRED_STATE_PUSH_TYPES.has(message.type)
+      ) {
+        pendingStatePushes.push({ message, buffers: data.buffers || [] });
+        return true;
+      }
+      return false;
+    };
+
+    const replayPendingStatePushes = () => {
+      const queued = pendingStatePushes.splice(0);
+      for (const { message, buffers } of queued) dispatchToView(message, buffers);
+    };
+
+    const pendingPushReplacesSelection = () => pendingStatePushes.some(({ message }) =>
+      message.type === "selection_rows" ||
+      (
+        message.type === "state_patch" &&
+        Object.prototype.hasOwnProperty.call(message.state || {}, "selection")
+      )
+    );
+
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
       // Direct subscription replies are mount-addressed; room-wide rebuild
@@ -631,7 +666,12 @@ export function XYChart(props) {
       const selectionToRestore = durableState
         ? durableState.selection
         : selectionFromRequest(lastSelect);
-      const selectionMaskRequest = selectionRequest(selectionToRestore);
+      // A queued select/clear/rows push is newer than the pre-payload client
+      // selection. Do not send a restore request whose later async reply could
+      // overwrite that queued replacement after it is replayed below.
+      const selectionMaskRequest = pendingPushReplacesSelection()
+        ? null
+        : selectionRequest(selectionToRestore);
       payloadVersion = nextPayloadVersion;
       awaitingPayload = false;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
@@ -648,6 +688,7 @@ export function XYChart(props) {
           hydrateSelectionForRepublish(selectionToRestore);
         }
         restoreSelectionMask(selectionMaskRequest);
+        replayPendingStatePushes();
         return;
       }
       reclaimTooltipSlot();
@@ -673,6 +714,7 @@ export function XYChart(props) {
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
+      replayPendingStatePushes();
     };
 
     const onMsg = (data) => {
@@ -682,7 +724,7 @@ export function XYChart(props) {
       const message = data.message;
       if (!message) return;
       if (awaitingPayload) {
-        discardPendingReply(message);
+        if (!deferStatePush(data, message)) discardPendingReply(message);
         return;
       }
       const wireVersion = Number.isInteger(data.version) ? data.version : null;
@@ -750,7 +792,7 @@ export function XYChart(props) {
         restoreSelectionSeqs.clear();
         payloadVersion = wireVersion;
       }
-      for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
+      dispatchToView(clientMessage, data.buffers || []);
     };
 
     const onErr = (data) => {

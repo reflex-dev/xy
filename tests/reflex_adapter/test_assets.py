@@ -80,6 +80,7 @@ def test_wrapper_speaks_the_namespace_protocol():
         "awaitingPayload = true",
         "clickInputs.clear()",
         "restoreSelectionSeqs.clear()",
+        "pendingStatePushes.length = 0",
     ):
         assert needle in reset_epoch
     subscribe = jsx.split("const subscribe = () => {", 1)[1].split("};", 1)[0]
@@ -98,6 +99,47 @@ def test_wrapper_speaks_the_namespace_protocol():
     # Subscription payloads echo a mount id; unaddressed room broadcasts are
     # still accepted, while another mount's direct response is ignored.
     assert "data.mid !== undefined && data.mid !== null && data.mid !== mid" in jsx
+    # Versionless programmatic state pushes are not represented by the full
+    # payload, so they wait in wire order for either payload-mount path. The
+    # exact allow-list plus unaddressed/versionless guards keep stale replies
+    # and append deltas out of that queue.
+    assert (
+        'const DEFERRED_STATE_PUSH_TYPES = new Set(["state_patch", "view_nav", "selection_rows"]);'
+    ) in jsx
+    assert "data.mid == null" in jsx
+    assert "data.version == null" in jsx
+    assert "DEFERRED_STATE_PUSH_TYPES.has(message.type)" in jsx
+    assert "pendingStatePushes.push({ message, buffers: data.buffers || [] })" in jsx
+    assert "if (!deferStatePush(data, message)) discardPendingReply(message)" in jsx
+    assert "const queued = pendingStatePushes.splice(0)" in jsx
+    assert "for (const { message, buffers } of queued)" in jsx
+    assert jsx.count("replayPendingStatePushes();") == 2
+    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
+        "const onMsg = (data) => {", 1
+    )[0]
+    in_place_mount, fresh_mount = on_payload.split("reclaimTooltipSlot();", 1)
+    assert (
+        in_place_mount.index("view?.updatePayload?.")
+        < in_place_mount.index("restoreSelectionMask(selectionMaskRequest);")
+        < in_place_mount.index("replayPendingStatePushes();")
+        < in_place_mount.rindex("return;")
+    )
+    assert (
+        fresh_mount.index("view = new ChartView(")
+        < fresh_mount.index("restoreSelectionMask(selectionMaskRequest);")
+        < fresh_mount.index("replayPendingStatePushes();")
+    )
+    # A queued selection replacement must suppress the old selection-mask
+    # restore request; its async reply would otherwise arrive after replay and
+    # overwrite the newer select/clear/rows push.
+    selection_guard = jsx.split(
+        "const pendingPushReplacesSelection = () => pendingStatePushes.some", 1
+    )[1].split(";", 1)[0]
+    assert 'message.type === "selection_rows"' in selection_guard
+    assert 'message.type === "state_patch"' in selection_guard
+    assert 'hasOwnProperty.call(message.state || {}, "selection")' in selection_guard
+    assert "const selectionMaskRequest = pendingPushReplacesSelection()" in jsx
+    assert "? null\n        : selectionRequest(selectionToRestore)" in jsx
     # The old view remains mounted while a replacement payload is in flight;
     # it must not arm new semantic view callbacks in that reset epoch.
     dispatch_view = jsx.split("const dispatchView = (m) => {", 1)[1].split("};", 1)[0]

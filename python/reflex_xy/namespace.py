@@ -138,11 +138,13 @@ class XYNamespace(AsyncNamespace):
         # process-lifetime cache.
         self._subscription_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._subscription_lock_users: dict[tuple[str, str], int] = {}
-        # A page with several same-token mounts can issue concurrent `sub`s on
-        # a cold worker. Only one may run the state builder/publish; waiters
-        # re-read the registry after taking this token lock.
-        self._rebuild_locks: dict[str, asyncio.Lock] = {}
-        self._rebuild_lock_users: dict[str, int] = {}
+        # A page with several same-token mounts can miss concurrently on a
+        # cold worker. They share one task, including its failure result and
+        # room fan-out, so one cancelled waiter cannot cancel the attempt and
+        # a failed builder is not rerun serially by every existing waiter.
+        self._rebuild_attempts: dict[
+            str, asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]
+        ] = {}
 
     # -- connection lifecycle ------------------------------------------------
 
@@ -178,7 +180,9 @@ class XYNamespace(AsyncNamespace):
         lock = self._retain_subscription_lock(key)
         try:
             async with lock:
-                token, entry, _rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
+                token, entry, _initially_missing = await self._entry_for(
+                    sid, data, allow_rebuild=True
+                )
                 if token is None or entry is None or not self._is_connected(sid):
                     return
                 await self.enter_room(sid, self._room(token))
@@ -258,13 +262,13 @@ class XYNamespace(AsyncNamespace):
             if isinstance(raw_version, bool) or not isinstance(raw_version, int):
                 return
             message_version = raw_version
-        token, entry, rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
+        token, entry, initially_missing = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
-        if rebuilt:
-            # The request was made against the evicted generation. Re-prime
-            # already happened atomically with the rebuild in `_entry_for`.
-            # Never resolve old coordinates against the rebuilt figure.
+        if initially_missing:
+            # The request predates this worker's authoritative payload. The
+            # shared attempt already re-primed the room; never resolve its old
+            # coordinates even if another waiter rebuilt or versions match.
             return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
@@ -410,19 +414,74 @@ class XYNamespace(AsyncNamespace):
         if self._subscription_locks.get(key) is lock:
             self._subscription_locks.pop(key, None)
 
-    def _retain_rebuild_lock(self, token: str) -> asyncio.Lock:
-        lock = self._rebuild_locks.setdefault(token, asyncio.Lock())
-        self._rebuild_lock_users[token] = self._rebuild_lock_users.get(token, 0) + 1
-        return lock
+    def _start_rebuild_attempt(
+        self, token: str
+    ) -> asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]:
+        """Start and retain one shared cache-miss attempt for ``token``."""
+        task = asyncio.create_task(self._run_rebuild_attempt(token))
+        self._rebuild_attempts[token] = task
 
-    def _release_rebuild_lock(self, token: str, lock: asyncio.Lock) -> None:
-        users = self._rebuild_lock_users[token] - 1
-        if users:
-            self._rebuild_lock_users[token] = users
-            return
-        self._rebuild_lock_users.pop(token, None)
-        if self._rebuild_locks.get(token) is lock:
-            self._rebuild_locks.pop(token, None)
+        def forget(completed: asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]) -> None:
+            if self._rebuild_attempts.get(token) is completed:
+                self._rebuild_attempts.pop(token, None)
+
+        task.add_done_callback(forget)
+        return task
+
+    async def _run_rebuild_attempt(self, token: str) -> tuple[Optional[FigureEntry], Optional[str]]:
+        """Build, conditionally publish, and fan out one total rebuild attempt."""
+        entry, guard = self.registry.begin_rebuild(token)
+        if entry is not None:
+            return entry, None
+        if guard is None:  # defensive: a miss always receives one bounded guard
+            return None, "unknown figure token"
+
+        try:
+            rebuild = self._rebuild
+            if rebuild is None:
+                return None, "unknown figure token"
+            try:
+                figure = await rebuild(token)
+            except Exception:  # noqa: BLE001 - user builder code is an input boundary
+                figure = None
+
+            if figure is None:
+                # A dependency-driven publish may have won while user code was
+                # awaiting. Use it instead of reporting a stale rebuild failure.
+                entry = self.registry.get(token)
+                if entry is None:
+                    return None, "unknown figure token"
+                return entry, None
+
+            entry, inserted = self.registry.publish_if_missing(token, figure, guard=guard)
+            if entry is None:
+                return None, "unknown figure token"
+            if not inserted:
+                return entry, None
+
+            try:
+                await self.broadcast_payload(token, entry)
+            except Exception:  # noqa: BLE001 - payload build/emit is a protocol boundary
+                # A failed generation must not poison later cache hits. Remove
+                # only the generation this attempt inserted; if a normal
+                # replacement won meanwhile, preserve and return that entry.
+                if not self.registry.remove_if_current(token, entry):
+                    current = self.registry.get(token)
+                    if current is not None:
+                        return current, None
+                return None, "rebuild failed"
+
+            # ``broadcast_payload`` intentionally no-ops when its generation
+            # went stale. Resolve that race explicitly: a replacement wins,
+            # while a concurrent release becomes a closed error and retry.
+            if not self.registry.is_current(token, entry):
+                current = self.registry.get(token)
+                if current is None:
+                    return None, "unknown figure token"
+                return current, None
+            return entry, None
+        finally:
+            self.registry.finish_rebuild(token, guard)
 
     async def _entry_for(
         self, sid: str, data: Any, *, allow_rebuild: bool
@@ -445,41 +504,23 @@ class XYNamespace(AsyncNamespace):
                 await self._err(sid, token, "figure belongs to another session")
                 return token, None, False
         entry = self.registry.get(token)
-        rebuilt = False
-        if entry is None and parsed is not None and allow_rebuild and self._rebuild is not None:
-            # Several same-token mounts can miss concurrently on a fresh
-            # worker. Serialize the state builder and re-check after waiting:
-            # one generation is published, every waiter receives that exact
-            # current entry, and only the publisher performs room fan-out.
-            lock = self._retain_rebuild_lock(token)
-            try:
-                async with lock:
-                    entry = self.registry.get(token)
-                    if entry is None:
-                        # Registry miss: worker restarted, or the reconnect
-                        # landed on a node that never built this figure. Reflex
-                        # state is the durable record — rebuild from it (§27
-                        # applied to processes: every figure is a cache).
-                        try:
-                            figure = await self._rebuild(token)
-                        except Exception:  # noqa: BLE001 - user builder code
-                            figure = None
-                        if figure is not None:
-                            entry, rebuilt = self.registry.publish_if_missing(token, figure)
-                            if rebuilt:
-                                # A rebuild is token-global, not request-local.
-                                # Broadcast before releasing the single-flight
-                                # lock and before an on_sub caller joins its
-                                # SID; shield delivery so a triggering
-                                # disconnect cannot strand existing room
-                                # members after insertion already succeeded.
-                                await asyncio.shield(self.broadcast_payload(token, entry))
-            finally:
-                self._release_rebuild_lock(token, lock)
+        attempt = self._rebuild_attempts.get(token)
+        initially_missing = entry is None or attempt is not None
+        if parsed is not None and allow_rebuild and self._rebuild is not None and initially_missing:
+            # The task spans builder, conditional insertion, and existing-room
+            # fan-out. All requests that observed this in-flight miss share its
+            # result and must drop pre-payload interactions, even when another
+            # waiter inserted the entry or its version happens to match.
+            if attempt is None:
+                attempt = self._start_rebuild_attempt(token)
+            entry, error = await asyncio.shield(attempt)
+            if error is not None:
+                await self._err(sid, token, error)
+                return token, None, initially_missing
         if entry is None:
             await self._err(sid, token, "unknown figure token")
             return token, None, False
-        return token, entry, rebuilt
+        return token, entry, initially_missing
 
     async def _err(self, sid: str, token: Optional[str], error: str) -> None:
         await self.emit("err", {"fig": token, "error": error}, to=sid)

@@ -184,14 +184,15 @@ def test_live_wrapper_silently_hydrates_durable_selection_and_all_axis_ranges() 
     assert "const viewChanged = changedFromHome(" in jsx
     assert "previousView?.ranges ? { ranges: previousView.ranges } : null" in jsx
     assert "view?.view0," in jsx
-    assert "const selectionMaskRequest = selectionRequest(selectionToRestore);" in jsx
+    assert "const selectionMaskRequest = pendingPushReplacesSelection()" in jsx
+    assert "? null\n        : selectionRequest(selectionToRestore);" in jsx
     assert 'source: "republish",' in jsx
     assert "dispatch: false," in jsx
     assert "broadcast: false," in jsx
     assert jsx.count("hydrateSelectionForRepublish(selectionToRestore);") == 2
     assert jsx.count("restoreSelectionMask(selectionMaskRequest);") == 2
     assert "if (isRestore) clientMessage = { ...message, suppress_event: true };" in jsx
-    assert "cb(clientMessage, data.buffers || [])" in jsx
+    assert "dispatchToView(clientMessage, data.buffers || [])" in jsx
     # Geometry is hydrated before the one direct mask re-request.
     assert jsx.index("view._applyStatePatch?.(") < jsx.rindex(
         "restoreSelectionMask(selectionMaskRequest);"
