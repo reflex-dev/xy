@@ -197,7 +197,7 @@ class ChromiumSession:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ChromiumError("Chromium did not connect to DevTools in time")
-            self._ws = _WebSocket(ws_url, timeout_s=remaining)
+            self._ws: _WebSocket | None = _WebSocket(ws_url, timeout_s=remaining)
             self._next_id = 0
             self._events: dict[tuple[Optional[str], str], list[dict[str, Any]]] = {}
         except BaseException:
@@ -248,6 +248,9 @@ class ChromiumSession:
         session_id: Optional[str] = None,
         timeout_s: float = 60.0,
     ) -> dict[str, Any]:
+        websocket = self._ws
+        if websocket is None:
+            raise ChromiumError("Chromium session websocket is no longer usable")
         self._next_id += 1
         call_id = self._next_id
         message: dict[str, Any] = {"id": call_id, "method": method, "params": params or {}}
@@ -257,14 +260,23 @@ class ChromiumSession:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ChromiumError(f"timeout waiting for {method}")
-        self._ws.settimeout(remaining)
-        self._ws.send_text(json.dumps(message))
+        websocket.settimeout(remaining)
+        try:
+            websocket.send_text(json.dumps(message))
+        except OSError:
+            # sendall() may have written only part of a WebSocket frame.  The
+            # stream cannot be resynchronized, so do not let later CDP calls
+            # reuse it.
+            self._ws = None
+            with contextlib.suppress(Exception):
+                websocket.close()
+            raise
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ChromiumError(f"timeout waiting for {method}")
-            self._ws.settimeout(remaining)
-            reply = json.loads(self._ws.recv_text())
+            websocket.settimeout(remaining)
+            reply = json.loads(websocket.recv_text())
             if reply.get("id") == call_id:
                 if "error" in reply:
                     raise ChromiumError(f"{method}: {reply['error']}")
@@ -275,6 +287,9 @@ class ChromiumSession:
                 )
 
     def _wait_event(self, method: str, *, session_id: Optional[str], timeout_s: float) -> None:
+        websocket = self._ws
+        if websocket is None:
+            raise ChromiumError("Chromium session websocket is no longer usable")
         key = (session_id, method)
         deadline = time.monotonic() + timeout_s
         while True:
@@ -285,8 +300,8 @@ class ChromiumSession:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ChromiumError(f"timeout waiting for event {method}")
-            self._ws.settimeout(remaining)
-            reply = json.loads(self._ws.recv_text())
+            websocket.settimeout(remaining)
+            reply = json.loads(websocket.recv_text())
             if reply.get("method"):
                 self._events.setdefault((reply.get("sessionId"), reply["method"]), []).append(
                     reply.get("params", {})
@@ -303,16 +318,31 @@ class ChromiumSession:
             return value
 
         target = self._call("Target.createTarget", {"url": "about:blank"}, timeout_s=remaining())
-        attached = self._call(
-            "Target.attachToTarget",
-            {"targetId": target["targetId"], "flatten": True},
-            timeout_s=remaining(),
-        )
-        sid = attached["sessionId"]
-        page_path = Path(self._tmp.name) / f"chart-{target['targetId'][:8]}.html"
-        page_path.write_text(html, encoding="utf-8")
-        self._call("Page.enable", session_id=sid, timeout_s=remaining())
-        return target["targetId"], sid, page_path
+        target_id = target["targetId"]
+        page_path = Path(self._tmp.name) / f"chart-{target_id[:8]}.html"
+        try:
+            attached = self._call(
+                "Target.attachToTarget",
+                {"targetId": target_id, "flatten": True},
+                timeout_s=remaining(),
+            )
+            sid = attached["sessionId"]
+            page_path.write_text(html, encoding="utf-8")
+            self._call("Page.enable", session_id=sid, timeout_s=remaining())
+            return target_id, sid, page_path
+        except BaseException:
+            # Prefer the caller's remaining budget.  If setup consumed it all,
+            # allow only a short best-effort window rather than leaking a tab.
+            cleanup_timeout_s = min(10.0, max(0.1, deadline - time.monotonic()))
+            with contextlib.suppress(Exception):
+                self._call(
+                    "Target.closeTarget",
+                    {"targetId": target_id},
+                    timeout_s=cleanup_timeout_s,
+                )
+            with contextlib.suppress(OSError):
+                page_path.unlink(missing_ok=True)
+            raise
 
     def _navigate_and_settle(self, sid: str, page_path: "Path", timeout_s: float) -> None:
         self._call(
@@ -463,8 +493,11 @@ class ChromiumSession:
         # keep writing into Default/ while rmtree walks it (ENOTEMPTY races).
         with contextlib.suppress(Exception):
             self._call("Browser.close", timeout_s=10.0)
-        with contextlib.suppress(Exception):
-            self._ws.close()
+        websocket = self._ws
+        self._ws = None
+        if websocket is not None:
+            with contextlib.suppress(Exception):
+                websocket.close()
         try:
             self._proc.wait(timeout=15)
         except subprocess.TimeoutExpired:

@@ -239,3 +239,93 @@ def test_cdp_call_deadline_includes_sending_the_request(monkeypatch: pytest.Monk
 
     assert session._call("Page.navigate", timeout_s=5.0) == {"status": "ok"}
     assert websocket.timeouts == [pytest.approx(5.0), pytest.approx(1.0)]
+
+
+def test_cdp_call_closes_and_invalidates_websocket_when_send_fails() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.closed = False
+            self.send_calls = 0
+
+        def settimeout(self, _timeout_s: float) -> None:
+            pass
+
+        def send_text(self, _message: str) -> None:
+            self.send_calls += 1
+            raise TimeoutError("partial frame")
+
+        def close(self) -> None:
+            self.closed = True
+
+    websocket = FakeWebSocket()
+    session = object.__new__(_chromium.ChromiumSession)
+    session._ws = websocket
+    session._next_id = 0
+    session._events = {}
+
+    with pytest.raises(TimeoutError, match="partial frame"):
+        session._call("Page.navigate", timeout_s=5.0)
+
+    assert websocket.closed
+    assert session._ws is None
+    with pytest.raises(_chromium.ChromiumError, match="no longer usable"):
+        session._call("Page.navigate", timeout_s=5.0)
+    assert websocket.send_calls == 1
+
+
+@pytest.mark.parametrize("failure_stage", ["attach", "write", "enable"])
+def test_page_session_cleans_target_and_file_after_setup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_stage: str,
+) -> None:
+    now = 0.0
+    calls: list[tuple[str, float]] = []
+    page_path = tmp_path / "chart-target12.html"
+    session = object.__new__(_chromium.ChromiumSession)
+    session._tmp = SimpleNamespace(name=str(tmp_path))
+
+    def call(
+        method: str,
+        _params=None,  # noqa: ANN001
+        *,
+        session_id: str | None = None,
+        timeout_s: float,
+    ) -> dict[str, str]:
+        nonlocal now
+        del session_id
+        calls.append((method, timeout_s))
+        now += 1.0
+        if method == "Target.createTarget":
+            return {"targetId": "target123"}
+        if method == "Target.attachToTarget":
+            if failure_stage == "attach":
+                raise _chromium.ChromiumError("attach failed")
+            return {"sessionId": "session123"}
+        if method == "Page.enable" and failure_stage == "enable":
+            raise _chromium.ChromiumError("enable failed")
+        return {}
+
+    real_write_text = Path.write_text
+
+    def write_text(path: Path, data: str, *, encoding: str) -> int:
+        if failure_stage == "write":
+            real_write_text(path, "partial", encoding=encoding)
+            raise OSError("write failed")
+        return real_write_text(path, data, encoding=encoding)
+
+    monkeypatch.setattr(_chromium.time, "monotonic", lambda: now)
+    monkeypatch.setattr(Path, "write_text", write_text)
+    session._call = call
+
+    expected_error = {
+        "attach": _chromium.ChromiumError,
+        "write": OSError,
+        "enable": _chromium.ChromiumError,
+    }[failure_stage]
+    with pytest.raises(expected_error):
+        session._page_session("<p>probe</p>", 5.0)
+
+    assert calls[-1][0] == "Target.closeTarget"
+    assert 0.0 < calls[-1][1] <= 5.0
+    assert not page_path.exists()
