@@ -230,7 +230,7 @@ class ChromiumSession:
                 websocket.abort()
 
     def _stop_process(self, deadline: float) -> None:
-        """Stop and reap Chromium without waiting past ``deadline``."""
+        """Stop Chromium by ``deadline``; allow one extra second to reap after killing it."""
         proc = getattr(self, "_proc", None)
         if proc is None:
             return
