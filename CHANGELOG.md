@@ -104,24 +104,7 @@ in the README).
   stay uniform.
 
 ### Changed
-- Polar charts no longer zoom by default. The centre of a disc is a fixed point
-  of the polar transform and radial zoom pins the minimum, so zooming a
-  composition whose radius is *layout* rather than data — a pie or donut (the
-  value is the angle, the radius a constant rim), a radial bar, a gauge, a radar
-  on a fixed frame — could only crop the rim while the geometry stayed welded to
-  the middle, which read as a broken chart rather than as navigation.
-  `coords="polar"` now resolves `zoom` to `False` and ships the flag explicitly,
-  which also means such a chart shows no zoom modebar controls (no percentage,
-  no Zoom In/Out, and no view history, since nothing can move the view) and
-  leaves wheel events uncancelled so the surrounding page keeps scrolling.
-  `xy.wind_rose` is the one exception and still ships zoom enabled: its radius is
-  a frequency count, so pulling the outer ring in magnifies the short sectors of
-  a rose dominated by one prevailing direction. Any chart opts in or out with
-  `xy.interaction_config(zoom=True/False)` or a `zoom=` chart prop, and the
-  gesture is unchanged once enabled. The decision is made in Python because
-  `Chart.kind` never reaches the wire — a pie and a wind rose are the same figure
-  to the renderers — making this the one documented exception to
-  `pan-and-zoom-configuration.md` §5.2's "unspecified keys stay absent" rule.
+- All Polar charts with the exception of wind rose disable zoom by default.
 - Default tooltips now lead with the hovered series name, and the radial row of
   a polar readout is labelled `r` rather than presented as a Cartesian `y`. The
   numeric angle row is gone from polar readouts: on most polar charts the angle
