@@ -57,19 +57,30 @@ def run_probe(page: str, *, timeout_s: float = 300.0) -> str:
     Chromium's ``--dump-dom`` waits for the entire page to become idle, which
     can leave a successful WebGL page running until the subprocess timeout.
     """
-    with ChromiumSession(find_chromium(), gl="software", sandbox=False) as session:
-        _, sid, page_path = session._page_session(page, timeout_s)
+    deadline = time.monotonic() + timeout_s
+
+    def remaining() -> float:
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError(f"render probe did not finish within {timeout_s:g} seconds")
+        return value
+
+    with ChromiumSession(
+        find_chromium(),
+        gl="software",
+        sandbox=False,
+        launch_timeout_s=remaining(),
+    ) as session:
+        _, sid, page_path = session._page_session(page, remaining())
         session._call(
             "Page.navigate",
             {"url": page_path.as_uri()},
             session_id=sid,
-            timeout_s=timeout_s,
+            timeout_s=remaining(),
         )
-        session._wait_event("Page.loadEventFired", session_id=sid, timeout_s=timeout_s)
+        session._wait_event("Page.loadEventFired", session_id=sid, timeout_s=remaining())
 
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
+        while True:
             reply = session._call(
                 "Runtime.evaluate",
                 {"expression": "document.title", "returnByValue": True},
@@ -78,15 +89,14 @@ def run_probe(page: str, *, timeout_s: float = 300.0) -> str:
                 # occupy one renderer task for well over 30 seconds on a
                 # software-only CI runner. The overall deadline still catches
                 # a real hang without imposing a shorter per-poll timeout.
-                timeout_s=max(1.0, remaining),
+                timeout_s=remaining(),
             )
             if reply.get("exceptionDetails"):
                 raise RuntimeError(f"probe page exception: {reply['exceptionDetails']}")
             title = str(reply.get("result", {}).get("value", ""))
             if title != "pending":
                 return title
-            time.sleep(0.1)
-    raise TimeoutError(f"render probe did not finish within {timeout_s:g} seconds")
+            time.sleep(min(0.1, remaining()))
 
 
 def encode_f32(vals, offset):  # noqa: ANN001

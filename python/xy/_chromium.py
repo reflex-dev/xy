@@ -37,28 +37,45 @@ class _WebSocket:
         parts = urlsplit(url)
         if parts.scheme != "ws" or parts.hostname is None:
             raise ChromiumError(f"unsupported DevTools endpoint {url!r}")
-        self._sock = socket.create_connection((parts.hostname, parts.port or 80), timeout=timeout_s)
-        key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
-        path = parts.path + (f"?{parts.query}" if parts.query else "")
-        self._sock.sendall(
-            (
-                f"GET {path} HTTP/1.1\r\n"
-                f"Host: {parts.hostname}:{parts.port or 80}\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Key: {key}\r\n"
-                "Sec-WebSocket-Version: 13\r\n\r\n"
-            ).encode("ascii")
+        deadline = time.monotonic() + timeout_s
+
+        def remaining() -> float:
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise ChromiumError("timeout connecting to DevTools websocket")
+            return value
+
+        self._sock = socket.create_connection(
+            (parts.hostname, parts.port or 80), timeout=remaining()
         )
-        response = b""
-        while b"\r\n\r\n" not in response:
-            chunk = self._sock.recv(4096)
-            if not chunk:
-                raise ChromiumError("websocket handshake: connection closed")
-            response += chunk
-        if b"101" not in response.split(b"\r\n", 1)[0]:
-            raise ChromiumError("websocket handshake rejected")
-        self._buffer = response.split(b"\r\n\r\n", 1)[1]
+        try:
+            key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+            path = parts.path + (f"?{parts.query}" if parts.query else "")
+            self._sock.settimeout(remaining())
+            self._sock.sendall(
+                (
+                    f"GET {path} HTTP/1.1\r\n"
+                    f"Host: {parts.hostname}:{parts.port or 80}\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    f"Sec-WebSocket-Key: {key}\r\n"
+                    "Sec-WebSocket-Version: 13\r\n\r\n"
+                ).encode("ascii")
+            )
+            response = b""
+            while b"\r\n\r\n" not in response:
+                self._sock.settimeout(remaining())
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    raise ChromiumError("websocket handshake: connection closed")
+                response += chunk
+            if b"101" not in response.split(b"\r\n", 1)[0]:
+                raise ChromiumError("websocket handshake rejected")
+            self._buffer = response.split(b"\r\n\r\n", 1)[1]
+        except BaseException:
+            with contextlib.suppress(OSError):
+                self._sock.close()
+            raise
 
     def settimeout(self, timeout_s: float | None) -> None:
         self._sock.settimeout(timeout_s)
@@ -131,50 +148,97 @@ class ChromiumSession:
         sandbox: bool = True,
         launch_timeout_s: float = 30.0,
     ) -> None:
+        if launch_timeout_s <= 0:
+            raise ChromiumError("Chromium launch timeout must be positive")
+        deadline = time.monotonic() + launch_timeout_s
         # ignore_cleanup_errors covers the GC-finalizer path; close() does its
         # own retrying removal (see _cleanup_tmp) for the common `with` path.
         self._tmp = tempfile.TemporaryDirectory(prefix="xy-export-", ignore_cleanup_errors=True)
-        stderr_path = Path(self._tmp.name) / "chromium-stderr.log"
-        self._stderr_file = stderr_path.open("w+b")
-        gl_flags = (
-            ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] if gl == "software" else []
-        )
-        args = [
-            executable,
-            "--headless=new",
-            "--remote-debugging-port=0",
-            f"--user-data-dir={Path(self._tmp.name) / 'profile'}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-dev-shm-usage",
-            # No crashpad handler: it is a detached process that writes into
-            # the profile dir on its own schedule, past the browser's exit.
-            "--disable-breakpad",
-            "--disable-crash-reporter",
-            "--hide-scrollbars",
-            *gl_flags,
-        ]
-        if not sandbox:
-            args.insert(2, "--no-sandbox")
-        self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self._stderr_file)
-        deadline = time.monotonic() + launch_timeout_s
-        ws_url = None
-        while time.monotonic() < deadline:
-            if self._proc.poll() is not None:
-                tail = stderr_path.read_text(errors="replace")[-400:]
-                raise ChromiumError(f"Chromium exited during launch: {tail}")
-            m = re.search(
-                r"DevTools listening on (ws://\S+)", stderr_path.read_text(errors="replace")
+        try:
+            stderr_path = Path(self._tmp.name) / "chromium-stderr.log"
+            self._stderr_file = stderr_path.open("w+b")
+            gl_flags = (
+                ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+                if gl == "software"
+                else []
             )
-            if m:
-                ws_url = m.group(1)
-                break
-            time.sleep(0.05)
-        if ws_url is None:
-            raise ChromiumError("Chromium did not report a DevTools endpoint in time")
-        self._ws = _WebSocket(ws_url)
-        self._next_id = 0
-        self._events: dict[tuple[Optional[str], str], list[dict[str, Any]]] = {}
+            args = [
+                executable,
+                "--headless=new",
+                "--remote-debugging-port=0",
+                f"--user-data-dir={Path(self._tmp.name) / 'profile'}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-dev-shm-usage",
+                # No crashpad handler: it is a detached process that writes into
+                # the profile dir on its own schedule, past the browser's exit.
+                "--disable-breakpad",
+                "--disable-crash-reporter",
+                "--hide-scrollbars",
+                *gl_flags,
+            ]
+            if not sandbox:
+                args.insert(2, "--no-sandbox")
+            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self._stderr_file)
+            ws_url = None
+            while time.monotonic() < deadline:
+                if self._proc.poll() is not None:
+                    tail = stderr_path.read_text(errors="replace")[-400:]
+                    raise ChromiumError(f"Chromium exited during launch: {tail}")
+                m = re.search(
+                    r"DevTools listening on (ws://\S+)", stderr_path.read_text(errors="replace")
+                )
+                if m:
+                    ws_url = m.group(1)
+                    break
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+            if ws_url is None:
+                raise ChromiumError("Chromium did not report a DevTools endpoint in time")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ChromiumError("Chromium did not connect to DevTools in time")
+            self._ws = _WebSocket(ws_url, timeout_s=remaining)
+            self._next_id = 0
+            self._events: dict[tuple[Optional[str], str], list[dict[str, Any]]] = {}
+        except BaseException:
+            self._cleanup_failed_init()
+            raise
+
+    def _cleanup_failed_init(self) -> None:
+        """Release every resource acquired before ``__init__`` raised."""
+        websocket = getattr(self, "_ws", None)
+        if websocket is not None:
+            with contextlib.suppress(Exception):
+                websocket.close()
+
+        proc = getattr(self, "_proc", None)
+        if proc is not None:
+            try:
+                running = proc.poll() is None
+            except Exception:
+                running = True
+            if running:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=10)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=10)
+
+        stderr_file = getattr(self, "_stderr_file", None)
+        if stderr_file is not None:
+            with contextlib.suppress(Exception):
+                stderr_file.close()
+        with contextlib.suppress(Exception):
+            self._cleanup_tmp()
 
     def _call(
         self,
@@ -189,8 +253,12 @@ class ChromiumSession:
         message: dict[str, Any] = {"id": call_id, "method": method, "params": params or {}}
         if session_id is not None:
             message["sessionId"] = session_id
-        self._ws.send_text(json.dumps(message))
         deadline = time.monotonic() + timeout_s
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ChromiumError(f"timeout waiting for {method}")
+        self._ws.settimeout(remaining)
+        self._ws.send_text(json.dumps(message))
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -226,14 +294,24 @@ class ChromiumSession:
 
     def _page_session(self, html: str, timeout_s: float) -> tuple[str, str, "Path"]:
         """Open a fresh tab on `html` (written to disk) and return its ids."""
-        target = self._call("Target.createTarget", {"url": "about:blank"})
+        deadline = time.monotonic() + timeout_s
+
+        def remaining() -> float:
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise ChromiumError("timeout opening Chromium page session")
+            return value
+
+        target = self._call("Target.createTarget", {"url": "about:blank"}, timeout_s=remaining())
         attached = self._call(
-            "Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}
+            "Target.attachToTarget",
+            {"targetId": target["targetId"], "flatten": True},
+            timeout_s=remaining(),
         )
         sid = attached["sessionId"]
         page_path = Path(self._tmp.name) / f"chart-{target['targetId'][:8]}.html"
         page_path.write_text(html, encoding="utf-8")
-        self._call("Page.enable", session_id=sid, timeout_s=timeout_s)
+        self._call("Page.enable", session_id=sid, timeout_s=remaining())
         return target["targetId"], sid, page_path
 
     def _navigate_and_settle(self, sid: str, page_path: "Path", timeout_s: float) -> None:
