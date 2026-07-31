@@ -84,6 +84,17 @@ def test_rebuild_var_without_builder_fails_closed(_fresh_registry, client_token)
     assert asyncio.run(hook(token)) is None
 
 
+def test_rebuild_builder_returning_non_figure_fails_closed(_fresh_registry, client_token):
+    class NotActuallyAFigure(rx.State):
+        @reflex_xy.figure
+        def chart(self) -> object:
+            return object()
+
+    token = build_state_token(client_token, NotActuallyAFigure.get_full_name(), "chart")
+    hook = make_rebuild_hook(make_app_stub())
+    assert asyncio.run(hook(token)) is None
+
+
 def test_token_full_name_resolves_class(client_token):
     token = build_state_token(client_token, BridgeDemo.get_full_name(), "chart")
     parsed = parse_token(token)

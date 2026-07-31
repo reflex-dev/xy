@@ -1,8 +1,9 @@
 """Tests for the bundled ``xy[reflex]`` integration.
 
 These run only when the optional framework dependency is installed
-(`uv pip install -e ".[reflex]" --group dev`); plain `xy` must never require
-Reflex (CLAUDE.md dependency rule), so everything here importorskips.
+(`uv sync --extra reflex --group dev`); plain `xy` must never require Reflex
+(CLAUDE.md dependency rule), so this suite uses ``pytest.importorskip`` for
+both optional import namespaces.
 """
 
 from __future__ import annotations

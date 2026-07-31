@@ -62,6 +62,8 @@ def test_wrapper_speaks_the_namespace_protocol():
         assert f"socket.on({needle}" in jsx
     # binary columns go straight into typed arrays — never through JSON numbers
     assert "new Uint8Array(b)" in jsx
+    assert "data.version < payloadVersion" in jsx
+    assert 'message.type === "append"' in jsx
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render
@@ -71,7 +73,9 @@ def test_wrapper_speaks_the_namespace_protocol():
         "renderStandalone(\n"
         "          el, withHoverFlag(fitSpecToElement(frame.message)), frame.buffers[0])"
     ) in jsx
-    assert "fetch(src)" in jsx
+    assert "const controller = new AbortController()" in jsx
+    assert "fetch(src, { signal: controller.signal })" in jsx
+    assert "controller.abort()" in jsx
 
 
 def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():

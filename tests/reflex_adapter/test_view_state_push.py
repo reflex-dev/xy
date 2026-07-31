@@ -26,7 +26,8 @@ def _wired(registry: FigureRegistry):
     """Attach a recording push seam on a fresh loop; returns (run, pushed)."""
     pushed: list[tuple[str, dict, list[bytes]]] = []
 
-    async def on_push(token, message, buffers):
+    async def on_push(token, message, buffers, version=None):
+        assert version is None  # view-state pushes do not mutate figure data
         pushed.append((token, message, buffers))
 
     def run(call) -> None:

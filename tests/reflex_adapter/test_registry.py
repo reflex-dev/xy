@@ -35,6 +35,22 @@ def test_publish_versioning(_fresh_registry):
     assert registry.publish("tok", make_figure(32), broadcast=False).version == 2
 
 
+def test_publish_replacement_creates_a_consistent_generation(_fresh_registry):
+    registry = _fresh_registry
+    first_figure = make_figure(8)
+    first = registry.publish("tok", first_figure, broadcast=False)
+    second = registry.publish("tok", make_figure(32), broadcast=False)
+
+    assert second is not first
+    assert first.figure is first_figure
+    assert first.version == 1
+    assert second.version == 2
+    assert registry.is_current("tok", second)
+    assert not registry.is_current("tok", first)
+    assert registry.bump("tok", expected=first) is None
+    assert second.version == 2
+
+
 def test_bump_records_in_place_mutation(_fresh_registry):
     registry = _fresh_registry
     token = registry.register(make_figure())

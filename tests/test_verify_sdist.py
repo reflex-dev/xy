@@ -235,6 +235,14 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             r"reflex>=0\.9\.6",
         ),
         (
+            DEFAULT_PKG_INFO + "Requires-Dist: reflex<0.9.6; extra == 'reflex'\n",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n",
+            "exactly one requirement",
+        ),
+        (
             DEFAULT_PKG_INFO.replace("; extra == 'reflex'", ""),
             "only xy base dependencies",
         ),
@@ -278,6 +286,22 @@ def test_verify_sdist_rejects_partial_type_marker(tmp_path: Path) -> None:
     _write_sdist(sdist, replacements={"python/xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_reflex_type_marker(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/reflex_xy/py.typed"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_partial_reflex_type_marker(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, replacements={"python/reflex_xy/py.typed": "partial\n"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
         verify_sdist.verify_sdist(str(sdist))
 
 

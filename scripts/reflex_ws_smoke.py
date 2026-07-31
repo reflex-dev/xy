@@ -312,6 +312,7 @@ def main() -> None:
             point = probe.wait_for(
                 """(() => {
                   const v = window.__xy_views.get('cloud');
+                  if (!v || v._interactionTransitionActive()) return null;
                   const r = v.canvas.getBoundingClientRect();
                   for (let y = 0; y < r.height; y += 2) {
                     for (let x = 0; x < r.width; x += 2) {

@@ -283,6 +283,14 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             r"reflex>=0\.9\.6",
         ),
         (
+            DEFAULT_METADATA + "\nRequires-Dist: reflex<0.9.6; extra == 'reflex'",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.9.6; extra == 'reflex'",
+            "exactly one requirement",
+        ),
+        (
             DEFAULT_METADATA.replace("; extra == 'reflex'", ""),
             "only xy base dependencies",
         ),
@@ -321,11 +329,27 @@ def test_verify_wheel_rejects_missing_reflex_integration(tmp_path: Path) -> None
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+def test_verify_wheel_rejects_missing_reflex_type_marker(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"reflex_xy/py.typed"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
 def test_verify_wheel_rejects_partial_type_marker(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, replacements={"xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_partial_reflex_type_marker(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, replacements={"reflex_xy/py.typed": "partial\n"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

@@ -130,11 +130,13 @@ class XYNamespace(AsyncNamespace):
     # -- connection lifecycle ------------------------------------------------
 
     async def on_connect(self, sid: str, environ: dict) -> None:
-        """Record the Reflex client token this connection authenticated with.
+        """Record the Reflex client token presented by this connection.
 
         The engine.io connection is shared with Reflex's `/_event` namespace,
-        so the same `?token=` query string reaches us — session affinity and
-        any future connection auth are inherited, not reimplemented.
+        so the same `?token=` query string reaches us. Reflex treats this as a
+        bearer session identifier (its TokenManager links rather than
+        authenticates it); engine-level origin/auth policy is inherited from
+        the shared connection.
         """
         query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
         token_list = query.get("token", [])
@@ -158,6 +160,8 @@ class XYNamespace(AsyncNamespace):
         await self.enter_room(sid, self._room(token))
         async with entry.lock:
             spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure, px)
+        if not self.registry.is_current(token, entry):
+            return
         await self.emit(
             "payload",
             {
@@ -180,18 +184,24 @@ class XYNamespace(AsyncNamespace):
         token, entry = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
+        message_version: Optional[int] = None
         if isinstance(data, dict) and data.get("v") is not None:
             try:
                 message_version = int(data["v"])
             except (TypeError, ValueError):
-                message_version = entry.version
-            if message_version != entry.version:
-                return
+                message_version = None
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
+            if not self.registry.is_current(token, entry):
+                return
+            operation_version = entry.version
+            if message_version is not None and message_version != operation_version:
+                return
             # Kernel work off the event loop: the Rust kernels release the
             # GIL, so a slow view recompute never stalls app-plane traffic.
             reply = await asyncio.to_thread(handle_message, entry.figure, content, None)
+            if not self.registry.is_current(token, entry) or entry.version != operation_version:
+                return
         if reply is None:
             return
         message, buffers = reply
@@ -206,6 +216,7 @@ class XYNamespace(AsyncNamespace):
             return
         envelope: dict[str, Any] = {
             "fig": token,
+            "version": operation_version,
             "message": _plain(message),
             "buffers": wire_buffers,
         }
@@ -219,7 +230,11 @@ class XYNamespace(AsyncNamespace):
     # -- server-side pushes (append/refresh fan-out) ---------------------------
 
     async def broadcast_message(
-        self, token: str, message: dict[str, Any], buffers: Optional[list[bytes]] = None
+        self,
+        token: str,
+        message: dict[str, Any],
+        buffers: Optional[list[bytes]] = None,
+        version: Optional[int] = None,
     ) -> None:
         """Push one channel message to every subscriber of a figure."""
         wire_buffers = _buffer_bytes(buffers)
@@ -233,20 +248,21 @@ class XYNamespace(AsyncNamespace):
                 room=self._room(token),
             )
             return
-        await self.emit(
-            "msg",
-            {
-                "fig": token,
-                "message": _plain(message),
-                "buffers": wire_buffers,
-            },
-            room=self._room(token),
-        )
+        envelope = {
+            "fig": token,
+            "message": _plain(message),
+            "buffers": wire_buffers,
+        }
+        if version is not None:
+            envelope["version"] = version
+        await self.emit("msg", envelope, room=self._room(token))
 
     async def broadcast_payload(self, token: str, entry: FigureEntry) -> None:
         """Push a full refreshed payload (figure rebuilt) to subscribers."""
         async with entry.lock:
             spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure)
+        if not self.registry.is_current(token, entry):
+            return
         await self.emit(
             "payload",
             {

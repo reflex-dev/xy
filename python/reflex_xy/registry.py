@@ -77,7 +77,9 @@ class FigureRegistry:
         self._on_publish: Optional[Callable[[str, FigureEntry], Awaitable[None]]] = None
         # async callback(token, message, buffers) -> None for incremental
         # pushes (append) — same seam, message-shaped instead of payload-shaped.
-        self._on_push: Optional[Callable[[str, dict, list[bytes]], Awaitable[None]]] = None
+        self._on_push: Optional[
+            Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
+        ] = None
 
     # -- wiring ------------------------------------------------------------
 
@@ -87,7 +89,10 @@ class FigureRegistry:
     def on_publish(self, callback: Callable[[str, FigureEntry], Awaitable[None]]) -> None:
         self._on_publish = callback
 
-    def on_push(self, callback: Callable[[str, dict, list[bytes]], Awaitable[None]]) -> None:
+    def on_push(
+        self,
+        callback: Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]],
+    ) -> None:
         self._on_push = callback
 
     # -- core map ----------------------------------------------------------
@@ -98,6 +103,11 @@ class FigureRegistry:
             if entry is not None:
                 entry.touch()
             return entry
+
+    def is_current(self, token: str, entry: FigureEntry) -> bool:
+        """Whether ``entry`` is still the live generation for ``token``."""
+        with self._mutex:
+            return self._entries.get(token) is entry
 
     def publish(
         self, token: str, figure: "Figure", *, broadcast: bool = True, pinned: bool = False
@@ -117,10 +127,20 @@ class FigureRegistry:
             else:
                 changed = entry.figure is not figure
                 if changed:
-                    entry.figure = figure
-                    entry.version += 1
-                entry.pinned = entry.pinned or pinned
-                entry.touch()
+                    # A replacement is a new immutable generation. In-flight
+                    # handlers keep a self-consistent old figure/version pair
+                    # instead of observing the old figure with a newly bumped
+                    # version. Their results are discarded by ``is_current``.
+                    entry = FigureEntry(
+                        figure=figure,
+                        token=token,
+                        version=entry.version + 1,
+                        pinned=entry.pinned or pinned,
+                    )
+                    self._entries[token] = entry
+                else:
+                    entry.pinned = entry.pinned or pinned
+                    entry.touch()
         if broadcast and changed:
             # Re-publishing the identical object means nothing moved; a new
             # figure object is the signal subscribers need a fresh payload.
@@ -152,11 +172,11 @@ class FigureRegistry:
 
     # -- version bump + fan-out ---------------------------------------------
 
-    def bump(self, token: str) -> Optional[FigureEntry]:
+    def bump(self, token: str, *, expected: Optional[FigureEntry] = None) -> Optional[FigureEntry]:
         """Record an in-place mutation (e.g. append) without broadcast."""
         with self._mutex:
             entry = self._entries.get(token)
-            if entry is None:
+            if entry is None or (expected is not None and entry is not expected):
                 return None
             entry.version += 1
             entry.touch()
@@ -213,12 +233,17 @@ class FigureRegistry:
         """
         loop = self._loop
         if loop is None:
-            entry = self.get(token)
-            if entry is None:
-                msg = f"unknown figure token: {token!r}"
-                raise KeyError(msg)
-            entry.figure.append(trace, x, y, color=color, size=size)
-            self.bump(token)
+            # With no serving loop there are no namespace handlers, so hold
+            # the map mutex across the mutation and version bump. A concurrent
+            # publish cannot replace the generation between those operations.
+            with self._mutex:
+                entry = self._entries.get(token)
+                if entry is None:
+                    msg = f"unknown figure token: {token!r}"
+                    raise KeyError(msg)
+                entry.figure.append(trace, x, y, color=color, size=size)
+                entry.version += 1
+                entry.touch()
             return
 
         async def _do() -> None:
@@ -229,10 +254,15 @@ class FigureRegistry:
                 message, buffers = await asyncio.to_thread(
                     entry.figure.append, trace, x, y, color=color, size=size
                 )
-                self.bump(token)
-            push = self._on_push
-            if push is not None:
-                await push(token, message, list(buffers))
+                bumped = self.bump(token, expected=entry)
+                if bumped is None:
+                    return  # a replacement won; never mutate/bump its generation
+                push = self._on_push
+                if push is not None:
+                    # Keep append pushes ordered under the generation lock.
+                    # The wire version lets the client discard this delta if
+                    # a replacement payload overtakes it.
+                    await push(token, message, list(buffers), bumped.version)
 
         try:
             running = asyncio.get_running_loop()
@@ -268,7 +298,7 @@ class FigureRegistry:
             return  # unwired (tests, headless): validated, nobody to push to
 
         async def _do() -> None:
-            await push(token, message, list(buffers))
+            await push(token, message, list(buffers), None)
 
         try:
             running = asyncio.get_running_loop()

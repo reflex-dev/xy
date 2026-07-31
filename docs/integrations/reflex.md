@@ -17,8 +17,9 @@ rendering, and interaction math.
 
 ## Install and Configure
 
-Install the `reflex` extra from PyPI. It selects a compatible Reflex version;
-the `reflex_xy` import namespace is already included in every `xy` wheel:
+Install the `reflex` extra from PyPI. It installs the supported Reflex
+dependency floor; the `reflex_xy` import namespace is already included in
+every `xy` wheel:
 
 ~~~~md tabs
 ## uv
@@ -219,8 +220,8 @@ objects never enter standalone HTML. For ordinary DOM customization, use the
 ~~~md alert warning
 ### Experimental Boundary
 
-The Reflex adapter and callback payload details are still experimental and the
-package has no PyPI release. Keep `xy` and the adapter on the matching tag, and
-build against `reflex_xy.chart`, `@reflex_xy.figure`, and `reflex_xy.append`
-rather than private transport or registry modules.
+The Reflex adapter and callback payload details are still experimental. Pin
+`xy` when you need a stable integration contract, and build against
+`reflex_xy.chart`, `@reflex_xy.figure`, and `reflex_xy.append` rather than
+private transport or registry modules.
 ~~~

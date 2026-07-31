@@ -98,7 +98,7 @@ node js/build.mjs                     # typecheck + regenerate minified static/ 
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 python3 scripts/append_stream_smoke.py   # streaming-append tail uploads + coalesced refines
-uv venv && uv pip install -e ".[reflex]" --group dev
+uv sync --extra reflex --group dev
 uv run pytest                         # native core required (no fallback)
 python3 scripts/reflex_ws_smoke.py    # browser E2E vs the running Reflex demo app
 uv run ruff check . && uv run ruff format . && uv run ty check

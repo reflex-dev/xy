@@ -20,6 +20,11 @@ from email.parser import Parser
 from pathlib import PurePosixPath
 from typing import Optional
 
+try:
+    from artifact_metadata import dependency_metadata_errors
+except ModuleNotFoundError:  # imported by tests from the repository root
+    from scripts.artifact_metadata import dependency_metadata_errors
+
 REQUIRED_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
@@ -82,6 +87,7 @@ REQUIRED_FILES = {
     "python/reflex_xy/events.py",
     "python/reflex_xy/namespace.py",
     "python/reflex_xy/payload_asset.py",
+    "python/reflex_xy/py.typed",
     "python/reflex_xy/registry.py",
     "python/reflex_xy/selections.py",
     "python/reflex_xy/state_bridge.py",
@@ -122,6 +128,7 @@ REQUIRED_FILES = {
     "scripts/bench_dashboard.py",
     "scripts/bench_interaction.py",
     "scripts/bench_pyplot_vs_matplotlib.py",
+    "scripts/artifact_metadata.py",
     "scripts/verify_ci_workflow.py",
     "scripts/verify_benchmark_report.py",
     "scripts/verify_local.py",
@@ -199,35 +206,6 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     return root, files
 
 
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
-        )
-    )
-
-
-def _dependency_name(requirement: str) -> str:
-    requirement = requirement.split(";", 1)[0].strip()
-    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
-    return "" if match is None else match.group(1).replace("_", "-").lower()
-
-
-def _requires_extra(requirement: str, extra: str) -> bool:
-    _, separator, marker = requirement.partition(";")
-    return bool(
-        separator
-        and re.fullmatch(
-            rf"\s*extra\s*==\s*['\"]{re.escape(extra)}['\"]\s*",
-            marker,
-            flags=re.IGNORECASE,
-        )
-    )
-
-
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -247,39 +225,7 @@ def _require_pkg_info(path: str, root: str) -> None:
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
-    requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
-            for requirement in requirements
-        ):
-            missing.append(f"Requires-Dist: {package}>={minimum}")
-    reflex_requirements = [
-        requirement
-        for requirement in requirements
-        if _dependency_name(requirement) == "reflex" and _requires_extra(requirement, "reflex")
-    ]
-    if not any(
-        _dependency_satisfies_floor(requirement, "reflex", "0.9.6")
-        for requirement in reflex_requirements
-    ):
-        missing.append("Requires-Dist: reflex>=0.9.6; extra == 'reflex'")
-    unexpected_requirements = []
-    for requirement in requirements:
-        name = _dependency_name(requirement)
-        if name in {"anywidget", "numpy"} and ";" not in requirement:
-            continue
-        if name == "reflex" and _requires_extra(requirement, "reflex"):
-            continue
-        unexpected_requirements.append(requirement)
-    if unexpected_requirements:
-        missing.append(
-            "only xy base dependencies plus the Reflex extra in Requires-Dist "
-            f"({unexpected_requirements})"
-        )
-    provided_extras = {extra.strip().lower() for extra in metadata.get_all("Provides-Extra") or []}
-    if provided_extras != {"reflex"}:
-        missing.append(f"Provides-Extra: reflex (got {sorted(provided_extras)})")
+    missing.extend(dependency_metadata_errors(metadata))
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
@@ -359,6 +305,7 @@ def verify_sdist(path: str) -> None:
         raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
+    _require_exact_file(path, root, "python/reflex_xy/py.typed", b"")
     _require_baseline_json(path, root)
     _require_file_contains(
         path,

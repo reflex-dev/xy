@@ -1,6 +1,6 @@
 # Reflex integration — design
 
-Status: **prototype landed** (`python/reflex_xy`, tests under
+Status: **implementation landed** (`python/reflex_xy`, tests under
 `tests/reflex_adapter/`). This document is the authoritative design; the
 prototype implements it end to end over Reflex 0.9.6. The deliverable is an
 integration bundled in the `xy` distribution and installed with

@@ -356,9 +356,10 @@ export function XYChart(props) {
     const key = outerRef.current?.id || `src:${src}`;
     let view = null;
     let cancelled = false;
+    const controller = new AbortController();
     const handleViewChange = (event) => cbRef.current.onViewChange?.(event.detail);
     el.addEventListener("xy:view_change", handleViewChange);
-    fetch(src)
+    fetch(src, { signal: controller.signal })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.arrayBuffer();
@@ -380,6 +381,7 @@ export function XYChart(props) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
       reclaimTooltipSlot();
       if (view) view.destroy();
       view = null;
@@ -556,6 +558,11 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
+      if (
+        Number.isInteger(data.version)
+        && payloadVersion !== null
+        && data.version < payloadVersion
+      ) return;
       // The public durable-state document is the authoritative client mirror:
       // unlike `lastSelect`, it includes linked selections, x/y band mode, and
       // every named axis range. Fall back only for an older client bundle that
@@ -620,6 +627,13 @@ export function XYChart(props) {
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
       if (!message) return;
+      const wireVersion = Number.isInteger(data.version) ? data.version : null;
+      if (wireVersion !== null && payloadVersion !== null) {
+        const expected = message.type === "append" && data.mid == null
+          ? payloadVersion + 1
+          : payloadVersion;
+        if (wireVersion !== expected) return;
+      }
       let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
         const clickInput = clickInputs.get(message.seq);
@@ -666,6 +680,9 @@ export function XYChart(props) {
         }
       }
       for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
+      if (wireVersion !== null && message.type === "append" && data.mid == null) {
+        payloadVersion = wireVersion;
+      }
     };
 
     const onErr = (data) => {

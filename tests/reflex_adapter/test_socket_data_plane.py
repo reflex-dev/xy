@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import socket
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -348,6 +349,48 @@ def test_stale_message_versions_are_dropped(_fresh_registry):
     run(main())
 
 
+def test_reply_from_replaced_generation_is_dropped(_fresh_registry, monkeypatch):
+    started = threading.Event()
+    resume = threading.Event()
+
+    def slow_handle_message(figure, content, callbacks):
+        started.set()
+        assert resume.wait(timeout=5)
+        return {"type": "pick_result", "seq": 99, "row": None}, []
+
+    monkeypatch.setattr("reflex_xy.namespace.handle_message", slow_handle_message)
+
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "mid": "m1"}, namespace="/_xy")
+            await collector.next(collector.payloads)
+
+            await client.emit(
+                "msg",
+                {
+                    "fig": token,
+                    "mid": "m1",
+                    "v": 1,
+                    "m": {"type": "pick", "trace": 0, "index": 2, "seq": 99},
+                },
+                namespace="/_xy",
+            )
+            assert await asyncio.to_thread(started.wait, 5)
+            registry.publish(token, make_figure(32))
+            resume.set()
+
+            replacement = await collector.next(collector.payloads)
+            assert replacement["version"] == 2
+            with pytest.raises(asyncio.TimeoutError):
+                await Collector.next(collector.messages, timeout=0.15)
+            await client.disconnect()
+
+    run(main())
+
+
 def test_state_token_affinity_enforced(_fresh_registry):
     async def main():
         state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
@@ -446,6 +489,7 @@ def test_append_streams_to_subscribers(_fresh_registry):
             reflex_xy.append(token, x=[2.0, 3.0], y=[6.0, 9.0])
             push = await collector.next(collector.messages)
             assert push["message"]["type"] == "append"
+            assert push["version"] == 2
             assert push.get("mid") is None  # pushes are room-wide, not mount-addressed
             assert registry.get(token).version == 2
             assert registry.get(token).figure.traces[0].n_points == 6

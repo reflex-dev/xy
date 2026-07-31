@@ -380,8 +380,10 @@ Before tagging a release:
   `PKG-INFO` package name, Python floor, runtime dependencies, docs, tests,
   scripts, benchmark harnesses/baselines, the example apps' source, and no
   native binaries or generated caches.
-- Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
-  install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
+- Confirm each platform wheel passes `scripts/verify_wheel.py --expect-native`
+  and its install smoke loads `xy.kernels.BACKEND == "native"`. Confirm the
+  fallback `py3-none-any` wheel passes `--expect-pure` and fails compute with
+  the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
   `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel

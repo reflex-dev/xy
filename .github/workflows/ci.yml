@@ -137,8 +137,7 @@ jobs:
 
       - name: Install package + dev deps
         run: |
-          uv venv .venv
-          uv pip install -p .venv/bin/python -e ".[reflex]" --group dev
+          uv sync --extra reflex --group dev
 
       - name: Verify bundled Reflex integration import
         run: |
