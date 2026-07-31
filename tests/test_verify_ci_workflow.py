@@ -1382,6 +1382,42 @@ def test_release_workflow_rejects_sibling_release_api_mutation(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
+    ("marker", "replacement"),
+    [
+        ('                2>"$release_lookup_error"\n', "                2>/dev/null\n"),
+        (
+            "          elif ! jq -eRs '. == \"release not found\\n\"' "
+            '"$release_lookup_error" >/dev/null; then\n',
+            "          else\n",
+        ),
+        ('else error("invalid isImmutable") end', 'else "false" end'),
+    ],
+)
+def test_release_workflow_rejects_fail_open_immutable_preflight(
+    tmp_path: Path,
+    marker: str,
+    replacement: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    before, inspect_marker, after = workflow.partition("      - name: Inspect existing release\n")
+    assert inspect_marker
+    inspect_step, next_marker, remainder = after.partition(
+        "      - name: Prepare release provenance\n"
+    )
+    assert next_marker
+    mutated_step = _replace_once(inspect_step, marker, replacement)
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + inspect_marker + mutated_step + next_marker + remainder,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact fail-closed" in error for error in errors)
+
+
+@pytest.mark.parametrize(
     "shell_value",
     ["python", "pwsh", "bash {0}", "bash -c", "${{ matrix.release_shell }}"],
 )
@@ -3140,6 +3176,147 @@ exec "$@"
         encoding="utf-8",
     )
     fake_timeout.chmod(0o755)
+
+
+def _run_release_state_preflight(
+    tmp_path: Path,
+    *,
+    mode: str,
+    response: str = "",
+) -> tuple[subprocess.CompletedProcess[str], str, list[Path]]:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    inspect_shell = verify_ci_workflow._named_step_run(
+        verify_ci_workflow._job_blocks(workflow)["github-release"],
+        "Inspect existing release",
+    )
+    assert inspect_shell is not None
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_passthrough_timeout(fake_bin)
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "$GH_MODE" in
+  success)
+    printf '%s\\n' "$GH_RESPONSE"
+    ;;
+  not-found)
+    printf 'release not found\\n' >&2
+    exit 1
+    ;;
+  auth-error)
+    printf 'HTTP 401: Bad credentials\\n' >&2
+    exit 1
+    ;;
+  timeout)
+    exit 124
+    ;;
+  *)
+    exit 98
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    github_output = tmp_path / "github-output"
+    env = os.environ | {
+        "GITHUB_OUTPUT": str(github_output),
+        "GH_MODE": mode,
+        "GH_RESPONSE": response,
+        "GH_TOKEN": "test-token",
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "REPO": "reflex-dev/xy",
+        "RUNNER_TEMP": str(runner_temp),
+        "TAG": "v1.2.3",
+    }
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", inspect_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    output = github_output.read_text(encoding="utf-8") if github_output.exists() else ""
+    return result, output, list(runner_temp.iterdir())
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+@pytest.mark.parametrize(
+    ("response", "expected_output"),
+    [
+        ('{"isImmutable":true}', "immutable=true\n"),
+        ('{"isImmutable":false}', "immutable=false\n"),
+    ],
+)
+def test_release_state_preflight_reports_boolean_metadata(
+    tmp_path: Path,
+    response: str,
+    expected_output: str,
+) -> None:
+    result, output, leftovers = _run_release_state_preflight(
+        tmp_path,
+        mode="success",
+        response=response,
+    )
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert output == expected_output
+    assert leftovers == []
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_state_preflight_treats_only_exact_not_found_as_absent(
+    tmp_path: Path,
+) -> None:
+    result, output, leftovers = _run_release_state_preflight(tmp_path, mode="not-found")
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert output == "immutable=false\n"
+    assert leftovers == []
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+@pytest.mark.parametrize(
+    ("mode", "response"),
+    [
+        ("auth-error", ""),
+        ("timeout", ""),
+        ("success", "{"),
+        ("success", "{}"),
+        ("success", '{"isImmutable":"true"}'),
+    ],
+)
+def test_release_state_preflight_fails_closed_on_lookup_or_metadata_errors(
+    tmp_path: Path,
+    mode: str,
+    response: str,
+) -> None:
+    result, output, leftovers = _run_release_state_preflight(
+        tmp_path,
+        mode=mode,
+        response=response,
+    )
+
+    assert result.returncode != 0
+    assert output == ""
+    assert leftovers == []
 
 
 @pytest.mark.skipif(

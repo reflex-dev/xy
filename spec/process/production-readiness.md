@@ -414,11 +414,10 @@ Before tagging a release:
   signed manifest and PyPI bytes instead of requiring a later rebuild to be
   archive-byte-identical. Every `workflow_dispatch` run (including
   `dry_run=false`) skips GitHub Release creation. Before production promotion,
-  the docs workflow verifies that
-  signed provenance and note binding, rejects yanked or unsupported PyPI
-  uploads, and requires the exact distribution filename set and SHA-256
-  digests to agree across the downloaded GitHub Release assets, manifest, and
-  PyPI metadata.
+  the docs workflow verifies signed provenance and note binding, rejects
+  yanked or unsupported PyPI uploads, and requires the exact distribution
+  filename set and SHA-256 digests to agree across the downloaded GitHub
+  Release assets, manifest, and PyPI metadata.
 
 ### reflex-xy releases
 

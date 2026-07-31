@@ -351,15 +351,26 @@ jobs:
         shell: bash
         run: |
           immutable=false
+          release_lookup_error="$(mktemp "${RUNNER_TEMP}/xy-release-state-error.XXXXXX")"
           if release_json="$(
             timeout --signal=TERM --kill-after=5s 30s \
               gh release view "$TAG" \
                 --repo "$REPO" \
                 --json isImmutable \
-                2>/dev/null
-          )" && [[ "$(jq -r '.isImmutable' <<<"$release_json")" == "true" ]]; then
-            immutable=true
+                2>"$release_lookup_error"
+          )"; then
+            if ! immutable="$(jq -er '.isImmutable | if . == true then "true" elif . == false then "false" else error("invalid isImmutable") end' <<<"$release_json")"; then
+              rm -f "$release_lookup_error"
+              echo "::error::GitHub returned invalid release metadata for ${TAG}"
+              exit 1
+            fi
+          elif ! jq -eRs '. == "release not found\n"' "$release_lookup_error" >/dev/null; then
+            cat "$release_lookup_error" >&2
+            rm -f "$release_lookup_error"
+            echo "::error::Could not inspect existing GitHub Release ${TAG}; refusing to prepare provenance"
+            exit 1
           fi
+          rm -f "$release_lookup_error"
           echo "immutable=${immutable}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release provenance

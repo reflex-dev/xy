@@ -3110,39 +3110,41 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 errors.append(
                     "release immutable-release preflight must not use indirect shell execution"
                 )
-            missing = _missing_needles(
-                inspect_shell,
+            expected_inspect_shell = "\n".join(
                 (
-                    'gh release view "$TAG"',
-                    "--json isImmutable",
-                    "immutable=true",
+                    "immutable=false",
+                    'release_lookup_error="$(mktemp '
+                    '"${RUNNER_TEMP}/xy-release-state-error.XXXXXX")"',
+                    'if release_json="$(',
+                    "  timeout --signal=TERM --kill-after=5s 30s \\",
+                    '    gh release view "$TAG" \\',
+                    '      --repo "$REPO" \\',
+                    "      --json isImmutable \\",
+                    '      2>"$release_lookup_error"',
+                    ')"; then',
+                    "  if ! immutable=\"$(jq -er '.isImmutable | "
+                    'if . == true then "true" elif . == false then "false" '
+                    'else error("invalid isImmutable") end\' <<<"$release_json")"; then',
+                    '    rm -f "$release_lookup_error"',
+                    '    echo "::error::GitHub returned invalid release metadata for ${TAG}"',
+                    "    exit 1",
+                    "  fi",
+                    "elif ! jq -eRs '. == \"release not found\\n\"' "
+                    '"$release_lookup_error" >/dev/null; then',
+                    '  cat "$release_lookup_error" >&2',
+                    '  rm -f "$release_lookup_error"',
+                    '  echo "::error::Could not inspect existing GitHub Release '
+                    '${TAG}; refusing to prepare provenance"',
+                    "  exit 1",
+                    "fi",
+                    'rm -f "$release_lookup_error"',
                     'echo "immutable=${immutable}" >> "$GITHUB_OUTPUT"',
-                ),
+                )
             )
-            if missing:
-                errors.append(f"release immutable-release preflight is incomplete: {missing}")
-            inspect_tokens = [
-                "timeout",
-                "--signal=TERM",
-                "--kill-after=5s",
-                "30s",
-                "gh",
-                "release",
-                "view",
-                "$TAG",
-                "--repo",
-                "$REPO",
-                "--json",
-                "isImmutable",
-                "2>/dev/null",
-            ]
-            inspect_commands = [
-                tokens for _, _, tokens in _shell_command_records(inspect_shell) if "gh" in tokens
-            ]
-            if inspect_commands != [inspect_tokens]:
+            if inspect_shell != expected_inspect_shell:
                 errors.append(
-                    "release immutable-release preflight must use one exact "
-                    "30-second timeout-bounded metadata read"
+                    "release immutable-release preflight must use the exact fail-closed, "
+                    "timeout-bounded metadata probe and accept only a boolean immutable state"
                 )
 
         immutable_skip = "steps.release_state.outputs.immutable != 'true'"
