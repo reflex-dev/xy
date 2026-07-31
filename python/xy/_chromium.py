@@ -238,6 +238,12 @@ class ChromiumSession:
         def wait_timeout() -> float:
             return min(10.0, max(0.0, deadline - time.monotonic()))
 
+        def reap_timeout() -> float:
+            # SIGKILL still needs wait() to collect the child.  Preserve the
+            # caller's remaining budget when possible, but allow one bounded
+            # second after expiry so cleanup does not leave a zombie.
+            return max(1.0, wait_timeout())
+
         try:
             running = proc.poll() is None
         except Exception:
@@ -251,12 +257,12 @@ class ChromiumSession:
             with contextlib.suppress(Exception):
                 proc.kill()
             with contextlib.suppress(Exception):
-                proc.wait(timeout=wait_timeout())
+                proc.wait(timeout=reap_timeout())
         except Exception:
             with contextlib.suppress(Exception):
                 proc.kill()
             with contextlib.suppress(Exception):
-                proc.wait(timeout=wait_timeout())
+                proc.wait(timeout=reap_timeout())
 
     def _abort_session(self, deadline: float) -> None:
         """Make an ambiguously mutated CDP session impossible to reuse."""

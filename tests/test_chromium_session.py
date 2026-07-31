@@ -171,7 +171,7 @@ def test_websocket_closes_socket_when_handshake_fails(monkeypatch: pytest.Monkey
     assert sock.closed
 
 
-def test_failed_init_cleanup_does_not_wait_past_launch_deadline(
+def test_failed_init_cleanup_uses_only_bounded_reap_grace_after_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     temp_paths = _track_tempdirs(monkeypatch)
@@ -211,10 +211,10 @@ def test_failed_init_cleanup_does_not_wait_past_launch_deadline(
     with pytest.raises(_chromium.ChromiumError, match="handshake failed"):
         _chromium.ChromiumSession("/fake/chromium", launch_timeout_s=5.0)
 
-    assert now == pytest.approx(5.0)
+    assert now == pytest.approx(6.0)
     assert process.terminate_calls == 1
     assert process.kill_calls == 1
-    assert process.wait_calls == [pytest.approx(1.0), 0.0]
+    assert process.wait_calls == [pytest.approx(1.0), pytest.approx(1.0)]
     assert stderr_files[0].closed
     assert len(temp_paths) == 1
     assert not temp_paths[0].exists()
@@ -421,7 +421,7 @@ def test_page_session_aborts_browser_when_target_creation_is_ambiguous(
     assert session._ws is None
     assert process.terminate_calls == 1
     assert process.kill_calls == 1
-    assert process.wait_calls == [0.0, 0.0]
+    assert process.wait_calls == [0.0, pytest.approx(1.0)]
     with pytest.raises(_chromium.ChromiumError, match="no longer usable"):
         _chromium.ChromiumSession._call(session, "Page.navigate", timeout_s=1.0)
 
