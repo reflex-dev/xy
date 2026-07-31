@@ -6859,10 +6859,14 @@ def wind_rose(
     # reads as broken. A wind rose is the exception this default is written
     # around: its radius is a FREQUENCY COUNT, so scaling the outer ring against
     # a pinned zero is exactly the useful gesture (it magnifies the short
-    # sectors of a rose dominated by one prevailing direction). `setdefault`, so
-    # an author's own `zoom=` — or an `xy.interaction_config(zoom=False)` child,
-    # which is applied after chart props — still wins.
-    props.setdefault("zoom", True)
+    # sectors of a rose dominated by one prevailing direction). An author's own
+    # `zoom=` — or an `xy.interaction_config(zoom=False)` child, which is applied
+    # after chart props — still wins. `None` is "unset" everywhere else in this
+    # API, so it must keep the rose's default rather than fall through to the
+    # polar one: a wrapper forwarding an `Optional[bool]` would otherwise turn
+    # zoom OFF by passing the value that means "I have no opinion".
+    if props.get("zoom") is None:
+        props["zoom"] = True
     return Chart("wind_rose", children, **props)
 
 

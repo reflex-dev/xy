@@ -23,13 +23,13 @@ Back and Next view-history controls live at the top of the zoom menu. They
 disable automatically at the ends of the history, remain open while stepping
 through views, and a new navigation after going Back clears the forward stack.
 
-Polar charts use a narrower control contract: hover, reset, and export remain
-available, and zoom is off by default — `xy.wind_rose()` is the one polar chart
-that ships with it on. A polar chart without zoom shows no zoom menu at all: no
-zoom percentage, no Zoom In/Out, and no Back/Next history, because nothing can
-move the view. Add `xy.interaction_config(zoom=True)` and the menu returns with
-radial wheel/button zoom, which scales `r_max` about a fixed `r_min` while
-preserving an authored `hole` or `origin`. Authored angular sectors render
+Polar charts use a narrower control contract: hover and export remain available,
+and zoom is off by default — `xy.wind_rose()` is the one polar chart that ships
+with it on. A polar chart without zoom shows no zoom menu at all: no zoom
+percentage, no Zoom In/Out, no Fit Data or Reset View, and no Back/Next history,
+because nothing can move the view. Add `xy.interaction_config(zoom=True)` and the
+whole menu returns, including radial wheel/button zoom, which scales `r_max` about
+a fixed `r_min` while preserving an authored `hole` or `origin`. Authored angular sectors render
 normally, but Pan/theta rotation, interactive sector zoom, box zoom, selection,
 brushing, and crosshairs do not yet have polar semantics and stay disabled even
 when a general interaction flag is enabled. The polar modebar therefore omits the

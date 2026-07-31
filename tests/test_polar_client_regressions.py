@@ -550,6 +550,68 @@ setTimeout(() => {
     assert result["zoomMenu"] is False
 
 
+def test_wind_rose_keeps_radial_zoom_without_restoring_box_zoom(tmp_path: Path) -> None:
+    """The wind-rose exception grants RADIAL zoom, not the rectangle gestures.
+
+    `zoom` is the generic capability, so enabling it on the one polar chart that
+    wants zoom raises the question of whether `box_zoom` (which defaults to true)
+    comes back with it. It does not: the client forces `box_zoom`, `select`,
+    `brush`, and `crosshair` off under `coords="polar"` regardless of the flags
+    (§8), so a default rose gets the wheel, the Zoom In/Out buttons, and reset —
+    and no Box Zoom item, no Pan button, and a resolved drag tool of `none`.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    bearings = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] * 4
+    speeds = [1.0, 4.0, 9.0, 3.0, 6.0, 2.0, 7.0, 5.0] * 4
+    chart = xy.wind_rose(bearings, speeds, width=420, height=420)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    document.body.setAttribute("data-xy-rose-zoom", JSON.stringify({
+      zoomFlag: view._interactionFlag("zoom", true),
+      boxZoomFlag: view._interactionFlag("box_zoom", true),
+      dragMode: view.dragMode,
+      zoomAxes: view._axisPolicy("zoom_axes"),
+      resetAxes: view._resetAxisPolicy(),
+      zoomIn: !!view.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      resetItem: !!view.root.querySelector('[data-xy-modebar-menu-item="reset"]'),
+      boxZoomItem: !!view.root.querySelector('[data-xy-modebar-menu-item="zoom"]'),
+      panButton: !!view.root.querySelector('[data-xy-modebar-action="pan"]'),
+      selectTrigger: !!view.root.querySelector('[data-xy-modebar-select-trigger]'),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-rose-zoom-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "wind_rose_zoom.html",
+        "data-xy-rose-zoom",
+        label="wind rose zoom scope",
+    )
+    # Granted: radial zoom on the r axis only, plus its reset.
+    assert result["zoomFlag"] is True
+    assert result["zoomAxes"] == ["y"]
+    assert result["resetAxes"] == ["y"]
+    assert result["zoomIn"] is True
+    assert result["resetItem"] is True
+    # Withheld: every rectangle-shaped gesture, and any drag tool at all.
+    assert result["boxZoomFlag"] is False
+    assert result["boxZoomItem"] is False
+    assert result["panButton"] is False
+    assert result["selectTrigger"] is False
+    assert result["dragMode"] != "zoom"
+
+
 def test_polar_bar_hover_wraps_across_the_seam(tmp_path: Path) -> None:
     """A wedge straddling theta = 0/turn (a wind-rose "N" sector) must be
     hoverable on BOTH sides of the seam. `_barHover` compared |dataX - centre|

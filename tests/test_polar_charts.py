@@ -1810,6 +1810,37 @@ def test_wind_rose_is_the_polar_composition_that_keeps_zoom() -> None:
         _polar_zoom_flag(xy.wind_rose(directions, speeds, xy.interaction_config(zoom=False)))
         is False
     )
+    # `None` is "unset" everywhere else in the interaction API, so it must keep
+    # the rose's own default rather than fall through to the polar one. A wrapper
+    # forwarding an `Optional[bool]` would otherwise turn zoom OFF by passing the
+    # value that means "I have no opinion".
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds, zoom=None)) is True
+
+
+def test_polar_refuses_a_drag_action_its_resolved_zoom_cannot_serve() -> None:
+    """`default_drag_action` is validated against the RESOLVED zoom capability.
+
+    Validation read an absent `zoom` as enabled while the payload resolved it to
+    `False` for polar, so `default_drag_action="zoom"` passed construction and
+    then shipped the self-contradicting
+    `{"zoom": false, "default_drag_action": "zoom"}`. One predicate
+    (`Figure._zoom_enabled`) now feeds both.
+    """
+    for build in (
+        lambda **k: xy.polar_chart(xy.line([0.0, 1.0], [1.0, 2.0]), **k),
+        lambda **k: xy.pie_chart(["a", "b"], [1.0, 2.0], **k),
+    ):
+        with pytest.raises(ValueError, match="requires navigation, zoom, and box_zoom"):
+            build(default_drag_action="zoom").figure().build_payload_split()
+
+    # Cartesian is untouched: absent zoom still resolves to enabled there.
+    spec, _ = (
+        xy.line_chart(xy.line([0.0, 1.0], [1.0, 2.0]), default_drag_action="zoom")
+        .figure()
+        .build_payload_split()
+    )
+    assert spec["interaction"]["default_drag_action"] == "zoom"
+    assert "zoom" not in spec["interaction"]
 
 
 def test_interaction_config_opts_a_polar_chart_back_into_zoom() -> None:

@@ -48,18 +48,24 @@ is no separate transport configuration flag.
 
 ### Polar interaction boundary
 
-Polar charts keep hover and reset. Zoom is the one default that differs from
-Cartesian charts: `zoom` resolves to `False` under `coords="polar"`, because the
-center of a disc is a fixed point and zooming a pie, radial bar, gauge, or radar
-crops its rim instead of navigating it. `xy.wind_rose()` is the exception and
-ships with zoom on, since its radius is a frequency count.
+Polar charts keep hover. Zoom is the one default that differs from Cartesian
+charts: `zoom` resolves to `False` under `coords="polar"`, because the center of a
+disc is a fixed point and zooming crops the rim instead of navigating the chart —
+which is misleading on a pie, radial bar, gauge, or radar, where the radius is a
+constant rim or a fixed frame rather than the value. `xy.wind_rose()` is the
+exception and ships with zoom on, since its radius is a frequency count.
 
 Opt back in per chart with `xy.interaction_config(zoom=True)` (or `zoom=True` on
-the chart). Radial zoom then changes the maximum radius while holding the minimum
-fixed, so zooming a disc does not unexpectedly create a hole and an authored
-`hole` or `origin` remains stable. While zoom is off, the chart leaves wheel
-events uncancelled so the surrounding page keeps scrolling, and the modebar shows
-no zoom controls.
+the chart) — an ordinary `polar_chart()` whose radius *is* measured data is the
+expected case for this. Radial zoom then changes the maximum radius while holding
+the minimum fixed, so zooming a disc does not unexpectedly create a hole and an
+authored `hole` or `origin` remains stable.
+
+While zoom is off, the resolved reset-axis policy is empty, so reset is not part
+of the default polar contract either: the modebar shows no zoom or reset controls
+and double-click has nothing to restore. Both return with zoom (or with an
+explicit `reset_axes`). The chart also leaves wheel events uncancelled, so the
+surrounding page keeps scrolling under the cursor.
 
 Authored sectors are supported, but theta rotation/panning, interactive sector
 zoom, box zoom, selection, brushing, and crosshairs are disabled until those

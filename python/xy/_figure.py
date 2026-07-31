@@ -977,6 +977,23 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     "before charting."
                 )
 
+    def _zoom_enabled(self) -> bool:
+        """The resolved `zoom` capability.
+
+        `zoom` is the one interaction switch whose default depends on the
+        coordinate system: polar resolves it to False (polar-axes.md §8 — the
+        centre is a fixed point, so zooming a constant-rim composition crops it
+        instead of navigating it), Cartesian to True. Every consumer of the
+        resolved value goes through here, so validation and the payload cannot
+        disagree about it — they did, and `default_drag_action='zoom'` on a
+        polar chart passed construction only to ship the self-contradicting
+        `{"zoom": false, "default_drag_action": "zoom"}`.
+        """
+        value = self.interaction.get("zoom")
+        if value is None:
+            return self.coords != "polar"
+        return value is not False
+
     def _validate_interaction(self) -> None:
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
@@ -991,6 +1008,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return
 
         def enabled(name: str) -> bool:
+            if name == "zoom":
+                return self._zoom_enabled()
             return self.interaction.get(name, True) is not False
 
         if action == "pan" and not (enabled("navigation") and enabled("pan")):
@@ -1721,22 +1740,24 @@ class Figure(AnnotationsMixin, PayloadMixin):
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
-        if self.coords == "polar" and "zoom" not in self.interaction:
+        if "zoom" not in self.interaction and not self._zoom_enabled():
             # Polar zoom is OFF by default (polar-axes.md §8). The centre is a
             # fixed point of the transform and r_lo is pinned, so zooming in
             # only crops the rim while the geometry stays welded to the middle
             # of the disc — on a pie, radial bar, or radar, whose radius is a
-            # constant rim or a fixed 0..1 frame, that reads as broken rather
-            # than as navigation. A composition whose RADIUS is a measured
-            # quantity (`wind_rose`, where it is a frequency count) opts back in
-            # by shipping `zoom=True`, as does any author via
-            # `xy.interaction_config(zoom=True)`.
+            # constant rim or a fixed frame, that reads as broken rather than as
+            # navigation. A composition whose RADIUS is a measured quantity
+            # (`wind_rose`, where it is a frequency count) opts back in by
+            # shipping `zoom=True`, as does any author via
+            # `xy.interaction_config(zoom=True)`; an ordinary `polar_chart` whose
+            # radius IS data is expected to do the same.
             #
             # Resolved HERE and shipped explicitly, against §5.2's "unspecified
             # keys stay absent" rule, for two reasons: the client cannot make
             # this decision (`Chart.kind` never reaches the wire — every polar
             # figure looks identical to it), and §28 requires the choice to be
-            # on the wire rather than re-derived per renderer.
+            # on the wire rather than re-derived per renderer. The predicate is
+            # `_zoom_enabled` so validation resolves the same default this ships.
             spec["zoom"] = False
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:

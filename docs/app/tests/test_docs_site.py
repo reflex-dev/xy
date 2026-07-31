@@ -1578,8 +1578,10 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
         "scales the radial maximum",
         "keeps the radial minimum fixed",
         # Zoom is off by default on polar (polar-axes.md §8), and the guide has
-        # to carry both halves of that: why, and the exact way back in.
+        # to carry both halves of that: why, and the exact way back in. Reset
+        # follows the zoom capability, so the page must not promise it either.
         "**Zoom is off by default.**",
+        "reset-axis policy is empty",
         "xy.interaction_config(zoom=True)",
         "def zoomable_polar_demo():",
         "authored fractional degree",
@@ -1687,6 +1689,14 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
         "Partial-sector layouts are not implemented",
         "validated log-r semantics",
         "Each polar trace is limited to 200,000 points",
+        # Zoom, and the reset that follows it, are opt-in on polar (polar-axes.md
+        # §8). No polar guide may promise either as part of the default contract,
+        # and none may claim a non-wind-rose radius is merely layout — an ordinary
+        # `polar_chart` carrying measured radii is the documented opt-in case.
+        "Wheel and modebar zoom scale the radial maximum",
+        "radial wheel zoom, double-click reset",
+        "hover, radial-only zoom",
+        "its radius is layout rather than data",
     ):
         assert stale_fragment not in polar_guides
         assert stale_fragment not in matplotlib

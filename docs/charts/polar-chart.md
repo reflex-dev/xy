@@ -249,11 +249,12 @@ Cartesian charts:
   `xy.tooltip(labels={"x": ...})` opts the angle back in. A hole or excluded
   part of a sector is not hit-testable.
 - **Zoom is off by default.** Polar charts ship without wheel zoom, modebar zoom
-  controls, or the zoom percentage indicator; there is nothing to reset, so the
-  reset controls are absent too. Wind roses are the exception and keep zoom on.
-  Enabling zoom brings the wheel, the modebar zoom menu, and double-click reset
-  back: zoom scales the radial maximum while keeping the radial minimum fixed,
-  and reset restores the original radial range.
+  controls, or the zoom percentage indicator. Reset goes with it: the resolved
+  reset-axis policy is empty, so Fit Data and Reset View are absent and
+  double-click has nothing to restore. Wind roses are the exception and keep zoom
+  on. Enabling zoom brings the wheel, the whole modebar zoom menu, and
+  double-click reset back: zoom scales the radial maximum while keeping the radial
+  minimum fixed, and reset restores the original radial range.
 - Theta rotation/panning, interactive sector zoom, box zoom, rectangular or lasso
   selection, brushing, and crosshairs are not currently available.
 

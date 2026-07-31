@@ -517,11 +517,25 @@ modebar reset remains available.
   `coords="polar"` resolves `zoom` to `False` and every polar payload carries
   the flag explicitly.
 
-  Two consequences of the flag are the point of it, not side effects: the
+  Three consequences of the flag are the point of it, not side effects. The
   modebar grows no zoom controls (`canRecordHistory` in `53_interaction.ts` — a
-  chart whose durable state cannot change must not offer view history either),
-  and the wheel handler returns *before* `preventDefault()`, so the page scrolls
-  normally under the cursor instead of the chart swallowing the gesture.
+  chart whose durable state cannot change must not offer view history either).
+  The wheel handler returns *before* `preventDefault()`, so the page scrolls
+  normally under the cursor instead of the chart swallowing the gesture. And
+  **reset goes with zoom**: `_resetAxisPolicy` is pan-axes ∪ zoom-axes, both empty
+  under polar with zoom off, so Fit Data / Reset View do not render and the
+  double-click handler restores nothing. Reset is therefore *not* part of the
+  default polar contract — it returns with zoom, or with an explicit `reset_axes`.
+
+  Validation resolves the same default the payload ships, through the one
+  `Figure._zoom_enabled` predicate. Without that, `default_drag_action="zoom"`
+  passed construction on a default polar figure (validation read absent-zoom as
+  enabled) and then shipped the self-contradicting
+  `{"zoom": false, "default_drag_action": "zoom"}`. Two neighbouring holes are
+  older than this rule and remain: with zoom explicitly `True`, polar still
+  accepts `default_drag_action="zoom"`, and it accepts `"pan"` in any case, even
+  though the client forces `box_zoom` off and resolves `pan_axes` to `[]` for
+  polar — both actions are accepted and inert.
 
   `wind_rose` is the exception the default is written around and ships
   `zoom=True`: its radius is a frequency count, so scaling the outer ring
@@ -560,10 +574,11 @@ modebar reset remains available.
   visible extent at an angle is `[base, top] ∩ [r_lo, r_hi]`, and culling one
   endpoint made a radar fill vanish the moment zoom lifted `r_lo` above its
   baseline. A span fully outside collapses to zero and draws nothing.
-- **Reset** — existing modebar, no change. Double-click reset stays wired even
-  with zoom off (it is then a no-op on an unmoved view): several pie/gauge/wind-
-  rose examples hide the modebar, and a chart that later opts into zoom must not
-  need a second opt-in to get back home.
+- **Reset** — existing modebar, no change, but it follows the zoom capability:
+  with zoom off the reset-axis policy is empty, so the controls do not render and
+  the double-click handler is a no-op. The handler stays *wired* rather than gated
+  separately (several pie/gauge/wind-rose examples hide the modebar, and a chart
+  that opts into zoom must not need a second opt-in to get back home).
 - The wheel gesture stays live — once zoom is enabled — even though polar's
   resolved default drag tool is `none` (pan/box/select are all disabled, so
   there is nothing to drag). Only the *user* choosing the `none` tool releases
