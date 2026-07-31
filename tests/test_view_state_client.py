@@ -1682,7 +1682,13 @@ def test_axis_band_restores_authored_cursor_after_drag(tmp_path: Path) -> None:
         "data-xy-axisband-authored-cursor-probe",
         label="axis-band authored cursor restore probe",
     )
-    assert result == {key: True for key in result}
+    assert result == {
+        "authoredInitially": True,
+        "grabbingDuringCancelledDrag": True,
+        "authoredAfterCancel": True,
+        "grabbingDuringCompletedDrag": True,
+        "authoredAfterPointerUp": True,
+    }
 
 
 _AXIS_BAND_EXCLUDED_PROBE = """

@@ -14,6 +14,10 @@ from xy import export
 
 SLOT_CLASSES = {
     "annotation_layer": "tw-annotation-layer",
+    "colorbar": "tw-colorbar",
+    "colorbar_bar": "tw-colorbar-bar",
+    "colorbar_tick": "tw-colorbar-tick",
+    "colorbar_title": "tw-colorbar-title",
     "colorbar_extension": "tw-colorbar-extension",
     "colorbar_line": "tw-colorbar-line",
     "colorbar_minor_tick": "tw-colorbar-minor-tick",
@@ -40,6 +44,10 @@ UTILITY_CSS = """
 @layer base, components, utilities;
 @layer utilities {
   .tw-annotation-layer { opacity: .72; filter: saturate(1.35); }
+  .tw-colorbar { filter: drop-shadow(0 0 8px rgb(34 211 238 / 32%)); }
+  .tw-colorbar-bar { border-radius: 5px; box-shadow: 0 0 10px rgb(34 211 238 / 28%); }
+  .tw-colorbar-tick { color: #bae6fd; font-weight: 650; }
+  .tw-colorbar-title { color: #f0f9ff; font-weight: 800; letter-spacing: .02em; }
   .tw-colorbar-extension { fill: #f97316; stroke: #fed7aa; stroke-width: 2px; }
   .tw-colorbar-line { border-color: #22d3ee; }
   .tw-colorbar-minor-tick { border-color: #a78bfa; }
