@@ -221,10 +221,11 @@ Axis `style=` uses a validated, cross-renderer vocabulary for grid, axis, tick,
 and label paint and geometry. In the browser, `axis_line`, `tick_mark`,
 `tick_label`, and `axis_title` target each visible Cartesian part, while
 `axis_band` targets the invisible axis-only pan/zoom gesture region (most
-usefully for cursor utilities). Each band also exposes its direction through
-`data-xy-axis-band="x"` or `data-xy-axis-band="y"`, so one shared slot can use
-the correct cursor for each axis. Use the validated axis style for output that
-must agree across HTML, SVG, and native PNG.
+usefully for cursor utilities). Each band exposes its full axis identifier
+through `data-xy-axis-band`, such as `x`, `y`, `x2`, or `y2`. The utilities
+below distinguish the two primary axes; add matching data variants for any
+named axes in the chart. Use the validated axis style for output that must agree
+across HTML, SVG, and native PNG.
 
 ~~~python
 chart = xy.line_chart(

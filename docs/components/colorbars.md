@@ -198,11 +198,11 @@ chrome: `colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`,
 `colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick`.
 
 The declarative `xy.colorbar()` API creates the container, gradient bar, major
-ticks, and title shown below. The extension, reference-line, and minor-tick
-slots are conditional: they appear only when a compatible adapter-generated
-colorbar specification requests those nodes. They remain stable CSS/Tailwind
-targets whenever those nodes are present, but listing their classes on a plain
-declarative colorbar would not create them.
+ticks, and title shown below. The extension, contour-line, and minor-tick slots
+are conditional: they appear when the Matplotlib-shaped `xy.pyplot` colorbar API
+requests those nodes. They remain stable CSS/Tailwind targets whenever those
+nodes are present, but listing their classes on a plain declarative colorbar
+would not create them.
 
 ~~~python
 chart = xy.scatter_chart(
