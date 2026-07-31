@@ -947,8 +947,7 @@ def test_release_workflow_rejects_detached_release_artifacts(
     path.write_text(
         workflow.replace(
             upload,
-            '            gh release upload "$TAG" "$provenance_file" '
-            '--repo "$REPO" --clobber\n',
+            '            gh release upload "$TAG" "$provenance_file" --repo "$REPO" --clobber\n',
         ).replace(
             create,
             '          gh release create "$TAG" "$provenance_file" '
@@ -1023,14 +1022,11 @@ def test_release_workflow_rejects_unattested_provenance(
     tmp_path: Path,
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    action = (
-        "        uses: actions/attest@"
-        "508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1\n"
-    )
+    action = "        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1\n"
     assert action in workflow
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace(action, '        uses: example/untrusted-attest@v1\n'),
+        workflow.replace(action, "        uses: example/untrusted-attest@v1\n"),
         encoding="utf-8",
     )
 

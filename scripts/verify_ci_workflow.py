@@ -929,15 +929,12 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 (
                     'gh release view "$TAG"',
                     "--json isImmutable",
-                    'immutable=true',
+                    "immutable=true",
                     'echo "immutable=${immutable}" >> "$GITHUB_OUTPUT"',
                 ),
             )
             if missing:
-                errors.append(
-                    "release immutable-release preflight is incomplete: "
-                    f"{missing}"
-                )
+                errors.append(f"release immutable-release preflight is incomplete: {missing}")
 
         immutable_skip = "steps.release_state.outputs.immutable != 'true'"
         prepare_block = step_blocks.get("Prepare release provenance")
@@ -1002,9 +999,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 attest_block,
                 re.MULTILINE,
             ):
-                errors.append(
-                    "release provenance attestation must sign the prepared manifest path"
-                )
+                errors.append("release provenance attestation must sign the prepared manifest path")
 
         release_shell = _named_step_run(
             github_release,
@@ -1085,18 +1080,14 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             upload_lines = [
                 line
                 for line in active_lines
-                if line.startswith(
-                    'gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" '
-                )
+                if line.startswith('gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" ')
                 and line.endswith(" --clobber")
             ]
             create_lines = [
                 line
                 for line in active_lines
-                if line.startswith(
-                    'gh release create "$TAG" "${artifacts[@]}" "$provenance_file" '
-                )
-                and '--verify-tag ' in line
+                if line.startswith('gh release create "$TAG" "${artifacts[@]}" "$provenance_file" ')
+                and "--verify-tag " in line
                 and '--notes-file "$notes_file" ' in line
             ]
             if len(upload_lines) != 1 or len(create_lines) != 1:
@@ -1193,9 +1184,7 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
             "docs deploy production Helm promotion must actively depend on verify-library-release"
         )
 
-    gate_step = _named_step_blocks(release_gate).get(
-        "Await GitHub Release and PyPI availability"
-    )
+    gate_step = _named_step_blocks(release_gate).get("Await GitHub Release and PyPI availability")
     gate_shell = _named_step_run(
         release_gate,
         "Await GitHub Release and PyPI availability",
