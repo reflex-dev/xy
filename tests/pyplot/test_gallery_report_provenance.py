@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from scripts.pyplot_gallery import run_gallery as gallery_runner
+from scripts.pyplot_gallery.provenance import current_python_interpreter
 
 
 def _git(repo: Path, *arguments: str) -> str:
@@ -197,5 +198,6 @@ def test_clean_in_repo_output_produces_promotion_eligible_report(
 
     assert report["implementation_commit"] == head
     assert report["implementation_dirty"] is False
+    assert report["python_interpreter"] == current_python_interpreter()
     assert (output_root / "report.json").is_file()
     assert (output_root / "junit.xml").is_file()

@@ -19,6 +19,7 @@ from typing import Any
 from . import HARNESS_VERSION
 from .behavior import behavior_gate
 from .integrity import capture_integrity_errors
+from .provenance import valid_python_interpreter
 from .rewrite import pyplot_imports, rewrite_pyplot_imports
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -844,6 +845,7 @@ def _case_provenance_errors(
     entry: dict[str, Any],
     root: Path,
     extended_requirements: dict[str, Any] | None,
+    python_interpreter: dict[str, str],
 ) -> list[str]:
     """Verify that a report case came from the current exact-source harness."""
 
@@ -885,6 +887,7 @@ def _case_provenance_errors(
             "transformed_sha256": expected_transformed,
             "rewrite_count": expected_rewrite_count,
             "ast_rewrite_verified": True,
+            "python_interpreter": python_interpreter,
             "requested_pyplot_mode": expected_mode,
             "resolved_pyplot_mode": expected_mode,
             "requested_matplotlib_backend": expected_backend,
@@ -963,6 +966,12 @@ def promote_reports(
         report_bytes = report_path.read_bytes()
         report = json.loads(report_bytes)
         profile = report.get("environment_profile")
+        raw_python_interpreter = report.get("python_interpreter")
+        if valid_python_interpreter(raw_python_interpreter):
+            python_interpreter = dict(raw_python_interpreter)
+        else:
+            errors.append(f"{report_path}: python_interpreter is missing or invalid")
+            python_interpreter = {}
         if profile not in {"standard", "extended"}:
             errors.append(f"{report_path}: environment profile is missing or invalid")
         elif profile in report_profiles:
@@ -994,6 +1003,7 @@ def promote_reports(
                 "profile": profile,
                 "sha256": _sha256(report_bytes),
                 "harness_version": report.get("harness_version"),
+                "python_interpreter": python_interpreter,
             }
         )
         for case in report.get("examples", []):
@@ -1022,6 +1032,7 @@ def promote_reports(
                     entry=entry,
                     root=root,
                     extended_requirements=expected_extended,
+                    python_interpreter=python_interpreter,
                 )
             )
             errors.extend(
@@ -1326,6 +1337,10 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
                     record.get("harness_version") != HARNESS_VERSION
                     or not isinstance(record.get("sha256"), str)
                     or len(record["sha256"]) != 64
+                    or (
+                        "python_interpreter" in record
+                        and not valid_python_interpreter(record["python_interpreter"])
+                    )
                     for record in acceptance_reports
                 ):
                     errors.append("promoted baseline acceptance report provenance is invalid")

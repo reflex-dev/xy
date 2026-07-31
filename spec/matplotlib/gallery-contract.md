@@ -26,7 +26,12 @@ from matplotlib import pyplot as plt
 
 The rewritten AST must equal an independently constructed AST in which only
 the pyplot provider changes. Strings, comments, unrelated Matplotlib imports,
-and ambiguous mixed imports cannot be rewritten.
+and ambiguous mixed imports cannot be rewritten. The token-aware pass replaces
+the selected module-name character spans directly, from right to left; it does
+not reconstruct the source with `tokenize.untokenize`. Consequently every
+non-target character and the transformed SHA-256 are stable across supported
+CPython 3.11 and 3.12 patch releases, including sources whose f-string token
+boundaries changed between interpreters.
 
 Exactly 485 examples are eligible for this import swap:
 
@@ -81,6 +86,7 @@ and available generators.
 Each result records:
 
 - status, exception and traceback;
+- the exact Python implementation and `major.minor.micro` interpreter version;
 - stdout/stderr paths and hashes;
 - duration and peak resident memory;
 - warnings and capture errors;
@@ -101,7 +107,10 @@ cannot silently stand in for XY.
 `scripts.pyplot_gallery.run_gallery` selects deterministic SHA-based shards,
 runs both engines in isolated processes, writes `report.json` and `junit.xml`,
 and keeps reference/xy/difference PNGs only for failed or review-required
-comparisons.
+comparisons. The top-level report repeats the selected execution interpreter;
+resumption rejects cached results from another interpreter or from before this
+provenance was recorded. Promotion requires every engine result to agree with
+that report-level identity.
 
 ## Interaction, navigation, and animation evidence
 

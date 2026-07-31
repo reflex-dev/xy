@@ -25,11 +25,13 @@ from scripts.pyplot_gallery.contract import (
     verify_contract,
     verify_monotonic_baseline,
 )
+from scripts.pyplot_gallery.provenance import current_python_interpreter
 from scripts.pyplot_gallery.rewrite import PyplotRewriteError, rewrite_pyplot_imports
 from scripts.pyplot_gallery.run_case import run_case
 from scripts.pyplot_gallery.run_gallery import _resumable_result
 
 AUDIT_COMMIT = "a" * 40
+PYTHON_INTERPRETER = current_python_interpreter()
 
 
 def test_stable_ast_dump_includes_empty_fields_and_canonical_type_params() -> None:
@@ -115,6 +117,7 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
     result = {
         "engine": "xy",
         "harness_version": HARNESS_VERSION - 1,
+        "python_interpreter": PYTHON_INTERPRETER,
         "source_sha256": entry["sha256"],
         "status": "passed",
         "requested_pyplot_mode": "compat",
@@ -125,11 +128,36 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
     }
     (artifact_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
 
-    assert _resumable_result(output_root=tmp_path, entry=entry, engine="xy") is None
+    assert (
+        _resumable_result(
+            output_root=tmp_path,
+            entry=entry,
+            engine="xy",
+            python_interpreter=PYTHON_INTERPRETER,
+        )
+        is None
+    )
 
     result["harness_version"] = HARNESS_VERSION
     (artifact_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
-    assert _resumable_result(output_root=tmp_path, entry=entry, engine="xy") == result
+    assert (
+        _resumable_result(
+            output_root=tmp_path,
+            entry=entry,
+            engine="xy",
+            python_interpreter=PYTHON_INTERPRETER,
+        )
+        == result
+    )
+    assert (
+        _resumable_result(
+            output_root=tmp_path,
+            entry=entry,
+            engine="xy",
+            python_interpreter={"implementation": "cpython", "version": "0.0.0"},
+        )
+        is None
+    )
 
 
 def test_baseline_records_all_four_material_formatting_issues() -> None:
@@ -164,6 +192,49 @@ def test_from_import_rewrite_preserves_binding() -> None:
     source = "from matplotlib import pyplot as plt\nplt.plot([1])\n"
     result = rewrite_pyplot_imports(source)
     assert result.source == "from xy import pyplot as plt\nplt.plot([1])\n"
+
+
+def test_import_rewrite_preserves_every_non_target_character() -> None:
+    source = (
+        "# π and CRLF stay byte-for-byte stable\r\n"
+        "if True:\r\n"
+        "\timport matplotlib.pyplot as plt  # exact spacing\r\n"
+        "\tlabel = f'{value:>{width}}'\r\n"
+    )
+    target_start = source.index("matplotlib")
+    expected = source[:target_start] + "xy" + source[target_start + len("matplotlib") :]
+
+    result = rewrite_pyplot_imports(source)
+
+    assert result.source == expected
+
+
+def test_version_sensitive_gallery_rewrites_have_portable_hashes() -> None:
+    expected = {
+        "statistics/confidence_ellipse.py": (
+            "57669f2fe7b56b11661f6e7819407cc2f21d294953bb26755a23e3e0eee3f1d4"
+        ),
+        "text_labels_and_annotations/angle_annotation.py": (
+            "4c791aaa6c21e12bc2e89e2d5abc85c3554ca615e9fdb50f77359250a6c83468"
+        ),
+        "misc/custom_projection.py": (
+            "d608d99a389ec6aa3487bc96c3cf892350f435ec246534d0663d99e2d49b73ab"
+        ),
+        "misc/packed_bubbles.py": (
+            "7a1db0eecd2d7ddbfaaabcc2ea1b1b7cbb9234479184a8af64e9b14f75b6d9e6"
+        ),
+        "user_interfaces/svg_histogram_sgskip.py": (
+            "713a856b1d60cd1ad3f36ef94fbe00bce519165d8098a016e9c8bf318dbccebe"
+        ),
+        "images_contours_and_fields/plot_streamplot.py": (
+            "d5d3946742793da9c8133b16aac238ade56fb313937b59364aa6e1b867397e85"
+        ),
+    }
+
+    for relative, expected_sha256 in expected.items():
+        source = (CORPUS_ROOT / "examples" / relative).read_bytes().decode("utf-8")
+        rewritten = rewrite_pyplot_imports(source, filename=relative)
+        assert hashlib.sha256(rewritten.source.encode("utf-8")).hexdigest() == expected_sha256
 
 
 def test_import_rewrite_fails_closed_for_ambiguous_forms() -> None:
@@ -296,6 +367,7 @@ def _promotion_fixture(tmp_path: Path) -> tuple[Path, Path]:
         "harness_version": HARNESS_VERSION,
         "implementation_commit": AUDIT_COMMIT,
         "implementation_dirty": False,
+        "python_interpreter": PYTHON_INTERPRETER,
         "manifest_sha256": manifest_sha256,
         "extended_spec_sha256": extended_spec_sha256,
         "environment_profile": "standard",
@@ -318,6 +390,7 @@ def _promotion_fixture(tmp_path: Path) -> tuple[Path, Path]:
                         "transformed_sha256": source_sha256,
                         "rewrite_count": 0,
                         "ast_rewrite_verified": True,
+                        "python_interpreter": PYTHON_INTERPRETER,
                         "requested_pyplot_mode": None,
                         "resolved_pyplot_mode": None,
                         "requested_matplotlib_backend": "Agg",
@@ -351,6 +424,7 @@ def _promotion_fixture(tmp_path: Path) -> tuple[Path, Path]:
                         "transformed_sha256": transformed_sha256,
                         "rewrite_count": 1,
                         "ast_rewrite_verified": True,
+                        "python_interpreter": PYTHON_INTERPRETER,
                         "requested_pyplot_mode": "compat",
                         "resolved_pyplot_mode": "compat",
                         "requested_matplotlib_backend": "Agg",
@@ -425,6 +499,14 @@ def test_complete_report_promotion_removes_waivers_and_records_tolerant_dimensio
     assert baseline["examples"]["plot.py"]["dimension_gate_passed"] is True
     assert baseline["examples"]["plot.py"]["exact_dimension_parity"] is False
     assert baseline["examples"]["plot.py"]["temporary_waivers"] == []
+    assert baseline["acceptance_reports"] == [
+        {
+            "profile": "standard",
+            "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            "harness_version": HARNESS_VERSION,
+            "python_interpreter": PYTHON_INTERPRETER,
+        }
+    ]
     assert manifest["examples"][0]["temporary_waivers"] == []
 
 
@@ -491,6 +573,7 @@ def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
             "harness_version": HARNESS_VERSION,
             "implementation_commit": AUDIT_COMMIT,
             "implementation_dirty": False,
+            "python_interpreter": PYTHON_INTERPRETER,
             "manifest_sha256": report_manifest_sha256,
             "extended_spec_sha256": extended_spec_sha256,
             "environment_profile": profile,
@@ -512,6 +595,10 @@ def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
     emitted_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     assert emitted_manifest_sha256 != report_manifest_sha256
     assert baseline["manifest_sha256"] == emitted_manifest_sha256
+    assert all(
+        record["python_interpreter"] == PYTHON_INTERPRETER
+        for record in baseline["acceptance_reports"]
+    )
     assert verify_contract(root) == []
 
 
@@ -552,10 +639,23 @@ def test_report_promotion_rejects_stale_or_fabricated_provenance(tmp_path: Path)
             "implementation_dirty",
         ),
         (
+            lambda report: report.__setitem__(
+                "python_interpreter", {"implementation": "cpython", "version": "3.12"}
+            ),
+            "python_interpreter",
+        ),
+        (
             lambda report: report["examples"][0]["engines"]["xy"].__setitem__(
                 "source_sha256", "0" * 64
             ),
             "source_sha256",
+        ),
+        (
+            lambda report: report["examples"][0]["engines"]["xy"].__setitem__(
+                "python_interpreter",
+                {"implementation": "cpython", "version": "0.0.0"},
+            ),
+            "python_interpreter",
         ),
         (
             lambda report: report["examples"][0]["engines"]["xy"].__setitem__(
@@ -694,6 +794,7 @@ if __name__ == "__main__":
         python=Path(sys.executable),
     )
     assert result["status"] == "passed", (tmp_path / "output" / "stderr.txt").read_text()
+    assert result["python_interpreter"] == PYTHON_INTERPRETER
     assert result["capture_count"] == 1
     assert result["captures"][0]["dimensions"] == [640, 480]
     assert (tmp_path / "output" / "_execution" / "spawn_case.py").is_file()

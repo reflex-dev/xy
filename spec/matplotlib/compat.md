@@ -76,7 +76,9 @@ no waivers. The checked-in baseline records the exact implementation commit,
 harness/manifest hashes, and promoted standard/extended report hashes.
 
 The gallery harness changes only the pyplot binding through an AST-verified,
-token-aware rewrite and executes each result as a real temporary file.
+exact-token-span rewrite and executes each result as a real temporary file.
+The transformed source hash is independent of CPython token reconstruction,
+and reports record the patch-precise execution interpreter.
 Interactions and animations require delivered callback, widget, timer, and
 driven-frame evidence—not screenshots alone. See
 [`gallery-contract.md`](gallery-contract.md) for the immutable manifest,

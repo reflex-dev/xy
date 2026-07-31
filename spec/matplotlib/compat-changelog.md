@@ -28,6 +28,12 @@ which covers user-visible releases across the whole package.
   extended-environment cases. The other 22 backend/font/server/GUI sources are
   classified and hash-locked but never counted as pyplot successes or
   failures.
+- Gallery import substitution now edits only the exact `matplotlib` token
+  spans rather than round-tripping the full source through
+  `tokenize.untokenize`. Transformed hashes are therefore reproducible across
+  CPython 3.11/3.12 patch releases. Reports and per-engine results record the
+  exact interpreter implementation and `major.minor.micro` version, and
+  resume/promotion reject missing or inconsistent interpreter provenance.
 - The extended profile declares TeX/fonts, GTK/Xvfb and SVG-loader
   dependencies, deterministic input/argument/PDF/multiprocessing drivers, and
   separate reference/XY backend requirements.

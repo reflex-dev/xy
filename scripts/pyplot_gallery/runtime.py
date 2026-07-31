@@ -35,6 +35,7 @@ from .extended_drivers import (
     drive_timer_until_close,
 )
 from .integrity import aggregate_fallback_state
+from .provenance import current_python_interpreter
 
 DETERMINISTIC_SEED = 19680801
 
@@ -343,6 +344,7 @@ class GalleryRuntime:
             "transformed_sha256": transformed_sha256,
             "rewrite_count": rewrite_count,
             "ast_rewrite_verified": engine == "matplotlib" or rewrite_count > 0,
+            "python_interpreter": current_python_interpreter(),
             "requested_pyplot_mode": "compat" if engine == "xy" else None,
             "behavior_requirements": list(behavior_requirements),
             "extended_requirements": self.extended_requirements or None,

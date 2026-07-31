@@ -107,6 +107,16 @@ def _significant(tokens: list[tokenize.TokenInfo], index: int) -> int | None:
     return None
 
 
+def _source_offset(line_offsets: list[int], position: tuple[int, int]) -> int:
+    """Convert a tokenize row/column pair to a source character offset."""
+
+    row, column = position
+    try:
+        return line_offsets[row - 1] + column
+    except IndexError as exc:  # pragma: no cover - defensive tokenizer invariant
+        raise PyplotRewriteError(f"token position is outside the source: {position!r}") from exc
+
+
 def _rewrite_tokens(source: str) -> tuple[str, int]:
     tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
     replacements: set[int] = set()
@@ -137,11 +147,31 @@ def _rewrite_tokens(source: str) -> tuple[str, int]:
                 if name is not None and tokens[name].string in {"(", "pyplot"}:
                     replacements.add(index)
 
-    rewritten = [
-        token._replace(string="xy") if index in replacements else token
-        for index, token in enumerate(tokens)
-    ]
-    return tokenize.untokenize(rewritten), len(replacements)
+    # ``tokenize.untokenize`` is not a source-preservation primitive.  Its
+    # reconstruction of otherwise untouched tokens (notably nested f-string
+    # tokens) has changed between CPython patch releases, which made the
+    # transformed source digest depend on the verifier's interpreter.  Token
+    # positions are character offsets, so splice only the selected NAME spans
+    # from right to left and leave every other source character untouched.
+    line_offsets = [0]
+    for line in source.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    edits: list[tuple[int, int]] = []
+    for index in replacements:
+        token = tokens[index]
+        start = _source_offset(line_offsets, token.start)
+        end = _source_offset(line_offsets, token.end)
+        if source[start:end] != token.string:  # pragma: no cover - defensive invariant
+            raise PyplotRewriteError(
+                f"token span {token.start!r}:{token.end!r} does not match its source"
+            )
+        edits.append((start, end))
+
+    rewritten = source
+    for start, end in sorted(edits, reverse=True):
+        rewritten = rewritten[:start] + "xy" + rewritten[end:]
+    return rewritten, len(replacements)
 
 
 def rewrite_pyplot_imports(source: str, *, filename: str = "<gallery-example>") -> RewriteResult:

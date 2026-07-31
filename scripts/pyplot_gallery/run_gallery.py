@@ -30,6 +30,7 @@ from .metrics import (
     evaluate_visual,
     metrics_dict,
 )
+from .provenance import query_python_interpreter
 from .run_case import run_case
 
 
@@ -206,6 +207,7 @@ def _resumable_result(
     output_root: Path,
     entry: dict[str, Any],
     engine: str,
+    python_interpreter: dict[str, str],
     extended_requirements: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     artifact_dir = _artifact_dir(output_root, entry["path"], engine)
@@ -224,6 +226,7 @@ def _resumable_result(
         or (engine == "xy" and result.get("requested_pyplot_mode") != "compat")
         or sorted(result.get("behavior_requirements", [])) != sorted(entry.get("behavior", []))
         or result.get("extended_requirements") != extended_requirements
+        or result.get("python_interpreter") != python_interpreter
     ):
         return None
     backends = (extended_requirements or {}).get("backends", {})
@@ -501,6 +504,7 @@ def run_gallery(
     extended_spec_path: Path = EXTENDED_SPEC_PATH,
 ) -> dict[str, Any]:
     repository_start = _repository_snapshot(output_root)
+    python_interpreter = query_python_interpreter(python)
     manifest = _load(manifest_path)
     baseline = _load(baseline_path)
     entries = [
@@ -538,6 +542,7 @@ def run_gallery(
                     entry=entry,
                     engine=engine,
                     extended_requirements=extended_by_path.get(entry["path"]),
+                    python_interpreter=python_interpreter,
                 )
                 if resume
                 else None
@@ -675,6 +680,7 @@ def run_gallery(
         "harness_version": HARNESS_VERSION,
         "implementation_commit": implementation_commit,
         "implementation_dirty": implementation_dirty,
+        "python_interpreter": python_interpreter,
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "extended_spec_sha256": hashlib.sha256(extended_spec_path.read_bytes()).hexdigest(),
         "environment_profile": profile,
