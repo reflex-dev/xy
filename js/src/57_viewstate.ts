@@ -381,6 +381,10 @@ Object.assign(ChartView.prototype, {
         mode: null,
         interactionId: ++this._interactionSeq,
         changedAxes: [],
+        cursor: {
+          value: band.style.getPropertyValue("cursor"),
+          priority: band.style.getPropertyPriority("cursor"),
+        },
       };
       drag.capture = this._captureGesturePointer(band, e, end);
       this.tooltip.style.display = "none";
@@ -410,7 +414,7 @@ Object.assign(ChartView.prototype, {
         drag.mode = wantPan
           ? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
           : (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
-        if (drag.mode === "pan") band.style.cursor = "grabbing";
+        if (drag.mode === "pan") band.style.setProperty("cursor", "grabbing");
       }
       if (drag.mode === "pan") {
         const ranges = Object.fromEntries(
@@ -470,10 +474,16 @@ Object.assign(ChartView.prototype, {
       const finished = drag;
       drag = null;
       finished.capture.release();
-      // `grabbing` is transient controller state. Remove it on release so the
-      // low-priority default (and any author/Tailwind cursor utility above it)
-      // resumes instead of pinning the configured default inline.
-      band.style.removeProperty("cursor");
+      // `grabbing` is transient controller state. Restore the exact inline
+      // declaration that preceded it so an authored slot style survives both
+      // completed and cancelled gestures; otherwise expose the CSS cascade.
+      if (finished.cursor.value) {
+        band.style.setProperty(
+          "cursor", finished.cursor.value, finished.cursor.priority,
+        );
+      } else {
+        band.style.removeProperty("cursor");
+      }
       if (finished.mode === "span") this.selRect.style.display = "none";
       // Only a real release commits a coordinate-dependent gesture; a pan keeps
       // the view it already reached however the gesture ended.

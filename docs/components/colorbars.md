@@ -36,9 +36,6 @@ vertical_scale = xy.heatmap_chart(
     ),
     styles={
         "colorbar_bar": {"border_radius": 5},
-        "colorbar_extension": {"stroke": "#7c3aed", "stroke_width": 2},
-        "colorbar_line": {"border_color": "#0891b2"},
-        "colorbar_minor_tick": {"border_color": "#64748b"},
         "colorbar_tick": {"color": "#475569"},
         "colorbar_title": {"font_weight": 700},
     },
@@ -200,15 +197,19 @@ Seven chart slots target every visible part of built-in browser colorbar
 chrome: `colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`,
 `colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick`.
 
+The declarative `xy.colorbar()` API creates the container, gradient bar, major
+ticks, and title shown below. The extension, reference-line, and minor-tick
+slots are conditional: they appear only when a compatible adapter-generated
+colorbar specification requests those nodes. They remain stable CSS/Tailwind
+targets whenever those nodes are present, but listing their classes on a plain
+declarative colorbar would not create them.
+
 ~~~python
 chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [3, 5, 4], color=[0.2, 0.8, 1.4]),
     xy.colorbar(title="Intensity"),
     class_names={
         "colorbar_title": "font-semibold",
-        "colorbar_extension": "stroke-violet-600 stroke-2",
-        "colorbar_line": "border-cyan-600",
-        "colorbar_minor_tick": "border-slate-500",
     },
     styles={
         "colorbar_bar": {"border_radius": 4},

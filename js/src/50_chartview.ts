@@ -6811,7 +6811,7 @@ export class ChartView {
         d.dataset.xyAxis = styleAxis && styleAxis.id !== undefined
           ? String(styleAxis.id)
           : "";
-        if (side) d.dataset.xyAxisSide = side;
+        d.dataset.xyAxisSide = side || this._axisDefaultSide(styleAxis);
         if (tickKind) d.dataset.xyTickKind = tickKind;
         this._applySlot(d, slot);
         this.labels.appendChild(d);

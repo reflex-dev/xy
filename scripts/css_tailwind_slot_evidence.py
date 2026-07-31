@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import html
+import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import xy
@@ -231,22 +234,41 @@ def _instrument(document: str) -> str:
     if render_call not in document:
         raise RuntimeError("standalone render call changed; update the evidence script")
     instrumented = """
-spec.colorbar = {
-  ...spec.colorbar,
-  line_only: true,
-  extend: "both",
-  minor_ticks: true,
-  lines: [{value: 0.5, color: "#94a3b8", width: 2, dash: "dashed"}],
+const evidenceRoot = document.documentElement;
+const evidenceError = (error) => {
+  evidenceRoot.dataset.xyEvidenceStatus = "error";
+  evidenceRoot.dataset.xyEvidenceError = String((error && error.stack) || error);
 };
-const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
-view._drawNow();
-view._raf = null;
-const bar = view.root.querySelector('[data-xy-slot="modebar"]');
-bar.style.opacity = "1";
-bar.style.pointerEvents = "auto";
-bar.classList.add("xy-dragging");
-const zoomTrigger = bar.querySelector("[data-xy-modebar-menu-trigger]");
-if (zoomTrigger) zoomTrigger.click();
+evidenceRoot.dataset.xyEvidenceStatus = "running";
+window.addEventListener("error", (event) => evidenceError(event.error || event.message));
+window.addEventListener("unhandledrejection", (event) => evidenceError(event.reason));
+try {
+  spec.colorbar = {
+    ...spec.colorbar,
+    line_only: true,
+    extend: "both",
+    minor_ticks: true,
+    lines: [{value: 0.5, color: "#94a3b8", width: 2, dash: "dashed"}],
+  };
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  view._drawNow();
+  view._raf = null;
+  const bar = view.root.querySelector('[data-xy-slot="modebar"]');
+  if (!bar) throw new Error("CSS/Tailwind evidence is missing the modebar");
+  bar.style.opacity = "1";
+  bar.style.pointerEvents = "auto";
+  bar.classList.add("xy-dragging");
+  const zoomTrigger = bar.querySelector("[data-xy-modebar-menu-trigger]");
+  if (!zoomTrigger) throw new Error("CSS/Tailwind evidence is missing the zoom menu trigger");
+  zoomTrigger.click();
+  const zoomMenu = bar.querySelector('[data-xy-modebar-menu][role="menu"]');
+  if (!zoomMenu || getComputedStyle(zoomMenu).display === "none") {
+    throw new Error("CSS/Tailwind evidence could not open the zoom menu");
+  }
+  evidenceRoot.dataset.xyEvidenceStatus = "ready";
+} catch (error) {
+  evidenceError(error);
+}
 """
     return document.replace(render_call, instrumented, 1)
 
@@ -256,27 +278,44 @@ def _screenshot(html_path: Path, png_path: Path) -> None:
     if chromium is None:
         raise RuntimeError("Chromium is required to capture CSS/Tailwind audit evidence")
     png_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [
-            chromium,
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--allow-file-access-from-files",
-            "--use-angle=swiftshader",
-            "--enable-unsafe-swiftshader",
-            "--hide-scrollbars",
-            "--window-size=940,600",
-            "--virtual-time-budget=3000",
-            f"--screenshot={png_path.resolve()}",
-            html_path.resolve().as_uri(),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"Chromium exited {result.returncode}")
+    with tempfile.NamedTemporaryFile(
+        dir=png_path.parent, prefix=f".{png_path.stem}-", suffix=".png", delete=False
+    ) as capture:
+        capture_path = Path(capture.name)
+    capture_path.unlink()
+    try:
+        result = subprocess.run(
+            [
+                chromium,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--allow-file-access-from-files",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+                "--hide-scrollbars",
+                "--window-size=940,600",
+                "--virtual-time-budget=3000",
+                "--dump-dom",
+                f"--screenshot={capture_path.resolve()}",
+                html_path.resolve().as_uri(),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or f"Chromium exited {result.returncode}")
+        status = re.search(r'data-xy-evidence-status="([^"]+)"', result.stdout)
+        error = re.search(r'data-xy-evidence-error="([^"]+)"', result.stdout)
+        if status is None or status.group(1) != "ready":
+            detail = html.unescape(error.group(1)) if error else "ready sentinel missing"
+            raise RuntimeError(f"Chromium evidence render failed: {detail}")
+        if not capture_path.is_file() or capture_path.stat().st_size == 0:
+            raise RuntimeError("Chromium exited successfully without writing a screenshot")
+        capture_path.replace(png_path)
+    finally:
+        capture_path.unlink(missing_ok=True)
 
 
 def main() -> None:

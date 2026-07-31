@@ -1628,6 +1628,63 @@ def test_axis_band_respects_axis_policies(tmp_path: Path) -> None:
     assert result == {key: True for key in result}
 
 
+_AXIS_BAND_AUTHORED_CURSOR_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
+    if (!bandY) throw new Error("missing y axis band");
+    const authoredInitially = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+    const rect = bandY.getBoundingClientRect();
+    const sx = rect.left + rect.width / 2;
+    const sy = rect.top + rect.height / 2;
+    const dispatch = (type, pointerId, y) => bandY.dispatchEvent(new PointerEvent(type, {
+      pointerId, clientX: sx, clientY: y, bubbles: true, cancelable: true,
+    }));
+
+    dispatch("pointerdown", 21, sy);
+    dispatch("pointermove", 21, sy + 40);
+    const grabbingDuringCancelledDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointercancel", 21, sy + 40);
+    const authoredAfterCancel = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 22, sy);
+    dispatch("pointermove", 22, sy + 40);
+    const grabbingDuringCompletedDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointerup", 22, sy + 40);
+    const authoredAfterPointerUp = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    document.body.setAttribute("data-xy-axisband-authored-cursor-probe", JSON.stringify({
+      authoredInitially,
+      grabbingDuringCancelledDrag,
+      authoredAfterCancel,
+      grabbingDuringCompletedDrag,
+      authoredAfterPointerUp,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-axisband-authored-cursor-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_axis_band_restores_authored_cursor_after_drag(tmp_path: Path) -> None:
+    document = _chart_html(
+        xy.interaction_config(pan_axes=("x", "y"), zoom_axes=("x",)),
+        styles={"axis_band": {"cursor": "crosshair"}},
+    ).replace(_RENDER_CALL, _AXIS_BAND_AUTHORED_CURSOR_PROBE)
+    result = _run(
+        tmp_path,
+        document,
+        "data-xy-axisband-authored-cursor-probe",
+        label="axis-band authored cursor restore probe",
+    )
+    assert result == {key: True for key in result}
+
+
 _AXIS_BAND_EXCLUDED_PROBE = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
   try {
