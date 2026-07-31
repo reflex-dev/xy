@@ -19,8 +19,8 @@ check_duplicate_ids = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(check_duplicate_ids)
 
 
-def test_public_docs_have_unique_ids() -> None:
-    """Keep every rendered public route free of duplicate static IDs."""
+def test_markdown_page_bodies_have_unique_literal_ids() -> None:
+    """Keep Markdown-rendered page content free of duplicate literal IDs."""
     result = subprocess.run(
         [sys.executable, str(CHECK_DUPLICATE_IDS_PATH)],
         cwd=DOCS_APP_ROOT,

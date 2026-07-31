@@ -10,6 +10,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
@@ -1793,6 +1794,75 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     )
     with pytest.raises(RuntimeError, match="33 previews, expected 34"):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
+
+
+def test_prerendered_route_validator_rejects_ids_from_layout_and_raw_svg(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Inspect layout and raw SVG IDs through the final content-route check."""
+    build_root = tmp_path / "build"
+    routes_root = tmp_path / "routes"
+    route = "/guide/"
+    html_path = build_root / "guide" / "index.html"
+    module_path = routes_root / "[guide]._index.jsx"
+    html_path.parent.mkdir(parents=True)
+    module_path.parent.mkdir(parents=True)
+    (build_root / "__spa-fallback.html").write_text("<html></html>", encoding="utf-8")
+    module_path.write_text("export default function Guide() {}", encoding="utf-8")
+    source = f"""\
+<!doctype html>
+<nav id="shared-id"></nav>
+<main id="shared-id">
+  <svg>
+    <filter id="raw-svg-id"></filter>
+    <clipPath id="raw-svg-id" />
+  </svg>
+</main>
+{check_html_routes.LLMS_DIRECTIVE}
+"""
+    html_path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {})
+    monkeypatch.setattr(
+        check_html_routes,
+        "discover_docs",
+        lambda _config: (SimpleNamespace(route=route, content=""),),
+    )
+    assert check_html_routes.duplicate_html_ids(source) == ("shared-id", "raw-svg-id")
+    with pytest.raises(
+        RuntimeError,
+        match=r"duplicate element IDs .*shared-id.*raw-svg-id",
+    ):
+        check_html_routes.main()
+
+
+def test_redirect_route_validator_rejects_duplicate_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Run the final-ID check for redirects as well as content pages."""
+    build_root = tmp_path / "build"
+    routes_root = tmp_path / "routes"
+    redirect = "/legacy/"
+    redirect_html = build_root / "legacy" / "index.html"
+    redirect_module = routes_root / "[legacy]._index.jsx"
+    redirect_html.parent.mkdir(parents=True)
+    redirect_module.parent.mkdir(parents=True)
+    (build_root / "__spa-fallback.html").write_text("<html></html>", encoding="utf-8")
+    redirect_html.write_text(
+        '<html><meta id="redirect-id"><main id="redirect-id"></main></html>',
+        encoding="utf-8",
+    )
+    redirect_module.write_text("export default function Redirect() {}", encoding="utf-8")
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {redirect: "/"})
+    monkeypatch.setattr(check_html_routes, "discover_docs", lambda _config: ())
+
+    with pytest.raises(RuntimeError, match=r"duplicate element IDs .*redirect-id"):
+        check_html_routes.main()
 
 
 @pytest.mark.xfail(

@@ -1,4 +1,8 @@
-"""Validate static element IDs on every public documentation route."""
+"""Fast source-level validation for Markdown-rendered documentation IDs.
+
+The post-build route validator checks complete HTML, including shared layout,
+raw HTML/SVG, and redirects.
+"""
 
 from collections import Counter
 from collections.abc import Iterator, Sequence
@@ -35,7 +39,7 @@ def duplicate_ids(components: Sequence[object]) -> tuple[str, ...]:
 
 
 def validate_public_page_ids() -> None:
-    """Raise when a public page has duplicate static element IDs."""
+    """Raise when Markdown-rendered page content has duplicate static IDs."""
     failures: dict[str, tuple[str, ...]] = {}
     for page in discover_docs(DOCS_CONFIG):
         components = tuple(_walk_component_tree(render_xy_markdown_page(page)))
@@ -47,7 +51,7 @@ def validate_public_page_ids() -> None:
 
 
 def main() -> None:
-    """Validate IDs on all public documentation pages."""
+    """Validate literal IDs produced from all Markdown-backed pages."""
     validate_public_page_ids()
 
 
