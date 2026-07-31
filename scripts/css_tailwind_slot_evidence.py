@@ -153,7 +153,9 @@ def audit_chart(label: str) -> xy.Chart:
             },
         ),
         title=f"CSS & Tailwind surface audit — {label}",
-        class_name="evidence",
+        # The fixture owns a dark chart surface, so opt into XY's documented
+        # scheme-aware modebar palette instead of leaving the light fallback.
+        class_name="evidence dark",
         class_names=SLOT_CLASSES,
         width=900,
         height=560,
