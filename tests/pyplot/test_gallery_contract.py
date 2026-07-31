@@ -15,7 +15,10 @@ from scripts.pyplot_gallery.contract import (
     CORPUS_ROOT,
     MANIFEST_PATH,
     _accepted_report_case,
+    _ast_dump_show_empty_fallback,
     _classify_source,
+    _normalized_script_ast,
+    _stable_ast_dump,
     promote_reports,
     verify_contract,
     verify_monotonic_baseline,
@@ -25,6 +28,28 @@ from scripts.pyplot_gallery.run_case import run_case
 from scripts.pyplot_gallery.run_gallery import _resumable_result
 
 AUDIT_COMMIT = "a" * 40
+
+
+def test_stable_ast_dump_includes_empty_fields_and_canonical_type_params() -> None:
+    tree = ast.parse("def function():\n    pass\n\nclass Example:\n    pass\n")
+
+    dumped = _stable_ast_dump(tree)
+
+    assert "posonlyargs=[]" in dumped
+    assert "kw_defaults=[]" in dumped
+    assert "decorator_list=[]" in dumped
+    assert dumped.count("type_params=[]") == 2
+    assert dumped.endswith("type_ignores=[])")
+    assert _ast_dump_show_empty_fallback(tree) == dumped
+
+
+def test_normalized_script_ast_matches_equivalent_notebook_code() -> None:
+    script = '"""Gallery prose."""\nvalue = call()\n'
+    notebook_code = "value = call()\n"
+
+    assert _normalized_script_ast(script, "example.py") == _stable_ast_dump(
+        ast.parse(notebook_code, filename="example.ipynb")
+    )
 
 
 def test_vendored_gallery_contract_is_complete_and_immutable() -> None:

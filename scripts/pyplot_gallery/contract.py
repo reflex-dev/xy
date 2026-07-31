@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import inspect
 import json
 import re
 import subprocess
@@ -159,6 +160,50 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
+def _ast_dump_show_empty_fallback(value: object) -> str:
+    """Match ``ast.dump(..., show_empty=True)`` on older interpreters.
+
+    Python 3.11 also predates the empty ``type_params`` fields added to
+    function and class definitions in Python 3.12.  Gallery sources use the
+    Python 3.11 grammar, so synthesizing those empty fields gives every
+    supported interpreter the same canonical AST schema.
+    """
+
+    if isinstance(value, ast.AST):
+        fields = list(value._fields)
+        if (
+            isinstance(value, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and "type_params" not in fields
+        ):
+            fields.append("type_params")
+
+        rendered_fields: list[str] = []
+        for name in fields:
+            if name == "type_params" and not hasattr(value, name):
+                field_value: object = []
+            else:
+                try:
+                    field_value = getattr(value, name)
+                except AttributeError:
+                    continue
+            if field_value is None and getattr(type(value), name, ...) is None:
+                continue
+            rendered_fields.append(f"{name}={_ast_dump_show_empty_fallback(field_value)}")
+        return f"{type(value).__name__}({', '.join(rendered_fields)})"
+    if isinstance(value, list):
+        return f"[{', '.join(_ast_dump_show_empty_fallback(item) for item in value)}]"
+    return repr(value)
+
+
+def _stable_ast_dump(tree: ast.AST) -> str:
+    """Serialize an AST identically on supported CPython versions."""
+
+    if "show_empty" in inspect.signature(ast.dump).parameters:
+        kwargs: dict[str, Any] = {"include_attributes": False, "show_empty": True}
+        return ast.dump(tree, **kwargs)
+    return _ast_dump_show_empty_fallback(tree)
+
+
 def _normalized_script_ast(source: str, filename: str) -> str:
     tree = ast.parse(source, filename=filename)
     if (
@@ -168,7 +213,7 @@ def _normalized_script_ast(source: str, filename: str) -> str:
         and isinstance(tree.body[0].value.value, str)
     ):
         tree.body.pop(0)
-    return ast.dump(tree, include_attributes=False)
+    return _stable_ast_dump(tree)
 
 
 def _notebook_code(notebook: dict[str, Any]) -> str:
@@ -494,9 +539,8 @@ def build_contract(
             notebook = json.loads(notebook_bytes)
 
             script_ast = _normalized_script_ast(source, path)
-            notebook_ast = ast.dump(
-                ast.parse(_notebook_code(notebook), filename=notebook_path),
-                include_attributes=False,
+            notebook_ast = _stable_ast_dump(
+                ast.parse(_notebook_code(notebook), filename=notebook_path)
             )
             if script_ast != notebook_ast:
                 raise ValueError(f"notebook code AST differs from Python source: {path}")

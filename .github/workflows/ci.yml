@@ -135,6 +135,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - name: Install standard gallery system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ffmpeg
       - name: Install xy and Matplotlib 3.11
         env:
           XY_REQUIRE_CARGO: "1"
@@ -147,7 +151,8 @@ jobs:
           .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
             --output "gallery-artifacts-${{ matrix.shard }}" \
             --profile standard \
-            --shard "${{ matrix.shard }}/8"
+            --shard "${{ matrix.shard }}/8" \
+            --workers 2
       - name: Upload failure-only gallery evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -511,18 +516,22 @@ jobs:
           npm ci
           node js/build.mjs
 
-      - name: Install package for Python 3.11
+      - name: Install package and compatibility test dependencies for Python 3.11
         run: |
           python -VV
           # Absolute path: newer uv resolves a bare name as a directory, not
           # the interpreter setup-python put on PATH.
           uv venv .venv --python "$(command -v python)"
-          uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
+          uv pip install -p .venv/bin/python \
+            -e . \
+            "pytest>=8,<9" \
+            "pillow>=10" \
+            "matplotlib==3.11.0"
 
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
 
-      - name: Python 3.11 tests (native core)
+      - name: Python 3.11 tests (native + compat)
         run: .venv/bin/python -m pytest -q
 
   # Cross-library scatter benchmark incl. time-to-first-render (spec/benchmarks/results.md).

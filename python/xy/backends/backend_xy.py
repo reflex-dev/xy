@@ -911,6 +911,9 @@ class FigureCanvasXY(FigureCanvasBase):
         return self.renderer
 
     def draw(self, *args: Any, **kwargs: Any) -> None:
+        manager = getattr(self, "manager", None)
+        if isinstance(manager, FigureManagerXY):
+            manager._activate_deferred_toolbar()
         renderer = self.get_renderer(cleared=True)
         wait_cursor = (
             self.toolbar._wait_cursor_for_draw_cm()  # ty: ignore[unresolved-attribute]
@@ -923,7 +926,6 @@ class FigureCanvasXY(FigureCanvasBase):
             super().draw(*args, **kwargs)
         if self._widget is not None:
             self._widget.refresh(renderer.display_list)
-        manager = getattr(self, "manager", None)
         if isinstance(manager, FigureManagerXY) and manager._browser_host is not None:
             manager._refresh_browser_host()
 
@@ -1248,15 +1250,36 @@ class ContainerXY:
 class FigureManagerXY(FigureManagerBase):
     """Manager for the live notebook widget and connected loopback host."""
 
-    _toolbar2_class = NavigationToolbar2XY
+    _toolbar2_class: type[NavigationToolbar2XY] | None = NavigationToolbar2XY
     _toolmanager_toolbar_class = ToolbarXY
 
     def __init__(self, canvas: FigureCanvasXY, num: int) -> None:
-        super().__init__(canvas, num)
+        defer_toolbar2 = matplotlib.rcParams["toolbar"] == "toolbar2"
+        toolbar2_class = self._toolbar2_class
+        if defer_toolbar2:
+            # Figure hooks run after manager creation but before the first
+            # draw.  Match non-GUI backends during that window so hooks which
+            # only support native GUI toolbars safely see ``toolbar=None``.
+            self._toolbar2_class = None
+        try:
+            super().__init__(canvas, num)
+        finally:
+            self._toolbar2_class = toolbar2_class
+        self._deferred_toolbar2_class = toolbar2_class if defer_toolbar2 else None
         self.vbox = ContainerXY(canvas, self.toolbar)
         self._widget_displayed = False
         self._browser_host: LoopbackHost | None = None
         self._browser_opened = False
+
+    def _activate_deferred_toolbar(self) -> None:
+        """Expose the browser navigation toolbar on the first canvas draw."""
+        toolbar_class = self._deferred_toolbar2_class
+        if toolbar_class is None:
+            return
+        toolbar = toolbar_class(cast(FigureCanvasXY, self.canvas))
+        self.toolbar = toolbar
+        self._deferred_toolbar2_class = None
+        self.vbox.children.append(toolbar)
 
     def show(self) -> None:
         self.canvas.draw()

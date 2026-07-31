@@ -688,6 +688,30 @@ def test_toolmanager_toolbar_add_remove_toggle_and_message_protocol() -> None:
     assert all(item["name"] != "Probe" for item in manager.toolbar.items)
 
 
+def test_toolbar2_is_hidden_from_figure_hooks_until_first_canvas_draw() -> None:
+    observed: list[tuple[object | None, object | None]] = []
+
+    def backend_specific_hook(figure: Figure) -> None:
+        observed.append((figure.canvas.toolbar, figure.canvas.manager.toolbar))
+        if figure.canvas.toolbar is not None:
+            raise NotImplementedError("The current backend is not supported")
+
+    with matplotlib.rc_context({"toolbar": "toolbar2"}):
+        figure = Figure()
+        canvas = FigureCanvasXY(figure)
+        manager = backend_xy.FigureManagerXY(canvas, 2)
+        backend_specific_hook(figure)
+
+    assert observed == [(None, None)]
+    assert manager.vbox.children == [canvas]
+
+    canvas.draw()
+
+    assert isinstance(manager.toolbar, NavigationToolbar2XY)
+    assert canvas.toolbar is manager.toolbar
+    assert manager.vbox.children == [canvas, manager.toolbar]
+
+
 def test_foreign_toolbar_and_vbox_reference_methods_retain_callbacks_and_order() -> None:
     class ForeignWidget:
         def __init__(self) -> None:
@@ -706,6 +730,7 @@ def test_foreign_toolbar_and_vbox_reference_methods_retain_callbacks_and_order()
         canvas = FigureCanvasXY(figure)
         manager = backend_xy.FigureManagerXY(canvas, 2)
     figure.subplots()  # Exercises the manager's axes-change update hook.
+    canvas.draw()
     clicked: list[object] = []
     first = ForeignWidget()
     second = ForeignWidget()
