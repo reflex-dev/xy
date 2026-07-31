@@ -108,9 +108,9 @@ path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
+    # Both packages published by the xy distribution. The bundled adapter is
+    # selected by the `reflex` extra; the retired python/reflex-xy project and
+    # its independent lock/release material must not ride in this sdist.
     "python/xy",
     "python/reflex_xy",
     "src",
@@ -120,22 +120,9 @@ include = [
     "js",
     "package.json",
     "package-lock.json",
-    "benchmarks",
-    "docs",
-    "spec",
-    "examples/fastapi/*.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/README.md",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/README.md",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/*.py",
-    "scripts",
-    "tests",
     "Cargo.toml",
     "Cargo.lock",
     "hatch_build.py",
-    "Makefile",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -143,7 +130,15 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
-    "/docs/app/**",
+    # Repository-only development, CI, documentation, and evidence material.
+    "/.github/**",
+    "/benchmarks/**",
+    "/docs/**",
+    "/examples/**",
+    "/Makefile",
+    "/scripts/**",
+    "/spec/**",
+    "/tests/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -154,6 +149,9 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
+    # Belt and braces for the include narrowing above: hatchling auto-admits
+    # readme-named files, which could smuggle the retired adapter project back in.
+    "/python/reflex-xy/**",
 ]
 
 [tool.ruff]

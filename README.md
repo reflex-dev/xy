@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="521">
+  <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/xy-sdf-binned-scatter.png" alt="XY-shaped probability field shown as a binned scatter chart." width="521">
 </p>
 
 <p align="center">
@@ -62,8 +62,8 @@ The same API scales to a hundred million points as a density surface:
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="spec/assets/xy-density-100m-dark.gif">
-    <img src="spec/assets/xy-density-100m-light.gif" alt="A hundred-million-point spiral rendered as a density surface, then zoomed until the surface resolves into individual points." width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/xy-density-100m-dark.gif">
+    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/xy-density-100m-light.gif" alt="A hundred-million-point spiral rendered as a density surface, then zoomed until the surface resolves into individual points." width="780">
   </picture>
 </p>
 
@@ -115,7 +115,7 @@ ax.legend()
 plt.show()
 ```
 
-See the [compatibility guide](spec/matplotlib/compat.md); not all charts and
+See the [compatibility guide](https://github.com/reflex-dev/xy/blob/main/spec/matplotlib/compat.md); not all charts and
 functionality are supported yet.
 
 ## Customize every layer
@@ -152,7 +152,7 @@ stable (10 byte-identical frames), so progressive renderers are charged until
 their last chunk lands.
 
 <p align="center">
-  <img src="spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
 </p>
 
 XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of
@@ -193,8 +193,8 @@ One machine (Apple M5 Pro), one run per cell; at the small end the timings
 carry roughly ±10 ms of run-to-run spread.
 
 For the environment, methodology, per-size videos, and raw results, see the
-[benchmark runbook](benchmarks/README.md) and
-[competitive benchmark specification](spec/benchmarks/results.md).
+[benchmark runbook](https://github.com/reflex-dev/xy/blob/main/benchmarks/README.md) and
+[competitive benchmark specification](https://github.com/reflex-dev/xy/blob/main/spec/benchmarks/results.md).
 
 ## Embed XY in a Reflex app
 
@@ -250,20 +250,20 @@ app.add_page(index)
 Hover, pan, and zoom keep working. For charts driven by Reflex state, events, or
 live streams, see the
 [Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/) and
-the [runnable example app](examples/reflex/).
+the [runnable example app](https://github.com/reflex-dev/xy/tree/main/examples/reflex/).
 
 ## Examples
 
 Each notebook fetches its rows from the linked public source; no raw datasets
 are stored in this repository. Counts describe the featured chart, and the
 notebooks scale further. See the
-[example guide](examples/real_world/README.md) for sources, workload controls,
+[example guide](https://github.com/reflex-dev/xy/blob/main/examples/real_world/README.md) for sources, workload controls,
 and setup.
 
 |  |  |  |
 | :---: | :---: | :---: |
-| **Gaia DR3 · HR diagram**<br><sub>250,000 plotted stars</sub><br><br>![Gaia DR3 stellar color versus absolute magnitude.](examples/real_world/assets/01-gaia-hr-diagram.png)<br><br>[Open notebook](examples/real_world/01_gaia_hr_diagram.ipynb) | **gnomAD v4.1 · allele frequency**<br><sub>164,000 plotted variants</sub><br><br>![gnomAD allele frequency across all autosomes.](examples/real_world/assets/02-gnomad-allele-frequency.png)<br><br>[Open notebook](examples/real_world/02_gnomad_allele_frequency.ipynb) | **Pan-UKBB · Manhattan plot**<br><sub>814,294 plotted variants</sub><br><br>![Pan-UKBB standing-height associations across all autosomes.](examples/real_world/assets/03-pan-ukbb-manhattan.png)<br><br>[Open notebook](examples/real_world/03_pan_ukbb_manhattan.ipynb) |
-| **Dukascopy · EUR/USD ticks**<br><sub>101,427 plotted ticks</sub><br><br>![Dukascopy EUR/USD midpoint quotes.](examples/real_world/assets/04-dukascopy-fx-ticks.png)<br><br>[Open notebook](examples/real_world/04_dukascopy_fx_ticks.ipynb) | **LIGO · GW150914 strain**<br><sub>16,777,216 raw · 3,441 shown</sub><br><br>![GWOSC reconstructed Hanford waveform for GW150914.](examples/real_world/assets/05-ligo-gw150914-strain.png)<br><br>[Open notebook](examples/real_world/05_ligo_gw150914_strain.ipynb) | **NYC TLC · taxi pickup density**<br><sub>300,000 pickup records</sub><br><br>![Locally projected NYC yellow-taxi pickup hexbin density.](examples/real_world/assets/06-nyc-taxi-density.png)<br><br>[Open notebook](examples/real_world/06_nyc_taxi_density.ipynb) |
+| **Gaia DR3 · HR diagram**<br><sub>250,000 plotted stars</sub><br><br>![Gaia DR3 stellar color versus absolute magnitude.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/01-gaia-hr-diagram.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/01_gaia_hr_diagram.ipynb) | **gnomAD v4.1 · allele frequency**<br><sub>164,000 plotted variants</sub><br><br>![gnomAD allele frequency across all autosomes.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/02-gnomad-allele-frequency.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/02_gnomad_allele_frequency.ipynb) | **Pan-UKBB · Manhattan plot**<br><sub>814,294 plotted variants</sub><br><br>![Pan-UKBB standing-height associations across all autosomes.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/03-pan-ukbb-manhattan.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/03_pan_ukbb_manhattan.ipynb) |
+| **Dukascopy · EUR/USD ticks**<br><sub>101,427 plotted ticks</sub><br><br>![Dukascopy EUR/USD midpoint quotes.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/04-dukascopy-fx-ticks.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/04_dukascopy_fx_ticks.ipynb) | **LIGO · GW150914 strain**<br><sub>16,777,216 raw · 3,441 shown</sub><br><br>![GWOSC reconstructed Hanford waveform for GW150914.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/05-ligo-gw150914-strain.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/05_ligo_gw150914_strain.ipynb) | **NYC TLC · taxi pickup density**<br><sub>300,000 pickup records</sub><br><br>![Locally projected NYC yellow-taxi pickup hexbin density.](https://raw.githubusercontent.com/reflex-dev/xy/main/examples/real_world/assets/06-nyc-taxi-density.png)<br><br>[Open notebook](https://github.com/reflex-dev/xy/blob/main/examples/real_world/06_nyc_taxi_density.ipynb) |
 
 ## How it works
 
@@ -287,7 +287,7 @@ So a dense overview can aggregate while a narrow view returns exact points. With
 a live host, pan and zoom request a refined payload. Canonical f64 data stays in
 Python, so hover and selection still return original rows.
 
-For the full design, see the [design dossier](spec/design-dossier.md).
+For the full design, see the [design dossier](https://github.com/reflex-dev/xy/blob/main/spec/design-dossier.md).
 
 ## Roadmap
 
@@ -307,6 +307,6 @@ next, no dates implied:
 - **Slope, bump, and dumbbell**
 - **3D and volume:** scatter, surfaces, meshes, isosurfaces, and volumetric views
 
-The full ranked backlog is in the [chart roadmap](spec/api/chart-roadmap.md).
+The full ranked backlog is in the [chart roadmap](https://github.com/reflex-dev/xy/blob/main/spec/api/chart-roadmap.md).
 Want a chart or feature that isn't listed?
 [Open an issue](https://github.com/reflex-dev/xy/issues/new).

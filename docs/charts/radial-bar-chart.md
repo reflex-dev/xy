@@ -1,15 +1,20 @@
 ---
 title: Radial Bar Charts in Python
-description: Build polished radial bar, progress-ring, and semicircular capacity blocks in Python with xy and Reflex.
+description: Create radial bar charts in Python with xy. Build radial bar plots, progress rings, gauge charts, and semicircular capacity blocks.
 components:
   - xy.polar_bar_chart
 ---
 
 # Radial Bar Charts in Python
 
-A **radial bar chart** encodes each value as an annular sector. The bar's first
+A **radial bar chart** (also called a radial bar plot or radial bar graph)
+encodes each value as an annular sector. The bar's first
 channel is its center angle, its second is its radial height, `width` controls
 the angular span, and `base` controls the inner radius.
+
+Jump to [a basic radial bar chart](#basic-radial-bar-chart),
+[inner radius and sector geometry](#inner-radius-and-sector-geometry), or
+[partial gauges](#partial-gauges).
 
 The first example keeps that geometry intentionally small. The blocks after it
 combine XY's exportable sectors with ordinary Reflex layout for center values,
@@ -622,8 +627,8 @@ used by the progress-ring blocks above.
 
 ## Partial Gauges
 
-Use `sector=(start, end)` for a gauge whose visible arc should expand to fill
-the plot box. Rounded sectors, background-colored strokes, gradients, and
+Use `sector=(start, end)` for a gauge chart whose visible arc should expand to
+fill the plot box. Rounded sectors, background-colored strokes, gradients, and
 explicit padding work the same way on a partial layout:
 
 ~~~python
