@@ -13,20 +13,6 @@
       "url": "https://matplotlib.org/stable/_downloads/46b4cb42d5bb56cc39e2b5b2b520b38d/gallery_python.zip"
     }
   },
-  "gallery_adapters": {
-    "event_handling/resample.py": {
-      "matplotlib": [
-        {
-          "artist_type": "matplotlib.collections.FillBetweenPolyCollection",
-          "figure_index": 0,
-          "id": "matplotlib-3.11-fill-between-set-data-step"
-        }
-      ],
-      "xy": []
-    }
-  },
-  "gallery_documentation_version": "3.11.1",
-  "gallery_snapshot_downloaded_on": "2026-07-30",
   "examples": [
     {
       "behavior": [
@@ -14133,6 +14119,20 @@
       "temporary_waivers": []
     }
   ],
+  "gallery_adapters": {
+    "event_handling/resample.py": {
+      "matplotlib": [
+        {
+          "artist_type": "matplotlib.collections.FillBetweenPolyCollection",
+          "figure_index": 0,
+          "id": "matplotlib-3.11-fill-between-set-data-step"
+        }
+      ],
+      "xy": []
+    }
+  },
+  "gallery_documentation_version": "3.11.1",
+  "gallery_snapshot_downloaded_on": "2026-07-30",
   "matplotlib_version": "3.11.0",
   "notebook_count": 507,
   "profile_counts": {
