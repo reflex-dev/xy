@@ -42,6 +42,7 @@ def _reset_mode() -> Any:
     _mode._deactivate_compat_backend_hint()
     _mode._requested_mode = "native"
     _mode._auto_compat_unavailable = False
+    _mode._auto_compat_supported = None
     _mode._compat_pyplot = None
     yield
     _state.close("all")
@@ -51,6 +52,7 @@ def _reset_mode() -> Any:
     _mode._deactivate_compat_backend_hint()
     _mode._requested_mode = "native"
     _mode._auto_compat_unavailable = False
+    _mode._auto_compat_supported = None
     _mode._compat_pyplot = None
 
 
@@ -161,6 +163,105 @@ def test_auto_falls_back_to_native_without_supported_matplotlib(monkeypatch: Any
     assert plt.get_mode() == "auto"
     assert type(fig).__module__ == "xy.pyplot._mplfig"
     assert type(ax).__module__ == "xy.pyplot._axes"
+
+
+def test_auto_resolution_caches_distribution_metadata_across_routed_calls(
+    monkeypatch: Any,
+) -> None:
+    probes = 0
+
+    def missing(_name: str) -> str:
+        nonlocal probes
+        probes += 1
+        raise _mode.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(_mode.importlib.metadata, "version", missing)
+
+    plt.set_mode("auto")
+    plt.figure()
+    plt.title("native auto")
+    plt.close("all")
+
+    assert probes == 1
+
+
+def test_set_mode_auto_refreshes_install_and_uninstall_detection(
+    monkeypatch: Any,
+) -> None:
+    version: str | None = None
+    probes = 0
+
+    def installed_version(_name: str) -> str:
+        nonlocal probes
+        probes += 1
+        if version is None:
+            raise _mode.importlib.metadata.PackageNotFoundError
+        return version
+
+    monkeypatch.setattr(_mode.importlib.metadata, "version", installed_version)
+
+    plt.set_mode("auto")
+    assert _mode._effective_mode() == "native"
+    assert probes == 1
+
+    version = "3.11.0"
+    plt.set_mode("auto")
+    assert _mode._effective_mode() == "compat"
+    assert probes == 2
+
+    version = None
+    plt.set_mode("auto")
+    assert _mode._effective_mode() == "native"
+    assert probes == 3
+
+
+def test_auto_refresh_cannot_change_effective_mode_with_open_figures(
+    monkeypatch: Any,
+) -> None:
+    version: str | None = None
+
+    def installed_version(_name: str) -> str:
+        if version is None:
+            raise _mode.importlib.metadata.PackageNotFoundError
+        return version
+
+    monkeypatch.setattr(_mode.importlib.metadata, "version", installed_version)
+
+    plt.set_mode("auto")
+    plt.figure()
+    version = "3.11.0"
+
+    with pytest.raises(RuntimeError, match=r'close\("all"\)'):
+        plt.set_mode("auto")
+
+    assert _mode._effective_mode() == "native"
+
+    plt.close("all")
+    plt.set_mode("auto")
+    assert _mode._effective_mode() == "compat"
+
+
+def test_auto_falls_back_if_matplotlib_disappears_before_lazy_import(
+    monkeypatch: Any,
+) -> None:
+    calls = 0
+
+    def changing_version(_name: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "3.11.0"
+        raise _mode.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(_mode.importlib.metadata, "version", changing_version)
+
+    plt.set_mode("auto")
+    fig, ax = plt.subplots()
+
+    assert type(fig).__module__ == "xy.pyplot._mplfig"
+    assert type(ax).__module__ == "xy.pyplot._axes"
+    assert _mode._effective_mode() == "native"
+    assert calls == 2
 
 
 def test_auto_falls_back_to_native_when_supported_matplotlib_cannot_import() -> None:

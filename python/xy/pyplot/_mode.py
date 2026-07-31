@@ -55,6 +55,10 @@ _compat_pyplot: Any = None
 _compat_previous_mplbackend: str | None = None
 _compat_backend_hint_active = False
 _auto_compat_unavailable = False
+# Resolving distribution metadata performs filesystem work.  Keep the result
+# stable across routed pyplot calls and refresh it only at the explicit
+# ``set_mode("auto")`` boundary.
+_auto_compat_supported: bool | None = None
 
 
 class _AutoCompatFallback(RuntimeError):
@@ -235,17 +239,21 @@ def _matplotlib_series(version: str) -> tuple[int, int] | None:
 
 
 def _mode_resolves_compat(mode: PyplotMode) -> bool:
+    global _auto_compat_supported
     if mode == "auto" and _auto_compat_unavailable:
         return False
     if mode == "compat":
         return True
     if mode == "native":
         return False
-    try:
-        version = importlib.metadata.version("matplotlib")
-    except importlib.metadata.PackageNotFoundError:
-        return False
-    return _matplotlib_series(version) == _SUPPORTED_MATPLOTLIB
+    if _auto_compat_supported is None:
+        try:
+            version = importlib.metadata.version("matplotlib")
+        except importlib.metadata.PackageNotFoundError:
+            _auto_compat_supported = False
+        else:
+            _auto_compat_supported = _matplotlib_series(version) == _SUPPORTED_MATPLOTLIB
+    return _auto_compat_supported
 
 
 if _mode_resolves_compat(_requested_mode):
@@ -282,16 +290,32 @@ def set_mode(mode: PyplotMode | str) -> None:
     Matplotlib series is installed and otherwise selects ``native``.
 
     Switching modes while either frontend has an open figure is rejected.
-    Close all figures first (``plt.close("all")``).
+    Close all figures first (``plt.close("all")``). Calling
+    ``set_mode("auto")`` again refreshes optional Matplotlib discovery, for
+    example after installing or uninstalling the extra in a live process.
     """
 
     requested = _parse_mode(mode, source="mode")
     with _lock:
-        global _requested_mode
-        if requested == _requested_mode:
+        global _auto_compat_supported, _auto_compat_unavailable, _requested_mode
+        if requested == _requested_mode and requested != "auto":
             return
+
+        previous_auto_supported = _auto_compat_supported
+        previous_auto_unavailable = _auto_compat_unavailable
+        previous_effective = "compat" if _mode_resolves_compat(_requested_mode) else "native"
+
+        # A same-mode call is the explicit refresh boundary for optional
+        # dependency changes.  Ordinary pyplot dispatch remains filesystem-free.
+        if requested == "auto":
+            _auto_compat_supported = None
+            _auto_compat_unavailable = False
         new_effective = "compat" if _mode_resolves_compat(requested) else "native"
-        if _figures_are_open():
+        mode_changed = requested != _requested_mode
+        effective_changed = new_effective != previous_effective
+        if (mode_changed or effective_changed) and _figures_are_open():
+            _auto_compat_supported = previous_auto_supported
+            _auto_compat_unavailable = previous_auto_unavailable
             raise RuntimeError(
                 "cannot switch xy.pyplot mode while figures are open; "
                 'call close("all") before set_mode()'
@@ -302,13 +326,13 @@ def set_mode(mode: PyplotMode | str) -> None:
             _validate_installed_matplotlib()
         if new_effective == "compat":
             _activate_compat_backend_hint()
-        elif _effective_mode() == "compat":
+        elif previous_effective == "compat":
             _deactivate_compat_backend_hint()
         _requested_mode = requested
 
 
 def _load_compat_pyplot() -> Any:
-    global _auto_compat_unavailable, _compat_pyplot
+    global _auto_compat_supported, _auto_compat_unavailable, _compat_pyplot
     with _lock:
         if _compat_pyplot is not None:
             # Production cache entries are the actual pyplot module.  Validate
@@ -324,7 +348,20 @@ def _load_compat_pyplot() -> Any:
                 return _compat_pyplot
             _compat_pyplot = None
 
-        expected_version = _validate_installed_matplotlib()
+        try:
+            expected_version = _validate_installed_matplotlib()
+        except RuntimeError as exc:
+            if _requested_mode != "auto":
+                raise
+            # Metadata can change after auto was resolved but before the first
+            # routed compat call. Fall back transactionally instead of leaking
+            # an explicit-compat installation error from auto mode.
+            _auto_compat_supported = False
+            _auto_compat_unavailable = True
+            _deactivate_compat_backend_hint()
+            raise _AutoCompatFallback(
+                "supported Matplotlib metadata disappeared or changed; auto mode selected native"
+            ) from exc
         try:
             matplotlib = importlib.import_module("matplotlib")
             runtime_version = str(getattr(matplotlib, "__version__", expected_version))

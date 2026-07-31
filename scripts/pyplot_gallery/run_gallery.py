@@ -11,6 +11,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -36,19 +37,17 @@ def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _implementation_commit() -> str | None:
-    """Return the exact implementation revision exercised by this report.
+@dataclass(frozen=True)
+class _RepositorySnapshot:
+    """Git state at one boundary of a gallery run."""
 
-    Release promotion requires a real 40-character commit.  Keeping the
-    unversioned case explicit lets developers run the harness from an sdist,
-    while making such a report ineligible for baseline promotion.
-    """
+    head: str | None
+    dirty: bool | None
 
-    configured = os.environ.get("XY_GALLERY_IMPLEMENTATION_COMMIT")
-    if configured:
-        return configured.strip()
+
+def _repository_head(repo_root: Path) -> str | None:
     completed = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
         check=False,
         capture_output=True,
         text=True,
@@ -58,16 +57,38 @@ def _implementation_commit() -> str | None:
     return completed.stdout.strip() or None
 
 
-def _implementation_dirty() -> bool | None:
-    """Return repository dirtiness, excluding only the known user artifact."""
+def _relative_output_root(output_root: Path, repo_root: Path) -> str | None:
+    """Return a strict repo-relative output directory, if there is one."""
+
+    try:
+        relative = output_root.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    if not relative.parts:
+        # Selecting the repository itself cannot safely suppress every change.
+        return None
+    return relative.as_posix()
+
+
+def _ignored_status_path(path: str, output_relative: str | None) -> bool:
+    if path == "test.png":
+        return True
+    return bool(
+        output_relative and (path == output_relative or path.startswith(f"{output_relative}/"))
+    )
+
+
+def _repository_dirty(output_root: Path, repo_root: Path) -> bool | None:
+    """Return Git dirtiness outside this run's output and ``test.png``."""
 
     completed = subprocess.run(
         [
             "git",
             "-C",
-            str(REPO_ROOT),
+            str(repo_root),
             "status",
             "--porcelain=v1",
+            "-z",
             "--untracked-files=all",
         ],
         check=False,
@@ -76,10 +97,87 @@ def _implementation_dirty() -> bool | None:
     )
     if completed.returncode:
         return None
-    material_changes = [
-        line for line in completed.stdout.splitlines() if len(line) < 4 or line[3:] != "test.png"
-    ]
-    return bool(material_changes)
+    output_relative = _relative_output_root(output_root, repo_root)
+    records = completed.stdout.split("\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            return True
+        status = record[:2]
+        paths = [record[3:]]
+        if "R" in status or "C" in status:
+            if index >= len(records) or not records[index]:
+                return True
+            paths.append(records[index])
+            index += 1
+        # A rename wholly inside the output remains an output artifact.  A
+        # move across its boundary still exposes the unrelated source/target.
+        if not all(_ignored_status_path(path, output_relative) for path in paths):
+            return True
+    return False
+
+
+def _repository_snapshot(
+    output_root: Path,
+    *,
+    repo_root: Path | None = None,
+) -> _RepositorySnapshot:
+    root = REPO_ROOT if repo_root is None else repo_root
+    return _RepositorySnapshot(
+        head=_repository_head(root),
+        dirty=_repository_dirty(output_root, root),
+    )
+
+
+def _implementation_provenance(
+    start: _RepositorySnapshot,
+    end: _RepositorySnapshot,
+) -> tuple[str | None, bool | None]:
+    """Resolve a fail-closed commit and clean-tree result for one run."""
+
+    configured = os.environ.get("XY_GALLERY_IMPLEMENTATION_COMMIT", "").strip() or None
+    repository_available = any(
+        value is not None for value in (start.head, start.dirty, end.head, end.dirty)
+    )
+    stable_head = start.head if start.head is not None and start.head == end.head else None
+    if repository_available:
+        implementation_commit = stable_head
+        configured_mismatch = configured is not None and (
+            start.head != configured or end.head != configured
+        )
+    else:
+        # An sdist has no Git identity.  Keep an explicitly supplied revision
+        # visible, but the indeterminate dirty state still prevents promotion.
+        implementation_commit = configured
+        configured_mismatch = False
+
+    if start.head != end.head or configured_mismatch:
+        implementation_dirty: bool | None = True
+    elif start.dirty is True or end.dirty is True:
+        implementation_dirty = True
+    elif start.dirty is False and end.dirty is False:
+        implementation_dirty = False
+    else:
+        implementation_dirty = None
+    return implementation_commit, implementation_dirty
+
+
+def _implementation_commit() -> str | None:
+    """Return the authoritative current Git revision, when available."""
+
+    snapshot = _repository_snapshot(REPO_ROOT)
+    return _implementation_provenance(snapshot, snapshot)[0]
+
+
+def _implementation_dirty(output_root: Path | None = None) -> bool | None:
+    """Return current dirtiness with an optional runner-output exclusion."""
+
+    snapshot = _repository_snapshot(REPO_ROOT if output_root is None else output_root)
+    return _implementation_provenance(snapshot, snapshot)[1]
 
 
 def _parse_shard(value: str) -> tuple[int, int]:
@@ -402,6 +500,7 @@ def run_gallery(
     corpus_root: Path = CORPUS_ROOT,
     extended_spec_path: Path = EXTENDED_SPEC_PATH,
 ) -> dict[str, Any]:
+    repository_start = _repository_snapshot(output_root)
     manifest = _load(manifest_path)
     baseline = _load(baseline_path)
     entries = [
@@ -562,11 +661,20 @@ def run_gallery(
         "profile": profile,
         "shard": f"{shard[0]}/{shard[1]}",
     }
+    # Capture provenance after every runner-owned artifact except report.json
+    # has been written.  When output_root is inside the checkout those files
+    # are the one ignored subtree; unrelated changes remain visible.
+    _write_junit(cases, output_root / "junit.xml")
+    repository_end = _repository_snapshot(output_root)
+    implementation_commit, implementation_dirty = _implementation_provenance(
+        repository_start,
+        repository_end,
+    )
     report = {
         "schema_version": 2,
         "harness_version": HARNESS_VERSION,
-        "implementation_commit": _implementation_commit(),
-        "implementation_dirty": _implementation_dirty(),
+        "implementation_commit": implementation_commit,
+        "implementation_dirty": implementation_dirty,
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "extended_spec_sha256": hashlib.sha256(extended_spec_path.read_bytes()).hexdigest(),
         "environment_profile": profile,
@@ -578,7 +686,6 @@ def run_gallery(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    _write_junit(cases, output_root / "junit.xml")
     return report
 
 
