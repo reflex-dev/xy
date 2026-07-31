@@ -6,10 +6,12 @@ import ast
 import copy
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
-from scripts.pyplot_gallery import HARNESS_VERSION
+from scripts.pyplot_gallery import HARNESS_VERSION, extended_environment
+from scripts.pyplot_gallery import contract as gallery_contract
 from scripts.pyplot_gallery.contract import (
     BASELINE_PATH,
     CORPUS_ROOT,
@@ -424,6 +426,93 @@ def test_complete_report_promotion_removes_waivers_and_records_tolerant_dimensio
     assert baseline["examples"]["plot.py"]["exact_dimension_parity"] is False
     assert baseline["examples"]["plot.py"]["temporary_waivers"] == []
     assert manifest["examples"][0]["temporary_waivers"] == []
+
+
+def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    manifest_path = root / "manifest.json"
+    extended_spec_path = root / "extended-environment.json"
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    examples = manifest.pop("examples")
+    deliberately_noncanonical = {"examples": examples, **manifest}
+    manifest_path.write_text(
+        json.dumps(deliberately_noncanonical, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    report_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    extended_spec_sha256 = hashlib.sha256(extended_spec_path.read_bytes()).hexdigest()
+
+    # This regression is about the promotion write/provenance boundary.  The
+    # ordinary fixture tests above exercise detailed report acceptance; use
+    # compact accepted cases here so the real 507-source contract can be
+    # promoted and then passed through the complete verifier.
+    monkeypatch.setattr(gallery_contract, "_case_provenance_errors", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        gallery_contract,
+        "_accepted_report_case",
+        lambda _case, *, expected_behavior=(): [],
+    )
+    monkeypatch.setattr(
+        extended_environment,
+        "validate_complete_report",
+        lambda _report, *, spec: [],
+    )
+
+    report_paths: list[Path] = []
+    for profile in ("standard", "extended"):
+        cases = []
+        for entry in deliberately_noncanonical["examples"]:
+            if not entry["pyplot_eligible"] or entry["profile"] != profile:
+                continue
+            cases.append(
+                {
+                    "path": entry["path"],
+                    "engines": {
+                        engine: {
+                            "status": "passed",
+                            "capture_count": 1,
+                            "wall_duration_seconds": 0.1,
+                        }
+                        for engine in ("matplotlib", "xy")
+                    },
+                    "comparison": {
+                        "exact_dimension_parity": True,
+                        "figure_pairs": [{"visual_gate": {"decision": "pass"}}],
+                    },
+                }
+            )
+        report = {
+            "schema_version": 2,
+            "harness_version": HARNESS_VERSION,
+            "implementation_commit": AUDIT_COMMIT,
+            "implementation_dirty": False,
+            "manifest_sha256": report_manifest_sha256,
+            "extended_spec_sha256": extended_spec_sha256,
+            "environment_profile": profile,
+            "matplotlib_version": deliberately_noncanonical["matplotlib_version"],
+            "summary": {"profile": profile},
+            "examples": cases,
+        }
+        report_path = tmp_path / f"{profile}-report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        report_paths.append(report_path)
+
+    _manifest, baseline = promote_reports(
+        report_paths,
+        audit_commit=AUDIT_COMMIT,
+        root=root,
+        verify_repository=False,
+    )
+
+    emitted_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    assert emitted_manifest_sha256 != report_manifest_sha256
+    assert baseline["manifest_sha256"] == emitted_manifest_sha256
+    assert verify_contract(root) == []
 
 
 def test_report_promotion_is_fail_closed(tmp_path: Path) -> None:

@@ -767,9 +767,11 @@ def _accepted_report_case(
             if not isinstance(pair, dict):
                 errors.append(f"{path}: figure pair {index} is invalid")
                 continue
-            if pair.get("dimension_gate", {}).get("decision") != "pass":
+            dimension_gate = pair.get("dimension_gate")
+            if not isinstance(dimension_gate, dict) or dimension_gate.get("decision") != "pass":
                 errors.append(f"{path}: figure pair {index} dimension gate detail did not pass")
-            if pair.get("visual_gate", {}).get("decision") != "pass":
+            visual_gate = pair.get("visual_gate")
+            if not isinstance(visual_gate, dict) or visual_gate.get("decision") != "pass":
                 errors.append(f"{path}: figure pair {index} visual gate detail did not pass")
             if pair.get("semantic_differences") != []:
                 errors.append(f"{path}: figure pair {index} has semantic differences")
@@ -949,7 +951,12 @@ def promote_reports(
     report_records: list[dict[str, Any]] = []
     report_profiles: set[str] = set()
     errors: list[str] = []
-    manifest_sha256 = _sha256(manifest_path.read_bytes())
+    # Reports identify the exact manifest bytes they consumed.  Promotion
+    # canonicalizes that manifest when it writes the checked-in contract, so
+    # keep the input digest separate from the digest of the emitted bytes.
+    # Conflating the two makes an otherwise valid promotion immediately fail
+    # schema-3 verification whenever the input JSON was not already canonical.
+    report_manifest_sha256 = _sha256(manifest_path.read_bytes())
     extended_spec_sha256 = _sha256(extended_spec_path.read_bytes())
 
     for report_path in reports:
@@ -967,7 +974,7 @@ def promote_reports(
             ("harness_version", HARNESS_VERSION),
             ("implementation_commit", audit_commit),
             ("implementation_dirty", False),
-            ("manifest_sha256", manifest_sha256),
+            ("manifest_sha256", report_manifest_sha256),
             ("extended_spec_sha256", extended_spec_sha256),
         ):
             if report.get(field) != expected:
@@ -1084,10 +1091,13 @@ def promote_reports(
         }
         manifest_by_path[path]["temporary_waivers"] = []
 
+    manifest_bytes = _json_bytes(manifest)
+    promoted_manifest_sha256 = _sha256(manifest_bytes)
+
     baseline["schema_version"] = 3
     baseline["audit_commit"] = audit_commit
     baseline["harness_version"] = HARNESS_VERSION
-    baseline["manifest_sha256"] = manifest_sha256
+    baseline["manifest_sha256"] = promoted_manifest_sha256
     baseline["extended_spec_sha256"] = extended_spec_sha256
     baseline["acceptance_reports"] = sorted(
         report_records,
@@ -1097,7 +1107,7 @@ def promote_reports(
         manifest=manifest,
         baseline_examples=baseline_examples,
     )
-    manifest_path.write_bytes(_json_bytes(manifest))
+    manifest_path.write_bytes(manifest_bytes)
     baseline_path.write_bytes(_json_bytes(baseline))
     return manifest, baseline
 
