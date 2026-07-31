@@ -118,10 +118,11 @@ jobs:
       - run: echo "Approved for production promotion"
 
   # No GitHub Release job here: on a `v*` tag release.yml owns the release
-  # (it gates tag == pyproject == CHANGELOG and attaches the Pyodide wheel with
-  # generated notes). A second creator would race it and could win, stamping a
-  # library release with docs-deployment notes. The flip side of not owning it
-  # is that this workflow must confirm it happened before promoting prod.
+  # (it gates tag == pyproject == CHANGELOG and attaches every verified wheel
+  # and sdist with generated notes). A second creator would race it and could
+  # win, stamping a library release with docs-deployment notes. The flip side
+  # of not owning it is that this workflow must confirm it happened before
+  # promoting prod.
   verify-library-release:
     name: Verify Library Release Published
     needs: [prepare, await-prod-approval]

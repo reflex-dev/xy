@@ -1,8 +1,8 @@
 name: Release
 
-# Publish prebuilt wheels + sdist to PyPI on a version tag. This is what makes
-# `pip install xy` a no-toolchain install: each platform wheel carries
-# the compiled Rust core, so end users never see Rust or Node.
+# Publish prebuilt wheels + sdist to PyPI and GitHub Releases on a version tag.
+# This is what makes `pip install xy` a no-toolchain install: each platform
+# wheel carries the compiled Rust core, so end users never see Rust or Node.
 on:
   push:
     tags: ["v*"]
@@ -299,3 +299,52 @@ jobs:
           # A failed upload can leave a partial release on immutable PyPI.
           # Retrying the same tag should skip files that were already accepted.
           skip-existing: true
+
+  github-release:
+    name: Publish GitHub Release
+    # GitHub Releases are a tag-push side effect only. In particular, neither
+    # the default dry run nor a manually requested PyPI publish may create one.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Keep repository write access out of every build and PyPI job.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - name: Create GitHub Release and attach distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          artifacts=(dist/*.whl dist/*.tar.gz)
+          if (( ${#artifacts[@]} == 0 )); then
+            echo "::error::No wheel or sdist artifacts were downloaded"
+            exit 1
+          fi
+
+          # `gh release create` publishes immediately. If a previous run made
+          # the release but failed partway through uploading assets, refresh
+          # the verified files instead of failing an otherwise safe retry.
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::notice::${TAG} already exists; refreshing distribution assets"
+            gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber
+            exit 0
+          fi
+
+          prerelease=()
+          if [[ "$TAG" =~ (a|b|rc)[0-9]+ ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" "${artifacts[@]}" \
+            --repo "$REPO" \
+            --verify-tag \
+            --generate-notes \
+            --title "$TAG" \
+            "${prerelease[@]}"

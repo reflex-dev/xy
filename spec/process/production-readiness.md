@@ -357,8 +357,8 @@ Before tagging a release:
 - Run `make check-full` locally or confirm the equivalent
   CI gates passed on the release commit.
 - Run `make check-ci` to confirm CI and release workflow
-  gates still include artifact verification, upload/download, and trusted PyPI
-  publishing.
+  gates still include artifact verification, upload/download, trusted PyPI
+  publishing, and tag-only GitHub Release creation.
 - Before the first release after a change to the wheel matrix (new target,
   cross-compile toolchain, or tagging scheme), manually run the release
   workflow (`workflow_dispatch`, `dry_run` defaults to `true`) and confirm
@@ -396,6 +396,16 @@ Before tagging a release:
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm `spec/api/api-examples.md` runs against the tagged API.
+- Confirm the tag run created a public GitHub Release only after PyPI
+  publishing succeeded. `release.yml` downloads the same verified wheel and
+  sdist batch into a least-privilege `contents: write` job, attaches every
+  distribution with generated notes, and marks canonical alpha, beta, and
+  release-candidate tags as prereleases. The job is retry-safe: an existing
+  release has its assets refreshed with `--clobber`, while every
+  `workflow_dispatch` run (including `dry_run=false`) skips GitHub Release
+  creation. The production docs workflow polls for both this release and the
+  matching PyPI version before promotion.
+
 ### reflex-xy releases
 
 The adapter is a pure-Python distribution — no native core, no JS build, no

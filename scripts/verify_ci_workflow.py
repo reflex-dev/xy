@@ -35,7 +35,7 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm", "github-release"}
 REQUIRED_REFLEX_XY_RELEASE_JOBS = {"build", "publish"}
 
 
@@ -823,6 +823,31 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             "unrelated condition (e.g. `if: always()`) would let a manual "
             "dispatch publish unintentionally"
         )
+    _require_job_contains(
+        errors,
+        jobs,
+        "github-release",
+        "release",
+        "tag-only, least-privilege GitHub Release creation after PyPI, using "
+        "the verified distribution artifacts with retry-safe uploads",
+        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
+        "needs: publish",
+        "permissions:",
+        "contents: write",
+        "actions/download-artifact@",
+        "pattern: dist-*",
+        "merge-multiple: true",
+        "GH_TOKEN: ${{ github.token }}",
+        "dist/*.whl",
+        "dist/*.tar.gz",
+        "gh release view",
+        "gh release upload",
+        "--clobber",
+        "gh release create",
+        "--verify-tag",
+        "--generate-notes",
+        "--prerelease",
+    )
     return errors
 
 

@@ -742,6 +742,54 @@ def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> 
     assert any("release publish job" in error and "skip-existing" in error for error in errors)
 
 
+def test_release_workflow_rejects_missing_github_release_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.split("\n  github-release:\n", 1)[0], encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("github-release" in error for error in errors)
+
+
+def test_release_workflow_rejects_manual_github_release_creation(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n",
+            "    if: github.event_name != 'workflow_dispatch' "
+            "|| github.event.inputs.dry_run != 'true'\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("github-release job" in error and "tag-only" in error for error in errors)
+
+
+def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("      contents: write\n", "      contents: read\n", 1)
+        .replace(" --clobber\n", "\n", 1)
+        .replace("            --verify-tag \\\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "github-release job" in error
+        and "contents: write" in error
+        and "--clobber" in error
+        and "--verify-tag" in error
+        for error in errors
+    )
+
+
 def test_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
     """A depth-1 checkout fetches no tags, and the version is derived from them.
 
