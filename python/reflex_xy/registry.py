@@ -51,9 +51,13 @@ class FigureEntry:
     # The unwired/headless path cannot use the asyncio lock. Keep its
     # mutations generation-local so a slow append never holds the map mutex
     # or blocks unrelated figures.
-    sync_lock: threading.Lock = field(
-        default_factory=threading.Lock, repr=False, compare=False
-    )
+    sync_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    # Number of registry operations currently using this exact generation.
+    # The registry mutex protects this counter; the TTL sweep skips a current
+    # entry while it is leased. Keeping the count on the immutable generation
+    # (rather than by token) means a replacement never inherits an old
+    # append's lease.
+    active_operations: int = field(default=0, init=False, repr=False, compare=False)
     # Pinned entries are exempt from the TTL sweep: figures with no rebuild
     # recipe elsewhere (module-level `inline()` charts) live as long as the
     # process, or a sweep would break them permanently after idling.
@@ -69,9 +73,17 @@ class FigureRegistry:
     def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> None:
         self._entries: dict[str, FigureEntry] = {}
         # A mounted client remains in its socket room when a TTL sweep evicts
-        # the figure. Retain only the evicted scalar version so a state-driven
-        # rebuild on this worker cannot regress the client's wire version.
+        # a rebuildable figure. Retain only the evicted scalar version while
+        # at least one such client is subscribed, so a state-driven rebuild on
+        # this worker cannot regress its wire version. Opaque tokens and state
+        # tokens with no subscribers leave no unbounded tombstones behind.
         self._evicted_versions: dict[str, int] = {}
+        # Only rebuildable subscriptions need registry lifecycle state;
+        # socket.io owns rooms for both token families. The inverse indexes
+        # make subscribe/unsubscribe/disconnect idempotent and bounded by live
+        # connections.
+        self._rebuildable_subscribers: dict[str, set[str]] = {}
+        self._rebuildable_tokens_by_sid: dict[str, set[str]] = {}
         self._mutex = threading.RLock()
         self._ttl = float(ttl_seconds)
         # Tokens with a broadcast scheduled but not yet started. Publishes
@@ -119,6 +131,24 @@ class FigureRegistry:
         with self._mutex:
             return self._entries.get(token) is entry
 
+    def _acquire_operation(self, token: str) -> Optional[FigureEntry]:
+        """Lease and return the token's current immutable generation."""
+        with self._mutex:
+            entry = self._entries.get(token)
+            if entry is None:
+                return None
+            entry.active_operations += 1
+            entry.touch()
+            return entry
+
+    def _release_operation(self, entry: FigureEntry) -> None:
+        """Release a generation lease acquired by ``_acquire_operation``."""
+        with self._mutex:
+            if entry.active_operations <= 0:
+                msg = "figure entry operation lease released without acquire"
+                raise RuntimeError(msg)
+            entry.active_operations -= 1
+
     def publish(
         self, token: str, figure: "Figure", *, broadcast: bool = True, pinned: bool = False
     ) -> FigureEntry:
@@ -132,9 +162,7 @@ class FigureRegistry:
             entry = self._entries.get(token)
             if entry is None:
                 version = self._evicted_versions.pop(token, 0) + 1
-                entry = FigureEntry(
-                    figure=figure, token=token, version=version, pinned=pinned
-                )
+                entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
                 self._entries[token] = entry
                 changed = True
             else:
@@ -160,6 +188,30 @@ class FigureRegistry:
             self.schedule_broadcast(token)
         return entry
 
+    def publish_if_missing(
+        self, token: str, figure: "Figure", *, pinned: bool = False
+    ) -> tuple[FigureEntry, bool]:
+        """Atomically insert one rebuilt generation unless another producer won.
+
+        State builders run outside the registry mutex. A normal dependency-
+        driven publish may therefore populate ``token`` while a cache-miss
+        rebuild is awaiting user code. The completed rebuild must use that
+        newer current entry rather than replace it with its older snapshot.
+
+        Returns ``(entry, inserted)``. The caller owns any fan-out for an
+        inserted rebuild; an existing entry's original publisher owns its
+        broadcast.
+        """
+        with self._mutex:
+            entry = self._entries.get(token)
+            if entry is not None:
+                entry.touch()
+                return entry, False
+            version = self._evicted_versions.pop(token, 0) + 1
+            entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
+            self._entries[token] = entry
+            return entry, True
+
     def register(self, figure: "Figure") -> str:
         """Imperative registration: mint an opaque token for a figure.
 
@@ -175,6 +227,56 @@ class FigureRegistry:
         with self._mutex:
             self._entries.pop(token, None)
             self._evicted_versions.pop(token, None)
+
+    # -- subscription lifecycle -------------------------------------------
+
+    def subscribe(self, token: str, sid: str, rebuildable: bool) -> None:
+        """Track one live socket subscription when ``token`` can rebuild.
+
+        Socket.io remains responsible for room membership. This small mirror
+        exists only to decide whether a swept version tombstone is needed.
+        Repeated calls are idempotent. Passing ``rebuildable=False`` leaves
+        opaque tokens untracked and clears a stale classification for the
+        same SID/token pair defensively.
+        """
+        with self._mutex:
+            if not rebuildable:
+                self._unsubscribe_locked(token, sid)
+                return
+            self._rebuildable_subscribers.setdefault(token, set()).add(sid)
+            self._rebuildable_tokens_by_sid.setdefault(sid, set()).add(token)
+
+    def unsubscribe(self, token: str, sid: str) -> None:
+        """Forget one socket subscription, idempotently."""
+        with self._mutex:
+            self._unsubscribe_locked(token, sid)
+
+    def _unsubscribe_locked(self, token: str, sid: str) -> None:
+        subscribers = self._rebuildable_subscribers.get(token)
+        if subscribers is not None:
+            subscribers.discard(sid)
+            if not subscribers:
+                self._rebuildable_subscribers.pop(token, None)
+                self._evicted_versions.pop(token, None)
+
+        tokens = self._rebuildable_tokens_by_sid.get(sid)
+        if tokens is not None:
+            tokens.discard(token)
+            if not tokens:
+                self._rebuildable_tokens_by_sid.pop(sid, None)
+
+    def disconnect(self, sid: str) -> None:
+        """Forget all rebuildable subscriptions owned by one socket SID."""
+        with self._mutex:
+            tokens = self._rebuildable_tokens_by_sid.pop(sid, set())
+            for token in tokens:
+                subscribers = self._rebuildable_subscribers.get(token)
+                if subscribers is None:
+                    continue
+                subscribers.discard(sid)
+                if not subscribers:
+                    self._rebuildable_subscribers.pop(token, None)
+                    self._evicted_versions.pop(token, None)
 
     def tokens(self) -> list[str]:
         with self._mutex:
@@ -247,35 +349,42 @@ class FigureRegistry:
         """
         loop = self._loop
         if loop is None:
-            entry = self.get(token)
+            entry = self._acquire_operation(token)
             if entry is None:
                 msg = f"unknown figure token: {token!r}"
                 raise KeyError(msg)
-            # Serialize only this immutable generation. A publish may replace
-            # it while append is running; the identity-checked bump below then
-            # discards the obsolete result without touching the replacement.
-            with entry.sync_lock:
-                entry.figure.append(trace, x, y, color=color, size=size)
-                self.bump(token, expected=entry)
+            try:
+                # Serialize only this immutable generation. A publish may
+                # replace it while append is running; the identity-checked
+                # bump below then discards the obsolete result without
+                # touching the replacement.
+                with entry.sync_lock:
+                    entry.figure.append(trace, x, y, color=color, size=size)
+                    self.bump(token, expected=entry)
+            finally:
+                self._release_operation(entry)
             return
 
         async def _do() -> None:
-            entry = self.get(token)
+            entry = self._acquire_operation(token)
             if entry is None:
                 return
-            async with entry.lock:
-                message, buffers = await asyncio.to_thread(
-                    entry.figure.append, trace, x, y, color=color, size=size
-                )
-                bumped = self.bump(token, expected=entry)
-                if bumped is None:
-                    return  # a replacement won; never mutate/bump its generation
-                push = self._on_push
-                if push is not None:
-                    # Keep append pushes ordered under the generation lock.
-                    # The wire version lets the client discard this delta if
-                    # a replacement payload overtakes it.
-                    await push(token, message, list(buffers), bumped.version)
+            try:
+                async with entry.lock:
+                    message, buffers = await asyncio.to_thread(
+                        entry.figure.append, trace, x, y, color=color, size=size
+                    )
+                    bumped = self.bump(token, expected=entry)
+                    if bumped is None:
+                        return  # a replacement won; never mutate/bump its generation
+                    push = self._on_push
+                    if push is not None:
+                        # Keep append pushes ordered under the generation lock.
+                        # The wire version lets the client discard this delta if
+                        # a replacement payload overtakes it.
+                        await push(token, message, list(buffers), bumped.version)
+            finally:
+                self._release_operation(entry)
 
         try:
             running = asyncio.get_running_loop()
@@ -376,10 +485,17 @@ class FigureRegistry:
         dropped: list[str] = []
         with self._mutex:
             for token, entry in list(self._entries.items()):
-                if not entry.pinned and now - entry.last_access > self._ttl:
-                    self._evicted_versions[token] = max(
-                        entry.version, self._evicted_versions.get(token, 0)
-                    )
+                if (
+                    not entry.pinned
+                    and not entry.active_operations
+                    and now - entry.last_access > self._ttl
+                ):
+                    if self._rebuildable_subscribers.get(token):
+                        self._evicted_versions[token] = max(
+                            entry.version, self._evicted_versions.get(token, 0)
+                        )
+                    else:
+                        self._evicted_versions.pop(token, None)
                     del self._entries[token]
                     dropped.append(token)
         return dropped
@@ -400,6 +516,8 @@ def reset_registry_for_tests() -> FigureRegistry:
     """Reset the process registry in place (test isolation only)."""
     registry._entries.clear()
     registry._evicted_versions.clear()
+    registry._rebuildable_subscribers.clear()
+    registry._rebuildable_tokens_by_sid.clear()
     registry._pending_broadcasts.clear()
     registry._loop = None
     registry._on_publish = None

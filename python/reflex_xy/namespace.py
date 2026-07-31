@@ -15,12 +15,12 @@ no base64 (§29) — and no custom length-prefix framing needed, because the
 socket.io protocol already delimits attachments.
 
 Events, client -> server:
-    sub     {fig, px?}    subscribe; joins the figure room, replies `payload`
+    sub     {fig, px?, mid?} subscribe; joins the figure room, replies `payload`
     unsub   {fig}         leave the figure room
     msg     {fig, v?, mid?, m}  one channel.handle_message dispatch, reply `msg`
 
 Events, server -> client:
-    payload {fig, version, spec, buffers}   first paint / full refresh
+    payload {fig, version, spec, buffers, mid?} first paint / full refresh
     msg     {fig, version?, mid?, message, buffers}  reply or room-wide push
     err     {fig, error, resync?}            failure; resync requests a new `sub`
 
@@ -131,6 +131,18 @@ class XYNamespace(AsyncNamespace):
         super().__init__(namespace)
         self.registry = registry
         self._rebuild = rebuild
+        # Socket.IO may dispatch events for one SID concurrently. Serialize
+        # subscribe/unsubscribe for one mount token so a slow rebuild cannot
+        # re-add membership after a later unsubscribe. Locks are reference-
+        # counted so hostile/abandoned token strings do not create a second
+        # process-lifetime cache.
+        self._subscription_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._subscription_lock_users: dict[tuple[str, str], int] = {}
+        # A page with several same-token mounts can issue concurrent `sub`s on
+        # a cold worker. Only one may run the state builder/publish; waiters
+        # re-read the registry after taking this token lock.
+        self._rebuild_locks: dict[str, asyncio.Lock] = {}
+        self._rebuild_lock_users: dict[str, int] = {}
 
     # -- connection lifecycle ------------------------------------------------
 
@@ -154,39 +166,88 @@ class XYNamespace(AsyncNamespace):
         network) must not destroy server-side figures — the client
         resubscribes with the same tokens on reconnect.
         """
+        self.registry.disconnect(sid)
 
     # -- subscription ----------------------------------------------------------
 
     async def on_sub(self, sid: str, data: Any) -> None:
-        token, entry, _rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
-        if token is None or entry is None:
+        requested_token = self._token_of(data)
+        if requested_token is None:
             return
-        await self.enter_room(sid, self._room(token))
-        await self._send_payload(sid, token, entry, px=self._px_hint(data))
+        key = (sid, requested_token)
+        lock = self._retain_subscription_lock(key)
+        try:
+            async with lock:
+                token, entry, _rebuilt = await self._entry_for(sid, data, allow_rebuild=True)
+                if token is None or entry is None or not self._is_connected(sid):
+                    return
+                await self.enter_room(sid, self._room(token))
+                if not self._is_connected(sid):
+                    return
+                # Mirror membership only after the await-heavy join/rebuild
+                # path has proved the SID is still live. A concurrent
+                # disconnect can now only remove this record, never precede
+                # and be undone by it.
+                self.registry.subscribe(token, sid, rebuildable=parse_token(token) is not None)
+                # A normal state publish can replace a just-rebuilt entry
+                # while its room-wide broadcast is still completing, before
+                # this SID joins. Re-read after the join: replacements before
+                # this point become the direct response; replacements after
+                # it reach the now-joined room even if this send goes stale.
+                current_entry = self.registry.get(token)
+                if current_entry is None:
+                    return
+                await self._send_payload(
+                    sid,
+                    token,
+                    current_entry,
+                    px=self._px_hint(data),
+                    mid=self._mid_of(data),
+                )
+        finally:
+            self._release_subscription_lock(key, lock)
 
     async def _send_payload(
-        self, sid: str, token: str, entry: FigureEntry, *, px: Optional[int] = None
+        self,
+        sid: str,
+        token: str,
+        entry: FigureEntry,
+        *,
+        px: Optional[int] = None,
+        mid: Optional[str] = None,
     ) -> None:
         """Send one authoritative payload if ``entry`` is still current."""
         async with entry.lock:
             spec, raw = await asyncio.to_thread(_build_wire_payload, entry.figure, px)
         if not self.registry.is_current(token, entry):
             return
+        envelope: dict[str, Any] = {
+            "fig": token,
+            "version": entry.version,
+            "spec": spec,
+            "buffers": _buffer_bytes(raw),
+        }
+        if mid is not None:
+            envelope["mid"] = mid
         await self.emit(
             "payload",
-            {
-                "fig": token,
-                "version": entry.version,
-                "spec": spec,
-                "buffers": _buffer_bytes(raw),
-            },
+            envelope,
             to=sid,
         )
 
     async def on_unsub(self, sid: str, data: Any) -> None:
         token = self._token_of(data)
         if token is not None:
-            await self.leave_room(sid, self._room(token))
+            key = (sid, token)
+            lock = self._retain_subscription_lock(key)
+            try:
+                async with lock:
+                    try:
+                        await self.leave_room(sid, self._room(token))
+                    finally:
+                        self.registry.unsubscribe(token, sid)
+            finally:
+                self._release_subscription_lock(key, lock)
 
     # -- interaction round-trips ----------------------------------------------
 
@@ -202,10 +263,8 @@ class XYNamespace(AsyncNamespace):
             return
         if rebuilt:
             # The request was made against the evicted generation. Re-prime
-            # every still-connected mount and let it retry in the new version;
-            # the rebuilt generation is token-global, not SID-local. Never
-            # resolve old coordinates against the rebuilt figure.
-            await self.broadcast_payload(token, entry)
+            # already happened atomically with the rebuild in `_entry_for`.
+            # Never resolve old coordinates against the rebuilt figure.
             return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
@@ -239,8 +298,8 @@ class XYNamespace(AsyncNamespace):
         }
         # Replies are mount-addressed: several charts on one page share one
         # socket, so the client tags requests with a mount id and we echo it.
-        mid = data.get("mid") if isinstance(data, dict) else None
-        if isinstance(mid, str) and len(mid) <= 64:
+        mid = self._mid_of(data)
+        if mid is not None:
             envelope["mid"] = mid
         await self.emit("msg", envelope, to=sid)
 
@@ -321,6 +380,50 @@ class XYNamespace(AsyncNamespace):
             return None
         return max(_MIN_PX_HINT, min(_MAX_PX_HINT, px))
 
+    @staticmethod
+    def _mid_of(data: Any) -> Optional[str]:
+        """Return a validated optional mount id for addressed replies."""
+        if not isinstance(data, dict):
+            return None
+        mid = data.get("mid")
+        if not isinstance(mid, str) or len(mid) > 64:
+            return None
+        return mid
+
+    def _is_connected(self, sid: str) -> bool:
+        """Whether Socket.IO still owns ``sid`` in this namespace."""
+        server = getattr(self, "server", None)
+        manager = getattr(server, "manager", None)
+        return manager is not None and manager.is_connected(sid, self.namespace)
+
+    def _retain_subscription_lock(self, key: tuple[str, str]) -> asyncio.Lock:
+        lock = self._subscription_locks.setdefault(key, asyncio.Lock())
+        self._subscription_lock_users[key] = self._subscription_lock_users.get(key, 0) + 1
+        return lock
+
+    def _release_subscription_lock(self, key: tuple[str, str], lock: asyncio.Lock) -> None:
+        users = self._subscription_lock_users[key] - 1
+        if users:
+            self._subscription_lock_users[key] = users
+            return
+        self._subscription_lock_users.pop(key, None)
+        if self._subscription_locks.get(key) is lock:
+            self._subscription_locks.pop(key, None)
+
+    def _retain_rebuild_lock(self, token: str) -> asyncio.Lock:
+        lock = self._rebuild_locks.setdefault(token, asyncio.Lock())
+        self._rebuild_lock_users[token] = self._rebuild_lock_users.get(token, 0) + 1
+        return lock
+
+    def _release_rebuild_lock(self, token: str, lock: asyncio.Lock) -> None:
+        users = self._rebuild_lock_users[token] - 1
+        if users:
+            self._rebuild_lock_users[token] = users
+            return
+        self._rebuild_lock_users.pop(token, None)
+        if self._rebuild_locks.get(token) is lock:
+            self._rebuild_locks.pop(token, None)
+
     async def _entry_for(
         self, sid: str, data: Any, *, allow_rebuild: bool
     ) -> tuple[Optional[str], Optional[FigureEntry], bool]:
@@ -344,17 +447,35 @@ class XYNamespace(AsyncNamespace):
         entry = self.registry.get(token)
         rebuilt = False
         if entry is None and parsed is not None and allow_rebuild and self._rebuild is not None:
-            # Registry miss: worker restarted, or the reconnect landed on a
-            # node that never built this figure. Reflex state is the durable
-            # record — rebuild the figure from it and carry on (§27 applied
-            # to processes: every registered figure is a rebuildable cache).
+            # Several same-token mounts can miss concurrently on a fresh
+            # worker. Serialize the state builder and re-check after waiting:
+            # one generation is published, every waiter receives that exact
+            # current entry, and only the publisher performs room fan-out.
+            lock = self._retain_rebuild_lock(token)
             try:
-                figure = await self._rebuild(token)
-            except Exception:  # noqa: BLE001 - rebuild runs user builder code
-                figure = None
-            if figure is not None:
-                entry = self.registry.publish(token, figure, broadcast=False)
-                rebuilt = True
+                async with lock:
+                    entry = self.registry.get(token)
+                    if entry is None:
+                        # Registry miss: worker restarted, or the reconnect
+                        # landed on a node that never built this figure. Reflex
+                        # state is the durable record — rebuild from it (§27
+                        # applied to processes: every figure is a cache).
+                        try:
+                            figure = await self._rebuild(token)
+                        except Exception:  # noqa: BLE001 - user builder code
+                            figure = None
+                        if figure is not None:
+                            entry, rebuilt = self.registry.publish_if_missing(token, figure)
+                            if rebuilt:
+                                # A rebuild is token-global, not request-local.
+                                # Broadcast before releasing the single-flight
+                                # lock and before an on_sub caller joins its
+                                # SID; shield delivery so a triggering
+                                # disconnect cannot strand existing room
+                                # members after insertion already succeeded.
+                                await asyncio.shield(self.broadcast_payload(token, entry))
+            finally:
+                self._release_rebuild_lock(token, lock)
         if entry is None:
             await self._err(sid, token, "unknown figure token")
             return token, None, False

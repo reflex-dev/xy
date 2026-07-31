@@ -297,13 +297,23 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             r"numpy>=1\.24",
         ),
         (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget[dev]>=0.9"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_METADATA.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy[typing]>=1.24"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
             DEFAULT_METADATA + "\nRequires-Dist: numpy<2",
             "exactly one requirement",
         ),
         (
-            DEFAULT_METADATA.replace(
-                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"
-            ),
+            DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"),
             "with no conflicts",
         ),
         (

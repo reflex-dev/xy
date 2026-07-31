@@ -249,13 +249,23 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             r"numpy>=1\.24",
         ),
         (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget[dev]>=0.9"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy[typing]>=1.24"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
             DEFAULT_PKG_INFO + "Requires-Dist: numpy<2\n",
             "exactly one requirement",
         ),
         (
-            DEFAULT_PKG_INFO.replace(
-                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"
-            ),
+            DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"),
             "with no conflicts",
         ),
         (

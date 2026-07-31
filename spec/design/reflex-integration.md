@@ -142,28 +142,35 @@ in `spec/design/wire-protocol.md`.
 
 ```
 client -> server (namespace /_xy)
-  sub     {fig, px?, mid}       subscribe; join figure room; reply `payload`
+  sub     {fig, px?, mid?}      subscribe; join figure room; reply `payload`
   unsub   {fig, mid}            leave the room
   msg     {fig, v?, mid, m}     one xy.channel.handle_message dispatch
 
 server -> client
-  payload {fig, version, spec, buffers}   first paint / full refresh
+  payload {fig, version, spec, buffers, mid?}   first paint / full refresh
   msg     {fig, version?, mid?, message, buffers}   reply or push (no mid)
   err     {fig, error, resync?}           failure; resync requests a new `sub`
 ```
 
-`mid` is a per-mount id: several charts on a page share the socket, replies
-are mount-addressed, pushes are room-wide. The kernel dispatch is byte-for-
-byte the notebook dispatch — `xy.channel.handle_message` (§3.1 of the
-old draft, now shipped), run off the event loop via a worker thread (the
-Rust kernels release the GIL) under a per-figure lock.
+`mid` is a validated optional per-mount id: several charts on a page share the
+socket, so direct interaction replies and direct subscription payloads echo it
+and other mounts ignore the addressed envelope. Pushes and full-payload
+broadcasts remain unaddressed and room-wide. This prevents M same-token mounts
+from each applying all M direct subscription responses after a resync. The
+kernel dispatch is byte-for-byte the notebook dispatch —
+`xy.channel.handle_message` (§3.1 of the old draft, now shipped), run off the
+event loop via a worker thread (the Rust kernels release the GIL) under a
+per-figure lock.
 
 Each successful `sub` starts a client version epoch. The wrapper resets its
 comparison state, ignores `msg` events until the authoritative `payload`
 arrives, and then compares versions within that epoch. This permits a
 reconnect to land on a fresh worker whose rebuilt cache starts at version 1.
 Interaction replies and append pushes carry `version`; view-state-only pushes
-may omit it because they do not mutate the figure data generation.
+may omit it because they do not mutate the figure data generation. Resetting
+an epoch also cancels pending hover/view throttles, and the still-mounted old
+view cannot emit new semantic callbacks while the replacement payload is in
+flight.
 
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
@@ -356,18 +363,36 @@ not stable across workers — documented as dev-only, not deployment-safe.
 
 ### 3.5 Lifecycle
 
-Rooms track subscriptions; disconnects clean rooms, never figures (a page
-reload must not destroy what its reconnect will re-request). The TTL sweep
-(30 min idle, lifespan task) bounds leaked figures; state-derived figures
-transparently rebuild after a sweep, so the TTL bounds large figure/data
-memory, not correctness. The registry retains only an evicted token's scalar
-version so a rebuild on the same worker remains monotonic for a still-mounted
-client; the figure and its data buffers are released. If an interaction is the
-first touch after eviction, the namespace rebuilds, sends every subscribed
-mount a replacement payload room-wide, and drops the old-generation
-interaction for the triggering client to retry. Rapid re-publishes coalesce:
-an un-started broadcast absorbs newer publishes and always ships the latest
-payload.
+Rooms track delivery subscriptions; the registry mirrors active SID membership
+only for rebuildable state tokens so it can bound version tombstones.
+Disconnects and explicit unsubs remove that membership, and the last departure
+drops any evicted scalar tombstone; opaque tokens are never tracked. A page
+reload still never destroys a live figure that its reconnect will re-request.
+The TTL sweep (30 min idle, lifespan task) bounds leaked figures; state-derived
+figures transparently rebuild after a sweep, so the TTL bounds large
+figure/data memory, not correctness. While at least one rebuildable subscriber
+remains, the registry retains only an evicted token's scalar version so a
+rebuild on the same worker stays monotonic; the figure and its data buffers are
+released. If an interaction is the first touch after eviction, the namespace
+rebuilds, sends every subscribed mount a replacement payload room-wide, and
+drops the old-generation interaction for the triggering client to retry. If a
+new `sub` is first, the namespace broadcasts the rebuild to existing room
+members before joining the requester, then sends that mount one `mid`-addressed
+payload built for its own `px` hint. The direct path re-reads the current entry
+after joining the room: a normal replacement that landed before the join is
+sent directly, while a replacement after the join reaches the mount through
+the room broadcast. Concurrent same-token misses are single-flight: one state
+builder publishes and broadcasts one current generation, while the remaining
+mounts wait and receive direct responses from that entry. The rebuild's final
+insertion is conditional: if a normal
+dependency-driven publish populated the token while user builder code was
+awaiting, that newer current entry wins and the stale rebuild result is
+discarded. Subscribe/unsubscribe handlers for one SID/token are serialized,
+and a handler rechecks live Socket.IO membership after every await-heavy phase
+so a slow rebuild cannot restore bookkeeping after disconnect. Active append
+generations are leased; the sweep skips them until the mutation and version
+bump finish. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
+publishes and always ships the latest payload.
 
 ## 4. Updates and streaming
 
@@ -658,8 +683,8 @@ examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
                              whose category toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
-                             units, component compile, and a real-websocket
+tests/reflex_adapter/        token/registry/var/bridge/payload-asset units,
+                             component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
                              publish-broadcast/append/unsub

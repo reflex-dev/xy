@@ -67,11 +67,24 @@ def test_wrapper_speaks_the_namespace_protocol():
     # Each subscription is a fresh comparison epoch (a reconnect may land on
     # a worker whose rebuilt cache starts at version 1). Kernel traffic is
     # gated until its authoritative payload arrives.
+    reset_epoch = jsx.split("const resetEpoch = () => {", 1)[1].split("};", 1)[0]
+    for needle in (
+        "clearTimeout(hoverTimer)",
+        "clearTimeout(viewTimer)",
+        "hoverTimer = null",
+        "viewTimer = null",
+        "pendingHover = null",
+        "pendingView = null",
+        "pendingClickInput = null",
+        "payloadVersion = null",
+        "awaitingPayload = true",
+        "clickInputs.clear()",
+        "restoreSelectionSeqs.clear()",
+    ):
+        assert needle in reset_epoch
     subscribe = jsx.split("const subscribe = () => {", 1)[1].split("};", 1)[0]
-    assert "payloadVersion = null" in subscribe
-    assert "awaitingPayload = true" in subscribe
-    assert "clickInputs.clear()" in subscribe
-    assert "restoreSelectionSeqs.clear()" in subscribe
+    assert "resetEpoch()" in subscribe
+    assert jsx.count("resetEpoch();") == 3  # subscribe, disconnect, cleanup
     assert "awaitingPayload || !socket.connected" in jsx
     assert "awaitingPayload = false" in jsx
     assert 'socket.on("disconnect", onDisconnect)' in jsx
@@ -82,6 +95,14 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "discardPendingReply(message)" in jsx
     assert jsx.count("clickInputs.clear()") >= 3
     assert jsx.count("restoreSelectionSeqs.clear()") >= 3
+    # Subscription payloads echo a mount id; unaddressed room broadcasts are
+    # still accepted, while another mount's direct response is ignored.
+    assert "data.mid !== undefined && data.mid !== null && data.mid !== mid" in jsx
+    # The old view remains mounted while a replacement payload is in flight;
+    # it must not arm new semantic view callbacks in that reset epoch.
+    dispatch_view = jsx.split("const dispatchView = (m) => {", 1)[1].split("};", 1)[0]
+    assert "awaitingPayload" in dispatch_view
+    assert "!socket.connected" in dispatch_view
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render

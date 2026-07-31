@@ -12,7 +12,7 @@
 //
 // Live data protocol (namespace.py):
 //   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, v?, mid, m}
-//   in:   payload {fig, version, spec, buffers} — buffers are ArrayBuffers
+//   in:   payload {fig, version, spec, buffers, mid?} — direct replies carry mid
 //         msg {fig, version?, mid?, message, buffers} — replies carry our mid
 //         err {fig, error, resync?}
 // A subscribe/reconnect starts a version epoch: no msg is applied until its
@@ -417,13 +417,27 @@ export function XYChart(props) {
     const viewCallbacks = [];
     let awaitingPayload = true;
 
-    const subscribe = () => {
-      // A reconnect can land on a fresh worker whose rebuilt figure starts at
-      // version 1. Versions are monotonic only within this subscription epoch.
+    const resetEpoch = () => {
+      // Timer callbacks capture row/domain data from the preceding figure
+      // generation. Cancel them as part of the same reset as wire-version and
+      // synthetic-reply bookkeeping so no old epoch can update Reflex state.
+      if (hoverTimer !== null) clearTimeout(hoverTimer);
+      if (viewTimer !== null) clearTimeout(viewTimer);
+      hoverTimer = null;
+      viewTimer = null;
+      pendingHover = null;
+      pendingView = null;
+      pendingClickInput = null;
       payloadVersion = null;
       awaitingPayload = true;
       clickInputs.clear();
       restoreSelectionSeqs.clear();
+    };
+
+    const subscribe = () => {
+      // A reconnect can land on a fresh worker whose rebuilt figure starts at
+      // version 1. Versions are monotonic only within this subscription epoch.
+      resetEpoch();
       socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
     };
 
@@ -511,7 +525,16 @@ export function XYChart(props) {
     };
 
     const dispatchView = (m) => {
-      if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
+      // The old ChartView can still receive gestures while a reconnect/full
+      // resync is waiting for its authoritative payload. Do not let that
+      // preceding epoch arm a new trailing timer after resetEpoch cleared it.
+      if (
+        awaitingPayload
+        || !socket.connected
+        || !cbRef.current.onViewChange
+        || m.source === "linked"
+        || m.source === "republish"
+      ) return;
       if (viewTimer === null) {
         emitView(m);
         openViewWindow();
@@ -578,6 +601,9 @@ export function XYChart(props) {
 
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
+      // Direct subscription replies are mount-addressed; room-wide rebuild
+      // broadcasts intentionally omit mid and remain visible to every mount.
+      if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       if (
         Number.isInteger(data.version)
         && payloadVersion !== null
@@ -734,10 +760,7 @@ export function XYChart(props) {
     };
 
     const onDisconnect = () => {
-      payloadVersion = null;
-      awaitingPayload = true;
-      clickInputs.clear();
-      restoreSelectionSeqs.clear();
+      resetEpoch();
     };
 
     socket.on("payload", onPayload);
@@ -773,15 +796,7 @@ export function XYChart(props) {
     return () => {
       destroyed = true;
       if (tracksClickInput) el.removeEventListener("click", rememberClick, true);
-      if (hoverTimer !== null) clearTimeout(hoverTimer);
-      if (viewTimer !== null) clearTimeout(viewTimer);
-      hoverTimer = null;
-      viewTimer = null;
-      pendingHover = null;
-      pendingView = null;
-      pendingClickInput = null;
-      clickInputs.clear();
-      restoreSelectionSeqs.clear();
+      resetEpoch();
       socket.off("payload", onPayload);
       socket.off("msg", onMsg);
       socket.off("err", onErr);

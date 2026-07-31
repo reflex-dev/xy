@@ -7,7 +7,6 @@ from email.message import Message
 
 BASE_DEPENDENCY_FLOORS = (("anywidget", "0.9"), ("numpy", "1.24"))
 REFLEX_REQUIREMENT = "Requires-Dist: reflex>=0.9.6; extra == 'reflex'"
-_EXTRA_NAME = r"[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -20,7 +19,6 @@ def _is_valid_base_requirement(requirement: str, package: str, minimum: str) -> 
     """Require one stable numeric lower bound, without markers or conflicts."""
     match = re.fullmatch(
         rf"\s*{re.escape(package)}\s*"
-        rf"(?:\[\s*{_EXTRA_NAME}(?:\s*,\s*{_EXTRA_NAME})*\s*\])?\s*"
         rf">=\s*(?P<version>\d+(?:\.\d+)*)\s*",
         requirement,
         flags=re.IGNORECASE,
@@ -51,9 +49,7 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
 
     for package, minimum in BASE_DEPENDENCY_FLOORS:
         package_requirements = [
-            requirement
-            for requirement in requirements
-            if _dependency_name(requirement) == package
+            requirement for requirement in requirements if _dependency_name(requirement) == package
         ]
         if len(package_requirements) != 1 or not _is_valid_base_requirement(
             package_requirements[0], package, minimum
@@ -74,9 +70,7 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
     for requirement in requirements:
         name = _dependency_name(requirement)
         base_minimum = base_floors.get(name)
-        if base_minimum is not None and _is_valid_base_requirement(
-            requirement, name, base_minimum
-        ):
+        if base_minimum is not None and _is_valid_base_requirement(requirement, name, base_minimum):
             continue
         if _is_exact_reflex_extra(requirement):
             continue

@@ -37,6 +37,22 @@ def test_publish_versioning(_fresh_registry):
     assert registry.publish("tok", make_figure(32), broadcast=False).version == 2
 
 
+def test_publish_if_missing_preserves_a_concurrent_current_generation(
+    _fresh_registry,
+):
+    registry = _fresh_registry
+    current_figure = make_figure(8)
+    current = registry.publish("tok", current_figure, broadcast=False)
+
+    entry, inserted = registry.publish_if_missing("tok", make_figure(32))
+
+    assert not inserted
+    assert entry is current
+    assert entry.figure is current_figure
+    assert entry.version == 1
+    assert registry.is_current("tok", entry)
+
+
 def test_publish_replacement_creates_a_consistent_generation(_fresh_registry):
     registry = _fresh_registry
     first_figure = make_figure(8)
@@ -68,8 +84,11 @@ def test_ttl_sweep(_fresh_registry):
     assert registry.get(token) is None
 
 
-def test_rebuild_after_ttl_sweep_keeps_wire_version_monotonic(_fresh_registry):
+def test_subscribed_rebuild_after_ttl_sweep_keeps_wire_version_monotonic(
+    _fresh_registry,
+):
     registry = FigureRegistry(ttl_seconds=0.0)
+    registry.subscribe("tok", "sid-1", rebuildable=True)
     first = registry.publish("tok", make_figure(), broadcast=False)
     assert registry.bump("tok", expected=first).version == 2
 
@@ -77,6 +96,20 @@ def test_rebuild_after_ttl_sweep_keeps_wire_version_monotonic(_fresh_registry):
     rebuilt = registry.publish("tok", make_figure(), broadcast=False)
 
     assert rebuilt.version == 3
+
+
+def test_opaque_sweeps_do_not_retain_version_tombstones(_fresh_registry):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    registry.subscribe("opaque", "sid-1", rebuildable=False)
+    first = registry.publish("opaque", make_figure(), broadcast=False)
+    assert registry.bump("opaque", expected=first).version == 2
+
+    assert registry.sweep(now=first.last_access + 1.0) == ["opaque"]
+    assert "opaque" not in registry._evicted_versions
+
+    # An opaque token has no automatic rebuild contract. If application code
+    # explicitly reuses its string, it starts a fresh wire generation.
+    assert registry.publish("opaque", make_figure(), broadcast=False).version == 1
 
 
 def test_sweep_keeps_recently_touched(_fresh_registry):
@@ -187,9 +220,9 @@ def test_unwired_slow_append_does_not_hold_the_registry_mutex(_fresh_registry):
         append_future = pool.submit(registry.append, "slow", [1.0], [2.0])
         assert started.wait(1.0)
         try:
-            replaced = pool.submit(
-                registry.publish, "slow", replacement, broadcast=False
-            ).result(timeout=0.5)
+            replaced = pool.submit(registry.publish, "slow", replacement, broadcast=False).result(
+                timeout=0.5
+            )
         finally:
             resume.set()
         append_future.result(timeout=1.0)
@@ -198,6 +231,118 @@ def test_unwired_slow_append_does_not_hold_the_registry_mutex(_fresh_registry):
     assert current is replaced
     assert current.figure is replacement
     assert current.version == 2
+
+
+def test_forced_sweep_skips_a_generation_with_a_blocking_headless_append(
+    _fresh_registry,
+):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    started = threading.Event()
+    resume = threading.Event()
+
+    class BlockingFigure:
+        def append(self, *args, **kwargs):
+            started.set()
+            assert resume.wait(2.0)
+            return {"type": "append"}, []
+
+    entry = registry.publish("slow", BlockingFigure(), broadcast=False)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        append_future = pool.submit(registry.append, "slow", [1.0], [2.0])
+        assert started.wait(1.0)
+        try:
+            forced_now = entry.last_access + 1_000_000.0
+            assert registry.sweep(now=forced_now) == []
+            assert registry.is_current("slow", entry)
+        finally:
+            resume.set()
+        append_future.result(timeout=1.0)
+
+    assert entry.version == 2
+    assert entry.active_operations == 0
+    assert registry.sweep(now=entry.last_access + 1_000_000.0) == ["slow"]
+
+
+def test_forced_sweep_skips_a_generation_with_a_blocking_wired_append(
+    _fresh_registry,
+):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    started = threading.Event()
+    resume = threading.Event()
+
+    class BlockingFigure:
+        def append(self, *args, **kwargs):
+            started.set()
+            assert resume.wait(2.0)
+            return {"type": "append"}, []
+
+    entry = registry.publish("slow", BlockingFigure(), broadcast=False)
+
+    async def main():
+        registry.attach_loop(asyncio.get_running_loop())
+        tasks_before = asyncio.all_tasks()
+        registry.append("slow", [1.0], [2.0])
+        append_tasks = asyncio.all_tasks() - tasks_before
+        assert len(append_tasks) == 1
+        append_task = append_tasks.pop()
+        assert await asyncio.to_thread(started.wait, 1.0)
+        try:
+            forced_now = entry.last_access + 1_000_000.0
+            assert registry.sweep(now=forced_now) == []
+            assert registry.is_current("slow", entry)
+        finally:
+            resume.set()
+        await append_task
+
+    asyncio.run(main())
+    assert entry.version == 2
+    assert entry.active_operations == 0
+    assert registry.sweep(now=entry.last_access + 1_000_000.0) == ["slow"]
+
+
+def test_unsubscribe_cleans_tombstone_only_after_last_subscriber(_fresh_registry):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    registry.subscribe("tok", "sid-1", rebuildable=True)
+    registry.subscribe("tok", "sid-1", rebuildable=True)  # idempotent
+    registry.subscribe("tok", "sid-2", rebuildable=True)
+    entry = registry.publish("tok", make_figure(), broadcast=False)
+    assert registry.bump("tok", expected=entry).version == 2
+    assert registry.sweep(now=entry.last_access + 1.0) == ["tok"]
+
+    registry.unsubscribe("tok", "sid-1")
+    registry.unsubscribe("tok", "sid-1")  # idempotent
+    assert registry._evicted_versions == {"tok": 2}
+    assert registry._rebuildable_subscribers == {"tok": {"sid-2"}}
+    assert "sid-1" not in registry._rebuildable_tokens_by_sid
+
+    registry.unsubscribe("tok", "sid-2")
+    assert registry._evicted_versions == {}
+    assert registry._rebuildable_subscribers == {}
+    assert registry._rebuildable_tokens_by_sid == {}
+
+
+def test_disconnect_cleans_all_tokens_and_is_idempotent(_fresh_registry):
+    registry = FigureRegistry(ttl_seconds=0.0)
+    registry.subscribe("shared", "sid-1", rebuildable=True)
+    registry.subscribe("shared", "sid-2", rebuildable=True)
+    registry.subscribe("only-sid-1", "sid-1", rebuildable=True)
+    registry.subscribe("only-sid-1", "sid-1", rebuildable=True)  # idempotent
+
+    for token in ("shared", "only-sid-1"):
+        entry = registry.publish(token, make_figure(), broadcast=False)
+        assert registry.sweep(now=entry.last_access + 1.0) == [token]
+
+    registry.disconnect("sid-1")
+    registry.disconnect("sid-1")  # idempotent
+    assert registry._evicted_versions == {"shared": 1}
+    assert registry._rebuildable_subscribers == {"shared": {"sid-2"}}
+    assert registry._rebuildable_tokens_by_sid == {"sid-2": {"shared"}}
+
+    registry.disconnect("sid-2")
+    assert registry._evicted_versions == {}
+    assert registry._rebuildable_subscribers == {}
+    assert registry._rebuildable_tokens_by_sid == {}
 
 
 @pytest.mark.parametrize("n", [1, 3])
