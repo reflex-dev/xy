@@ -66,7 +66,7 @@ flowchart LR
   NB["Notebook widget<br/>.show()"]
   HTML["Standalone HTML<br/>to_html()"]
   PNG["PNG export<br/>to_png()"]
-  RX["Future reflex-xy<br/>adapter"]
+  RX["Bundled reflex_xy<br/>integration"]
 
   USER --> TREE --> FIG --> SPEC
   SPEC --> NB
@@ -553,9 +553,10 @@ def index():
     )
 ```
 
-The adapter consumes the same component tree or compiled figure. The user app
-may import full Reflex because it is a Reflex app. The adapter package itself
-should still use the minimum possible Reflex dependency surface:
+The integration consumes the same component tree or compiled figure. The user
+app may import full Reflex because it is a Reflex app. The bundled
+`reflex_xy` package should still use the minimum possible Reflex dependency
+surface:
 
 - Best: no hard Reflex dependency; expose registration/data-plane helpers and a
   small component declaration that plugs into Reflex when Reflex is already
@@ -565,20 +566,19 @@ should still use the minimum possible Reflex dependency surface:
 - Last resort: depend on full `reflex`, and document why the public API requires
   it.
 
-In every case, `xy` remains pure and Reflex-free.
+In every case, importing plain `xy` remains Reflex-free.
 
 Dependency rule:
 
 ```text
 pip install xy                 # never installs Reflex
-pip install reflex-xy          # should not install full Reflex by default
-pip install reflex-xy[reflex]  # only if full Reflex is truly required
+pip install "xy[reflex]"       # adds the supported full-Reflex floor
 ```
 
-The adapter can assume it is running inside a Reflex app when the user imports
-it from app code. That lets the adapter use duck typing, registration helpers,
-or a small component declaration without making every charting install inherit
-the full Reflex application stack.
+The integration can assume it is running inside a Reflex app when the user
+imports `reflex_xy` from app code. Keeping that namespace out of `xy.__init__`
+means ordinary charting installs do not eagerly import the Reflex application
+stack.
 
 ## 9. Concrete Code Examples
 

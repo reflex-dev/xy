@@ -9,26 +9,18 @@ pushes: the package's changelog must carry a dated entry for the tagged
 version (an "unreleased" heading fails — date it as part of cutting the
 release).
 
-Two release lines share the repo, in disjoint tag namespaces (`--package`):
+The ``xy`` distribution uses bare `vX.Y.Z` tags and `CHANGELOG.md`. Its bundled
+Reflex integration and `reflex` extra ship on the same version line.
 
-- ``xy`` (default): bare `vX.Y.Z` tags, gated against `CHANGELOG.md`.
-- ``reflex-xy``: `reflex-xy-vX.Y.Z` tags, gated against
-  `python/reflex-xy/CHANGELOG.md`.
+Tags accept an optional PEP 440 pre-release suffix in its canonical spelling
+(`a1`/`b2`/`rc3`). PyPI accepts pre-releases but does not serve them to default
+`pip install`. Only the canonical spelling passes: `-alpha1`-style tags would
+be normalized by the derivation (`0.0.1a1`) and could never match their own
+artifacts. A pre-release still needs its own dated changelog entry.
 
-Both accept an optional PEP 440 pre-release suffix in its canonical spelling
-(`a1`/`b2`/`rc3` — e.g. `reflex-xy-v0.0.1a1`), which the version derivation
-serializes verbatim; PyPI accepts pre-releases but does not serve them to
-default `pip install`. Only the canonical spelling passes: `-alpha1`-style
-tags would be *normalized* by the derivation (`0.0.1a1`) and so could never
-match their own artifacts. A pre-release still needs its own dated changelog
-entry — publishing to PyPI is publishing, alpha or not.
-
-The tag must also be shaped like the selected package's release tag, which is
-what its version derivation matches on; the docs-deploy CalVer tags
-(2026.WW.N) match neither shape and trigger neither workflow, and each
-package's tags fail the other package's gate. Dev/post/local shapes stay
-rejected: dev versions are the *between*-tags marker and must stay
-unpublishable.
+Docs-deploy CalVer tags (2026.WW.N) do not match the release shape.
+Dev/post/local shapes stay rejected: dev versions are the between-tags marker
+and must stay unpublishable.
 """
 
 from __future__ import annotations
@@ -62,11 +54,6 @@ PACKAGES = {
         tag_re=re.compile(rf"^v(?P<version>{_RELEASE})$"),
         tag_shape=_SHAPE,
         changelog=ROOT / "CHANGELOG.md",
-    ),
-    "reflex-xy": _Package(
-        tag_re=re.compile(rf"^reflex-xy-v(?P<version>{_RELEASE})$"),
-        tag_shape=f"reflex-xy-{_SHAPE}",
-        changelog=ROOT / "python" / "reflex-xy" / "CHANGELOG.md",
     ),
 }
 DEFAULT_CHANGELOG = PACKAGES["xy"].changelog

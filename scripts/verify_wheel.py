@@ -26,6 +26,19 @@ from typing import Optional
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[A-Za-z0-9_.+!]*)?$")
 
 REQUIRED_FILES = {
+    "reflex_xy/__init__.py",
+    "reflex_xy/app.py",
+    "reflex_xy/assets/XYChart.jsx",
+    "reflex_xy/assets/__init__.py",
+    "reflex_xy/component.py",
+    "reflex_xy/events.py",
+    "reflex_xy/namespace.py",
+    "reflex_xy/payload_asset.py",
+    "reflex_xy/registry.py",
+    "reflex_xy/selections.py",
+    "reflex_xy/state_bridge.py",
+    "reflex_xy/tokens.py",
+    "reflex_xy/vars.py",
     "xy/__init__.py",
     "xy/_native.py",
     "xy/_framing.py",
@@ -90,7 +103,9 @@ def _require_only_shippable_roots(names: set[str]) -> None:
         name
         for name in names
         if name.rstrip("/")
-        and not (name.startswith("xy/") or name.split("/", 1)[0].endswith(".dist-info"))
+        and not (
+            name.startswith(("reflex_xy/", "xy/")) or name.split("/", 1)[0].endswith(".dist-info")
+        )
     )
     if unexpected:
         raise AssertionError(
@@ -155,6 +170,18 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
+def _requires_extra(requirement: str, extra: str) -> bool:
+    _, separator, marker = requirement.partition(";")
+    return bool(
+        separator
+        and re.fullmatch(
+            rf"\s*extra\s*==\s*['\"]{re.escape(extra)}['\"]\s*",
+            marker,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
@@ -172,16 +199,32 @@ def _require_metadata(names: set[str], data: bytes, expected_version: str) -> No
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
-    unexpected_requirements = [
+    reflex_requirements = [
         requirement
         for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
+        if _dependency_name(requirement) == "reflex" and _requires_extra(requirement, "reflex")
     ]
+    if not any(
+        _dependency_satisfies_floor(requirement, "reflex", "0.9.6")
+        for requirement in reflex_requirements
+    ):
+        missing.append("Requires-Dist: reflex>=0.9.6; extra == 'reflex'")
+    unexpected_requirements = []
+    for requirement in requirements:
+        name = _dependency_name(requirement)
+        if name in {"anywidget", "numpy"} and ";" not in requirement:
+            continue
+        if name == "reflex" and _requires_extra(requirement, "reflex"):
+            continue
+        unexpected_requirements.append(requirement)
     if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
-    provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+        missing.append(
+            "only xy base dependencies plus the Reflex extra in Requires-Dist "
+            f"({unexpected_requirements})"
+        )
+    provided_extras = {extra.strip().lower() for extra in metadata.get_all("Provides-Extra") or []}
+    if provided_extras != {"reflex"}:
+        missing.append(f"Provides-Extra: reflex (got {sorted(provided_extras)})")
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")
@@ -308,6 +351,16 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             "xy/__init__.py",
             zf.read("xy/__init__.py"),
             {"__version__", "__all__", "_EXPORTS", "__getattr__"},
+        )
+        _require_text_markers(
+            "reflex_xy/__init__.py",
+            zf.read("reflex_xy/__init__.py"),
+            {"XYPlugin", "chart", "figure", "__version__", '_distribution_version("xy")'},
+        )
+        _require_text_markers(
+            "reflex_xy/assets/XYChart.jsx",
+            zf.read("reflex_xy/assets/XYChart.jsx"),
+            {"XYChart", "xy_client.js"},
         )
         _require_text_markers(
             "xy/_figure.py",

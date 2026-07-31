@@ -5,9 +5,8 @@ from __future__ import annotations
 import pathlib
 
 import reflex_xy
-from reflex_xy.assets import _client_source, _link_client
-
 import xy
+from reflex_xy.assets import _client_source, _link_client
 
 ADAPTER_ASSETS = pathlib.Path(reflex_xy.__file__).parent / "assets"
 
@@ -22,7 +21,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # The installed bundle is minified; its stable public markers are export
+    # aliases rather than source-level function/class declarations.
+    for marker in ("as renderStandalone", "as decodeFrame", "as ChartView"):
         assert marker in text
 
 

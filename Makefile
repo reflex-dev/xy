@@ -44,7 +44,7 @@ help:
 
 setup:
 	uv venv
-	uv pip install -e . --group dev
+	uv pip install -e ".[reflex]" --group dev
 	cargo build --release
 
 setup-browser:

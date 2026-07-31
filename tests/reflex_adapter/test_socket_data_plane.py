@@ -22,12 +22,12 @@ import pytest
 import socketio
 import uvicorn
 from reflex_base.utils import format as reflex_format
+
+import xy
 from reflex_xy.app import wire
 from reflex_xy.namespace import XYNamespace
 from reflex_xy.registry import registry
 from reflex_xy.tokens import build_state_token
-
-import xy
 
 CLIENT_TOKEN = "11111111-2222-4333-8444-555566667777"
 OTHER_TOKEN = "99999999-8888-4777-8666-555544443333"

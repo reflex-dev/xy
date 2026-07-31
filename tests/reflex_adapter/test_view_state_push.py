@@ -12,9 +12,9 @@ import asyncio
 
 import numpy as np
 import pytest
-from reflex_xy.registry import FigureRegistry
 
 import xy
+from reflex_xy.registry import FigureRegistry
 
 
 def make_figure(n: int = 16):

@@ -9,7 +9,7 @@ implementation divergences. The implementation lives in
 plus hooks in `50_chartview.ts`/`52_tooltip.ts`/`53_interaction.ts`/
 `54_kernel.ts`, `python/xy/_figure.py` (message builders, `view_state()`
 cache), `widget.py`, `channel.py`, and
-`python/reflex-xy/reflex_xy/` (registry push path, `on_hover`, tooltip
+`python/reflex_xy/` (registry push path, `on_hover`, tooltip
 mount). It builds directly on the per-axis
 pan/zoom contract of PR #117 (canonical per-axis `ranges`, one clamped
 mutation path, semantic view events with `source`, `axes`, `phase`,

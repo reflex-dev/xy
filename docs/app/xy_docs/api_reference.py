@@ -8,7 +8,6 @@ from functools import cache
 from typing import Any
 
 import reflex as rx
-import reflex_xy
 from reflex_site_shared.components.docs_api import (
     callable_api_group,
     callable_api_reference,
@@ -17,6 +16,7 @@ from reflex_site_shared.components.docs_api import (
     docs_api_table,
 )
 
+import reflex_xy
 import xy
 from xy.components import _POLAR_INERT_AXIS_KEYWORDS
 

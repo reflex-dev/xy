@@ -1,11 +1,12 @@
 """Reflex configuration for the XY documentation site."""
 
 import reflex as rx
-import reflex_xy
 from reflex_site_shared.plugins import SharedSiteStylesPlugin
 from xy_docs.config import DOCS_CONFIG
 from xy_docs.plugins import XYDocsAgentFilesPlugin
 from xy_docs.prerender import XyDocsMarkdownPlugin
+
+import reflex_xy
 
 config = rx.Config(
     app_name="xy_docs",

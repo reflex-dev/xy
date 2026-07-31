@@ -138,7 +138,11 @@ jobs:
       - name: Install package + dev deps
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python -e ".[reflex]" --group dev
+
+      - name: Verify bundled Reflex integration import
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
 
       - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
         run: |

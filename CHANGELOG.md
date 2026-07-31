@@ -9,6 +9,11 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Reflex integration is now bundled in the `xy` distribution and installed as
+  `xy[reflex]`. The `reflex_xy` import namespace and JSX wrapper ship in every
+  wheel and sdist, while the extra adds the supported `reflex>=0.9.6` floor;
+  plain `xy` still has no Reflex dependency. The separate `reflex-xy`
+  distribution, version line, and release workflow have been removed.
 - Completed the phase-6/7 polar depth surface: `xy.polar_chart` now admits
   heatmap, contour, and error-bar traces alongside line/scatter/area/bar; the
   heatmap uses a fragment-stage polar inverse in the browser and the matching

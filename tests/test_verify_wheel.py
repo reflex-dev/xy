@@ -52,6 +52,19 @@ except ImportError as err:
     raise ImportError("native core required") from err
 BACKEND = "native"
 """
+REFLEX_INIT_PY = """
+from .app import XYPlugin
+from .component import chart
+from .vars import figure
+def __getattr__(name):
+    if name == "__version__":
+        return _distribution_version("xy")
+"""
+REFLEX_COMPONENT_JS = """
+// XYChart imports the render client bundled in xy.
+import { render } from "./xy_client.js";
+export function XYChart() { return render; }
+"""
 # Shaped like the real minified vite bundles: export aliases in the ESM,
 # a `var xy` IIFE namespace in the standalone build.
 INDEX_JS = (
@@ -72,6 +85,8 @@ DEFAULT_METADATA = "\n".join(
         "Requires-Python: >=3.11",
         "Requires-Dist: anywidget>=0.9",
         "Requires-Dist: numpy>=1.24",
+        "Requires-Dist: reflex>=0.9.6; extra == 'reflex'",
+        "Provides-Extra: reflex",
     ]
 )
 
@@ -157,6 +172,10 @@ def _write_wheel(
                 data = INDEX_JS
             elif name == "xy/static/standalone.js" and name not in replacements:
                 data = STANDALONE_JS
+            elif name == "reflex_xy/__init__.py" and name not in replacements:
+                data = REFLEX_INIT_PY
+            elif name == "reflex_xy/assets/XYChart.jsx" and name not in replacements:
+                data = REFLEX_COMPONENT_JS
             write(zf, name, data)
         if native:
             write(zf, "xy/_native_lib/libxy_core.dylib", b"native")
@@ -257,16 +276,24 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.8",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_METADATA.replace("reflex>=0.9.6", "reflex>=0.8"),
+            r"reflex>=0\.9\.6",
+        ),
+        (
+            DEFAULT_METADATA.replace("; extra == 'reflex'", ""),
+            "only xy base dependencies",
         ),
         (
             DEFAULT_METADATA
             + "\nRequires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
         ),
         (
-            DEFAULT_METADATA + "\nProvides-Extra: dev",
-            "no published extras",
+            DEFAULT_METADATA.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
+            "Provides-Extra: reflex",
         ),
     ],
 )
@@ -283,6 +310,14 @@ def test_verify_wheel_rejects_missing_type_marker(tmp_path: Path) -> None:
     _write_wheel(whl, omit={"xy/py.typed"})
 
     with pytest.raises(AssertionError, match="py\\.typed"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_missing_reflex_integration(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"reflex_xy/assets/XYChart.jsx"})
+
+    with pytest.raises(AssertionError, match="reflex_xy"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

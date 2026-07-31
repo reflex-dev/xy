@@ -97,23 +97,6 @@ RELEASE_YML = (
     "    steps:\n"
     "      - uses: pypa/gh-action-pypi-publish@release/v1\n" + ("release workflow padding\n" * 100)
 )
-RELEASE_REFLEX_XY_YML = (
-    "name: Release reflex-xy\n"
-    "on:\n"
-    "  push:\n"
-    '    tags: ["reflex-xy-v*"]\n'
-    "jobs:\n"
-    "  build:\n"
-    "    steps:\n"
-    "      - run: python3 scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/*\n"
-    "  publish:\n"
-    "    permissions:\n"
-    "      id-token: write\n"
-    "    steps:\n"
-    "      - run: python3 scripts/check_release_version.py --package reflex-xy\n"
-    "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
-    + ("adapter release workflow padding\n" * 40)
-)
 DEFAULT_PKG_INFO = (
     "Metadata-Version: 2.4\n"
     "Name: xy\n"
@@ -121,6 +104,8 @@ DEFAULT_PKG_INFO = (
     "Requires-Python: >=3.11\n"
     "Requires-Dist: anywidget>=0.9\n"
     "Requires-Dist: numpy>=1.24\n"
+    "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n"
+    "Provides-Extra: reflex\n"
 )
 BASELINE_JSON = '{"metrics": {"scatter.tier.100000": "direct"}}\n'
 
@@ -188,8 +173,6 @@ def _write_sdist(
                 data = CODSPEED_YML.encode("utf-8")
             elif name == ".github/workflows/release.yml":
                 data = RELEASE_YML.encode("utf-8")
-            elif name == ".github/workflows/release-reflex-xy.yml":
-                data = RELEASE_REFLEX_XY_YML.encode("utf-8")
             _add_file(tf, f"{root}/{name}", data)
         for name, data in extra.items():
             _add_file(tf, f"{root}/{name}", data)
@@ -245,16 +228,24 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.8\n",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("reflex>=0.9.6", "reflex>=0.8"),
+            r"reflex>=0\.9\.6",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("; extra == 'reflex'", ""),
+            "only xy base dependencies",
         ),
         (
             DEFAULT_PKG_INFO
             + "Requires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench\n",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
         ),
         (
-            DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
-            "no published extras",
+            DEFAULT_PKG_INFO.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
+            "Provides-Extra: reflex",
         ),
     ],
 )
@@ -271,6 +262,14 @@ def test_verify_sdist_rejects_missing_static_bundle(tmp_path: Path) -> None:
     _write_sdist(sdist, omit={"python/xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="missing required files"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_reflex_integration(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/reflex_xy/assets/XYChart.jsx"})
+
+    with pytest.raises(AssertionError, match="reflex_xy"):
         verify_sdist.verify_sdist(str(sdist))
 
 

@@ -106,7 +106,7 @@ gate. This is the one request
 type a host may withhold: on the Reflex host it never reaches the kernel,
 because `XYChart.jsx` intercepts the outgoing message and invokes the
 `on_view_change` prop directly
-(`python/reflex-xy/reflex_xy/assets/XYChart.jsx`) — that namespace
+(`python/reflex_xy/assets/XYChart.jsx`) — that namespace
 registers no Python-side view callback.
 
 **`select`** — box select. Edges are ordered by `lod.normalize_window` with
@@ -351,7 +351,7 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   counts only real values, so split is a byte-identical repack of packed. This
   is what both live hosts ship at first paint — `FigureWidget`
   (`python/xy/widget.py`) and the `/_xy` namespace
-  (`python/reflex-xy/reflex_xy/namespace.py`) — and on streaming append (§4),
+  (`python/reflex_xy/namespace.py`) — and on streaming append (§4),
   with no join copy anywhere on a live path.
 
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;

@@ -24,7 +24,6 @@ REQUIRED_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
-    ".github/workflows/release-reflex-xy.yml",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "Cargo.lock",
@@ -75,6 +74,19 @@ REQUIRED_FILES = {
     "js/src/60_entries.ts",
     "package.json",
     "package-lock.json",
+    "python/reflex_xy/__init__.py",
+    "python/reflex_xy/app.py",
+    "python/reflex_xy/assets/XYChart.jsx",
+    "python/reflex_xy/assets/__init__.py",
+    "python/reflex_xy/component.py",
+    "python/reflex_xy/events.py",
+    "python/reflex_xy/namespace.py",
+    "python/reflex_xy/payload_asset.py",
+    "python/reflex_xy/registry.py",
+    "python/reflex_xy/selections.py",
+    "python/reflex_xy/state_bridge.py",
+    "python/reflex_xy/tokens.py",
+    "python/reflex_xy/vars.py",
     "python/xy/__init__.py",
     "python/xy/_framing.py",
     "python/xy/_native.py",
@@ -113,7 +125,6 @@ REQUIRED_FILES = {
     "scripts/verify_ci_workflow.py",
     "scripts/verify_benchmark_report.py",
     "scripts/verify_local.py",
-    "scripts/verify_reflex_xy_dist.py",
     "scripts/verify_sdist.py",
     "scripts/verify_wheel.py",
     "src/kernels.rs",
@@ -123,11 +134,13 @@ REQUIRED_FILES = {
     "tests/test_bench_pyplot_vs_matplotlib.py",
     "tests/test_check_regressions.py",
     "tests/test_example_apps.py",
+    "tests/reflex_adapter/conftest.py",
+    "tests/reflex_adapter/test_component.py",
+    "tests/reflex_adapter/test_socket_data_plane.py",
     "tests/test_type_surface.py",
     "tests/test_verify_benchmark_report.py",
     "tests/test_verify_ci_workflow.py",
     "tests/test_verify_local.py",
-    "tests/test_verify_reflex_xy_dist.py",
     "tests/test_verify_sdist.py",
     "tests/test_verify_wheel.py",
 }
@@ -203,6 +216,18 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
+def _requires_extra(requirement: str, extra: str) -> bool:
+    _, separator, marker = requirement.partition(";")
+    return bool(
+        separator
+        and re.fullmatch(
+            rf"\s*extra\s*==\s*['\"]{re.escape(extra)}['\"]\s*",
+            marker,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -229,16 +254,32 @@ def _require_pkg_info(path: str, root: str) -> None:
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
-    unexpected_requirements = [
+    reflex_requirements = [
         requirement
         for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
+        if _dependency_name(requirement) == "reflex" and _requires_extra(requirement, "reflex")
     ]
+    if not any(
+        _dependency_satisfies_floor(requirement, "reflex", "0.9.6")
+        for requirement in reflex_requirements
+    ):
+        missing.append("Requires-Dist: reflex>=0.9.6; extra == 'reflex'")
+    unexpected_requirements = []
+    for requirement in requirements:
+        name = _dependency_name(requirement)
+        if name in {"anywidget", "numpy"} and ";" not in requirement:
+            continue
+        if name == "reflex" and _requires_extra(requirement, "reflex"):
+            continue
+        unexpected_requirements.append(requirement)
     if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
-    provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+        missing.append(
+            "only xy base dependencies plus the Reflex extra in Requires-Dist "
+            f"({unexpected_requirements})"
+        )
+    provided_extras = {extra.strip().lower() for extra in metadata.get_all("Provides-Extra") or []}
+    if provided_extras != {"reflex"}:
+        missing.append(f"Provides-Extra: reflex (got {sorted(provided_extras)})")
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
@@ -419,18 +460,6 @@ def verify_sdist(path: str) -> None:
             "pypa/gh-action-pypi-publish@",
             "scripts/verify_wheel.py",
             "scripts/verify_sdist.py",
-            "id-token: write",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/release-reflex-xy.yml",
-        {
-            'tags: ["reflex-xy-v*"]',
-            "pypa/gh-action-pypi-publish@",
-            "scripts/verify_reflex_xy_dist.py",
-            "scripts/check_release_version.py --package reflex-xy",
             "id-token: write",
         },
     )

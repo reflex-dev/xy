@@ -1,9 +1,8 @@
-"""reflex-xy adapter tests.
+"""Tests for the bundled ``xy[reflex]`` integration.
 
-These run only when the adapter's dependencies are installed
-(`uv pip install -e python/reflex-xy`); the core `xy` suite must
-never require Reflex (CLAUDE.md dependency rule), so everything here
-importorskips.
+These run only when the optional framework dependency is installed
+(`uv pip install -e ".[reflex]" --group dev`); plain `xy` must never require
+Reflex (CLAUDE.md dependency rule), so everything here importorskips.
 """
 
 from __future__ import annotations

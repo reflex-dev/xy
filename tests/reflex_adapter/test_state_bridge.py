@@ -8,12 +8,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import reflex as rx
-import reflex_xy
 from reflex.istate.manager.memory import StateManagerMemory
+
+import reflex_xy
+import xy
 from reflex_xy.state_bridge import make_rebuild_hook
 from reflex_xy.tokens import build_state_token, parse_token
-
-import xy
 
 
 class BridgeDemo(rx.State):

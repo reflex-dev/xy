@@ -198,18 +198,18 @@ For the environment, methodology, per-size videos, and raw results, see the
 
 ## Embed XY in a Reflex app
 
-The `reflex-xy` adapter turns any XY chart into a regular Reflex component, with
-no JavaScript, iframe, or separate chart service. It ships as its own package
-and pulls in `xy` and `reflex`:
+The Reflex integration bundled with `xy` turns any XY chart into a regular
+Reflex component, with no JavaScript, iframe, or separate chart service.
+Install the `reflex` extra to select a compatible framework version:
 
 ```bash
-pip install reflex-xy
+pip install "xy[reflex]"
 
 # or, with uv
-uv add reflex-xy
+uv add "xy[reflex]"
 ```
 
-Register the adapter once:
+The import namespace remains `reflex_xy`. Register the integration once:
 
 ```python
 # rxconfig.py

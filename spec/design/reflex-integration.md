@@ -1,12 +1,13 @@
 # Reflex integration — design
 
-Status: **prototype landed** (`python/reflex-xy`, tests under
+Status: **prototype landed** (`python/reflex_xy`, tests under
 `tests/reflex_adapter/`). This document is the authoritative design; the
 prototype implements it end to end over Reflex 0.9.6. The deliverable is an
-external adapter package (`reflex-xy`) that makes a xy figure a
-first-class Reflex component with the same performance contract as the
-notebook path: screen-bounded binary wire (§29), kernel-side canonical data
-(§27), stale-while-revalidate interaction (§17).
+integration bundled in the `xy` distribution and installed with
+`xy[reflex]`. It makes a xy figure a first-class Reflex component with the
+same performance contract as the notebook path: screen-bounded binary wire
+(§29), kernel-side canonical data (§27), stale-while-revalidate interaction
+(§17).
 
 Two decisions define this revision (superseding the HTTP-routes draft — see
 §8 for the audit trail):
@@ -172,7 +173,7 @@ totality contract). This section records only what is specific to this host.
 
 **`view_change` does not reach the kernel here.** The wrapper intercepts the
 outgoing message and invokes the Reflex `on_view_change` prop directly
-(`dispatchView` in `python/reflex-xy/reflex_xy/assets/XYChart.jsx`), because
+(`dispatchView` in `python/reflex_xy/assets/XYChart.jsx`), because
 the namespace registers no Python-side view callback (§5). Every other request
 type crosses the socket unchanged and is dispatched by the shared
 `handle_message`.
@@ -605,21 +606,21 @@ demo app models.
 ## 7. What shipped where (prototype map)
 
 ```
-python/reflex-xy/
-  reflex_xy/registry.py      token -> FigureEntry(figure, version, lock); TTL;
+python/reflex_xy/
+  registry.py                token -> FigureEntry(figure, version, lock); TTL;
                              publish/push fan-out seams; append
-  reflex_xy/tokens.py        xyv1 token grammar; builder discovery on vars
-  reflex_xy/vars.py          @reflex_xy.figure (FigureVar: builder-tracked deps)
-  reflex_xy/state_bridge.py  token -> state_manager -> builder rebuild hook
-  reflex_xy/namespace.py     XYNamespace: sub/unsub/msg, payload/msg/err,
+  tokens.py                  xyv1 token grammar; builder discovery on vars
+  vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
+  state_bridge.py            token -> state_manager -> builder rebuild hook
+  namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
                              affinity, rebuild-on-miss, binary attachments
-  reflex_xy/app.py           setup(app), XYPlugin (post_compile), lifespan
-  reflex_xy/component.py     chart() -> rx.Component (local-JSX library);
+  app.py                     setup(app), XYPlugin (post_compile), lifespan
+  component.py               chart() -> rx.Component (local-JSX library);
                              dispatches token (live) vs Chart (static tier)
-  reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
+  payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
-  reflex_xy/assets/          XYChart.jsx; links xy's installed render client
-examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
+  assets/                    XYChart.jsx; links xy's installed render client
+examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
                              hover/click/select events, a slider-driven +
                              cross-filtered histogram, a streaming line, an
                              on_view_change-computed detail chart, both
@@ -643,23 +644,15 @@ tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
 `inline()` (content-addressed pinned tokens, §3.4) lives in the package
 root beside `register()`/`release()`.
 
-`xy` itself stays Reflex-free (CLAUDE.md rule); the adapter depends on
-`xy` + full `reflex` for now — the 0.9.6 `reflex-base` split covers
+The core `python/xy` package itself stays Reflex-free (CLAUDE.md rule).
+`xy[reflex]` adds full `reflex>=0.9.6` for now — the `reflex-base` split covers
 components/vars but not yet App/state-manager access; revisit when a smaller
 supported surface exists.
 
-**Versioning & releases.** The adapter is its own distributable and versions
-independently of the core: its distribution version is derived from
-`reflex-xy-vX.Y.Z` git tags (uv-dynamic-versioning with
-`pattern-prefix = "reflex-xy-"`), while the core keeps bare `vX.Y.Z` — the
-pattern anchoring makes each derivation blind to the other's tags. Releases
-publish via the dedicated `.github/workflows/release-reflex-xy.yml` workflow
-(pure wheel + sdist, `scripts/verify_reflex_xy_dist.py`, trusted publishing),
-gated on a dated entry in the adapter's own `python/reflex-xy/CHANGELOG.md`
-(`scripts/check_release_version.py --package reflex-xy`); the pipeline is
-deliberately separate from release.yml's cross-compile matrix because the
-adapter has no binary artifacts. Full checklist:
-`spec/process/production-readiness.md` § "reflex-xy releases".
+**Versioning & releases.** The integration ships in every `xy` wheel and sdist,
+so it shares the core's version and bare `vX.Y.Z` release tags. The published
+extra is dependency metadata only: it adds the supported Reflex floor without
+creating another distribution or release pipeline.
 
 ## 8. Superseded: the HTTP-routes draft
 

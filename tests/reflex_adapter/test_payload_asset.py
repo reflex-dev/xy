@@ -5,11 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import reflex as rx
+
 import reflex_xy
+import xy
 from reflex_xy.payload_asset import payload_asset
 from reflex_xy.tokens import parse_token
-
-import xy
 from xy.channel import decode_frame
 
 

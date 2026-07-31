@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
-import reflex_xy
 from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
@@ -87,6 +86,7 @@ from xy_docs.sidebar import (
 )
 from xy_docs.xy_docs import _CHART_STYLE, _DOCS_ROUTES, app
 
+import reflex_xy
 import xy
 from xy.components import _MARK_APPLIERS, _POLAR_INERT_AXIS_KEYWORDS
 

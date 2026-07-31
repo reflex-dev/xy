@@ -10,31 +10,31 @@ components:
 
 # Reflex
 
-The experimental `reflex-xy` adapter renders an XY chart as a first-class
-Reflex component. The core `xy` package stays framework-neutral: application
-state and events remain in Reflex while XY owns chart data, rendering, and
-interaction math.
+The experimental Reflex integration bundled with `xy` renders an XY chart as a
+first-class Reflex component. The core stays framework-neutral at runtime:
+application state and events remain in Reflex while XY owns chart data,
+rendering, and interaction math.
 
 ## Install and Configure
 
-Install `reflex-xy` from PyPI. It declares compatible `xy` and Reflex
-dependencies:
+Install the `reflex` extra from PyPI. It selects a compatible Reflex version;
+the `reflex_xy` import namespace is already included in every `xy` wheel:
 
 ~~~~md tabs
 ## uv
 
 ~~~bash
-uv add reflex-xy
+uv add "xy[reflex]"
 ~~~
 
 ## pip
 
 ~~~bash
-python -m pip install reflex-xy
+python -m pip install "xy[reflex]"
 ~~~
 ~~~~
 
-The adapter installs Reflex as a dependency. Then register its plugin:
+Then register the bundled plugin:
 
 ~~~python
 # rxconfig.py

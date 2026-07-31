@@ -467,7 +467,7 @@ def test_contributor_setup_builds_native_core() -> None:
     setup_recipe = makefile.split("setup:\n", 1)[1].split("\n\n", 1)[0]
 
     assert "uv venv" in setup_recipe
-    assert "uv pip install -e . --group dev" in setup_recipe
+    assert 'uv pip install -e ".[reflex]" --group dev' in setup_recipe
     assert "cargo build --release" in setup_recipe
 
 

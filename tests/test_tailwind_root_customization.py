@@ -143,9 +143,7 @@ def test_tailwind_root_font_utilities_and_explicit_styles_follow_the_cascade(
 
 
 def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> None:
-    jsx = (ROOT / "python" / "reflex-xy" / "reflex_xy" / "assets" / "XYChart.jsx").read_text(
-        encoding="utf-8"
-    )
+    jsx = (ROOT / "python" / "reflex_xy" / "assets" / "XYChart.jsx").read_text(encoding="utf-8")
 
     assert "const mountedChromeSpec = (spec) => ({" in jsx
     for field in (
@@ -180,9 +178,7 @@ def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> No
 
 
 def test_live_wrapper_silently_hydrates_durable_selection_and_all_axis_ranges() -> None:
-    jsx = (ROOT / "python" / "reflex-xy" / "reflex_xy" / "assets" / "XYChart.jsx").read_text(
-        encoding="utf-8"
-    )
+    jsx = (ROOT / "python" / "reflex_xy" / "assets" / "XYChart.jsx").read_text(encoding="utf-8")
 
     assert "const durableState = view?.root?.xy?.state?.() || null;" in jsx
     assert "const viewChanged = changedFromHome(" in jsx
