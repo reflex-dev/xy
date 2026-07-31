@@ -189,10 +189,10 @@ sign of a signed field easy to read.
 
 ### I use a MATLAB contour plot or matplotlib. What is the equivalent?
 
-Matplotlib users can keep their code and change the import because `xy.pyplot`
-accepts the familiar `contour()` and `contourf()` calls without rewriting the
-plotting logic. For MATLAB, translate the workflow to the equivalent
-Python/NumPy syntax shown here:
+Matplotlib users can often start by changing the import because `xy.pyplot`
+accepts the familiar `contour()` and `contourf()` calls, although unsupported
+options may still require changes. For MATLAB, translate the workflow to the
+equivalent Python/NumPy syntax shown here:
 
 ~~~python
 import numpy as np
