@@ -31,9 +31,7 @@ def duplicate_ids(components: Sequence[object]) -> tuple[str, ...]:
         for component in components
         if (component_id := _static_string(getattr(component, "id", None)))
     )
-    return tuple(
-        component_id for component_id, count in Counter(static_ids).items() if count > 1
-    )
+    return tuple(component_id for component_id, count in Counter(static_ids).items() if count > 1)
 
 
 def validate_public_page_ids() -> None:
