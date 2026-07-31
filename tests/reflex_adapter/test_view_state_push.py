@@ -213,6 +213,141 @@ def test_view_build_and_version_are_atomic_with_wired_append(_fresh_registry):
     assert other.active_operations == 0
 
 
+@pytest.mark.parametrize("first", ["view", "append"])
+def test_wired_push_order_follows_figure_lock_when_drain_start_is_delayed(
+    _fresh_registry, monkeypatch, first
+):
+    """Append/view visibility follows construction order, not task scheduling.
+
+    Holding the first drain start opens the old post-``sync_lock`` race in a
+    deterministic way: the second operation can finish construction before
+    either message reaches the transport. The entry FIFO must still expose
+    both messages in figure-lock order so the client's generation gate accepts
+    the programmatic command instead of dropping it around the append.
+    """
+    registry = _fresh_registry
+    appended = threading.Event()
+
+    class Figure:
+        points = 0
+
+        def append(self, *_args, **_kwargs):
+            self.points += 1
+            appended.set()
+            return {"type": "append", "points": self.points}, []
+
+    figure = Figure()
+    entry = registry.publish("primary", figure, broadcast=False)
+    observed: list[tuple[str, int, int | None]] = []
+    held_drains = []
+    drain_claimed = threading.Event()
+    all_pushed = asyncio.Event()
+
+    async def on_push(_token, message, _buffers, version=None):
+        observed.append((message["type"], message["points"], version))
+        if len(observed) == 2:
+            all_pushed.set()
+
+    original_schedule = registry._schedule_push_drain
+
+    def hold_first_drain(loop, queued_entry):
+        held_drains.append((loop, queued_entry))
+        drain_claimed.set()
+
+    monkeypatch.setattr(registry, "_schedule_push_drain", hold_first_drain)
+
+    def build(fig):
+        return {"type": "state_patch", "points": fig.points}, []
+
+    async def start_append():
+        tasks_before = asyncio.all_tasks()
+        registry.append("primary", [1.0], [2.0])
+        append_tasks = asyncio.all_tasks() - tasks_before
+        assert len(append_tasks) == 1
+        return append_tasks.pop()
+
+    async def main():
+        registry.attach_loop(asyncio.get_running_loop())
+        registry.on_push(on_push)
+
+        if first == "view":
+            await asyncio.to_thread(registry.push_view_message, "primary", build)
+            assert await asyncio.to_thread(drain_claimed.wait, 1.0)
+            append_task = await start_append()
+            assert await asyncio.to_thread(appended.wait, 1.0)
+        else:
+            append_task = await start_append()
+            assert await asyncio.to_thread(appended.wait, 1.0)
+            assert await asyncio.to_thread(drain_claimed.wait, 1.0)
+            await asyncio.to_thread(registry.push_view_message, "primary", build)
+
+        # The later operation joined the already-claimed drain rather than
+        # scheduling around it. Start that drain only after both are queued.
+        for _ in range(100):
+            with registry._mutex:
+                queued = len(entry._push_queue)
+            if queued == 2:
+                break
+            await asyncio.sleep(0)
+        assert queued == 2
+        assert len(held_drains) == 1
+        original_schedule(*held_drains[0])
+
+        await asyncio.wait_for(all_pushed.wait(), 1.0)
+        await append_task
+
+    asyncio.run(main())
+
+    if first == "view":
+        assert observed == [("state_patch", 0, 1), ("append", 1, 2)]
+    else:
+        assert observed == [("append", 1, 2), ("state_patch", 1, 2)]
+    assert entry.version == 2
+    assert entry.active_operations == 0
+    assert not entry._push_queue
+    assert not entry._push_drain_scheduled
+
+
+def test_slow_push_drain_does_not_block_another_figure(_fresh_registry):
+    """Outbound serialization is entry-local, like the figure locks."""
+    registry = _fresh_registry
+    primary = registry.publish("primary", make_figure(), broadcast=False)
+    other = registry.publish("other", make_figure(), broadcast=False)
+
+    async def main():
+        primary_started = asyncio.Event()
+        release_primary = asyncio.Event()
+        other_pushed = asyncio.Event()
+
+        async def on_push(token, _message, _buffers, version=None):
+            assert version == 1
+            if token == "primary":
+                primary_started.set()
+                await release_primary.wait()
+            else:
+                other_pushed.set()
+
+        registry.attach_loop(asyncio.get_running_loop())
+        registry.on_push(on_push)
+        registry.reset_view("primary")
+        await asyncio.wait_for(primary_started.wait(), 1.0)
+
+        registry.reset_view("other")
+        await asyncio.wait_for(other_pushed.wait(), 1.0)
+        release_primary.set()
+        for _ in range(100):
+            if not primary._push_drain_scheduled and not other._push_drain_scheduled:
+                break
+            await asyncio.sleep(0)
+
+    asyncio.run(main())
+
+    assert not primary._push_queue
+    assert not other._push_queue
+    assert not primary._push_drain_scheduled
+    assert not other._push_drain_scheduled
+
+
 def test_validation_raises_in_caller_thread(_fresh_registry):
     registry = _fresh_registry
     token = registry.register(make_figure())

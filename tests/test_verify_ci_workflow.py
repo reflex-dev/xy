@@ -720,6 +720,36 @@ def test_workflows_reject_normalized_top_level_overrides(tmp_path: Path) -> None
             assert any(f"top-level '{key}' key" in error for error in errors)
 
 
+def test_ci_workflow_requires_block_style_top_level_on(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    # Keep every trigger-shaped line as a decoy under another top-level key.
+    path.write_text(workflow.replace("on:\n", "on: {}\ntrigger_decoys:\n", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("block-style top-level 'on' key" in error for error in errors)
+
+
+def test_codspeed_trigger_checks_ignore_decoy_mapping(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text(encoding="utf-8")
+    path = tmp_path / "codspeed.yml"
+    path.write_text(
+        workflow.replace(
+            "on:\n",
+            'on:\n  schedule:\n    - cron: "0 0 * * *"\ntrigger_decoys:\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_codspeed_workflow(path)
+
+    assert any("missing pull_request trigger" in error for error in errors)
+    assert any("missing push trigger" in error for error in errors)
+    assert any("missing workflow_dispatch trigger" in error for error in errors)
+
+
 def test_ci_workflow_rejects_normalized_duplicate_required_job(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -1392,6 +1422,23 @@ def test_release_workflow_rejects_missing_dry_run_input(tmp_path: Path) -> None:
     assert any("dry-run input" in error for error in errors)
 
 
+def test_release_dry_run_rejects_inline_or_unsafe_duplicate_trigger(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "\n# Limit build jobs to repository reads."
+    assert marker in workflow
+    duplicates = (
+        '  "\\u0077orkflow_dispatch": {}\n',
+        "  !!str workflow_dispatch: {}\n",
+    )
+    for index, duplicate in enumerate(duplicates):
+        path = tmp_path / f"release-duplicate-trigger-{index}.yml"
+        path.write_text(workflow.replace(marker, f"\n{duplicate}{marker}", 1), encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_release_workflow(path)
+
+        assert any("dry-run input" in error for error in errors)
+
+
 def test_release_workflow_rejects_false_dry_run_default_hidden_by_comment(
     tmp_path: Path,
 ) -> None:
@@ -1489,6 +1536,23 @@ def test_ci_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("fetch-depth: 0" in error for error in errors)
+
+
+def test_ci_workflow_decodes_quoted_checkout_uses_key(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    uses_keys = ('"uses"', '"\\u0075ses"')
+    for index, uses_key in enumerate(uses_keys):
+        mutated = workflow.replace(
+            "      - uses: actions/checkout@",
+            f"      - {uses_key}: actions/checkout@",
+            1,
+        ).replace("          fetch-depth: 0\n", "", 1)
+        path = tmp_path / f"ci-quoted-checkout-{index}.yml"
+        path.write_text(mutated, encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("fetch-depth: 0" in error for error in errors)
 
 
 def test_workflows_reject_fetch_depth_hidden_in_scalar_input(tmp_path: Path) -> None:

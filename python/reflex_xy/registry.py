@@ -20,6 +20,7 @@ import asyncio
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
@@ -35,6 +36,21 @@ __all__ = ["FigureEntry", "FigureRegistry", "registry"]
 # `register()` figures do not come back — the sweep is their documented limit.
 DEFAULT_TTL_SECONDS = 30 * 60.0
 _SWEEP_INTERVAL_SECONDS = 60.0
+
+
+PushHook = Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
+
+
+@dataclass
+class _QueuedPush:
+    """One entry-local outbound message, ordered at figure-lock time."""
+
+    callback: PushHook
+    token: str
+    message: dict
+    buffers: list[bytes]
+    version: Optional[int]
+    completion: Optional[asyncio.Future[None]] = None
 
 
 @dataclass
@@ -60,6 +76,14 @@ class FigureEntry:
     # (rather than by token) means a replacement never inherits an old
     # append's lease.
     active_operations: int = field(default=0, init=False, repr=False, compare=False)
+    # Append and view-state messages become observable in the order their
+    # figure work acquires ``sync_lock``. The registry mutex protects this
+    # short queue bookkeeping; network fan-out starts after ``sync_lock`` is
+    # released and remains entry-local.
+    _push_queue: deque[_QueuedPush] = field(
+        default_factory=deque, init=False, repr=False, compare=False
+    )
+    _push_drain_scheduled: bool = field(default=False, init=False, repr=False, compare=False)
     # Pinned entries are exempt from the TTL sweep: figures with no rebuild
     # recipe elsewhere (module-level `inline()` charts) live as long as the
     # process, or a sweep would break them permanently after idling.
@@ -108,9 +132,7 @@ class FigureRegistry:
         self._on_publish: Optional[Callable[[str, FigureEntry], Awaitable[None]]] = None
         # async callback(token, message, buffers, version) -> None for append
         # and view-state pushes — the message-shaped data-plane seam.
-        self._on_push: Optional[
-            Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
-        ] = None
+        self._on_push: Optional[PushHook] = None
 
     # -- wiring ------------------------------------------------------------
 
@@ -122,9 +144,82 @@ class FigureRegistry:
 
     def on_push(
         self,
-        callback: Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]],
+        callback: PushHook,
     ) -> None:
         self._on_push = callback
+
+    def _enqueue_push(
+        self,
+        entry: FigureEntry,
+        token: str,
+        message: dict,
+        buffers: list[bytes],
+        version: Optional[int],
+        *,
+        completion: Optional[asyncio.Future[None]] = None,
+    ) -> tuple[bool, Optional[asyncio.AbstractEventLoop]]:
+        """Queue one push and claim its drain while ``sync_lock`` is held.
+
+        Returning the loop separately lets the caller schedule network work
+        only after releasing ``sync_lock``. A later append/view write can add
+        to the queue meanwhile, but it cannot schedule around the earlier
+        item because the first enqueue already owns the single drain.
+        """
+        callback = self._on_push
+        loop = self._loop
+        if callback is None or loop is None:
+            return False, None
+        queued = _QueuedPush(callback, token, message, buffers, version, completion)
+        with self._mutex:
+            entry._push_queue.append(queued)
+            if entry._push_drain_scheduled:
+                return True, None
+            entry._push_drain_scheduled = True
+        return True, loop
+
+    def _schedule_push_drain(self, loop: asyncio.AbstractEventLoop, entry: FigureEntry) -> None:
+        """Start the one event-loop drain claimed by ``_enqueue_push``."""
+
+        def start() -> None:
+            loop.create_task(self._drain_push_queue(entry))
+
+        loop.call_soon_threadsafe(start)
+
+    async def _drain_push_queue(self, entry: FigureEntry) -> None:
+        """Fan out one generation's prepared pushes in construction order."""
+        loop = asyncio.get_running_loop()
+        while True:
+            with self._mutex:
+                if not entry._push_queue:
+                    entry._push_drain_scheduled = False
+                    return
+                queued = entry._push_queue.popleft()
+            try:
+                await queued.callback(
+                    queued.token,
+                    queued.message,
+                    queued.buffers,
+                    queued.version,
+                )
+            except asyncio.CancelledError:
+                with self._mutex:
+                    entry._push_drain_scheduled = False
+                if queued.completion is not None and not queued.completion.done():
+                    queued.completion.cancel()
+                raise
+            except Exception as exc:  # noqa: BLE001 - async transport boundary
+                if queued.completion is not None and not queued.completion.done():
+                    queued.completion.set_exception(exc)
+                else:
+                    loop.call_exception_handler(
+                        {
+                            "message": "reflex_xy view-state push failed",
+                            "exception": exc,
+                        }
+                    )
+            else:
+                if queued.completion is not None and not queued.completion.done():
+                    queued.completion.set_result(None)
 
     # -- core map ----------------------------------------------------------
 
@@ -467,25 +562,41 @@ class FigureRegistry:
                 return
             try:
                 async with entry.lock:
+                    completion = loop.create_future()
 
-                    def _append_and_bump() -> tuple[dict, list[bytes], Optional[int]]:
+                    def _append_and_bump() -> tuple[
+                        Optional[int], bool, Optional[asyncio.AbstractEventLoop]
+                    ]:
                         with entry.sync_lock:
                             message, buffers = entry.figure.append(
                                 trace, x, y, color=color, size=size
                             )
                             bumped = self.bump(token, expected=entry)
                             version = None if bumped is None else bumped.version
-                            return message, list(buffers), version
+                            if version is None:
+                                return None, False, None
+                            enqueued, drain_loop = self._enqueue_push(
+                                entry,
+                                token,
+                                message,
+                                list(buffers),
+                                version,
+                                completion=completion,
+                            )
+                            return version, enqueued, drain_loop
 
-                    message, buffers, operation_version = await asyncio.to_thread(_append_and_bump)
+                    operation_version, enqueued, drain_loop = await asyncio.to_thread(
+                        _append_and_bump
+                    )
                     if operation_version is None:
                         return  # a replacement won; never mutate/bump its generation
-                    push = self._on_push
-                    if push is not None:
-                        # Keep append pushes ordered under the generation lock.
-                        # The wire version lets the client discard this delta if
-                        # a replacement payload overtakes it.
-                        await push(token, message, buffers, operation_version)
+                    if drain_loop is not None:
+                        self._schedule_push_drain(drain_loop, entry)
+                    if enqueued:
+                        # Keep the generation lock until this append becomes
+                        # observable, as before. Earlier view writes queued by
+                        # ``sync_lock`` drain first; later writes follow it.
+                        await completion
             finally:
                 self._release_operation(entry)
 
@@ -517,33 +628,30 @@ class FigureRegistry:
         if entry is None:
             msg = f"unknown figure token: {token!r}"
             raise KeyError(msg)
+        drain_loop: Optional[asyncio.AbstractEventLoop] = None
         try:
             # The view write does not advance the figure, but it may carry
             # generation-specific row-mask buffers. Append mutates and bumps
-            # under this same lock, making the built bytes and captured
-            # version one atomic generation snapshot.
+            # under this same lock. Enqueueing before release makes the built
+            # bytes, captured version, and observable push order one atomic
+            # generation snapshot.
             with entry.sync_lock:
                 message, built_buffers = build(entry.figure)
                 buffers = list(built_buffers)
                 operation_version = entry.version
+                _enqueued, drain_loop = self._enqueue_push(
+                    entry,
+                    token,
+                    message,
+                    buffers,
+                    operation_version,
+                )
         finally:
-            self._release_operation(entry)
-        loop = self._loop
-        push = self._on_push
-        if loop is None or push is None:
-            return  # unwired (tests, headless): validated, nobody to push to
-
-        async def _do() -> None:
-            await push(token, message, buffers, operation_version)
-
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-        if running is loop:
-            loop.create_task(_do())
-        else:
-            asyncio.run_coroutine_threadsafe(_do(), loop)
+            try:
+                if drain_loop is not None:
+                    self._schedule_push_drain(drain_loop, entry)
+            finally:
+                self._release_operation(entry)
 
     def set_view(
         self, token: str, ranges: Any, *, animate: bool = True, history: bool = True

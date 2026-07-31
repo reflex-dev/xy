@@ -207,6 +207,43 @@ def _direct_yaml_mapping(
     return indent, key, unsafe, match.group("value")
 
 
+def _sequence_item_yaml_mapping(
+    line: str,
+) -> Optional[tuple[int, Optional[str], bool, str]]:
+    """Return the first mapping entry carried by a block sequence item.
+
+    A step written as ``- uses: ...`` has a mapping key two columns deeper
+    than the sequence indicator. Decode that key exactly like a regular block
+    key so quoted and escape-equivalent spellings cannot disappear from
+    structural step checks.
+    """
+    indent = len(line) - len(line.lstrip(" "))
+    item = re.match(r"^-\s+(?P<mapping>.*)$", line[indent:])
+    if item is None:
+        return None
+    match = _DIRECT_YAML_KEY.match(item.group("mapping"))
+    if match is None:
+        return None
+    key, unsafe = _decode_yaml_key(match.group("key"))
+    return indent + 2, key, unsafe, match.group("value")
+
+
+def _step_direct_key_values(step: str, key: str) -> tuple[list[str], bool]:
+    """Return direct values for one key in a standard Actions step mapping."""
+    values: list[str] = []
+    unsafe = False
+    for index, line in enumerate(_yaml_code_lines(step)):
+        parsed = _sequence_item_yaml_mapping(line) if index == 0 else _direct_yaml_mapping(line)
+        if parsed is None or parsed[0] != 8:
+            continue
+        _indent, candidate, candidate_unsafe, value = parsed
+        if candidate_unsafe:
+            unsafe = True
+        elif candidate == key:
+            values.append(value.strip())
+    return values, unsafe
+
+
 def _environment_block_is_unsafe(lines: list[str], index: int, env_indent: int) -> bool:
     """Inspect one reviewed block-style Actions ``env`` mapping."""
     parsed = _direct_yaml_mapping(lines[index])
@@ -369,6 +406,12 @@ def _direct_yaml_key_values(text: str, key: str, *, indent: int) -> tuple[list[s
 
 def _unique_mapping_block(text: str, key: str, *, indent: int) -> Optional[str]:
     """Return one block-style mapping value, bounded by its indentation."""
+    # Count all normalized occurrences before selecting the reviewed block.
+    # In particular, an inline duplicate (``"on": {}``) or an unsupported
+    # equivalent spelling must not be ignored merely because one ordinary
+    # block-style occurrence is also present.
+    if _direct_yaml_key_count(text, key, indent=indent) != 1:
+        return None
     raw_lines = text.splitlines()
     code_lines = _yaml_code_lines(text)
     starts: list[int] = []
@@ -422,38 +465,20 @@ def _require_unique_workflow_structure(
     required_jobs: set[str],
 ) -> None:
     """Reject duplicate/encoded overrides of protected workflow mappings."""
-    keys = _yaml_mapping_keys(text)
-    unsafe_top = any(indent == 0 and unsafe for indent, _key, unsafe in keys)
-    top_counts: dict[str, int] = {}
+    top_blocks: dict[str, Optional[str]] = {}
     for key in ("on", "jobs"):
-        count = sum(
-            indent == 0 and candidate == key and not unsafe for indent, candidate, unsafe in keys
-        )
-        top_counts[key] = count
-        if unsafe_top or count != 1:
+        block = _unique_mapping_block(text, key, indent=0)
+        top_blocks[key] = block
+        if block is None:
             errors.append(
-                f"{workflow_label} workflow must define exactly one unambiguous top-level "
+                f"{workflow_label} workflow must define exactly one unambiguous block-style "
+                "top-level "
                 f"{key!r} key"
             )
 
     job_keys: list[tuple[Optional[int], Optional[str], bool]] = []
-    if top_counts.get("jobs") == 1:
-        lines = _yaml_code_lines(text)
-        start = next(
-            index
-            for index, line in enumerate(lines)
-            if (parsed := _direct_yaml_mapping(line)) is not None
-            and parsed[0] == 0
-            and parsed[1] == "jobs"
-            and not parsed[2]
-        )
-        end = len(lines)
-        for index in range(start + 1, len(lines)):
-            line = lines[index]
-            if line.strip() and len(line) == len(line.lstrip(" ")):
-                end = index
-                break
-        job_keys = _yaml_mapping_keys("\n".join(lines[start + 1 : end]))
+    if top_blocks["jobs"] is not None:
+        job_keys = _yaml_mapping_keys(top_blocks["jobs"] or "")
 
     unsafe_job_key = any(indent == 2 and unsafe for indent, _key, unsafe in job_keys)
     for job in sorted(required_jobs):
@@ -654,9 +679,9 @@ def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: s
     checkout_count = 0
     for job in _job_blocks(text).values():
         for step in _step_sequence_blocks(job):
-            uses_checkout = any(
-                "uses: actions/checkout@" in line and len(line) - len(line.lstrip(" ")) in {6, 8}
-                for line in _yaml_code_lines(step)
+            uses_values, uses_unsafe = _step_direct_key_values(step, "uses")
+            uses_checkout = uses_unsafe or any(
+                value.startswith("actions/checkout@") for value in uses_values
             )
             if not uses_checkout:
                 continue
@@ -678,41 +703,56 @@ def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: s
         errors.append(f"{workflow_label} workflow has no structurally recognized checkout step")
 
 
+def _workflow_trigger_block(text: str, trigger: str) -> Optional[str]:
+    """Return one trigger mapping from the unique top-level ``on`` block."""
+    on_block = _unique_mapping_block(text, "on", indent=0)
+    if on_block is None:
+        return None
+    return _unique_mapping_block(on_block, trigger, indent=2)
+
+
+def _require_trigger_with_direct_option(
+    errors: list[str],
+    text: str,
+    workflow_label: str,
+    trigger: str,
+    option: str,
+    expected: str,
+) -> None:
+    """Require one direct trigger option inside the unique ``on`` mapping."""
+    block = _workflow_trigger_block(text, trigger)
+    if block is None:
+        errors.append(f"{workflow_label} workflow missing {trigger} trigger")
+        return
+    values, unsafe = _direct_yaml_key_values(block, option, indent=4)
+    if unsafe or values != [expected]:
+        errors.append(
+            f"{workflow_label} {trigger} trigger must define exactly one direct "
+            f"{option}: {expected} option"
+        )
+
+
 def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_label: str) -> None:
-    """Require PR-only docs/spec changes to skip an expensive workflow."""
-    lines = text.splitlines()
-    try:
-        start = next(i for i, line in enumerate(lines) if line == "  pull_request:")
-    except StopIteration:
+    """Require PR-only docs/spec changes in the unique top-level trigger block."""
+    pull_request = _workflow_trigger_block(text, "pull_request")
+    if pull_request is None:
         errors.append(f"{workflow_label} workflow missing pull_request trigger")
         return
-
-    paths_ignore: list[str] | None = None
-    collecting_paths_ignore = False
-    for line in lines[start + 1 :]:
-        indent = len(line) - len(line.lstrip())
-        if line.strip() and indent <= 2:
-            break
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+    paths_block = _unique_mapping_block(pull_request, "paths-ignore", indent=4)
+    paths_ignore: list[str] = []
+    for line in _yaml_code_lines(paths_block or ""):
+        if len(line) - len(line.lstrip(" ")) != 6:
             continue
-        if indent == 4:
-            collecting_paths_ignore = bool(re.fullmatch(r"paths-ignore:\s*(?:#.*)?", stripped))
-            if collecting_paths_ignore:
-                paths_ignore = []
+        item = re.fullmatch(r"\s*-\s+(.+?)\s*", line)
+        if item is None:
             continue
-        if not collecting_paths_ignore or indent <= 4:
-            continue
-        item = re.fullmatch(r"-\s+(.+?)\s*", stripped)
-        if item is None or paths_ignore is None:
-            continue
-        value = re.sub(r"\s+#.*$", "", item.group(1)).strip()
+        value = item.group(1).strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         paths_ignore.append(value)
 
     required = {"docs/**", "spec/**"}
-    missing = sorted(required - set(paths_ignore or []))
+    missing = sorted(required - set(paths_ignore))
     if missing:
         errors.append(
             f"{workflow_label} pull_request trigger must skip docs/spec-only changes: {missing}"
@@ -1112,6 +1152,16 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     errors: list[str] = []
     _require_unique_workflow_structure(errors, text, "CodSpeed", REQUIRED_CODSPEED_JOBS)
     _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
+    _require_trigger_with_direct_option(
+        errors,
+        text,
+        "CodSpeed",
+        "push",
+        "branches",
+        '["main"]',
+    )
+    if _workflow_trigger_block(text, "workflow_dispatch") is None:
+        errors.append("CodSpeed workflow missing workflow_dispatch trigger")
     _require_unshallow_checkouts(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
@@ -1121,10 +1171,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         errors,
         text,
         "CodSpeed",
-        "push, PR, manual triggers, and OIDC permissions",
-        'branches: ["main"]',
-        "pull_request:",
-        "workflow_dispatch:",
+        "OIDC permissions",
         "id-token: write",
     )
     _require_job_contains(
@@ -1159,19 +1206,21 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     jobs = _job_blocks(text)
     errors: list[str] = []
     _require_unique_workflow_structure(errors, text, "release", REQUIRED_RELEASE_JOBS)
+    _require_trigger_with_direct_option(
+        errors,
+        text,
+        "release",
+        "push",
+        "tags",
+        '["v*"]',
+    )
+    if _workflow_trigger_block(text, "workflow_dispatch") is None:
+        errors.append("release workflow missing workflow_dispatch trigger")
     _require_unshallow_checkouts(errors, text, "release")
     missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"release workflow missing required jobs: {missing_jobs}")
 
-    _require_workflow_contains(
-        errors,
-        text,
-        "release",
-        "tag and manual triggers",
-        'tags: ["v*"]',
-        "workflow_dispatch:",
-    )
     _require_job_contains(
         errors,
         jobs,

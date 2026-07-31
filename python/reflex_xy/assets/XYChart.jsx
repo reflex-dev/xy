@@ -635,6 +635,16 @@ export function XYChart(props) {
       restoreSelectionSeqs.clear();
     };
 
+    const invalidatePayloadReplies = () => {
+      // An addressed payload can replace px-dependent shipped rows without
+      // advancing the FigureEntry generation. Replies already in flight still
+      // carry that same version, so version gating alone cannot prove that
+      // their indices belong to the newly mounted payload.
+      pendingClickInput = null;
+      clickInputs.clear();
+      invalidateSelectionReplies();
+    };
+
     const deferStatePush = (data, message) => {
       // Programmatic view/selection pushes are not part of the authoritative
       // figure payload. Preserve only generation-stamped room events; replies
@@ -689,6 +699,12 @@ export function XYChart(props) {
         && data.version < payloadVersion
       ) return;
       const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
+      const sameGenerationAddressedReplacement =
+        data.mid != null &&
+        payloadVersion !== null &&
+        nextPayloadVersion === payloadVersion &&
+        !awaitingPayload;
+      if (sameGenerationAddressedReplacement) invalidatePayloadReplies();
       if (payloadVersion !== null && nextPayloadVersion !== payloadVersion) {
         // Requests stamped with the preceding version will be dropped by the
         // server. Do not retain their synthetic click/selection bookkeeping.
@@ -809,8 +825,10 @@ export function XYChart(props) {
       ) invalidateSelectionReplies();
       let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
+        const clickWasPending = clickInputs.has(message.seq);
         const clickInput = clickInputs.get(message.seq);
         clickInputs.delete(message.seq);
+        if (!clickWasPending) return;
         if (message.type === "pick_result" && message.row) {
           cbRef.current.onPointClick?.(
             pointEnvelope("point_click", token, message.row, clickInput || {}),
@@ -822,8 +840,9 @@ export function XYChart(props) {
         if (cbRef.current.onPointHover) dispatchHover(message.row);
       }
       if (message.type === "selection") {
-        if (invalidatedSelectionSeqs.delete(message.seq)) return;
-        pendingSelectionSeqs.delete(message.seq);
+        const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);
+        const selectionWasPending = pendingSelectionSeqs.delete(message.seq);
+        if (selectionWasInvalidated || !selectionWasPending) return;
         const isRestore = restoreSelectionSeqs.delete(message.seq);
         // The mask reply still has to reach ChartView, but this restore was
         // initiated by a payload swap rather than a new user gesture. Tag the

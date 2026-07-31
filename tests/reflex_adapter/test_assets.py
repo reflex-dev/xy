@@ -191,8 +191,11 @@ def test_wrapper_speaks_the_namespace_protocol():
         < on_msg.index("let clientMessage = message;")
     )
     assert (
-        on_msg.index("if (invalidatedSelectionSeqs.delete(message.seq)) return;")
-        < on_msg.index("pendingSelectionSeqs.delete(message.seq);")
+        on_msg.index(
+            "const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);"
+        )
+        < on_msg.index("const selectionWasPending = pendingSelectionSeqs.delete(message.seq);")
+        < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
         < on_msg.index("const isRestore = restoreSelectionSeqs.delete(message.seq);")
         < on_msg.index("cbRef.current.onSelectEnd({")
         < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
@@ -233,6 +236,61 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "const controller = new AbortController()" in jsx
     assert "fetch(src, { signal: controller.signal })" in jsx
     assert "controller.abort()" in jsx
+
+
+def test_same_generation_addressed_payload_invalidates_in_flight_replies():
+    """A px-specific payload can change shipped indices without a version bump."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
+        "const onMsg = (data) => {", 1
+    )[0]
+    on_msg = jsx.split("const onMsg = (data) => {", 1)[1].split("const onErr = (data) => {", 1)[0]
+    invalidate = jsx.split("const invalidatePayloadReplies = () => {", 1)[1].split("};", 1)[0]
+
+    for needle in (
+        "pendingClickInput = null",
+        "clickInputs.clear()",
+        "invalidateSelectionReplies()",
+    ):
+        assert needle in invalidate
+
+    # The duplicate/rows-mask guard runs first. Any same-generation addressed
+    # payload that remains eligible invalidates old-payload replies before it
+    # snapshots durable state or replaces buffers.
+    assert (
+        on_payload.index("data.version === payloadVersion")
+        < on_payload.index("const sameGenerationAddressedReplacement =")
+        < on_payload.index("if (sameGenerationAddressedReplacement) invalidatePayloadReplies();")
+        < on_payload.index("const durableState =")
+        < on_payload.index("view?.updatePayload?.")
+    )
+    replacement = on_payload.split("const sameGenerationAddressedReplacement =", 1)[1].split(
+        ";", 1
+    )[0]
+    for needle in (
+        "data.mid != null",
+        "nextPayloadVersion === payloadVersion",
+        "!awaitingPayload",
+    ):
+        assert needle in replacement
+
+    # Clearing bookkeeping is authoritative: a late same-version reply with
+    # an unknown sequence is consumed before any Reflex callback or view
+    # dispatch, rather than falling through with empty click metadata.
+    assert (
+        on_msg.index("const clickWasPending = clickInputs.has(message.seq);")
+        < on_msg.index("if (!clickWasPending) return;")
+        < on_msg.index("cbRef.current.onPointClick?.(")
+    )
+    assert (
+        on_msg.index(
+            "const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);"
+        )
+        < on_msg.index("const selectionWasPending = pendingSelectionSeqs.delete(message.seq);")
+        < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
+        < on_msg.index("cbRef.current.onSelectEnd({")
+        < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
+    )
 
 
 def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
