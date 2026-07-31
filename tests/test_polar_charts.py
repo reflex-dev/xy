@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+import typing
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -18,6 +19,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import components
 from xy._svg import _PolarProjection, axis_ticks, layout, minor_axis_ticks
 from xy.config import POLAR_DIRECT_CEILING
 
@@ -1817,7 +1819,29 @@ def test_wind_rose_is_the_polar_composition_that_keeps_zoom() -> None:
     assert _polar_zoom_flag(xy.wind_rose(directions, speeds, zoom=None)) is True
 
 
-@pytest.mark.parametrize("action", ["pan", "zoom", "select", "select-x", "select-lasso"])
+#: Every drag action polar refuses, derived from the public `DefaultDragAction`
+#: type rather than hand-listed: a hand-written subset had already drifted (it
+#: missed `select-y`), and deriving it means a newly added drag action is covered
+#: the moment it exists — either polar grows a tool for it or this test fails.
+_POLAR_INERT_DRAG_ACTIONS = sorted(
+    set(typing.get_args(components.DefaultDragAction)) - {"auto", "none"}
+)
+
+
+def test_the_inert_polar_drag_action_list_is_exhaustive() -> None:
+    """Guard the derivation above: `auto`/`none` are the only legal polar values,
+    so every other member of the type must be in the refusal list."""
+    assert set(_POLAR_INERT_DRAG_ACTIONS) == {
+        "pan",
+        "zoom",
+        "select",
+        "select-x",
+        "select-y",
+        "select-lasso",
+    }
+
+
+@pytest.mark.parametrize("action", _POLAR_INERT_DRAG_ACTIONS)
 def test_polar_refuses_every_inert_drag_action(action) -> None:
     """A disc has no drag tools, so only `auto`/`none` are meaningful (§8).
 

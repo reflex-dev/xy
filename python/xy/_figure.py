@@ -1018,8 +1018,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 f"coords='polar' does not support default_drag_action={action!r}; a "
                 "disc has no drag tools (theta pan, box zoom, and rectangular/lasso "
                 "selection all lack polar geometry), so only 'auto' and 'none' are "
-                "meaningful. Radial zoom is a wheel/button gesture — enable it with "
-                "interaction_config(zoom=True). See spec/design/polar-axes.md."
+                "meaningful. Radial zoom is a separate wheel/button capability, "
+                "controlled by the `zoom` switch rather than by a drag action. See "
+                "spec/design/polar-axes.md."
             )
 
         def enabled(name: str) -> bool:

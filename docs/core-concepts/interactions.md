@@ -65,11 +65,13 @@ expected case for this. Radial zoom then changes the maximum radius while holdin
 the minimum fixed, so zooming a disc does not unexpectedly create a hole and an
 authored `hole` or `origin` remains stable.
 
-While zoom is off, no gesture can move the view, so the derived reset-axis policy
-is empty and reset is not part of the default polar contract either: the modebar
-shows no zoom or reset controls and double-click has nothing to restore. Zoom
-brings both back, and an explicit `reset_axes` grants reset by itself — the right
-choice for a chart whose view moves through linked axes or application state. The
+While zoom is off, no gesture can move the view, so the *derived* reset-axis
+policy is empty and reset is not part of the default polar contract either: with
+no `reset_axes` authored, the modebar shows no zoom or reset controls and
+double-click has nothing to restore. Zoom brings both back. An authored
+`reset_axes` is honored regardless of the zoom switch, and grants reset — controls
+and double-click alike — on its own; that is the right choice for a chart whose
+view moves through linked axes or application state rather than a gesture. The
 chart also leaves wheel events uncancelled while zoom is off, so the surrounding
 page keeps scrolling under the cursor.
 

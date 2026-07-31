@@ -683,8 +683,9 @@ through the shared polar renderer.
 Zoom is off by default, as on every polar chart except the wind rose: these
 compositions are laid out against a fixed center and a fixed outer ring, so
 zooming crops the sectors rather than revealing detail. With no gesture able to
-move the view, reset has nothing to restore either — double-click is inert and the
-reset controls drop out of the modebar unless an explicit `reset_axes` grants them.
+move the view, reset has nothing to restore either: unless `reset_axes` is
+authored, double-click is inert and the reset controls drop out of the modebar. An
+authored `reset_axes` grants both back on its own, whatever the zoom switch says.
 Add `xy.interaction_config(zoom=True)` to turn radial zoom (and reset) on when the
 sector lengths are worth magnifying — see
 [why zoom is off by default](/docs/xy/charts/polar-chart/#why-zoom-is-off-by-default).

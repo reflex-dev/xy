@@ -250,14 +250,15 @@ Cartesian charts:
   part of a sector is not hit-testable.
 - **Zoom is off by default.** Polar charts ship without wheel zoom, modebar zoom
   controls, or the zoom percentage indicator. Reset follows by default: with
-  nothing to move the view, the resolved reset-axis policy is empty, so Fit Data
+  nothing to move the view, the derived reset-axis policy is empty, so Fit Data
   and Reset View are absent and double-click has nothing to restore. Wind roses
   are the exception and keep zoom on. Enabling zoom brings the wheel, the whole
   modebar zoom menu, and double-click reset back: zoom scales the radial maximum
   while keeping the radial minimum fixed, and reset restores the original radial
-  range. An explicit `reset_axes` also grants reset on its own, which is what a
-  chart whose view moves through linked axes or state-driven updates rather than
-  a gesture should use.
+  range. An explicit `reset_axes` also grants reset on its own — controls and
+  double-click alike, whatever the zoom switch says — which is what a chart whose
+  view moves through linked axes or state-driven updates rather than a gesture
+  should use.
 - Drag does nothing on a disc, and says so: theta pan, box zoom, and
   rectangular/lasso selection have no polar geometry, so `default_drag_action`
   accepts only `"auto"` and `"none"` here and raises on the rest rather than
