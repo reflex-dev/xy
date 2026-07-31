@@ -23,6 +23,7 @@ from typing import Optional
 REQUIRED_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
+    ".github/workflows/deploy-docs-stg.yml",
     ".github/workflows/release.yml",
     ".github/workflows/release-reflex-xy.yml",
     "CHANGELOG.md",
@@ -410,6 +411,18 @@ def verify_sdist(path: str) -> None:
         root,
         ".github/workflows/codspeed.yml",
         {"CodSpeedHQ/action@", "pytest-codspeed", 'k.BACKEND == "native"'},
+    )
+    _require_file_contains(
+        path,
+        root,
+        ".github/workflows/deploy-docs-stg.yml",
+        {
+            "verify-library-release",
+            "--json assets,body,isDraft,isPrerelease,name,publishedAt,tagName",
+            "xy-release-workflow:",
+            "pypi.org/pypi/xy/",
+            "verify-library-release]",
+        },
     )
     _require_file_contains(
         path,

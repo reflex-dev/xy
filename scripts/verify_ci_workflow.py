@@ -4,8 +4,8 @@
 The workflows are YAML, but this checker intentionally stays stdlib-only so it
 can run before the dev environment is installed. It does not try to be a full
 YAML parser; it checks stable, high-value invariants that are easy to lose when
-editing `.github/workflows/ci.yml`, `.github/workflows/release.yml`, or
-`.github/workflows/release-reflex-xy.yml`.
+editing `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+`.github/workflows/release-reflex-xy.yml`, or the production docs release gate.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_REFLEX_XY_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release-reflex-xy.yml"
+DEFAULT_DOCS_DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-docs-stg.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
@@ -111,6 +112,51 @@ def _named_step_blocks(job_text: str) -> dict[str, str]:
     return {name: "\n".join(lines) for name, lines in blocks.items()}
 
 
+def _job_scalar(job_text: str, key: str) -> str | None:
+    """Return an active job-level scalar, ignoring comments and nested keys."""
+    match = re.search(rf"^    {re.escape(key)}:\s*(.*?)\s*$", job_text, re.MULTILINE)
+    return None if match is None else match.group(1)
+
+
+def _job_mapping(job_text: str, key: str) -> dict[str, str] | None:
+    """Return an active job-level mapping with direct scalar children."""
+    lines = job_text.splitlines()
+    try:
+        start = lines.index(f"    {key}:")
+    except ValueError:
+        return None
+
+    mapping: dict[str, str] = {}
+    for line in lines[start + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= 4:
+            break
+        match = re.fullmatch(r"      ([A-Za-z0-9_-]+):\s*(.*?)\s*", line)
+        if match:
+            mapping[match.group(1)] = match.group(2)
+    return mapping
+
+
+def _named_step_run(job_text: str, step: str) -> str | None:
+    """Return one named step's active shell body without comment-only lines."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        return None
+    lines = block.splitlines()
+    try:
+        start = lines.index("        run: |")
+    except ValueError:
+        return None
+    shell_lines = [
+        line[10:] if line.startswith("          ") else line.lstrip()
+        for line in lines[start + 1 :]
+        if not line.lstrip().startswith("#")
+    ]
+    return "\n".join(shell_lines)
+
+
 def _require_step_contains(
     errors: list[str], job_text: str, step: str, description: str, *needles: str
 ) -> None:
@@ -171,6 +217,7 @@ def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
 PYPI_PUBLISH_GATE = (
     "if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'"
 )
+CORE_PRERELEASE_TAG_PATTERN = r"^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$"
 
 
 def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
@@ -828,36 +875,233 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "github-release",
         "release",
-        "tag-only, least-privilege GitHub Release creation after PyPI, using "
-        "the verified distribution artifacts with retry-safe uploads",
-        "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
-        "needs: publish",
-        "permissions:",
-        "contents: write",
+        "GitHub Release creation from downloaded verified distributions",
         "actions/download-artifact@",
         "pattern: dist-*",
         "merge-multiple: true",
         "GH_TOKEN: ${{ github.token }}",
-        "shopt -s nullglob",
-        "artifacts=(dist/*.whl dist/*.tar.gz)",
-        "if (( ${#artifacts[@]} == 0 )); then\n"
-        '            echo "::error::No wheel or sdist artifacts were downloaded"\n'
-        "            exit 1\n"
-        "          fi",
-        "dist/*.whl",
-        "dist/*.tar.gz",
-        "gh release view",
-        "--json isDraft,isPrerelease,name",
-        "gh release edit",
-        "--draft=false",
-        "--prerelease=false",
-        "gh release upload",
-        "--clobber",
-        "gh release create",
-        "--verify-tag",
-        "--generate-notes",
-        "--prerelease",
+        "Create GitHub Release and attach distributions",
     )
+    github_release = jobs.get("github-release")
+    if github_release is not None:
+        expected_gate = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+        if _job_scalar(github_release, "if") != expected_gate:
+            errors.append(
+                "release github-release job must use the active tag-only gate "
+                f"`if: {expected_gate}`"
+            )
+        if _job_scalar(github_release, "needs") != "publish":
+            errors.append("release github-release job must actively declare `needs: publish`")
+        permissions = _job_mapping(github_release, "permissions")
+        if permissions != {"contents": "write"}:
+            errors.append(
+                "release github-release job permissions must be exactly "
+                f"`contents: write`, found {permissions!r}"
+            )
+
+        release_shell = _named_step_run(
+            github_release,
+            "Create GitHub Release and attach distributions",
+        )
+        if release_shell is None:
+            errors.append(
+                "release github-release job is missing the active release publication shell step"
+            )
+        else:
+            required_shell = (
+                "shopt -s nullglob",
+                "wheels=(dist/*.whl)",
+                "sdists=(dist/*.tar.gz)",
+                'artifacts=("${wheels[@]}" "${sdists[@]}")',
+                "if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then\n"
+                '  echo "::error::Expected at least one wheel and exactly one sdist"\n'
+                "  exit 1\n"
+                "fi",
+                f'if [[ "$TAG" =~ {CORE_PRERELEASE_TAG_PATTERN} ]]; then',
+                "prerelease=(--prerelease)",
+                "edit_prerelease=(--prerelease)",
+                "expected_prerelease=true",
+                '"${edit_prerelease[@]}"',
+                '"${prerelease[@]}"',
+                "expected_assets_json=",
+                'gh release upload "$TAG" "${artifacts[@]}"',
+                'gh release create "$TAG" "${artifacts[@]}"',
+                "--verify-tag",
+                "--prerelease=false",
+                "index($name) != null",
+                '.assets[] | select(.name | endswith(".whl") or endswith(".tar.gz"))',
+                '"repos/${REPO}/releases/assets/${asset_id}"',
+                '"repos/${REPO}/releases/generate-notes"',
+                '-f tag_name="$TAG"',
+                '--notes-file "$notes_file"',
+                "<!-- xy-release-workflow:%s -->",
+                'generated_notes="$(<"$notes_file")"',
+                'if [[ -z "${generated_notes//[[:space:]]/}" ]]; then',
+                "isImmutable",
+                "publishedAt",
+                "tagName",
+                "actual_assets_json=",
+                '"$actual_assets_json" != "$expected_assets_json"',
+                "--draft=false",
+                "--clobber",
+            )
+            missing = _missing_needles(release_shell, required_shell)
+            if missing:
+                errors.append(
+                    "release github-release job missing retry-safe artifact, metadata, "
+                    f"prerelease, or generated-notes behavior: {missing}"
+                )
+
+            active_lines = [
+                line.strip().removesuffix("\\").rstrip()
+                for line in release_shell.splitlines()
+                if line.strip()
+            ]
+            release_view = 'gh release view "$TAG"'
+            release_json_fields = (
+                "--json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName"
+            )
+            if active_lines.count(release_view) < 3 or active_lines.count(release_json_fields) < 3:
+                errors.append(
+                    "release github-release job must inspect full release metadata and "
+                    "assets before recovery, after upload, and after normalization"
+                )
+            upload_lines = [
+                line
+                for line in active_lines
+                if line.startswith('gh release upload "$TAG" "${artifacts[@]}" ')
+            ]
+            create_lines = [
+                line
+                for line in active_lines
+                if line == 'gh release create "$TAG" "${artifacts[@]}"'
+            ]
+            if len(upload_lines) != 1 or len(create_lines) != 1:
+                errors.append(
+                    "release github-release job must pass the verified artifact array "
+                    "directly to one active upload command and one active create command"
+                )
+
+            classifier = f'if [[ "$TAG" =~ {CORE_PRERELEASE_TAG_PATTERN} ]]; then'
+            for assignment in (
+                classifier,
+                "prerelease=(--prerelease)",
+                "edit_prerelease=(--prerelease)",
+                "expected_prerelease=true",
+            ):
+                if assignment not in active_lines:
+                    errors.append(
+                        "release github-release job must actively classify canonical "
+                        f"alpha/beta/RC tags; missing {assignment!r}"
+                    )
+
+            initial_view_position = release_shell.find(release_view)
+            upload_position = release_shell.find('gh release upload "$TAG"')
+            uploaded_view_position = release_shell.find(
+                release_view,
+                upload_position + 1 if upload_position >= 0 else 0,
+            )
+            prune_position = release_shell.find('"repos/${REPO}/releases/assets/${asset_id}"')
+            edit_position = release_shell.find('gh release edit "$TAG"')
+            final_view_position = release_shell.find(
+                release_view,
+                edit_position + 1 if edit_position >= 0 else 0,
+            )
+            if not (
+                0
+                <= initial_view_position
+                < upload_position
+                < uploaded_view_position
+                < prune_position
+                < edit_position
+                < final_view_position
+            ):
+                errors.append(
+                    "release github-release recovery must inspect, upload, re-read, "
+                    "prune stale assets by id, edit metadata last, and validate again"
+                )
+    return errors
+
+
+def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> list[str]:
+    """Keep production promotion behind a complete, published library release."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read docs deploy workflow {path}: {exc}"]
+
+    jobs = _job_blocks(text)
+    errors: list[str] = []
+    _require_job_contains(
+        errors,
+        jobs,
+        "verify-library-release",
+        "docs deploy",
+        "published GitHub Release metadata, generated notes, distribution assets, "
+        "and PyPI availability before production promotion",
+        "needs: [prepare, await-prod-approval]",
+        "permissions:",
+        "contents: read",
+        "Await GitHub Release and PyPI availability",
+    )
+    release_gate = jobs.get("verify-library-release")
+    if release_gate is None:
+        return errors
+    if _job_scalar(release_gate, "needs") != "[prepare, await-prod-approval]":
+        errors.append(
+            "docs deploy verify-library-release job must actively depend on "
+            "prepare and production approval"
+        )
+    if _job_mapping(release_gate, "permissions") != {"contents": "read"}:
+        errors.append(
+            "docs deploy verify-library-release permissions must be exactly `contents: read`"
+        )
+
+    production = jobs.get("helm-pr-prod")
+    if production is None:
+        errors.append("docs deploy workflow is missing the production Helm promotion job")
+    elif _job_scalar(production, "needs") != (
+        "[prepare, await-prod-approval, verify-library-release]"
+    ):
+        errors.append(
+            "docs deploy production Helm promotion must actively depend on verify-library-release"
+        )
+
+    gate_shell = _named_step_run(
+        release_gate,
+        "Await GitHub Release and PyPI availability",
+    )
+    if gate_shell is None:
+        errors.append("docs deploy release gate is missing its active polling shell step")
+        return errors
+
+    required = (
+        "EXPECTED_PRERELEASE=false",
+        f'if [[ "$VERSION" =~ {CORE_PRERELEASE_TAG_PATTERN} ]]; then',
+        "EXPECTED_PRERELEASE=true",
+        'gh release view "$VERSION"',
+        "--json assets,body,isDraft,isPrerelease,name,publishedAt,tagName",
+        ".isDraft == false",
+        ".name == $name",
+        ".tagName == $name",
+        ".publishedAt != null",
+        ".isPrerelease == $prerelease",
+        '(.body | endswith("<!-- xy-release-workflow:" + $name + " -->"))',
+        'any(.assets[]?; .name | endswith(".whl"))',
+        '([.assets[]? | select(.name | endswith(".tar.gz"))] | length) == 1',
+        "[.assets[]?.name |",
+        "[.urls[]?.filename |",
+        '[[ "$github_assets" == "$pypi_assets" ]]; then',
+        'if [[ "$RELEASED" == true &&',
+        '"$PUBLISHED" == true &&',
+        '"$ASSETS_MATCH" == true ]]; then',
+    )
+    missing = _missing_needles(gate_shell, required)
+    if missing:
+        errors.append(
+            "docs deploy release gate must require expected non-draft metadata, "
+            f"generated notes, wheel/sdist assets, and PyPI: {missing}"
+        )
     return errors
 
 
@@ -959,12 +1203,14 @@ def validate_all_workflows(
     codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
     release_path: Path = DEFAULT_RELEASE_WORKFLOW,
     reflex_xy_release_path: Path = DEFAULT_REFLEX_XY_RELEASE_WORKFLOW,
+    docs_deploy_path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW,
 ) -> list[str]:
     return [
         *validate_ci_workflow(ci_path),
         *validate_codspeed_workflow(codspeed_path),
         *validate_release_workflow(release_path),
         *validate_reflex_xy_release_workflow(reflex_xy_release_path),
+        *validate_docs_deploy_workflow(docs_deploy_path),
     ]
 
 
@@ -982,10 +1228,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--reflex-xy-release-workflow", type=Path, default=DEFAULT_REFLEX_XY_RELEASE_WORKFLOW
     )
+    parser.add_argument(
+        "--docs-deploy-workflow",
+        type=Path,
+        default=DEFAULT_DOCS_DEPLOY_WORKFLOW,
+    )
     parser.add_argument("--ci-only", action="store_true")
     parser.add_argument("--codspeed-only", action="store_true")
     parser.add_argument("--release-only", action="store_true")
     parser.add_argument("--reflex-xy-release-only", action="store_true")
+    parser.add_argument("--docs-deploy-only", action="store_true")
     args = parser.parse_args(argv)
 
     selected_modes = [
@@ -993,11 +1245,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.codspeed_only,
         args.release_only,
         args.reflex_xy_release_only,
+        args.docs_deploy_only,
     ]
     if sum(1 for selected in selected_modes if selected) > 1:
         parser.error(
-            "--ci-only, --codspeed-only, --release-only, and "
-            "--reflex-xy-release-only are mutually exclusive"
+            "--ci-only, --codspeed-only, --release-only, "
+            "--reflex-xy-release-only, and --docs-deploy-only are mutually exclusive"
         )
 
     if args.workflow is not None:
@@ -1015,18 +1268,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.reflex_xy_release_only:
         errors = validate_reflex_xy_release_workflow(args.reflex_xy_release_workflow)
         checked = [args.reflex_xy_release_workflow]
+    elif args.docs_deploy_only:
+        errors = validate_docs_deploy_workflow(args.docs_deploy_workflow)
+        checked = [args.docs_deploy_workflow]
     else:
         errors = validate_all_workflows(
             args.ci_workflow,
             args.codspeed_workflow,
             args.release_workflow,
             args.reflex_xy_release_workflow,
+            args.docs_deploy_workflow,
         )
         checked = [
             args.ci_workflow,
             args.codspeed_workflow,
             args.release_workflow,
             args.reflex_xy_release_workflow,
+            args.docs_deploy_workflow,
         ]
 
     if errors:

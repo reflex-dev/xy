@@ -141,25 +141,66 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           PYPI_VERSION="${VERSION#v}"
+          EXPECTED_PRERELEASE=false
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
+            EXPECTED_PRERELEASE=true
+          fi
           for attempt in $(seq 1 30); do
             RELEASED=false
             PUBLISHED=false
-            if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
-              RELEASED=true
+            ASSETS_MATCH=false
+            if release_json="$(
+              gh release view "$VERSION" \
+                --repo "$REPO" \
+                --json assets,body,isDraft,isPrerelease,name,publishedAt,tagName 2>/dev/null
+            )"; then
+              if jq -e \
+                --arg name "$VERSION" \
+                --argjson prerelease "$EXPECTED_PRERELEASE" \
+                '.isDraft == false and
+                 .name == $name and
+                 .tagName == $name and
+                 .publishedAt != null and
+                 .isPrerelease == $prerelease and
+                 (.body | endswith("<!-- xy-release-workflow:" + $name + " -->")) and
+                 any(.assets[]?; .name | endswith(".whl")) and
+                 ([.assets[]? | select(.name | endswith(".tar.gz"))] | length) == 1' \
+                <<<"$release_json" >/dev/null; then
+                RELEASED=true
+              fi
             fi
-            CODE=$(curl -fsS -o /dev/null -w '%{http_code}' \
-              "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null || true)
-            if [[ "$CODE" == "200" ]]; then
+            if pypi_json="$(
+              curl -fsS "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null
+            )"; then
               PUBLISHED=true
             fi
             if [[ "$RELEASED" == true && "$PUBLISHED" == true ]]; then
+              if github_assets="$(
+                   jq -c \
+                     '[.assets[]?.name |
+                       select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
+                     <<<"$release_json"
+                 )" &&
+                 pypi_assets="$(
+                   jq -c \
+                     '[.urls[]?.filename |
+                       select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
+                     <<<"$pypi_json"
+                 )" &&
+                 [[ "$github_assets" == "$pypi_assets" ]]; then
+                ASSETS_MATCH=true
+              fi
+            fi
+            if [[ "$RELEASED" == true &&
+                  "$PUBLISHED" == true &&
+                  "$ASSETS_MATCH" == true ]]; then
               echo "::notice::${VERSION} is on GitHub Releases and PyPI"
               exit 0
             fi
-            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED}; retrying in 60s"
+            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED} assets=${ASSETS_MATCH}; retrying in 60s"
             sleep 60
           done
-          echo "::error::${VERSION} did not publish (GitHub Release and/or PyPI missing) — refusing to promote prod"
+          echo "::error::${VERSION} did not become release-ready (metadata, notes, or GitHub/PyPI assets missing or mismatched) — refusing to promote prod"
           exit 1
 
   helm-pr-prod:

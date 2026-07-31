@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 # Actions are pinned to full commit SHAs (`@<40-hex> # vX`) per the org policy,
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
@@ -549,6 +554,25 @@ def test_release_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_release_workflow() == []
 
 
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    (
+        ("v1.2.3", False),
+        ("v1.2.3a1", True),
+        ("v1.2.3b2", True),
+        ("v1.2.3rc4", True),
+        ("v1.2.3.post1", False),
+        ("v1.2.3-rc1", False),
+        ("v1.2.3rc1-extra", False),
+        ("prefix-v1.2.3rc1", False),
+    ),
+)
+def test_release_prerelease_classifier_is_canonical(tag: str, expected: bool) -> None:
+    assert (
+        re.fullmatch(verify_ci_workflow.CORE_PRERELEASE_TAG_PATTERN, tag) is not None
+    ) is expected
+
+
 def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
@@ -754,19 +778,24 @@ def test_release_workflow_rejects_missing_github_release_job(tmp_path: Path) -> 
 
 def test_release_workflow_rejects_manual_github_release_creation(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    gate = "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n"
+    assert gate in workflow
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
-            "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n",
-            "    if: github.event_name != 'workflow_dispatch' "
-            "|| github.event.inputs.dry_run != 'true'\n",
+            gate,
+            "    # if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')\n"
+            "    if: always()\n",
         ),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("github-release job" in error and "tag-only" in error for error in errors)
+    assert any(
+        "github-release job" in error and "active tag-only gate" in error for error in errors
+    )
 
 
 def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> None:
@@ -781,13 +810,8 @@ def test_release_workflow_rejects_unsafe_github_release_job(tmp_path: Path) -> N
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any(
-        "github-release job" in error
-        and "contents: write" in error
-        and "--clobber" in error
-        and "--verify-tag" in error
-        for error in errors
-    )
+    assert any("permissions must be exactly" in error and "contents" in error for error in errors)
+    assert any("--clobber" in error and "--verify-tag" in error for error in errors)
 
 
 def test_release_workflow_rejects_missing_github_release_artifact_guard(
@@ -796,13 +820,16 @@ def test_release_workflow_rejects_missing_github_release_artifact_guard(
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     guard = """\
           shopt -s nullglob
-          artifacts=(dist/*.whl dist/*.tar.gz)
-          if (( ${#artifacts[@]} == 0 )); then
-            echo "::error::No wheel or sdist artifacts were downloaded"
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          artifacts=("${wheels[@]}" "${sdists[@]}")
+          if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then
+            echo "::error::Expected at least one wheel and exactly one sdist"
             exit 1
           fi
 
 """
+    assert guard in workflow
     path = tmp_path / "release.yml"
     path.write_text(workflow.replace(guard, ""), encoding="utf-8")
 
@@ -811,8 +838,8 @@ def test_release_workflow_rejects_missing_github_release_artifact_guard(
     assert any(
         "github-release job" in error
         and "shopt -s nullglob" in error
-        and "artifacts=(dist/*.whl dist/*.tar.gz)" in error
-        and "No wheel or sdist artifacts were downloaded" in error
+        and "wheels=(dist/*.whl)" in error
+        and "exactly one sdist" in error
         for error in errors
     )
 
@@ -821,23 +848,386 @@ def test_release_workflow_rejects_unvalidated_existing_github_release(
     tmp_path: Path,
 ) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    final_view = """\
+              gh release view "$TAG" \\
+                --repo "$REPO" \\
+                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+"""
+    assert workflow.count(final_view) == 2
     path = tmp_path / "release.yml"
-    path.write_text(
-        workflow.replace("--json isDraft,isPrerelease,name", "--json name")
-        .replace('              gh release edit "$TAG" \\\n', '              echo "$TAG" \\\n')
-        .replace("                --draft=false \\\n", ""),
-        encoding="utf-8",
-    )
+    before, separator, after = workflow.rpartition(final_view)
+    assert separator
+    path.write_text(before + '              echo "validation removed"\n' + after, encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any(
         "github-release job" in error
-        and "--json isDraft,isPrerelease,name" in error
-        and "gh release edit" in error
-        and "--draft=false" in error
+        and ("after normalization" in error or "validate again" in error)
         for error in errors
     )
+
+
+def test_release_workflow_rejects_extra_github_release_write_scope(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    permission = "      contents: write\n"
+    assert permission in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            permission,
+            permission + "      issues: write\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("permissions must be exactly" in error and "issues" in error for error in errors)
+
+
+def test_release_workflow_rejects_removed_prerelease_classifier(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    classifier = f"""\
+          if [[ "$TAG" =~ {verify_ci_workflow.CORE_PRERELEASE_TAG_PATTERN} ]]; then
+            prerelease=(--prerelease)
+            edit_prerelease=(--prerelease)
+            expected_prerelease=true
+          fi
+"""
+    assert classifier in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(classifier, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert "--prerelease=false" in workflow
+    assert any("classify canonical alpha/beta/RC tags" in error for error in errors)
+
+
+def test_release_workflow_rejects_detached_release_artifacts(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    upload = '            gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber\n'
+    create = '          gh release create "$TAG" "${artifacts[@]}" \\\n'
+    assert upload in workflow
+    assert create in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            upload,
+            '            gh release upload "$TAG" --repo "$REPO" --clobber\n',
+        ).replace(
+            create,
+            '          gh release create "$TAG" \\\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("pass the verified artifact array directly" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_stale_asset_reconciliation(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    endpoint = '"repos/${REPO}/releases/assets/${asset_id}"'
+    assert endpoint in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(endpoint, '"stale asset deletion removed"'), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "prune stale assets by id" in error or "releases/assets/${asset_id}" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_missing_generated_notes_marker(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "<!-- xy-release-workflow:%s -->"
+    assert marker in workflow
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(marker, "<!-- marker removed -->"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("generated-notes behavior" in error and marker in error for error in errors)
+
+
+def test_docs_deploy_workflow_accepts_release_contract() -> None:
+    assert verify_ci_workflow.validate_docs_deploy_workflow() == []
+
+
+def test_docs_deploy_rejects_existence_only_release_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    fields = "--json assets,body,isDraft,isPrerelease,name,publishedAt,tagName"
+    assert fields in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(workflow.replace(fields, "--json name"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("expected non-draft metadata" in error and fields in error for error in errors)
+
+
+def test_docs_deploy_rejects_asset_set_check_removal(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    comparison = '                 [[ "$github_assets" == "$pypi_assets" ]]; then\n'
+    assert comparison in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(comparison, "                 [[ true == true ]]; then\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("wheel/sdist assets" in error for error in errors)
+
+
+def test_docs_deploy_rejects_bypassed_production_release_gate(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    dependency = "    needs: [prepare, await-prod-approval, verify-library-release]\n"
+    assert dependency in workflow
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        workflow.replace(
+            dependency,
+            "    needs: [prepare, await-prod-approval]\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("production Helm promotion" in error for error in errors)
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_reconciles_stale_assets_before_publishing(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    job = verify_ci_workflow._job_blocks(workflow)["github-release"]
+    release_shell = verify_ci_workflow._named_step_run(
+        job,
+        "Create GitHub Release and attach distributions",
+    )
+    assert release_shell is not None
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        r"""#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$GH_LOG"
+state="$(<"$GH_STATE")"
+if [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
+  printf '## Changes\n\n- Generated\n'
+elif [[ "$1" == "api" && "$*" == *"/releases/assets/"* ]]; then
+  [[ "$*" == *"/releases/assets/9003"* ]]
+  printf 'deleted' > "$GH_STATE"
+elif [[ "$1" == "release" && "$2" == "upload" ]]; then
+  [[ "$state" == "initial" ]]
+  printf 'uploaded' > "$GH_STATE"
+elif [[ "$1" == "release" && "$2" == "edit" ]]; then
+  [[ "$state" == "deleted" ]]
+  printf 'edited' > "$GH_STATE"
+elif [[ "$1" == "release" && "$2" == "view" ]]; then
+  if [[ "$state" == "edited" ]]; then
+    printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"},{"name":"xy-1.2.3.tar.gz","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"},{"name":"checksums.txt","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"}],"body":"## Changes\n\n- Generated\n\n<!-- xy-release-workflow:v1.2.3 -->","isDraft":false,"isImmutable":false,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+  else
+    printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9001"},{"name":"xy-1.2.3.tar.gz","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9002"},{"name":"stale.whl","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9003"},{"name":"checksums.txt","apiUrl":"https://api.github.com/repos/reflex-dev/xy/releases/assets/9004"}],"body":"manual","isDraft":true,"isImmutable":false,"isPrerelease":false,"name":"manual","publishedAt":null,"tagName":"v1.2.3"}'
+  fi
+else
+  printf 'unexpected gh invocation: %s\n' "$*" >&2
+  exit 97
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "xy-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
+    (tmp_path / "dist" / "xy-1.2.3.tar.gz").write_bytes(b"sdist")
+    state = tmp_path / "state"
+    state.write_text("initial", encoding="utf-8")
+    log = tmp_path / "gh.log"
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GH_LOG": str(log),
+        "GH_STATE": str(state),
+        "GH_TOKEN": "test",
+        "REPO": "reflex-dev/xy",
+        "RUNNER_TEMP": str(runner_temp),
+        "TAG": "v1.2.3",
+    }
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", release_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    calls = log.read_text(encoding="utf-8")
+    assert "release upload v1.2.3 dist/xy-1.2.3-py3-none-any.whl dist/xy-1.2.3.tar.gz" in calls
+    assert "api --method DELETE repos/reflex-dev/xy/releases/assets/9003" in calls
+    assert "releases/assets/9004" not in calls
+    assert "release edit v1.2.3" in calls
+    assert state.read_text(encoding="utf-8") == "edited"
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_never_mutates_mismatched_immutable_release(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    release_shell = verify_ci_workflow._named_step_run(
+        verify_ci_workflow._job_blocks(workflow)["github-release"],
+        "Create GitHub Release and attach distributions",
+    )
+    assert release_shell is not None
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        r"""#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$GH_LOG"
+if [[ "$1" == "api" && "$*" == *"/generate-notes"* ]]; then
+  printf '## Changes\n\n- Generated\n'
+elif [[ "$1" == "release" && "$2" == "view" ]]; then
+  printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl"},{"name":"xy-1.2.3.tar.gz"}],"body":"manual notes","isDraft":false,"isImmutable":true,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+else
+  printf 'mutation attempted: %s\n' "$*" >&2
+  exit 98
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "xy-1.2.3-py3-none-any.whl").write_bytes(b"wheel")
+    (tmp_path / "dist" / "xy-1.2.3.tar.gz").write_bytes(b"sdist")
+    log = tmp_path / "gh.log"
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GH_LOG": str(log),
+        "GH_TOKEN": "test",
+        "REPO": "reflex-dev/xy",
+        "RUNNER_TEMP": str(runner_temp),
+        "TAG": "v1.2.3",
+    }
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", release_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "immutable but does not match" in result.stdout
+    calls = log.read_text(encoding="utf-8")
+    assert "release upload" not in calls
+    assert "release edit" not in calls
+    assert "/releases/assets/" not in calls
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="docs promotion runtime simulation requires bash and jq",
+)
+def test_docs_promotion_accepts_only_matching_ready_distribution_set(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    gate_shell = verify_ci_workflow._named_step_run(
+        verify_ci_workflow._job_blocks(workflow)["verify-library-release"],
+        "Await GitHub Release and PyPI availability",
+    )
+    assert gate_shell is not None
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        r"""#!/usr/bin/env bash
+set -eu
+printf '%s\n' '{"assets":[{"name":"xy-1.2.3-py3-none-any.whl"},{"name":"xy-1.2.3.tar.gz"},{"name":"checksums.txt"}],"body":"## Changes\n\n<!-- xy-release-workflow:v1.2.3 -->","isDraft":false,"isPrerelease":false,"name":"v1.2.3","publishedAt":"2026-07-31T00:00:00Z","tagName":"v1.2.3"}'
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        r"""#!/usr/bin/env bash
+set -eu
+printf '%s\n' '{"urls":[{"filename":"xy-1.2.3.tar.gz"},{"filename":"xy-1.2.3-py3-none-any.whl"}]}'
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+    fake_sleep.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GH_TOKEN": "test",
+        "REPO": "reflex-dev/xy",
+        "VERSION": "v1.2.3",
+    }
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", gate_shell],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "v1.2.3 is on GitHub Releases and PyPI" in result.stdout
 
 
 def test_release_workflow_rejects_shallow_checkout(tmp_path: Path) -> None:

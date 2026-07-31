@@ -82,6 +82,18 @@ CODSPEED_YML = (
     "      - run: python -c 'import xy.kernels as k; assert k.BACKEND == \"native\"'\n"
     + ("codspeed workflow padding\n" * 100)
 )
+DOCS_DEPLOY_YML = (
+    "name: Deploy docs\n"
+    "jobs:\n"
+    "  verify-library-release:\n"
+    "    steps:\n"
+    "      - run: gh release view --json assets,body,isDraft,isPrerelease,name,publishedAt,tagName\n"
+    "      - run: curl https://pypi.org/pypi/xy/version/json\n"
+    "      - run: echo '<!-- xy-release-workflow:tag -->'\n"
+    "  helm-pr-prod:\n"
+    "    needs: [prepare, await-prod-approval, verify-library-release]\n"
+    + ("docs deploy workflow padding\n" * 100)
+)
 RELEASE_YML = (
     "name: Release\n"
     "jobs:\n"
@@ -186,6 +198,8 @@ def _write_sdist(
                 data = CI_YML.encode("utf-8")
             elif name == ".github/workflows/codspeed.yml":
                 data = CODSPEED_YML.encode("utf-8")
+            elif name == ".github/workflows/deploy-docs-stg.yml":
+                data = DOCS_DEPLOY_YML.encode("utf-8")
             elif name == ".github/workflows/release.yml":
                 data = RELEASE_YML.encode("utf-8")
             elif name == ".github/workflows/release-reflex-xy.yml":
@@ -442,6 +456,14 @@ def test_verify_sdist_rejects_missing_release_workflow(tmp_path: Path) -> None:
     _write_sdist(sdist, omit={".github/workflows/release.yml"})
 
     with pytest.raises(AssertionError, match=r"release\.yml"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_docs_deploy_workflow(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={".github/workflows/deploy-docs-stg.yml"})
+
+    with pytest.raises(AssertionError, match=r"deploy-docs-stg\.yml"):
         verify_sdist.verify_sdist(str(sdist))
 
 

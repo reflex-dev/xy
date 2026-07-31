@@ -323,20 +323,39 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           shopt -s nullglob
-          artifacts=(dist/*.whl dist/*.tar.gz)
-          if (( ${#artifacts[@]} == 0 )); then
-            echo "::error::No wheel or sdist artifacts were downloaded"
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          artifacts=("${wheels[@]}" "${sdists[@]}")
+          if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then
+            echo "::error::Expected at least one wheel and exactly one sdist"
             exit 1
           fi
 
           prerelease=()
           edit_prerelease=(--prerelease=false)
           expected_prerelease=false
-          if [[ "$TAG" =~ (a|b|rc)[0-9]+ ]]; then
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
             prerelease=(--prerelease)
             edit_prerelease=(--prerelease)
             expected_prerelease=true
           fi
+          expected_assets_json="$(
+            printf '%s\n' "${artifacts[@]##*/}" |
+              jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
+          )"
+          notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
+          gh api \
+            --method POST \
+            "repos/${REPO}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq '.body' > "$notes_file"
+          generated_notes="$(<"$notes_file")"
+          if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
+            echo "::error::GitHub generated empty release notes for ${TAG}"
+            exit 1
+          fi
+          printf '\n<!-- xy-release-workflow:%s -->' "$TAG" >> "$notes_file"
+          expected_notes="$(<"$notes_file")"
 
           # `gh release create` publishes immediately. If a previous run made
           # the release but failed partway through uploading assets, refresh
@@ -346,37 +365,97 @@ jobs:
           if release_json="$(
             gh release view "$TAG" \
               --repo "$REPO" \
-              --json isDraft,isPrerelease,name 2>/dev/null
+              --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName \
+              2>/dev/null
           )"; then
             is_draft="$(jq -r '.isDraft' <<<"$release_json")"
+            is_immutable="$(jq -r '.isImmutable' <<<"$release_json")"
             is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
             release_name="$(jq -r '.name' <<<"$release_json")"
+            release_notes="$(jq -r '.body' <<<"$release_json")"
+            published_at="$(jq -r '.publishedAt' <<<"$release_json")"
+            release_tag="$(jq -r '.tagName' <<<"$release_json")"
+            actual_assets_json="$(
+              jq -c \
+                '[.assets[].name | select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
+                <<<"$release_json"
+            )"
+            if [[ "$is_immutable" == "true" ]]; then
+              if [[ "$is_draft" == "false" &&
+                    "$is_prerelease" == "$expected_prerelease" &&
+                    "$release_name" == "$TAG" &&
+                    "$published_at" != "null" &&
+                    "$release_tag" == "$TAG" &&
+                    "$release_notes" == "$expected_notes" &&
+                    "$actual_assets_json" == "$expected_assets_json" ]]; then
+                echo "::notice::${TAG} is immutable and already matches the verified release"
+                exit 0
+              fi
+              echo "::error::${TAG} is immutable but does not match the verified release"
+              exit 1
+            fi
+
             echo "::notice::${TAG} already exists; refreshing distribution assets"
             gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber
-
-            if [[ "$is_draft" != "false" ||
-                  "$is_prerelease" != "$expected_prerelease" ||
-                  "$release_name" != "$TAG" ]]; then
-              echo "::notice::${TAG} exists with incomplete metadata; normalizing it"
-              gh release edit "$TAG" \
+            release_json="$(
+              gh release view "$TAG" \
                 --repo "$REPO" \
-                --draft=false \
-                --title "$TAG" \
-                "${edit_prerelease[@]}"
-            fi
+                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+            )"
+
+            while IFS= read -r asset_json; do
+              asset_name="$(jq -r '.name' <<<"$asset_json")"
+              if ! jq -e --arg name "$asset_name" \
+                'index($name) != null' <<<"$expected_assets_json" >/dev/null; then
+                asset_id="$(jq -r '.apiUrl | split("/")[-1]' <<<"$asset_json")"
+                if [[ ! "$asset_id" =~ ^[0-9]+$ ]]; then
+                  echo "::error::Invalid GitHub asset id for ${asset_name}"
+                  exit 1
+                fi
+                echo "::notice::Removing stale distribution asset ${asset_name}"
+                gh api \
+                  --method DELETE \
+                  "repos/${REPO}/releases/assets/${asset_id}"
+              fi
+            done < <(
+              jq -c \
+                '.assets[] | select(.name | endswith(".whl") or endswith(".tar.gz"))' \
+                <<<"$release_json"
+            )
+
+            echo "::notice::Normalizing ${TAG} metadata and generated notes"
+            gh release edit "$TAG" \
+              --repo "$REPO" \
+              --draft=false \
+              --title "$TAG" \
+              --notes-file "$notes_file" \
+              "${edit_prerelease[@]}"
 
             release_json="$(
               gh release view "$TAG" \
                 --repo "$REPO" \
-                --json isDraft,isPrerelease,name
+                --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
             )"
             is_draft="$(jq -r '.isDraft' <<<"$release_json")"
             is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
             release_name="$(jq -r '.name' <<<"$release_json")"
+            release_notes="$(jq -r '.body' <<<"$release_json")"
+            published_at="$(jq -r '.publishedAt' <<<"$release_json")"
+            release_tag="$(jq -r '.tagName' <<<"$release_json")"
+            actual_assets_json="$(
+              jq -c \
+                '[.assets[].name | select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
+                <<<"$release_json"
+            )"
             if [[ "$is_draft" != "false" ||
                   "$is_prerelease" != "$expected_prerelease" ||
-                  "$release_name" != "$TAG" ]]; then
-              echo "::error::${TAG} release metadata is still invalid after normalization"
+                  "$release_name" != "$TAG" ||
+                  "$published_at" == "null" ||
+                  "$release_tag" != "$TAG" ||
+                  -z "$release_notes" ||
+                  "$release_notes" != "$expected_notes" ||
+                  "$actual_assets_json" != "$expected_assets_json" ]]; then
+              echo "::error::${TAG} release metadata, notes, or assets are invalid after normalization"
               exit 1
             fi
 
@@ -386,6 +465,6 @@ jobs:
           gh release create "$TAG" "${artifacts[@]}" \
             --repo "$REPO" \
             --verify-tag \
-            --generate-notes \
             --title "$TAG" \
+            --notes-file "$notes_file" \
             "${prerelease[@]}"
