@@ -12,6 +12,7 @@ before installing anything.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -55,7 +56,9 @@ REQUIRED_FILES = {
     "spec/api/chart-roadmap.md",
     "spec/benchmarks/results.md",
     "spec/design/renderer-architecture.md",
+    "spec/matplotlib/backend-xy.md",
     "spec/matplotlib/compat.md",
+    "spec/matplotlib/live-canvas.md",
     "spec/process/contributing.md",
     "spec/process/production-readiness.md",
     "spec/assets/benchmark-snapshot.svg",
@@ -84,11 +87,19 @@ REQUIRED_FILES = {
     "python/xy/config.py",
     "python/xy/export.py",
     "python/xy/_figure.py",
+    "python/xy/backends/__init__.py",
+    "python/xy/backends/backend_xy.py",
+    "python/xy/backends/backend_xy_host.py",
+    "python/xy/backends/backend_xy_widget.js",
+    "python/xy/backends/backend_xy_widget.py",
+    "python/xy/backends/display_list.py",
+    "python/xy/backends/raster.py",
     "python/xy/channel.py",
     "python/xy/interaction.py",
     "python/xy/kernels.py",
     "python/xy/lod.py",
     "python/xy/plugins.py",
+    "python/xy/pyplot/_compat_inventory.py",
     "python/xy/py.typed",
     "python/xy/styling/__init__.py",
     "python/xy/styling/capabilities.py",
@@ -103,8 +114,15 @@ REQUIRED_FILES = {
     "examples/reflex/rxconfig.py",
     "examples/reflex/xy_reflex_demo/__init__.py",
     "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
+    "gallery/matplotlib-3.11.1/LICENSE",
+    "gallery/matplotlib-3.11.1/README.md",
+    "gallery/matplotlib-3.11.1/baseline.json",
+    "gallery/matplotlib-3.11.1/extended-environment.json",
+    "gallery/matplotlib-3.11.1/manifest.json",
+    "gallery/matplotlib-3.11.1/provenance.json",
     "scripts/check_public_api.py",
     "scripts/gen_capability_matrix.py",
+    "scripts/generate_pyplot_compat_inventory.py",
     "scripts/check_python_floor.py",
     "scripts/check_regressions.py",
     "scripts/bench_dashboard.py",
@@ -116,6 +134,16 @@ REQUIRED_FILES = {
     "scripts/verify_reflex_xy_dist.py",
     "scripts/verify_sdist.py",
     "scripts/verify_wheel.py",
+    "scripts/pyplot_gallery/__init__.py",
+    "scripts/pyplot_gallery/contract.py",
+    "scripts/pyplot_gallery/extended_drivers.py",
+    "scripts/pyplot_gallery/extended_environment.py",
+    "scripts/pyplot_gallery/metrics.py",
+    "scripts/pyplot_gallery/rewrite.py",
+    "scripts/pyplot_gallery/run_case.py",
+    "scripts/pyplot_gallery/run_gallery.py",
+    "scripts/pyplot_gallery/runtime.py",
+    "spec/matplotlib/gallery-contract.md",
     "src/kernels.rs",
     "src/lib.rs",
     "tests/test_public_api.py",
@@ -130,6 +158,14 @@ REQUIRED_FILES = {
     "tests/test_verify_reflex_xy_dist.py",
     "tests/test_verify_sdist.py",
     "tests/test_verify_wheel.py",
+    "tests/backends/pyplot_svg_gallery_probe.mjs",
+    "tests/backends/test_backend_xy.py",
+    "tests/backends/test_backend_xy_widget.py",
+    "tests/backends/test_display_list.py",
+    "tests/backends/test_pyplot_svg_gallery_browser.py",
+    "tests/pyplot/test_gallery_contract.py",
+    "tests/pyplot/test_gallery_extended_environment.py",
+    "tests/pyplot/test_gallery_metrics.py",
 }
 
 FORBIDDEN_PARTS = {
@@ -203,6 +239,18 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
+def _is_matplotlib_compat_extra(requirement: str) -> bool:
+    compact = re.sub(r"\s+", "", requirement.lower()).replace('"', "'")
+    if _dependency_name(requirement) != "matplotlib" or ";" not in compact:
+        return False
+    specifier, marker = compact.split(";", 1)
+    constraints = set(specifier.removeprefix("matplotlib").split(","))
+    return constraints == {">=3.11", "<3.12"} and marker in {
+        "extra=='matplotlib'",
+        "'matplotlib'==extra",
+    }
+
+
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -232,13 +280,21 @@ def _require_pkg_info(path: str, root: str) -> None:
     unexpected_requirements = [
         requirement
         for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
+        if (
+            (_dependency_name(requirement) not in {"anywidget", "numpy"} or ";" in requirement)
+            and not _is_matplotlib_compat_extra(requirement)
+        )
     ]
     if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
+        missing.append(
+            "only xy runtime dependencies and the matplotlib compatibility extra "
+            f"in Requires-Dist ({unexpected_requirements})"
+        )
+    if not any(_is_matplotlib_compat_extra(requirement) for requirement in requirements):
+        missing.append("Requires-Dist: matplotlib>=3.11,<3.12; extra == 'matplotlib'")
     provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+    if provided_extras != ["matplotlib"]:
+        missing.append(f"only the matplotlib published extra ({provided_extras})")
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
@@ -281,6 +337,130 @@ def _require_baseline_json(path: str, root: str) -> None:
         raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
 
 
+def _require_gallery_contract(path: str, root: str, files: set[str]) -> None:
+    gallery_root = "gallery/matplotlib-3.11.1"
+    source_prefix = f"{gallery_root}/examples/"
+    source_paths = sorted(
+        member.removeprefix(source_prefix)
+        for member in files
+        if member.startswith(source_prefix) and member.endswith(".py")
+    )
+    if len(source_paths) != 507:
+        raise AssertionError(
+            f"sdist gallery must contain exactly 507 Python sources, got {len(source_paths)}"
+        )
+    notebook_members = [
+        member for member in files if member.startswith(source_prefix) and member.endswith(".ipynb")
+    ]
+    if notebook_members:
+        raise AssertionError("sdist gallery must not duplicate the 507 Jupyter notebooks")
+
+    with tarfile.open(path, "r:gz") as tf:
+        documents: dict[str, dict[str, object]] = {}
+        for name in (
+            "manifest.json",
+            "baseline.json",
+            "provenance.json",
+            "extended-environment.json",
+        ):
+            member = tf.extractfile(f"{root}/{gallery_root}/{name}")
+            if member is None:
+                raise AssertionError(f"{gallery_root}/{name} is missing")
+            try:
+                documents[name] = json.loads(member.read().decode("utf-8"))
+            except json.JSONDecodeError as exc:
+                raise AssertionError(f"{gallery_root}/{name} is invalid JSON: {exc}") from exc
+
+        manifest = documents["manifest.json"]
+        examples = manifest.get("examples")
+        if not isinstance(examples, list) or len(examples) != 507:
+            raise AssertionError("gallery manifest must describe exactly 507 examples")
+        manifest_paths = [entry.get("path") for entry in examples if isinstance(entry, dict)]
+        if manifest_paths != sorted(source_paths):
+            raise AssertionError("gallery manifest paths do not exactly match sdist sources")
+        for entry in examples:
+            member = tf.extractfile(f"{root}/{source_prefix}{entry['path']}")
+            if member is None:
+                raise AssertionError(f"gallery source is missing: {entry['path']}")
+            source = member.read()
+            if hashlib.sha256(source).hexdigest() != entry.get("sha256"):
+                raise AssertionError(f"gallery source hash differs: {entry['path']}")
+            if len(source) != entry.get("byte_count"):
+                raise AssertionError(f"gallery source byte count differs: {entry['path']}")
+            if entry.get("notebook_ast_matches") is not True:
+                raise AssertionError(f"gallery notebook AST proof is false: {entry['path']}")
+            if entry.get("notebook_code_ast_sha256") != entry.get("normalized_ast_sha256"):
+                raise AssertionError(f"gallery notebook/source AST proof differs: {entry['path']}")
+
+    if manifest.get("source_count") != 507 or manifest.get("notebook_count") != 507:
+        raise AssertionError("gallery manifest source/notebook counts must both be 507")
+    if manifest.get("pyplot_eligible_count") != 485:
+        raise AssertionError("gallery manifest must contain 485 pyplot-eligible examples")
+    if manifest.get("profile_counts") != {
+        "extended": 13,
+        "non_pyplot": 22,
+        "standard": 472,
+    }:
+        raise AssertionError("gallery manifest profile counts changed")
+
+    extended = documents["extended-environment.json"]
+    extended_examples = extended.get("examples")
+    if not isinstance(extended_examples, list) or len(extended_examples) != 13:
+        raise AssertionError("extended gallery environment must describe exactly 13 examples")
+    extended_paths = {entry.get("path") for entry in extended_examples if isinstance(entry, dict)}
+    manifest_extended_paths = {
+        entry.get("path")
+        for entry in examples
+        if isinstance(entry, dict) and entry.get("profile") == "extended"
+    }
+    if extended_paths != manifest_extended_paths:
+        raise AssertionError("extended gallery environment paths differ from manifest")
+    if any(entry.get("argv") != [] for entry in extended_examples):
+        raise AssertionError("extended gallery examples must preserve clean argv")
+    if any(
+        entry.get("backends", {}).get("xy") != "module://xy.backends.backend_xy"
+        for entry in extended_examples
+    ):
+        raise AssertionError("extended gallery xy cases must use the XY backend")
+
+    baseline = documents["baseline.json"]
+    expected_baseline = {
+        "source_count": 507,
+        "pyplot_eligible_count": 485,
+        "standard_profile_count": 472,
+        "extended_profile_count": 13,
+        "xy_execution_passed": 485,
+        "capture_parity_passed": 485,
+        "dimension_parity_passed": 485,
+        "exact_dimension_parity_passed": 481,
+        "visual_gate_passed": 485,
+        "semantic_gate_passed": 485,
+        "behavior_gate_passed": 485,
+        "accepted_examples": 485,
+        "temporary_waiver_count": 0,
+        "acceptance_complete": True,
+    }
+    summary = baseline.get("summary", {})
+    for key, expected in expected_baseline.items():
+        if summary.get(key) != expected:
+            raise AssertionError(f"gallery baseline {key} must be {expected}")
+    baseline_examples = baseline.get("examples")
+    if not isinstance(baseline_examples, dict) or set(baseline_examples) != set(source_paths):
+        raise AssertionError("gallery baseline paths do not exactly match sdist sources")
+
+    provenance = documents["provenance.json"]
+    archive_hashes = {
+        kind: metadata.get("sha256")
+        for kind, metadata in provenance.get("archives", {}).items()
+        if isinstance(metadata, dict)
+    }
+    if archive_hashes != {
+        "jupyter": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870",
+        "python": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc",
+    }:
+        raise AssertionError("gallery archive provenance hashes changed")
+
+
 # Every grouped subdirectory of spec/ must survive packaging. Pinning
 # individual files alone would let a whole group be dropped as long as the
 # pinned member stayed, so require each group to be non-empty in its own right.
@@ -319,6 +499,7 @@ def verify_sdist(path: str) -> None:
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
     _require_baseline_json(path, root)
+    _require_gallery_contract(path, root, files)
     _require_file_contains(
         path,
         root,

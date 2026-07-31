@@ -30,9 +30,13 @@ def _annotation_colors(*, explicit: bool) -> dict[str, str]:
     # Materialize only after the context exits. Matplotlib snapshots the
     # active default when each Text artist is created.
     spec, _ = ax._build_chart(400, 300).figure().build_payload()
-    return {
+    colors_by_text = {
         annotation["text"]: annotation["style"]["label_color"] for annotation in spec["annotations"]
     }
+    colors_by_text.update(
+        {label["text"]: label["color"] for label in fig._resolved_figure_labels()}
+    )
+    return colors_by_text
 
 
 def test_dark_background_defaults_all_pyplot_text_to_white() -> None:

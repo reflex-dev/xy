@@ -16,6 +16,8 @@ and the loud `NotImplementedError` list.
 from __future__ import annotations
 
 import contextlib
+import functools
+import inspect
 
 # The annotation dependencies below (collections.abc, pathlib, IO, Cmap) are
 # deliberately runtime imports, not TYPE_CHECKING: public annotations
@@ -23,12 +25,12 @@ import contextlib
 # must resolve. All are stdlib or shim-local, so import weight is unchanged.
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import IO, Any, Literal, Optional, Union, overload
+from typing import IO, Any, Literal, Optional, Union, cast, overload
 
 import numpy as np
 
 from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, TableLike
-from . import dates
+from . import dates as _native_dates
 from ._artists import (
     Artist,
     AxesImage,
@@ -50,8 +52,20 @@ from ._artists import (
 from ._axes import Axes
 from ._axisgrid import FacetGrid
 from ._colors import Cmap, LinearSegmentedColormap, ListedColormap
-from ._mplfig import Figure, GridSpec
-from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
+from ._compat_inventory import COMPAT_PYPLOT_PUBLIC_NAMES
+from ._figure_tree import FigureTreeNode, ResolvedFigureNode, ResolvedFigureTree
+from ._mode import (
+    _AutoCompatFallback,
+    _compat_callable,
+    _compat_object,
+    _effective_mode,
+    get_mode,
+    set_mode,
+    switch_backend,
+)
+from ._mplfig import Figure, GridSpec, SubFigure
+from ._rc import _PropCycle, rc, rc_context, rcdefaults
+from ._rc import rcParams as _native_rc_params
 from ._state import (
     _apply_factory_layout,
     all_figures,
@@ -59,10 +73,18 @@ from ._state import (
     figlabels,
     fignum_exists,
     fignums,
-    figure,
-    gca,
-    gcf,
-    sca,
+)
+from ._state import (
+    figure as _native_figure,
+)
+from ._state import (
+    gca as _native_gca,
+)
+from ._state import (
+    gcf as _native_gcf,
+)
+from ._state import (
+    sca as _native_sca,
 )
 from ._ticker import (
     AutoLocator,
@@ -81,6 +103,9 @@ from ._ticker import (
     StrMethodFormatter,
 )
 from ._translate import not_implemented
+from .typing import AxesResult, FigureResult
+
+rcParams: Any = _native_rc_params
 
 __all__ = [
     "AutoLocator",
@@ -88,6 +113,7 @@ __all__ = [
     "Axes",
     "FacetGrid",
     "Figure",
+    "FigureTreeNode",
     "FixedFormatter",
     "FixedLocator",
     "FormatStrFormatter",
@@ -102,8 +128,11 @@ __all__ = [
     "MultipleLocator",
     "NullFormatter",
     "NullLocator",
+    "ResolvedFigureNode",
+    "ResolvedFigureTree",
     "ScalarFormatter",
     "StrMethodFormatter",
+    "SubFigure",
     "acorr",
     "angle_spectrum",
     "annotate",
@@ -158,6 +187,7 @@ __all__ = [
     "get_cmap",
     "get_figlabels",
     "get_fignums",
+    "get_mode",
     "get_xbound",
     "get_ybound",
     "getp",
@@ -200,6 +230,7 @@ __all__ = [
     "semilogx",
     "semilogy",
     "set_cmap",
+    "set_mode",
     "set_xbound",
     "set_ybound",
     "setp",
@@ -218,6 +249,7 @@ __all__ = [
     "subplots",
     "subplots_adjust",
     "suptitle",
+    "switch_backend",
     "table",
     "text",
     "ticklabel_format",
@@ -243,8 +275,34 @@ __all__ = [
     "yscale",
     "yticks",
 ]
+_NATIVE_PUBLIC_NAMES = __all__
 
 # -- figure/axes management ----------------------------------------------------
+
+
+def figure(
+    num: Optional[Union[int, str]] = None,
+    figsize: Optional[tuple[float, float]] = None,
+    dpi: Optional[float] = None,
+    **kwargs: Any,
+) -> FigureResult:
+    """Create or activate a figure in the configured pyplot mode."""
+    return _native_figure(num=num, figsize=figsize, dpi=dpi, **kwargs)
+
+
+def gcf() -> FigureResult:
+    """Return the current figure in the configured pyplot mode."""
+    return _native_gcf()
+
+
+def gca() -> AxesResult:
+    """Return the current axes in the configured pyplot mode."""
+    return _native_gca()
+
+
+def sca(ax: AxesResult) -> None:
+    """Make an axes current in the configured pyplot mode."""
+    _native_sca(cast(Axes, ax))
 
 
 # The 1×1 default (squeeze=True) hands back a bare Axes — the shape almost
@@ -261,7 +319,7 @@ def subplots(
     sharey: bool = False,
     squeeze: Literal[True] = True,
     **kwargs: Any,
-) -> tuple[Figure, Axes]: ...
+) -> tuple[FigureResult, AxesResult]: ...
 @overload
 def subplots(
     nrows: int = 1,
@@ -273,7 +331,7 @@ def subplots(
     sharey: bool = False,
     squeeze: bool = True,
     **kwargs: Any,
-) -> tuple[Figure, Any]: ...
+) -> tuple[FigureResult, Any]: ...
 def subplots(
     nrows: int = 1,
     ncols: int = 1,
@@ -284,7 +342,7 @@ def subplots(
     sharey: bool = False,
     squeeze: bool = True,
     **kwargs: Any,
-) -> tuple[Figure, Any]:
+) -> tuple[FigureResult, Any]:
     """Create a figure with a grid of axes.
 
     Parameters
@@ -326,10 +384,10 @@ def subplots(
     toolbar = kwargs.pop("toolbar", None)
     layout = kwargs.pop("layout", None)
     # Remaining kwargs are matplotlib's **fig_kw, forwarded to figure().
-    fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
+    fig = _native_figure(figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     if fig._axes and any(ax._entries for ax in fig._axes):
         # fresh figure, mpl semantics
-        fig = figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
+        fig = _native_figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     axes = fig.subplots(
         nrows,
         ncols,
@@ -345,17 +403,19 @@ def subplots(
     return fig, axes
 
 
-def subplot(*args: Any, **kwargs: Any) -> Axes:
+def subplot(*args: Any, **kwargs: Any) -> AxesResult:
     """Add or activate a subplot on the current figure.
 
     Accepts matplotlib's forms: ``subplot(nrows, ncols, index)`` or the
     packed ``subplot(211)`` shorthand. Returns the (new or existing)
     `Axes` and makes it current.
     """
-    return gcf().activate_subplot(*args, **kwargs)
+    return _native_gcf().activate_subplot(*args, **kwargs)
 
 
-def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
+def subplot_mosaic(
+    mosaic: str | list[Any], **kwargs: Any
+) -> tuple[FigureResult, dict[Any, AxesResult]]:
     """Create a figure whose layout is described by an ASCII/list mosaic.
 
     ``mosaic`` is a string like ``"AB;CC"`` or a nested list of labels;
@@ -369,13 +429,13 @@ def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict
     figsize = kwargs.pop("figsize", None)
     dpi = kwargs.pop("dpi", None)
     layout = kwargs.pop("layout", None)
-    fig = figure(None, figsize=figsize, dpi=dpi)
+    fig = _native_figure(None, figsize=figsize, dpi=dpi)
     axes = fig.subplot_mosaic(mosaic, **kwargs)
     _apply_factory_layout(fig, layout)
-    return fig, axes
+    return fig, cast(dict[Any, AxesResult], axes)
 
 
-def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
+def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> AxesResult:
     """Add an axes to the current figure and make it current.
 
     ``axes()`` adds a full-figure axes; ``axes((left, bottom, width,
@@ -383,23 +443,24 @@ def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
     Keywords are applied via ``Axes.set``.
     """
     if arg is None:
-        return gcf().add_subplot(111, **kwargs)
-    return gcf().add_axes(arg, **kwargs)
+        return _native_gcf().add_subplot(111, **kwargs)
+    return _native_gcf().add_axes(arg, **kwargs)
 
 
-def delaxes(ax: Optional[Axes] = None) -> None:
+def delaxes(ax: AxesResult | None = None) -> None:
     """Remove an axes (the current one by default) from the current figure."""
-    gcf().delaxes(ax or gca())
+    target = cast(Axes, ax) if ax is not None else _native_gca()
+    _native_gcf().delaxes(target)
 
 
 def cla() -> None:
     """Clear the current axes."""
-    gca().cla()
+    _native_gca().cla()
 
 
 def clf() -> None:
     """Clear the current figure."""
-    gcf().clf()
+    _native_gcf().clf()
 
 
 def get_fignums() -> list[int]:
@@ -414,22 +475,22 @@ def get_figlabels() -> list[str]:
 
 def figtext(x: float, y: float, s: str, **kwargs: Any) -> Text:
     """Place text at figure-fraction coordinates ``(x, y)`` (see `text`)."""
-    return gcf().text(x, y, s, **kwargs)
+    return _native_gcf().text(x, y, s, **kwargs)
 
 
 def figlegend(*args: Any, **kwargs: Any) -> Legend:
     """Add a figure-level legend (same call forms and keywords as `legend`)."""
-    return gcf().legend(*args, **kwargs)
+    return _native_gcf().legend(*args, **kwargs)
 
 
-def twinx() -> Axes:
+def twinx() -> AxesResult:
     """A twin of the current axes sharing x but with its own right y-axis."""
-    return gca().twinx()
+    return _native_gca().twinx()
 
 
-def twiny() -> Axes:
+def twiny() -> AxesResult:
     """A twin of the current axes sharing y but with its own top x-axis."""
-    return gca().twiny()
+    return _native_gca().twiny()
 
 
 def subplot2grid(
@@ -437,9 +498,9 @@ def subplot2grid(
     loc: tuple[int, int],
     rowspan: int = 1,
     colspan: int = 1,
-    fig: Optional[Figure] = None,
+    fig: FigureResult | None = None,
     **kwargs: Any,
-) -> Axes:
+) -> AxesResult:
     """Place an axes at cell ``loc`` of a ``shape`` grid on the figure.
 
     Only single-cell placement is supported; ``rowspan``/``colspan``
@@ -447,7 +508,7 @@ def subplot2grid(
     """
     if rowspan != 1 or colspan != 1:
         raise not_implemented("subplot2grid(rowspan/colspan)", "single-cell subplot2grid specs")
-    target = fig or gcf()
+    target = cast(Figure, fig) if fig is not None else _native_gcf()
     target._ensure_grid(int(shape[0]), int(shape[1]))
     ax = target._axes_at(int(loc[0]) * int(shape[1]) + int(loc[1]))
     target._current_ax = ax
@@ -456,7 +517,7 @@ def subplot2grid(
 
 def box(on: Optional[bool] = None) -> None:
     """Show or hide the current axes' frame box (toggle when ``on=None``)."""
-    ax: Any = gca()
+    ax: Any = _native_gca()
     ax._box = True if on is None else bool(on)
     ax._invalidate()
 
@@ -514,11 +575,11 @@ def findobj(obj: Any = None, match: Any = None) -> list[Any]:
     def matches(candidate: Any) -> bool:
         if match is None:
             return True
-        if isinstance(match, type):
+        if isinstance(match, (type, _ModeClassProxy)):
             return isinstance(candidate, match)
         return bool(match(candidate))
 
-    root = obj or gcf()
+    root = obj or _native_gcf()
     found: list[Any] = []
     axes = getattr(root, "axes", []) if not isinstance(root, Axes) else [root]
     for ax in axes:
@@ -723,7 +784,7 @@ def _record_mappable(result: Any) -> Any:
     image (pyplot's sci() bookkeeping) so colorbar()/clim() find it."""
     candidate = result[-1] if isinstance(result, tuple) else result
     if hasattr(candidate, "_entry"):
-        gcf()._gci = candidate
+        _native_gcf()._gci = candidate
     return result
 
 
@@ -749,7 +810,7 @@ def plot(
 
     Returns the list of `Line2D` handles, one per plotted series.
     """
-    return gca().plot(*args, scalex=scalex, scaley=scaley, **kwargs)
+    return _native_gca().plot(*args, scalex=scalex, scaley=scaley, **kwargs)
 
 
 def semilogx(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
@@ -758,7 +819,7 @@ def semilogx(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     Accepts ``base``/``basex``, ``subs``/``subsx``, and
     ``nonpositive``/``nonposx`` in addition to every `plot` keyword.
     """
-    return gca().semilogx(*args, **kwargs)
+    return _native_gca().semilogx(*args, **kwargs)
 
 
 def semilogy(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
@@ -767,7 +828,7 @@ def semilogy(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     Accepts ``base``/``basey``, ``subs``/``subsy``, and
     ``nonpositive``/``nonposy`` in addition to every `plot` keyword.
     """
-    return gca().semilogy(*args, **kwargs)
+    return _native_gca().semilogy(*args, **kwargs)
 
 
 def loglog(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
@@ -776,7 +837,7 @@ def loglog(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     Accepts ``base``, ``subs``, and ``nonpositive`` in addition to every
     `plot` keyword.
     """
-    return gca().loglog(*args, **kwargs)
+    return _native_gca().loglog(*args, **kwargs)
 
 
 def scatter(
@@ -828,7 +889,7 @@ def scatter(
     PathCollection
     """
     return _record_mappable(
-        gca().scatter(
+        _native_gca().scatter(
             x,
             y,
             s,
@@ -859,7 +920,7 @@ def step(
     ``"mid"``; remaining arguments (including an optional ``fmt`` string)
     behave exactly like `plot`.
     """
-    return gca().step(x, y, *args, where=where, **kwargs)
+    return _native_gca().step(x, y, *args, where=where, **kwargs)
 
 
 def bar(
@@ -891,7 +952,7 @@ def bar(
 
     Returns the `BarContainer` holding one patch per bar.
     """
-    return gca().bar(
+    return _native_gca().bar(
         x,
         height,
         width,
@@ -938,7 +999,7 @@ def barh(
     ``"center"`` or ``"edge"``, and the same styling and error-bar
     keywords apply.
     """
-    return gca().barh(
+    return _native_gca().barh(
         y,
         width,
         height,
@@ -977,7 +1038,7 @@ def bar_label(
     ``{}``-format, or callable; ``label_type`` places labels at the bar
     ``"edge"`` or ``"center"``, offset by ``padding`` points.
     """
-    return gca().bar_label(
+    return _native_gca().bar_label(
         container,
         labels,
         fmt=fmt,
@@ -1006,7 +1067,7 @@ def grouped_bar(
     or a 2-D array (one column per dataset). Spacing is in multiples of
     bar width, matching matplotlib's `Axes.grouped_bar`.
     """
-    return gca().grouped_bar(
+    return _native_gca().grouped_bar(
         heights,
         positions=positions,
         group_spacing=group_spacing,
@@ -1065,7 +1126,7 @@ def hist(
         As matplotlib: counts (or a list of them), the edge array, and
         the bar container(s).
     """
-    return gca().hist(
+    return _native_gca().hist(
         x,
         bins,
         range=range,
@@ -1106,7 +1167,7 @@ def fill_between(
     (``"pre"``/``"post"``/``"mid"``). ``color`` (alias
     ``facecolor``/``fc``), ``alpha``, and ``label`` style the patch.
     """
-    return gca().fill_between(
+    return _native_gca().fill_between(
         x,
         y1,
         y2,
@@ -1136,7 +1197,7 @@ def fill_betweenx(
     (``color``/``facecolor``, ``edgecolor``, ``linewidth``, ``alpha``,
     ``label``, ``interpolate``, ``step``, ``transform``, ``data``).
     """
-    return gca().fill_betweenx(y, x1, x2, where, **kwargs)
+    return _native_gca().fill_betweenx(y, x1, x2, where, **kwargs)
 
 
 def fill(*args: ArrayLike | str, data: TableLike = None, **kwargs: Any) -> list[PolyCollection]:
@@ -1146,7 +1207,7 @@ def fill(*args: ArrayLike | str, data: TableLike = None, **kwargs: Any) -> list[
     "r")`` plus ``color``/``facecolor``, ``edgecolor``/``ec``,
     ``linewidth``/``lw``, ``alpha``, and ``label`` keywords.
     """
-    return gca().fill(*args, data=data, **kwargs)
+    return _native_gca().fill(*args, data=data, **kwargs)
 
 
 def stackplot(
@@ -1165,7 +1226,7 @@ def stackplot(
     ``"weighted_wiggle"``; ``alpha``, ``linewidth``/``lw``,
     ``edgecolor``, and ``facecolor`` keywords style the layers.
     """
-    return gca().stackplot(
+    return _native_gca().stackplot(
         x, *args, labels=labels, colors=colors, baseline=baseline, data=data, **kwargs
     )
 
@@ -1186,7 +1247,7 @@ def stem(
     ``basefmt`` are `plot`-style fmt strings for the stems, heads, and
     baseline; ``bottom`` moves the baseline.
     """
-    return gca().stem(
+    return _native_gca().stem(
         *args,
         linefmt=linefmt,
         markerfmt=markerfmt,
@@ -1214,7 +1275,7 @@ def stairs(
     to ``0..len(values)``). Line keywords (``color``, ``linewidth``,
     ``linestyle``, ``alpha``, ``label``, ``hatch``) style the patch.
     """
-    return gca().stairs(
+    return _native_gca().stairs(
         values,
         edges,
         orientation=orientation,
@@ -1240,7 +1301,7 @@ def ecdf(
     ``complementary=True`` plots 1 - ECDF; line keywords (``color``,
     ``linewidth``, ``linestyle``, ``label``) style the curve.
     """
-    return gca().ecdf(
+    return _native_gca().ecdf(
         x,
         weights,
         complementary=complementary,
@@ -1295,7 +1356,7 @@ def imshow(
     AxesImage
     """
     return _record_mappable(
-        gca().imshow(
+        _native_gca().imshow(
             z,
             cmap,
             **_given(
@@ -1312,13 +1373,36 @@ def imshow(
     )
 
 
-def matshow(z: ArrayLike, **kwargs: Any) -> Any:
+def matshow(z: ArrayLike, fignum: int | None = None, **kwargs: Any) -> Any:
     """Display a matrix with ticks on top, as matplotlib's `matshow`.
+
+    With the default ``fignum=None``, create a dedicated figure whose aspect
+    follows the matrix. ``fignum=0`` reuses the current axes without resizing;
+    another figure number adds an axes there and sizes only a newly created
+    figure.
 
     Accepts the `imshow` keywords (``cmap``, ``vmin``/``vmax``,
     ``alpha``, ``extent``, ...).
     """
-    return _record_mappable(gca().matshow(z, **kwargs))
+    values = np.asanyarray(z)
+    if fignum == 0:
+        ax = _native_gca()
+    else:
+        if fignum is not None and fignum_exists(fignum):
+            figsize = None
+        else:
+            rows, columns = values.shape[:2]
+            ratio = rows / columns
+            default_height = float(rcParams["figure.figsize"][1])
+            size = np.asarray((default_height / ratio, default_height), dtype=np.float64)
+            minimum = np.asarray((4.0, 2.0))
+            maximum = np.asarray((16.0, 16.0))
+            size /= min(1.0, *(size / minimum))
+            size /= max(1.0, *(size / maximum))
+            figsize = tuple(np.clip(size, minimum, maximum))
+        fig = figure(fignum, figsize=figsize)
+        ax = fig.add_axes((0.15, 0.09, 0.775, 0.775))
+    return _record_mappable(ax.matshow(values, **kwargs))
 
 
 def pcolormesh(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
@@ -1331,7 +1415,7 @@ def pcolormesh(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     ``norm="linear"``/``"log"``, ``rasterized`` on regular meshes, and
     ``antialiased``. The mesh becomes the figure's current mappable.
     """
-    return _record_mappable(gca().pcolormesh(*args, **kwargs))
+    return _record_mappable(_native_gca().pcolormesh(*args, **kwargs))
 
 
 def pcolor(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
@@ -1339,7 +1423,7 @@ def pcolor(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
 
     Same call forms and keywords as `pcolormesh`, which implements it.
     """
-    return _record_mappable(gca().pcolor(*args, **kwargs))
+    return _record_mappable(_native_gca().pcolor(*args, **kwargs))
 
 
 def pcolorfast(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
@@ -1347,7 +1431,7 @@ def pcolorfast(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
 
     Same call forms and keywords as `pcolormesh`.
     """
-    return _record_mappable(gca().pcolorfast(*args, **kwargs))
+    return _record_mappable(_native_gca().pcolorfast(*args, **kwargs))
 
 
 def hist2d(
@@ -1373,7 +1457,7 @@ def hist2d(
     Returns ``(counts, xedges, yedges, image)`` as matplotlib does.
     """
     return _record_mappable(
-        gca().hist2d(
+        _native_gca().hist2d(
             x,
             y,
             bins,
@@ -1421,7 +1505,7 @@ def hexbin(
     current mappable.
     """
     return _record_mappable(
-        gca().hexbin(
+        _native_gca().hexbin(
             x,
             y,
             C,
@@ -1455,12 +1539,12 @@ def contour(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> ContourS
     ``colors``, ``linewidths``, ``linestyles``, ``alpha``, and
     ``extent``. The set becomes the figure's current mappable.
     """
-    return _record_mappable(gca().contour(*args, data=data, **kwargs))
+    return _record_mappable(_native_gca().contour(*args, data=data, **kwargs))
 
 
 def contourf(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> ContourSet:
     """Filled contours of a 2-D array (same call forms as `contour`)."""
-    return _record_mappable(gca().contourf(*args, data=data, **kwargs))
+    return _record_mappable(_native_gca().contourf(*args, data=data, **kwargs))
 
 
 def clabel(
@@ -1482,7 +1566,7 @@ def clabel(
     ``levels`` restricts which levels get labels; ``fmt`` is a %-format,
     mapping, or callable; ``inline`` breaks the contour under each label.
     """
-    return gca().clabel(
+    return _native_gca().clabel(
         CS,
         levels,
         fontsize=fontsize,
@@ -1511,7 +1595,9 @@ def spy(
     Cells with ``|value| > precision`` are drawn; with ``marker`` given
     they render as markers instead of image cells.
     """
-    return gca().spy(z, precision, marker, markersize, aspect=aspect, origin=origin, **kwargs)
+    return _native_gca().spy(
+        z, precision, marker, markersize, aspect=aspect, origin=origin, **kwargs
+    )
 
 
 def axhline(y: float = 0.0, **kwargs: Any) -> Line2D:
@@ -1520,7 +1606,7 @@ def axhline(y: float = 0.0, **kwargs: Any) -> Line2D:
     Styled by the `plot` line keywords (``color``, ``linewidth``,
     ``linestyle``, ``alpha``, ``label``, ...).
     """
-    return gca().axhline(y, **kwargs)
+    return _native_gca().axhline(y, **kwargs)
 
 
 def axvline(x: float = 0.0, **kwargs: Any) -> Line2D:
@@ -1529,7 +1615,7 @@ def axvline(x: float = 0.0, **kwargs: Any) -> Line2D:
     Styled by the `plot` line keywords (``color``, ``linewidth``,
     ``linestyle``, ``alpha``, ``label``, ...).
     """
-    return gca().axvline(x, **kwargs)
+    return _native_gca().axvline(x, **kwargs)
 
 
 def axhspan(ymin: float, ymax: float, **kwargs: Any) -> Artist:
@@ -1537,7 +1623,7 @@ def axhspan(ymin: float, ymax: float, **kwargs: Any) -> Artist:
 
     ``color``/``facecolor``, ``alpha``, and ``label`` style the patch.
     """
-    return gca().axhspan(ymin, ymax, **kwargs)
+    return _native_gca().axhspan(ymin, ymax, **kwargs)
 
 
 def axvspan(xmin: float, xmax: float, **kwargs: Any) -> Artist:
@@ -1545,7 +1631,7 @@ def axvspan(xmin: float, xmax: float, **kwargs: Any) -> Artist:
 
     ``color``/``facecolor``, ``alpha``, and ``label`` style the patch.
     """
-    return gca().axvspan(xmin, xmax, **kwargs)
+    return _native_gca().axvspan(xmin, xmax, **kwargs)
 
 
 def axline(
@@ -1559,7 +1645,7 @@ def axline(
 
     Styled by the `plot` line keywords.
     """
-    return gca().axline(xy1, xy2, slope=slope, **kwargs)
+    return _native_gca().axline(xy1, xy2, slope=slope, **kwargs)
 
 
 def hlines(
@@ -1577,7 +1663,7 @@ def hlines(
     ``linewidth``/``linewidths``/``lw``, ``alpha``, ``data``, and
     ``transform`` are also accepted.
     """
-    return gca().hlines(y, xmin, xmax, colors, linestyles, label, **kwargs)
+    return _native_gca().hlines(y, xmin, xmax, colors, linestyles, label, **kwargs)
 
 
 def vlines(
@@ -1593,7 +1679,7 @@ def vlines(
 
     The vertical twin of `hlines`, with the same keywords.
     """
-    return gca().vlines(x, ymin, ymax, colors, linestyles, label, **kwargs)
+    return _native_gca().vlines(x, ymin, ymax, colors, linestyles, label, **kwargs)
 
 
 def broken_barh(
@@ -1606,7 +1692,7 @@ def broken_barh(
     ``edgecolors``/``edgecolor``, ``linewidth``, ``alpha``, ``label``,
     and ``align`` style the bars.
     """
-    return gca().broken_barh(xranges, yrange, **kwargs)
+    return _native_gca().broken_barh(xranges, yrange, **kwargs)
 
 
 def arrow(x: float, y: float, dx: float, dy: float, **kwargs: Any) -> PolyCollection:
@@ -1616,7 +1702,7 @@ def arrow(x: float, y: float, dx: float, dy: float, **kwargs: Any) -> PolyCollec
     ``length_includes_head``, ``color``/``facecolor``/``edgecolor``,
     ``alpha``, and ``transform``.
     """
-    return gca().arrow(x, y, dx, dy, **kwargs)
+    return _native_gca().arrow(x, y, dx, dy, **kwargs)
 
 
 def text(
@@ -1643,7 +1729,7 @@ def text(
     ``rotation`` style it. Pass ``transform=ax.transAxes`` for
     axes-fraction placement. Basic mathtext (``$...$``) is rendered.
     """
-    return gca().text(
+    return _native_gca().text(
         x,
         y,
         s,
@@ -1680,7 +1766,7 @@ def annotate(
     styling keywords (``color``, ``fontsize``, ``ha``/``va``,
     ``rotation``, ``bbox``, ...) are also accepted.
     """
-    return gca().annotate(
+    return _native_gca().annotate(
         text,
         xy,
         xytext,
@@ -1711,7 +1797,7 @@ def table(
     Mirrors matplotlib's `Axes.table` layout arguments; ``color`` and
     ``fontsize`` keywords style the cell text.
     """
-    return gca().table(
+    return _native_gca().table(
         cellText,
         cellColours,
         cellLoc,
@@ -1739,7 +1825,7 @@ def legend(*args: Any, **kwargs: Any) -> None:
     ``framealpha``, ``fancybox``, ``shadow``, ``borderpad``, and
     ``labelspacing``. Unsupported layout keywords raise loudly.
     """
-    return gca().legend(*args, **kwargs)
+    return _native_gca().legend(*args, **kwargs)
 
 
 def grid(
@@ -1760,7 +1846,7 @@ def grid(
     ``linestyle``/``ls``, ``linewidth``/``lw``, and ``alpha`` style the
     lines.
     """
-    return gca().grid(
+    return _native_gca().grid(
         visible,
         which=which,
         axis=axis,
@@ -1779,7 +1865,7 @@ def axis(
     ``axis("off"/"on"/"equal"/"scaled"/"square"/"tight"/"auto")`` applies
     the matplotlib convenience modes.
     """
-    return gca().axis(arg, **kwargs)
+    return _native_gca().axis(arg, **kwargs)
 
 
 def pie(
@@ -1813,7 +1899,7 @@ def pie(
     either a boolean or Matplotlib ``Shadow`` properties. Returns
     ``(wedges, texts)`` or ``(wedges, texts, autotexts)`` as matplotlib does.
     """
-    return gca().pie(
+    return _native_gca().pie(
         x,
         explode,
         labels,
@@ -1851,7 +1937,7 @@ def pie_label(
     ``labels`` may be strings or a %-format/callable applied per wedge;
     ``distance`` places labels as a fraction of the radius.
     """
-    return gca().pie_label(
+    return _native_gca().pie_label(
         container,
         labels,
         distance=distance,
@@ -1901,7 +1987,7 @@ def boxplot(
     the ``show*`` flags toggle elements, and the ``*props`` dicts style
     them. Returns the matplotlib-shaped dict of artist lists.
     """
-    return gca().boxplot(
+    return _native_gca().boxplot(
         x,
         notch=notch,
         sym=sym,
@@ -1966,7 +2052,7 @@ def bxp(
     ``whislo``/``whishi`` (plus optional ``mean``/``fliers``), as
     produced by `matplotlib.cbook.boxplot_stats`.
     """
-    return gca().bxp(
+    return _native_gca().bxp(
         bxpstats,
         positions,
         widths=widths,
@@ -2016,7 +2102,7 @@ def violinplot(
     the ``show*`` flags toggle means/extrema/medians and ``side`` draws
     half violins. Returns the matplotlib-shaped dict of artists.
     """
-    return gca().violinplot(
+    return _native_gca().violinplot(
         dataset,
         positions,
         vert=vert,
@@ -2054,7 +2140,7 @@ def violin(
     ``vpstats`` is a list of dicts with ``coords``/``vals``/``mean``/
     ``median``/``min``/``max``, as from `matplotlib.cbook.violin_stats`.
     """
-    return gca().violin(
+    return _native_gca().violin(
         vpstats,
         positions,
         vert=vert,
@@ -2099,7 +2185,7 @@ def errorbar(
     limited side. `plot` keywords style the line; non-default
     ``barsabove``/``capthick``/``elinestyle`` raise loudly.
     """
-    return gca().errorbar(
+    return _native_gca().errorbar(
         x,
         y,
         yerr,
@@ -2139,7 +2225,7 @@ def eventplot(
     One row (or column, with ``orientation="vertical"``) per dataset;
     ``lineoffsets``/``linelengths`` place and size the ticks.
     """
-    return gca().eventplot(
+    return _native_gca().eventplot(
         positions,
         orientation=orientation,
         lineoffsets=lineoffsets,
@@ -2158,7 +2244,7 @@ def acorr(x: ArrayLike, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any
 
     Returns ``(lags, correlations, lines, baseline)``.
     """
-    return gca().acorr(x, **kwargs)
+    return _native_gca().acorr(x, **kwargs)
 
 
 def xcorr(
@@ -2178,7 +2264,7 @@ def xcorr(
 
     Returns ``(lags, correlations, lines, baseline)``.
     """
-    return gca().xcorr(
+    return _native_gca().xcorr(
         x,
         y,
         normed=normed,
@@ -2211,7 +2297,7 @@ def psd(
     the sampling frequency, and `plot` keywords style the curve.
     Returns ``(Pxx, freqs)`` (plus the line with ``return_line=True``).
     """
-    return gca().psd(
+    return _native_gca().psd(
         x,
         NFFT=NFFT,
         Fs=Fs,
@@ -2249,7 +2335,7 @@ def csd(
     Same segmenting keywords as `psd`. Returns ``(Pxy, freqs)`` (plus
     the line with ``return_line=True``).
     """
-    return gca().csd(
+    return _native_gca().csd(
         x,
         y,
         NFFT=NFFT,
@@ -2286,7 +2372,7 @@ def cohere(
 
     Returns ``(Cxy, freqs)``.
     """
-    return gca().cohere(
+    return _native_gca().cohere(
         x,
         y,
         NFFT=NFFT,
@@ -2328,7 +2414,7 @@ def specgram(
     Segmenting follows `psd`; ``cmap``/``vmin``/``vmax``/``alpha`` style
     the image. Returns ``(spectrum, freqs, t, image)``.
     """
-    return gca().specgram(
+    return _native_gca().specgram(
         x,
         NFFT=NFFT,
         Fs=Fs,
@@ -2366,7 +2452,7 @@ def magnitude_spectrum(
     ``scale`` is ``"linear"`` or ``"dB"``; `plot` keywords style the
     curve. Returns ``(spectrum, freqs, line)``.
     """
-    return gca().magnitude_spectrum(
+    return _native_gca().magnitude_spectrum(
         x,
         Fs=Fs,
         Fc=Fc,
@@ -2393,7 +2479,7 @@ def angle_spectrum(
 
     Returns ``(spectrum, freqs, line)``.
     """
-    return gca().angle_spectrum(
+    return _native_gca().angle_spectrum(
         x,
         Fs=Fs,
         Fc=Fc,
@@ -2419,7 +2505,7 @@ def phase_spectrum(
 
     Returns ``(spectrum, freqs, line)``.
     """
-    return gca().phase_spectrum(
+    return _native_gca().phase_spectrum(
         x,
         Fs=Fs,
         Fc=Fc,
@@ -2438,7 +2524,7 @@ def quiver(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> PolyColle
     (``color``, ``scale``, ``width``, ``alpha``, ...) follow
     matplotlib's quiver where supported; unsupported ones raise loudly.
     """
-    return gca().quiver(*args, data=data, **kwargs)
+    return _native_gca().quiver(*args, data=data, **kwargs)
 
 
 def quiverkey(
@@ -2455,7 +2541,7 @@ def quiverkey(
     ``labelpos`` puts the label N/S/E/W of the arrow, and ``color``/
     ``labelcolor``/``labelsep``/``angle`` style it.
     """
-    return gca().quiverkey(Q, X, Y, U, label, **kwargs)
+    return _native_gca().quiverkey(Q, X, Y, U, label, **kwargs)
 
 
 def barbs(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> PolyCollection:
@@ -2464,7 +2550,7 @@ def barbs(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> PolyCollec
     Rendered at matplotlib's default barb geometry; non-default
     ``length``/``fill_empty``/``rounding``/``flip_barb`` raise loudly.
     """
-    return gca().barbs(*args, data=data, **kwargs)
+    return _native_gca().barbs(*args, data=data, **kwargs)
 
 
 def streamplot(
@@ -2498,7 +2584,7 @@ def streamplot(
     trajectories, and ``color``/``linewidth`` may be arrays evaluated
     along the field.
     """
-    return gca().streamplot(
+    return _native_gca().streamplot(
         x,
         y,
         u,
@@ -2540,7 +2626,7 @@ def tripcolor(
     figure's current mappable.
     """
     return _record_mappable(
-        gca().tripcolor(
+        _native_gca().tripcolor(
             *args,
             triangles=triangles,
             facecolors=facecolors,
@@ -2562,7 +2648,7 @@ def triplot(
     Call as ``triplot(x, y[, fmt])`` with optional ``triangles``
     indices; `plot` keywords style the edges and markers.
     """
-    return gca().triplot(*args, triangles=triangles, data=data, **kwargs)
+    return _native_gca().triplot(*args, triangles=triangles, data=data, **kwargs)
 
 
 def tricontour(*args: ArrayLike, **kwargs: Any) -> ContourSet:
@@ -2571,7 +2657,7 @@ def tricontour(*args: ArrayLike, **kwargs: Any) -> ContourSet:
     Call as ``tricontour(x, y, values[, levels])``; accepts the
     `contour` keywords.
     """
-    return gca().tricontour(*args, **kwargs)
+    return _native_gca().tricontour(*args, **kwargs)
 
 
 def tricontourf(*args: ArrayLike, **kwargs: Any) -> ContourSet:
@@ -2580,7 +2666,7 @@ def tricontourf(*args: ArrayLike, **kwargs: Any) -> ContourSet:
     Call as ``tricontourf(x, y, values[, levels])``; accepts the
     `contour` keywords.
     """
-    return gca().tricontourf(*args, **kwargs)
+    return _native_gca().tricontourf(*args, **kwargs)
 
 
 def autoscale(enable: bool = True, axis: str = "both", tight: Optional[bool] = None) -> None:
@@ -2589,17 +2675,17 @@ def autoscale(enable: bool = True, axis: str = "both", tight: Optional[bool] = N
     ``axis`` restricts to ``"x"`` or ``"y"``; ``tight=True`` drops the
     data margins.
     """
-    return gca().autoscale(enable, axis, tight)
+    return _native_gca().autoscale(enable, axis, tight)
 
 
 def autoscale_view(tight: Optional[bool] = None, scalex: bool = True, scaley: bool = True) -> None:
     """Re-fit the current axes' limits to the data (see `autoscale`)."""
-    return gca().autoscale_view(tight, scalex, scaley)
+    return _native_gca().autoscale_view(tight, scalex, scaley)
 
 
 def relim(visible_only: bool = False) -> None:
     """Recompute the current axes' data limits from its artists."""
-    return gca().relim(visible_only)
+    return _native_gca().relim(visible_only)
 
 
 def ticklabel_format(
@@ -2618,7 +2704,7 @@ def ticklabel_format(
     ``scilimits=(m, n)`` bounds the exponent range that stays plain;
     ``useOffset`` (alias ``useoffset``) toggles the offset readout.
     """
-    return gca().ticklabel_format(
+    return _native_gca().ticklabel_format(
         axis=axis,
         **_given(
             style=style,
@@ -2633,17 +2719,17 @@ def ticklabel_format(
 
 def minorticks_on() -> None:
     """Show minor ticks on the current axes."""
-    return gca().minorticks_on()
+    return _native_gca().minorticks_on()
 
 
 def minorticks_off() -> None:
     """Hide minor ticks on the current axes."""
-    return gca().minorticks_off()
+    return _native_gca().minorticks_off()
 
 
 def get_xbound() -> tuple[float, float]:
     """The current axes' x bounds as an ascending ``(lower, upper)``."""
-    return gca().get_xbound()
+    return _native_gca().get_xbound()
 
 
 def set_xbound(lower: float | LimitsLike | None = None, upper: float | None = None) -> None:
@@ -2651,12 +2737,12 @@ def set_xbound(lower: float | LimitsLike | None = None, upper: float | None = No
 
     ``lower`` may also be a ``(lower, upper)`` pair.
     """
-    return gca().set_xbound(lower, upper)
+    return _native_gca().set_xbound(lower, upper)
 
 
 def get_ybound() -> tuple[float, float]:
     """The current axes' y bounds as an ascending ``(lower, upper)``."""
-    return gca().get_ybound()
+    return _native_gca().get_ybound()
 
 
 def set_ybound(lower: float | LimitsLike | None = None, upper: float | None = None) -> None:
@@ -2664,17 +2750,17 @@ def set_ybound(lower: float | LimitsLike | None = None, upper: float | None = No
 
     ``lower`` may also be a ``(lower, upper)`` pair.
     """
-    return gca().set_ybound(lower, upper)
+    return _native_gca().set_ybound(lower, upper)
 
 
 def title(label: str, **kwargs: Any) -> None:
     """Set the title of the current axes (text keywords as in `text`)."""
-    gca().set_title(label, **kwargs)
+    _native_gca().set_title(label, **kwargs)
 
 
 def suptitle(label: str, **kwargs: Any) -> None:
     """Set the figure-level title above all subplots."""
-    gcf().suptitle(label, **kwargs)
+    _native_gcf().suptitle(label, **kwargs)
 
 
 def xlabel(label: str, **kwargs: Any) -> None:
@@ -2683,12 +2769,12 @@ def xlabel(label: str, **kwargs: Any) -> None:
     ``color``, ``fontsize``/``size``, and other supported text keywords
     style it; unsupported ones raise loudly.
     """
-    gca().set_xlabel(label, **kwargs)
+    _native_gca().set_xlabel(label, **kwargs)
 
 
 def ylabel(label: str, **kwargs: Any) -> None:
     """Set the y-axis label of the current axes (same keywords as `xlabel`)."""
-    gca().set_ylabel(label, **kwargs)
+    _native_gca().set_ylabel(label, **kwargs)
 
 
 def xlim(*args: Any) -> None:
@@ -2697,22 +2783,22 @@ def xlim(*args: Any) -> None:
     Call as ``xlim(left, right)``, ``xlim((left, right))``, or with
     ``left=``/``right=``; a descending pair inverts the axis.
     """
-    gca().set_xlim(*args)
+    _native_gca().set_xlim(*args)
 
 
 def ylim(*args: Any) -> None:
     """Set the y limits of the current axes (forms as in `xlim`)."""
-    gca().set_ylim(*args)
+    _native_gca().set_ylim(*args)
 
 
 def xscale(scale: str) -> None:
     """Set the x-axis scale: ``"linear"``, ``"log"``, ``"symlog"``, ...."""
-    gca().set_xscale(scale)
+    _native_gca().set_xscale(scale)
 
 
 def yscale(scale: str) -> None:
     """Set the y-axis scale: ``"linear"``, ``"log"``, ``"symlog"``, ...."""
-    gca().set_yscale(scale)
+    _native_gca().set_yscale(scale)
 
 
 def xticks(
@@ -2726,7 +2812,7 @@ def xticks(
 
     ``rotation`` (degrees) and supported text keywords style the labels.
     """
-    gca().set_xticks(ticks, labels, rotation=rotation, **kwargs)
+    _native_gca().set_xticks(ticks, labels, rotation=rotation, **kwargs)
 
 
 def yticks(
@@ -2737,18 +2823,18 @@ def yticks(
     **kwargs: Any,
 ) -> None:
     """Place the y ticks at the given positions (see `xticks`)."""
-    gca().set_yticks(ticks, labels, rotation=rotation, **kwargs)
+    _native_gca().set_yticks(ticks, labels, rotation=rotation, **kwargs)
 
 
 def tight_layout(**kwargs: Any) -> None:
     """Trim the figure's padding, as matplotlib's tight layout pass."""
-    gcf().tight_layout(**kwargs)
+    _native_gcf().tight_layout(**kwargs)
 
 
 def subplots_adjust(**kwargs: Any) -> None:
     """Adjust subplot spacing (``left``/``right``/``top``/``bottom``/
     ``wspace``/``hspace`` figure fractions)."""
-    gcf().subplots_adjust(**kwargs)
+    _native_gcf().subplots_adjust(**kwargs)
 
 
 def get_cmap(name: str | None = None, lut: int | None = None) -> Cmap:
@@ -2768,17 +2854,17 @@ def colorbar(*args: Any, **kwargs: Any) -> Any:
     Call as ``colorbar()``, ``colorbar(mappable)``, or with ``ax=``/
     ``cax=``/``label=`` as in matplotlib.
     """
-    return gcf().colorbar(*args, **kwargs)
+    return _native_gcf().colorbar(*args, **kwargs)
 
 
 def gci() -> Any:
     """The current color-mapped artist (image/collection), or None."""
-    return gcf()._gci
+    return _native_gcf()._gci
 
 
 def sci(mappable: Any) -> None:
     """Make ``mappable`` the figure's current image (target of `colorbar`)."""
-    gcf()._gci = mappable
+    _native_gcf()._gci = mappable
 
 
 def clim(vmin: float | None = None, vmax: float | None = None) -> None:
@@ -2801,7 +2887,7 @@ def savefig(fname: str | Path | IO[bytes], **kwargs: Any) -> None:
     html. ``dpi``, ``transparent``, ``facecolor``, ``metadata``, and
     ``bbox_inches="tight"`` are supported; other keywords raise loudly.
     """
-    gcf().savefig(fname, **kwargs)
+    _native_gcf().savefig(fname, **kwargs)
 
 
 def show(*args: Any, **kwargs: Any) -> None:
@@ -2828,7 +2914,10 @@ def show(*args: Any, **kwargs: Any) -> None:
 
 def _flush_inline_figures() -> None:
     """Display pyplot figures at the end of an IPython cell, like `%matplotlib inline`."""
-    if fignums():
+    # ``get_fignums`` is mode-routed after module initialization.  The private
+    # ``fignums`` import above is native-only and would make this hook silently
+    # ignore every compat figure.
+    if get_fignums():
         show()
 
 
@@ -3118,4 +3207,350 @@ def cycler(*args: Any, **kwargs: Any) -> Any:
     return _PropCycle(list(values))
 
 
+def _make_mode_router(name: str, native: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap one public callable without resolving or importing compat mode."""
+
+    @functools.wraps(native)
+    def routed(*args: Any, **kwargs: Any) -> Any:
+        if _effective_mode() == "native":
+            return native(*args, **kwargs)
+        try:
+            return _compat_callable(name)(*args, **kwargs)
+        except _AutoCompatFallback:
+            return native(*args, **kwargs)
+
+    return routed
+
+
+class _ModeObjectProxy:
+    """Resolve stateful pyplot namespaces against the active implementation."""
+
+    __slots__ = ("_name", "_native")
+
+    def __init__(self, name: str, native: Any) -> None:
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_native", native)
+
+    def _target(self) -> Any:
+        if _effective_mode() == "native":
+            return object.__getattribute__(self, "_native")
+        try:
+            return _compat_object(object.__getattribute__(self, "_name"))
+        except _AutoCompatFallback:
+            return object.__getattribute__(self, "_native")
+
+    def __getattr__(self, name: str) -> Any:
+        if (
+            object.__getattribute__(self, "_name") == "rcParams"
+            and name == "update"
+            and _effective_mode() == "compat"
+        ):
+            return self._update_compat_rc_params
+        return getattr(self._target(), name)
+
+    def _update_compat_rc_params(self, *args: Any, **kwargs: Any) -> None:
+        updates = dict(*args, **kwargs)
+        if "backend" in updates:
+            switch_backend(str(updates.pop("backend")))
+        self._target().update(updates)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self.__slots__:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._target(), name, value)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._target()[key]
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        if (
+            object.__getattribute__(self, "_name") == "rcParams"
+            and key == "backend"
+            and _effective_mode() == "compat"
+        ):
+            switch_backend(str(value))
+            return
+        self._target()[key] = value
+
+    def __delitem__(self, key: Any) -> None:
+        if (
+            object.__getattribute__(self, "_name") == "rcParams"
+            and key == "backend"
+            and _effective_mode() == "compat"
+        ):
+            raise RuntimeError("xy.pyplot compat mode requires the pinned Matplotlib backend")
+        del self._target()[key]
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._target())
+
+    def __len__(self) -> int:
+        return len(self._target())
+
+    def __contains__(self, item: Any) -> bool:
+        return item in self._target()
+
+    def __repr__(self) -> str:
+        return repr(self._target())
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(dir(self._target())))
+
+    def __eq__(self, other: object) -> bool:
+        return bool(self._target() == other)
+
+
+class _ModeClassProxy:
+    """A class-like object whose constructor and type checks follow the mode."""
+
+    __slots__ = ("_name", "_native")
+
+    def __init__(self, name: str, native: type[Any]) -> None:
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_native", native)
+
+    def _target(self) -> type[Any]:
+        native = object.__getattribute__(self, "_native")
+        if _effective_mode() == "native":
+            target = native
+        else:
+            try:
+                target = _compat_object(object.__getattribute__(self, "_name"))
+            except _AutoCompatFallback:
+                target = native
+        if not isinstance(target, type):
+            raise TypeError(f"{self._name} did not resolve to a class")
+        return target
+
+    @property
+    def __annotations__(self) -> dict[str, Any]:
+        # Makes runtime annotation tools accept this callable, class-like
+        # object without forcing the target class's module globals into xy.
+        return {}
+
+    @property
+    def __signature__(self) -> inspect.Signature:
+        return inspect.signature(self._target())
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in {"__doc__", "__module__", "__name__", "__qualname__"}:
+            target = object.__getattribute__(self, "_target")()
+            return getattr(target, name)
+        return object.__getattribute__(self, name)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target(), name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._target()(*args, **kwargs)
+
+    def __instancecheck__(self, instance: object) -> bool:
+        return isinstance(instance, self._target())
+
+    def __subclasscheck__(self, subclass: type[Any]) -> bool:
+        return issubclass(subclass, self._target())
+
+    def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type[Any], ...]:
+        return (self._target(),)
+
+    def __getitem__(self, item: Any) -> Any:
+        return self._target()[item]
+
+    def __or__(self, other: Any) -> Any:
+        return self._target() | other
+
+    def __ror__(self, other: Any) -> Any:
+        return other | self._target()
+
+    def __repr__(self) -> str:
+        return repr(self._target())
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(dir(self._target())))
+
+
+# Keep the hand-written native functions (and their precise signatures) as the
+# default implementation.  Compat calls cross this boundary lazily, so merely
+# importing xy.pyplot remains Matplotlib-free.
+for _routed_name in _NATIVE_PUBLIC_NAMES:
+    if _routed_name in {"get_mode", "set_mode", "switch_backend"}:
+        continue
+    _native_callable = globals().get(_routed_name)
+    if callable(_native_callable) and not isinstance(_native_callable, type):
+        globals()[_routed_name] = _make_mode_router(_routed_name, _native_callable)
+
+# Mutable module-level namespaces need the same late binding as functions:
+# scripts commonly mutate rcParams or enter style contexts before creating a
+# figure.
+rcParams = _ModeObjectProxy("rcParams", rcParams)
+cm = _ModeObjectProxy("cm", cm)
+colormaps = _ModeObjectProxy("colormaps", colormaps)
+dates = _ModeObjectProxy("dates", _native_dates)
+style = _ModeObjectProxy("style", style)
+
+# Public constructors need to return real Matplotlib objects in compat mode,
+# while dependency-free installs retain the current xy-owned classes.  Keep
+# them class-like for construction, attributes, isinstance/issubclass, class
+# bases, annotations, and signature inspection.
+_MODE_CLASS_NAMES = (
+    "Artist",
+    "Axes",
+    "AxesImage",
+    "AutoLocator",
+    "AutoMinorLocator",
+    "BarContainer",
+    "ContourSet",
+    "ErrorbarContainer",
+    "Figure",
+    "FixedFormatter",
+    "FixedLocator",
+    "FormatStrFormatter",
+    "FuncFormatter",
+    "GridSpec",
+    "Legend",
+    "LinearLocator",
+    "LinearSegmentedColormap",
+    "Line2D",
+    "ListedColormap",
+    "LogLocator",
+    "MaxNLocator",
+    "MultipleLocator",
+    "NullFormatter",
+    "NullLocator",
+    "PathCollection",
+    "PieContainer",
+    "PolyCollection",
+    "ScalarFormatter",
+    "StemContainer",
+    "StepPatch",
+    "StrMethodFormatter",
+    "StreamplotSet",
+    "Table",
+    "Text",
+)
+for _class_name in _MODE_CLASS_NAMES:
+    _native_class = globals()[_class_name]
+    globals()[_class_name] = _ModeClassProxy(_class_name, _native_class)
+
+
+_COMPAT_PUBLIC_NAMES = tuple(
+    sorted(
+        set(_NATIVE_PUBLIC_NAMES)
+        | set(COMPAT_PYPLOT_PUBLIC_NAMES)
+        | {
+            "AxesImage",
+            "AutoMinorLocator",
+            "BarContainer",
+            "ContourSet",
+            "ErrorbarContainer",
+            "Legend",
+            "LinearSegmentedColormap",
+            "ListedColormap",
+            "PathCollection",
+            "PieContainer",
+            "PolyCollection",
+            "StemContainer",
+            "StepPatch",
+            "StrMethodFormatter",
+            "StreamplotSet",
+            "Table",
+            "dates",
+        }
+    )
+)
+
+
+class _ModePublicNames(Sequence[str]):
+    """Expose the native or complete compat star-import surface lazily."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def _names() -> tuple[str, ...]:
+        if _effective_mode() == "compat":
+            return _COMPAT_PUBLIC_NAMES
+        return tuple(_NATIVE_PUBLIC_NAMES)
+
+    def __len__(self) -> int:
+        return len(self._names())
+
+    @overload
+    def __getitem__(self, index: int, /) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice, /) -> tuple[str, ...]: ...
+
+    def __getitem__(self, index: int | slice, /) -> str | tuple[str, ...]:
+        return self._names()[index]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._names())
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._names()
+
+    def __repr__(self) -> str:
+        return repr(list(self._names()))
+
+
+def _make_compat_only_router(name: str, target: Callable[..., Any]) -> Callable[..., Any]:
+    """Return a lazy callable that validates the XY backend on every call."""
+
+    def routed(*args: Any, **kwargs: Any) -> Any:
+        if _effective_mode() != "compat":
+            raise RuntimeError(f"{name} is only available in xy.pyplot compat mode")
+        try:
+            return _compat_callable(name)(*args, **kwargs)
+        except _AutoCompatFallback as exc:
+            raise RuntimeError(f"{name} requires xy.pyplot compat mode") from exc
+
+    routed.__name__ = name
+    routed.__qualname__ = name
+    routed.__module__ = __name__
+    routed.__doc__ = getattr(target, "__doc__", None)
+    with contextlib.suppress(TypeError, ValueError):
+        routed.__dict__["__signature__"] = inspect.signature(target)
+    return routed
+
+
+_DYNAMIC_COMPAT_PROXIES: dict[str, Any] = {}
+__all__ = _ModePublicNames()
+
+
 _install_ipython_display_hook()
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose the remaining Matplotlib pyplot surface in compat mode."""
+
+    if name.startswith("_") or _effective_mode() != "compat":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        # Revalidate even for an already-created proxy. Matplotlib's backend is
+        # process-global and can be changed through a separately imported
+        # matplotlib module between two xy.pyplot attribute reads.
+        target = _compat_object(name)
+    except (AttributeError, _AutoCompatFallback):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+    if name in _DYNAMIC_COMPAT_PROXIES:
+        return _DYNAMIC_COMPAT_PROXIES[name]
+    if isinstance(target, type):
+        # Names absent from native mode do not need a cross-mode class proxy:
+        # module ``__getattr__`` is consulted again on every access and rejects
+        # them outside compat mode. Returning the genuine Matplotlib class here
+        # preserves identity checks and subclass/registration semantics.
+        proxy: Any = target
+    elif callable(target):
+        proxy = _make_compat_only_router(name, target)
+    else:
+        proxy = target
+    _DYNAMIC_COMPAT_PROXIES[name] = proxy
+    return proxy
+
+
+def __dir__() -> list[str]:
+    names = set(globals())
+    if _effective_mode() == "compat":
+        names.update(_COMPAT_PUBLIC_NAMES)
+    return sorted(names)

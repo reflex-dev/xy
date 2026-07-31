@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
+import json
 import sys
 import tarfile
 from pathlib import Path
@@ -121,8 +123,89 @@ DEFAULT_PKG_INFO = (
     "Requires-Python: >=3.11\n"
     "Requires-Dist: anywidget>=0.9\n"
     "Requires-Dist: numpy>=1.24\n"
+    "Provides-Extra: matplotlib\n"
+    "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n"
 )
 BASELINE_JSON = '{"metrics": {"scatter.tier.100000": "direct"}}\n'
+GALLERY_SOURCES = {
+    f"section-{index // 100}/example-{index:03d}.py": (
+        b"import matplotlib.pyplot as plt\n" if index < 485 else b"import matplotlib\n"
+    )
+    for index in range(507)
+}
+GALLERY_EXAMPLES = [
+    {
+        "path": path,
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "byte_count": len(source),
+        "notebook_ast_matches": True,
+        "normalized_ast_sha256": hashlib.sha256(source).hexdigest(),
+        "notebook_code_ast_sha256": hashlib.sha256(source).hexdigest(),
+        "pyplot_eligible": index < 485,
+        "profile": ("standard" if index < 472 else ("extended" if index < 485 else "non_pyplot")),
+    }
+    for index, (path, source) in enumerate(GALLERY_SOURCES.items())
+]
+GALLERY_MANIFEST = json.dumps(
+    {
+        "source_count": 507,
+        "notebook_count": 507,
+        "pyplot_eligible_count": 485,
+        "profile_counts": {"extended": 13, "non_pyplot": 22, "standard": 472},
+        "examples": GALLERY_EXAMPLES,
+    }
+)
+GALLERY_BASELINE = json.dumps(
+    {
+        "schema_version": 2,
+        "summary": {
+            "source_count": 507,
+            "pyplot_eligible_count": 485,
+            "standard_profile_count": 472,
+            "extended_profile_count": 13,
+            "xy_execution_passed": 485,
+            "capture_parity_passed": 485,
+            "dimension_parity_passed": 485,
+            "exact_dimension_parity_passed": 481,
+            "visual_gate_passed": 485,
+            "semantic_gate_passed": 485,
+            "behavior_gate_passed": 485,
+            "accepted_examples": 485,
+            "temporary_waiver_count": 0,
+            "acceptance_complete": True,
+        },
+        "examples": {path: {} for path in GALLERY_SOURCES},
+    }
+)
+GALLERY_EXTENDED_ENVIRONMENT = json.dumps(
+    {
+        "example_count": 13,
+        "examples": [
+            {
+                "path": entry["path"],
+                "argv": [],
+                "backends": {
+                    "matplotlib": "Agg",
+                    "xy": "module://xy.backends.backend_xy",
+                },
+            }
+            for entry in GALLERY_EXAMPLES
+            if entry["profile"] == "extended"
+        ],
+    }
+)
+GALLERY_PROVENANCE = json.dumps(
+    {
+        "archives": {
+            "jupyter": {
+                "sha256": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870"
+            },
+            "python": {
+                "sha256": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc"
+            },
+        }
+    }
+)
 
 
 def _load_sdist_module():
@@ -168,6 +251,18 @@ def _write_sdist(
                 data = raw.encode("utf-8") if isinstance(raw, str) else raw
             elif name == "benchmarks/baseline.json":
                 data = BASELINE_JSON.encode("utf-8")
+            elif name == "gallery/matplotlib-3.11.1/manifest.json":
+                data = GALLERY_MANIFEST.encode("utf-8")
+            elif name == "gallery/matplotlib-3.11.1/baseline.json":
+                data = GALLERY_BASELINE.encode("utf-8")
+            elif name == "gallery/matplotlib-3.11.1/extended-environment.json":
+                data = GALLERY_EXTENDED_ENVIRONMENT.encode("utf-8")
+            elif name == "gallery/matplotlib-3.11.1/provenance.json":
+                data = GALLERY_PROVENANCE.encode("utf-8")
+            elif name == "gallery/matplotlib-3.11.1/LICENSE":
+                data = b"Matplotlib license fixture\n"
+            elif name == "gallery/matplotlib-3.11.1/README.md":
+                data = b"# Matplotlib gallery fixture\n"
             elif name == "python/xy/static/index.js":
                 data = INDEX_JS.encode("utf-8")
             elif name == "python/xy/static/standalone.js":
@@ -191,6 +286,13 @@ def _write_sdist(
             elif name == ".github/workflows/release-reflex-xy.yml":
                 data = RELEASE_REFLEX_XY_YML.encode("utf-8")
             _add_file(tf, f"{root}/{name}", data)
+        for name, source in GALLERY_SOURCES.items():
+            member = f"gallery/matplotlib-3.11.1/examples/{name}"
+            if member in omit:
+                continue
+            raw = replacements.get(member, source)
+            data = raw.encode("utf-8") if isinstance(raw, str) else raw
+            _add_file(tf, f"{root}/{member}", data)
         for name, data in extra.items():
             _add_file(tf, f"{root}/{name}", data)
 
@@ -254,7 +356,7 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
-            "no published extras",
+            "only the matplotlib published extra",
         ),
     ],
 )
@@ -271,6 +373,89 @@ def test_verify_sdist_rejects_missing_static_bundle(tmp_path: Path) -> None:
     _write_sdist(sdist, omit={"python/xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="missing required files"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/xy/backends/backend_xy_host.py"})
+
+    with pytest.raises(AssertionError, match="backend_xy_host"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "python/xy/pyplot/_compat_inventory.py",
+        "scripts/generate_pyplot_compat_inventory.py",
+    ],
+)
+def test_verify_sdist_rejects_missing_generated_pyplot_inventory_contract(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "tests/backends/pyplot_svg_gallery_probe.mjs",
+        "tests/backends/test_pyplot_svg_gallery_browser.py",
+    ],
+)
+def test_verify_sdist_rejects_missing_svg_gallery_browser_gate(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "python/xy/backends/backend_xy.py",
+        "python/xy/backends/display_list.py",
+        "python/xy/backends/raster.py",
+        "tests/backends/test_backend_xy.py",
+        "tests/backends/test_display_list.py",
+    ],
+)
+def test_verify_sdist_rejects_missing_text_resource_renderer_contract(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_gallery_source(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    missing = "gallery/matplotlib-3.11.1/examples/section-0/example-000.py"
+    _write_sdist(sdist, omit={missing})
+
+    with pytest.raises(AssertionError, match="exactly 507 Python sources"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_modified_gallery_source(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    modified = "gallery/matplotlib-3.11.1/examples/section-0/example-000.py"
+    _write_sdist(sdist, replacements={modified: b"print('modified')\n"})
+
+    with pytest.raises(AssertionError, match="gallery source hash differs"):
         verify_sdist.verify_sdist(str(sdist))
 
 

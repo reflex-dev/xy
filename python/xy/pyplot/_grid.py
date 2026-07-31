@@ -397,7 +397,7 @@ def compose_svg(
     from xy import _svg
 
     figures = [chart.figure() for chart in charts]
-    if not figures:
+    if not figures and canvas_size is None:
         raise ValueError("figure has no axes to save")
     if positions is not None and canvas_size is not None:
         title_h = 0
@@ -547,7 +547,36 @@ def stitch_png(
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
         tiles.append(img)
     if not tiles:
-        raise ValueError("figure has no axes to save")
+        if canvas_size is None:
+            raise ValueError("figure has no axes to save")
+        background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
+        canvas = np.empty((int(canvas_size[1]), int(canvas_size[0]), 4), dtype=np.uint8)
+        canvas[...] = background
+        if suptitle:
+            _blend_raster_suptitle(
+                canvas,
+                suptitle,
+                suptitle_style,
+                scale=scale,
+                title_h=canvas.shape[0],
+                absolute=True,
+            )
+        _blend_raster_figure_decorations(
+            canvas,
+            figure_labels or [],
+            figure_legend,
+            scale=scale,
+        )
+        if bbox_tight:
+            delta = np.any(canvas != background, axis=2)
+            ys, xs = np.nonzero(delta)
+            if len(xs):
+                x0 = max(0, int(xs.min()) - pad_pixels)
+                x1 = min(canvas.shape[1], int(xs.max()) + pad_pixels + 1)
+                y0 = max(0, int(ys.min()) - pad_pixels)
+                y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
+                canvas = canvas[y0:y1, x0:x1]
+        return _png.encode(canvas)
 
     if absolute:
         assert positions is not None and canvas_size is not None

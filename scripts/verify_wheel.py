@@ -36,7 +36,15 @@ REQUIRED_FILES = {
     "xy/config.py",
     "xy/export.py",
     "xy/_figure.py",
+    "xy/backends/__init__.py",
+    "xy/backends/backend_xy.py",
+    "xy/backends/backend_xy_host.py",
+    "xy/backends/backend_xy_widget.js",
+    "xy/backends/backend_xy_widget.py",
+    "xy/backends/display_list.py",
+    "xy/backends/raster.py",
     "xy/marks.py",
+    "xy/pyplot/_compat_inventory.py",
     "xy/interaction.py",
     "xy/kernels.py",
     "xy/lod.py",
@@ -155,6 +163,18 @@ def _dependency_name(requirement: str) -> str:
     return "" if match is None else match.group(1).replace("_", "-").lower()
 
 
+def _is_matplotlib_compat_extra(requirement: str) -> bool:
+    compact = re.sub(r"\s+", "", requirement.lower()).replace('"', "'")
+    if _dependency_name(requirement) != "matplotlib" or ";" not in compact:
+        return False
+    specifier, marker = compact.split(";", 1)
+    constraints = set(specifier.removeprefix("matplotlib").split(","))
+    return constraints == {">=3.11", "<3.12"} and marker in {
+        "extra=='matplotlib'",
+        "'matplotlib'==extra",
+    }
+
+
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
@@ -175,13 +195,21 @@ def _require_metadata(names: set[str], data: bytes, expected_version: str) -> No
     unexpected_requirements = [
         requirement
         for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
+        if (
+            (_dependency_name(requirement) not in {"anywidget", "numpy"} or ";" in requirement)
+            and not _is_matplotlib_compat_extra(requirement)
+        )
     ]
     if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
+        missing.append(
+            "only xy runtime dependencies and the matplotlib compatibility extra "
+            f"in Requires-Dist ({unexpected_requirements})"
+        )
+    if not any(_is_matplotlib_compat_extra(requirement) for requirement in requirements):
+        missing.append("Requires-Dist: matplotlib>=3.11,<3.12; extra == 'matplotlib'")
     provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+    if provided_extras != ["matplotlib"]:
+        missing.append(f"only the matplotlib published extra ({provided_extras})")
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")

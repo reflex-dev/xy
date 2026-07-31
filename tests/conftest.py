@@ -86,6 +86,7 @@ def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
     allowed to degrade into a skip. Only a browser that cannot be spawned at all
     raises `_BrowserUnavailable`.
     """
+    profile = page.parent / ".xy-chromium-profile"
     try:
         proc = subprocess.run(
             [
@@ -93,6 +94,16 @@ def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
                 "--headless=new",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                f"--user-data-dir={profile}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-extensions",
+                "--disable-sync",
+                "--metrics-recording-only",
+                "--mute-audio",
                 "--allow-file-access-from-files",
                 "--use-angle=swiftshader",
                 "--enable-unsafe-swiftshader",

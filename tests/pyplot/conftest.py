@@ -11,7 +11,11 @@ import xy.pyplot as plt
 @pytest.fixture(autouse=True)
 def _pyplot_hygiene():
     plt.close("all")
+    if plt.get_mode() != "native":
+        plt.set_mode("native")
     plt.rcParams.reset()
     yield
     plt.close("all")
+    if plt.get_mode() != "native":
+        plt.set_mode("native")
     plt.rcParams.reset()

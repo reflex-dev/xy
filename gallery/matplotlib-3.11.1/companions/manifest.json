@@ -1,0 +1,175 @@
+{
+  "archives": {
+    "jupyter": {
+      "sha256": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870",
+      "url": "https://matplotlib.org/stable/_downloads/fcaddee3a42ae2e2c41e00ae08d70347/gallery_jupyter.zip"
+    },
+    "python": {
+      "sha256": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc",
+      "url": "https://matplotlib.org/stable/_downloads/46b4cb42d5bb56cc39e2b5b2b520b38d/gallery_python.zip"
+    }
+  },
+  "non_pyplot_count": 22,
+  "pyplot_eligible_count": 0,
+  "records": [
+    {
+      "companion_path": "xy_native/font_indexing.py",
+      "companion_sha256": "0bf14bb2cf4840f3c1a53d4abbecbad5faafba130e16a3814e85ddb61449a8f7",
+      "disposition": "headless_xy_native_companion",
+      "upstream_path": "misc/font_indexing.py",
+      "upstream_sha256": "db0d48faec6711f9d6fb6e266efb47a242de0d5176f4460e28b5833a5083bbf8"
+    },
+    {
+      "companion_path": "xy_native/ftface_props.py",
+      "companion_sha256": "66f4339800d810339f6d5ce6ffae4ee81a193298950467ae706954e2b98308f3",
+      "disposition": "headless_xy_native_companion",
+      "upstream_path": "misc/ftface_props.py",
+      "upstream_sha256": "ef85c2d8cf306cbfb9eb6b376f7693ead021bad07e7d9d5dd0445f186a463e0f"
+    },
+    {
+      "companion_path": "xy_native/basic_units.py",
+      "companion_sha256": "ff29dcc0fb0b808d2aaa485baf90a0cfeb8c8060edad4dae593acbb1f7c306bf",
+      "disposition": "headless_xy_native_companion",
+      "upstream_path": "units/basic_units.py",
+      "upstream_sha256": "6a29366e933d0b0e268a66cbb5f67ce90e5759544f23ee2cc66df4c853a2e83d"
+    },
+    {
+      "companion_path": "xy_native/canvasagg.py",
+      "companion_sha256": "1df98728d60d54e9adb3990dae71400bcae35fdacece31f1fd16df8d54938055",
+      "disposition": "headless_xy_native_companion",
+      "upstream_path": "user_interfaces/canvasagg.py",
+      "upstream_sha256": "0770bf0383005e449ea16950307d7bf955fd019f83ef7e15a3633e30c7aef2cb"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_gtk3_panzoom_sgskip.py",
+      "upstream_sha256": "e20339c3492ab37942d19ea8d049e808921a36d00c577632a727b11fd350e171"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_gtk3_sgskip.py",
+      "upstream_sha256": "bb3f8ab8fabd2c2d3df9d8a373cff3689f1c9eff7dc7062319a5f49bd60f9380"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_gtk4_panzoom_sgskip.py",
+      "upstream_sha256": "ec50480335bb077f771dd7e1183f2e3c725bf8d10044c17a8d5600112538cbac"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_gtk4_sgskip.py",
+      "upstream_sha256": "ac4172d66617a7857b060a9d9e900779143979a52344219708ae01ae4811e0b0"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_qt_sgskip.py",
+      "upstream_sha256": "6b03b5073fae82b997256ed7fcf84c5a8f54da7605b1237fe216c1c99f34cf12"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_tk_sgskip.py",
+      "upstream_sha256": "ffbf5bc3b37c4d9416ec850f990784a38e209413e86c95ef401684b1a2a785c3"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_wx2_sgskip.py",
+      "upstream_sha256": "6aa505cecc29252576963b4f6ca529096e33651561aab2ba903deeea1ec3682e"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_wx3_sgskip.py",
+      "upstream_sha256": "9b8673736a510d22c8388716ce2eed6d21839fc20cd3039cc3c4a8077e75aa51"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_wx4_sgskip.py",
+      "upstream_sha256": "b5b97c666adbb683174d8d42fa86307536fa0f4c426f8d394c699ad7db488c8c"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/embedding_in_wx5_sgskip.py",
+      "upstream_sha256": "e42a5a450b950f92960e6cc3bdb8b2a0c67b19b682433d16e9a174ce92d3be7d"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "live_server_embedding",
+      "upstream_path": "user_interfaces/embedding_webagg_sgskip.py",
+      "upstream_sha256": "0e053fe0b5abdee192b96716853636aedb0a042977081a7a92fd5a91a3d6e75d"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/fourier_demo_wx_sgskip.py",
+      "upstream_sha256": "3cad34c35f656a6be6d070a702a0b8abfdd636cfb25f5a57614ef6dfa6d91f78"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/gtk3_spreadsheet_sgskip.py",
+      "upstream_sha256": "8eaf743d058cd9bebb9d18902a6913c479da63af5ed08bbf12eec86b0b7ef1d4"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/gtk4_spreadsheet_sgskip.py",
+      "upstream_sha256": "f01dac13ee98f185bb7e5344673b7f5129f94acfeb49624659473d0636199ee6"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/mathtext_wx_sgskip.py",
+      "upstream_sha256": "5963ff7614b8a67f72d833e3d97c47532e0452b7bc4b2c9812125b0926fed233"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/mpl_with_glade3_sgskip.py",
+      "upstream_sha256": "b03da36cb53a231b37fe831bdd5aa1789a9f69f6db18f96d1f8042bf9d0d1bb7"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "live_server_embedding",
+      "upstream_path": "user_interfaces/web_application_server_sgskip.py",
+      "upstream_sha256": "32057606674ae9605b8a3bbacd30ce59daf2570b312f4d8890eff26abc17ecc2"
+    },
+    {
+      "companion_path": null,
+      "companion_sha256": null,
+      "disposition": "gui_toolkit_embedding",
+      "upstream_path": "user_interfaces/wxcursor_demo_sgskip.py",
+      "upstream_sha256": "e006f9d2ca715b9373cd08b1e78aca61a18dc1d7227e955ebf5d102c234db8be"
+    }
+  ],
+  "schema_version": 1,
+  "upstream_license": "../LICENSE",
+  "upstream_manifest": "../manifest.json",
+  "upstream_version": "3.11.0",
+  "xy_native_companion_count": 4
+}

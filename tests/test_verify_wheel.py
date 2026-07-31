@@ -72,6 +72,8 @@ DEFAULT_METADATA = "\n".join(
         "Requires-Python: >=3.11",
         "Requires-Dist: anywidget>=0.9",
         "Requires-Dist: numpy>=1.24",
+        "Provides-Extra: matplotlib",
+        "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'",
     ]
 )
 
@@ -266,7 +268,7 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_METADATA + "\nProvides-Extra: dev",
-            "no published extras",
+            "only the matplotlib published extra",
         ),
     ],
 )
@@ -377,6 +379,41 @@ def test_verify_wheel_rejects_missing_static_bundle(tmp_path: Path) -> None:
     _write_wheel(whl, omit={"xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="required package files"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/backends/backend_xy_host.py"})
+
+    with pytest.raises(AssertionError, match="backend_xy_host"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/backends/backend_xy.py",
+        "xy/backends/display_list.py",
+        "xy/backends/raster.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_text_resource_renderer(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_missing_generated_pyplot_inventory(tmp_path: Path) -> None:
+    whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/pyplot/_compat_inventory.py"})
+
+    with pytest.raises(AssertionError, match="_compat_inventory"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

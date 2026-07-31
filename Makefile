@@ -6,8 +6,11 @@ SDIST ?=
 WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
+GALLERY_OUTPUT ?= /tmp/xy-pyplot-gallery
+GALLERY_PROFILE ?= standard
+GALLERY_SHARD ?= 0/1
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-gallery-contract check-pyplot-gallery-extended check-pyplot-gallery-shard check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -28,6 +31,9 @@ help:
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
+		'  make check-pyplot-gallery-contract verify the immutable 507-example gallery manifest' \
+		'  make check-pyplot-gallery-extended verify the 13-example extended environment metadata' \
+		'  make check-pyplot-gallery-shard run a differential shard (GALLERY_SHARD=0/8)' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires matplotlib)' \
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
@@ -82,6 +88,23 @@ check-examples:
 
 check-pyplot:
 	$(PYTHON) -m pytest tests/pyplot -q
+
+check-pyplot-gallery-contract:
+	$(PYTHON) -m scripts.pyplot_gallery.contract check
+	$(PYTHON) -m pytest -q \
+		tests/pyplot/test_gallery_contract.py \
+		tests/pyplot/test_gallery_extended_environment.py \
+		tests/pyplot/test_gallery_metrics.py
+
+check-pyplot-gallery-extended:
+	$(PYTHON) -m scripts.pyplot_gallery.extended_environment check
+	$(PYTHON) -m pytest -q tests/pyplot/test_gallery_extended_environment.py
+
+check-pyplot-gallery-shard:
+	$(PYTHON) -m scripts.pyplot_gallery.run_gallery \
+		--output "$(GALLERY_OUTPUT)" \
+		--profile "$(GALLERY_PROFILE)" \
+		--shard "$(GALLERY_SHARD)"
 
 check-security:
 	$(PYTHON) scripts/verify_local.py --only security_export

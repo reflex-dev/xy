@@ -4,6 +4,58 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Dual-mode Matplotlib 3.11 gallery contract — 2026-07-31
+
+- `xy.pyplot` now separates the existing dependency-free, high-performance
+  2-D implementation (`native`) from the optional real-Matplotlib frontend
+  (`compat`). The configured default is `auto`: it resolves to compat when the
+  supported Matplotlib 3.11 series is installed and to native otherwise.
+  Explicit native pins the lightweight implementation.
+- `pip install "xy[matplotlib]"` installs the supported Matplotlib 3.11
+  series. `plt.set_mode(...)` and `XY_PYPLOT_MODE` select a process before
+  figures are created; switching with an open native or Matplotlib figure is
+  rejected. Import and selection remain lazy.
+- Compat mode returns genuine Matplotlib Figure, Axes, Artist, layout, units,
+  toolkit, widget, animation, and `mplot3d` objects/semantics. The public
+  `module://xy.backends.backend_xy` backend emits one device-space XY display
+  list consumed by browser, HTML, SVG, and native raster output.
+- Renderer acceptance is fallback-free. Agg or another Matplotlib renderer may
+  be a development oracle, but a gallery result with `fallback_used=true`
+  fails. Pixel identity is not required; structure, semantics, major geometry,
+  layout, and tolerant full-canvas visual appearance are.
+- The immutable Matplotlib 3.11.0 contract represents 507 sources. Of these,
+  485 bind pyplot and are split into 472 standard-profile and 13
+  extended-environment cases. The other 22 backend/font/server/GUI sources are
+  classified and hash-locked but never counted as pyplot successes or
+  failures.
+- The extended profile declares TeX/fonts, GTK/Xvfb and SVG-loader
+  dependencies, deterministic input/argument/PDF/multiprocessing drivers, and
+  separate reference/XY backend requirements.
+- The completed report passes 472/472 standard and 13/13 extended examples:
+  485/485 pyplot-eligible cases with no execution, structural, semantic,
+  tolerant visual, behavioral, or fallback waivers.
+- Interactive, coordinate-reporting, navigation, and animation entries have
+  hard behavior gates for Matplotlib event delivery, axes callbacks, real
+  widget/selector gestures, draggable artists, status messages, pan/3-D view
+  changes, timers, and deterministic driven frames. Exact interactive SVG
+  exports also run click, hover, and hyperlink canaries in Chromium.
+  A live browser canvas routes events through a Python comm; standalone HTML
+  cannot retain arbitrary Python callbacks after the process exits.
+- Compat mode accepts the exact 3.11.0 resampling gallery call
+  `FillBetweenPolyCollection.set_data(..., step="pre")`. The source uses that
+  keyword even though 3.11.0 omitted it from the method while retaining the
+  `_step` state; the reference behavior run records the same scoped,
+  version-pinned normalization.
+- Public typing now exposes dependency-free common Figure/Axes protocols,
+  concrete native aliases, structural compat aliases, and honest union return
+  types for mode-routed factories.
+- Native figures now own a first-class measured tree for root figures, nested
+  subfigures, axes, insets, twins, explicit colorbar axes, renderer-owned
+  colorbar chrome, and figure-level text. Every node resolves a normalized
+  viewport and clip; HTML, SVG, and native PNG share one immutable snapshot per
+  export. Figure text stays axes-free, insets remain independent panels, and
+  `get_figure(root=True)` crosses nested subfigure ownership explicitly.
+
 ## Patch bodies and geometry — 2026-07-30 (Matplotlib 3.11.1 reference)
 
 - `xy.pyplot.Axes.add_patch` now fills a patch instead of drawing only its
@@ -62,6 +114,12 @@ which covers user-visible releases across the whole package.
   `set_visible()`, `set_alpha()`, `set_color()` and `set_transform()` move the
   whole patch instead of only its body. `set_color` paints edge and face
   alike, as `matplotlib.patches.Patch.set_color` does.
+- Matplotlib `FancyArrowPatch` interop now honors the arrow style's separate
+  fillability result. Open bracket and `->` paths remain strokes rather than
+  being implicitly closed and filled. Mutation, shrink, and connection
+  geometry is resolved under the axes data-to-display transform and figure
+  DPI before being mapped back to xy data coordinates, so point-sized heads
+  and brackets do not expand into plot-spanning polygons.
 
 ## Polar projection depth — 2026-07-28 (Matplotlib 3.11.1 reference)
 
@@ -91,6 +149,32 @@ which covers user-visible releases across the whole package.
   from epoch zero, which had compressed every modern instant into a hairline
   ring at the rim. `set_rlim` and an explicit radial `margin` are unaffected and
   still win.
+
+## Parent-relative inset axes — 2026-07-28 (Matplotlib 3.11.1 reference)
+
+- `Axes.inset_axes` now creates an independent free-form axes at the parent-relative
+  figure rectangle. Marginal histogram axes outside the central scatter frame no
+  longer have their artists projected into and stacked on the parent data space;
+  `sharex` and `sharey` retain the requested static axis-property sharing.
+
+## Axes-free figure text — 2026-07-31 (supplied 3.11.1 gallery source)
+
+- `Figure.text`, `supxlabel`, and `supylabel` are now figure-owned artists.
+  Creating them on an otherwise empty figure no longer manufactures a default
+  axes, so text-only examples retain the expected zero-axes structure.
+- HTML, SVG, and native PNG composition now accept an axes-free canvas and
+  preserve its requested `figsize * dpi` dimensions. Figure text participates
+  in the same measured compositor used by multi-axes figures and remains
+  mutable/removable through its returned `Text` handle.
+
+## Stateful `matshow` figure sizing — 2026-07-31 (supplied 3.11.1 gallery source)
+
+- `plt.matshow(A)` now creates a dedicated figure whose size follows
+  Matplotlib's bounded `figaspect(A)` calculation and places its axes at
+  `(0.15, 0.09, 0.775, 0.775)`. Square matrices therefore produce the
+  expected square 480×480 default canvas.
+- `fignum=0` reuses the current axes without resizing, while a numbered
+  existing figure receives a new axes without changing its authored size.
 
 ## Box and violin default geometry — 2026-07-26 (Matplotlib 3.11.1 reference)
 
@@ -259,16 +343,17 @@ into a dozen root causes, recorded here as known defects until fixed:
    colormap while the attached colorbar correctly shows RdBu — image and
    legend disagree. Discrete colormaps (`get_cmap(name, N)`-style) render
    as continuous gradients.
-5. Contours: no dashed-negative convention, auto level count runs 2–3× 
+5. Contours: no dashed-negative convention, auto level count runs 2–3×
    Matplotlib's, `contourf` bands smooth into gradients.
-6. **Mixed-engine measurement artifact (out of scope):** when seaborn —
-   which draws through real Matplotlib — owns the current figure,
-   module-level `plt.hist`/`axvline`/`axhline` draw onto xy's own figure,
-   so three seaborn-notebook cells count as passing while their plt-drawn
-   content lands elsewhere. This can only occur in a mixed environment:
-   xy replaces Matplotlib, and without Matplotlib installed seaborn fails
-   loudly at import. No runtime fallback onto Matplotlib will be added;
-   the benchmark's seaborn column is soft evidence only.
+6. **Historical mixed-engine measurement artifact:** in the native-only audit,
+   seaborn could own a real Matplotlib figure while module-level
+   `xy.pyplot` calls drew onto a separate native figure, so three cells counted
+   as running with content split across engines. Native mode remains isolated.
+   Compat mode resolves this architecturally by routing the whole pyplot
+   surface to genuine Matplotlib objects using the XY backend. That explicit
+   frontend selection is not a raster fallback: Agg output remains forbidden
+   by the gallery gate. The old benchmark's seaborn column remains historical
+   soft evidence rather than a compat pass count.
 7. `annotate` draws no arrow and ignores the `xytext` offset.
 8. A free-form `plt.axes([x, y, w, h])` inset next to a default axes
    renders as an equal side-by-side panel even in PNG (contradicting the

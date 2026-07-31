@@ -63,6 +63,9 @@ Published platform wheels bundle the Python package, browser client, and native
 Rust compute core. Notebook display and HTML, native PNG, and SVG export do not
 require separate `notebooks` or `export` extras, Node, npm, or a CDN.
 
+The regular dependency also includes `xy.pyplot`'s dependency-free native 2-D
+mode. It does not install Matplotlib.
+
 ## Installing from Git or source
 
 Use the PyPI wheel when your platform is supported. A working source install
@@ -89,6 +92,43 @@ an unsupported operating system or architecture may also require target-specific
 Rust tooling beyond the commands above.
 
 ## Optional tools and integrations
+
+- Install the Matplotlib extra for `xy.pyplot` compatibility mode:
+
+  ~~~~md tabs
+  ## uv
+
+  ~~~bash
+  uv add "xy[matplotlib]"
+  ~~~
+
+  ## pip
+
+  ~~~bash
+  python -m pip install "xy[matplotlib]"
+  ~~~
+  ~~~~
+
+  The extra installs the supported Matplotlib 3.11 series
+  (`matplotlib>=3.11,<3.12`). Select it before creating figures:
+
+  ~~~python
+  import xy.pyplot as plt
+
+  plt.set_mode("compat")
+  ~~~
+
+  Compat mode uses genuine Matplotlib Figure, Axes, Artist, layout, units,
+  toolkit, widget, animation, and projection semantics with XY's
+  `module://xy.backends.backend_xy` canvas and display-list renderer. It does
+  not use Agg or another Matplotlib renderer as a raster fallback.
+
+  The configured default is `auto`. It resolves to `native` for a base install
+  and to `compat` when the supported Matplotlib 3.11 extra is installed. Use
+  `plt.set_mode("native")` to pin the lightweight implementation. Explicit
+  `compat` fails with an installation hint if the supported extra is missing.
+  The equivalent process setting is `XY_PYPLOT_MODE=compat`. Close all open
+  figures before changing modes.
 
 - Install `pyarrow` separately when you want Arrow-backed input:
 

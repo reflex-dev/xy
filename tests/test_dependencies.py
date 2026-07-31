@@ -28,16 +28,14 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     )
 
 
-def test_core_publishes_no_optional_dependencies() -> None:
+def test_core_publishes_only_the_matplotlib_compatibility_extra() -> None:
     data = tomllib.loads(ROOT.joinpath("pyproject.toml").read_text(encoding="utf-8"))
     project = data.get("project") or {}
     groups = data.get("dependency-groups") or {}
+    extras = project.get("optional-dependencies") or {}
 
-    assert "optional-dependencies" not in project, (
-        "contributor tools and benchmark baselines must not be published as xy extras; "
-        "put local-only tools in dependency-groups and external baselines in the pinned "
-        "benchmark environment"
-    )
+    assert set(extras) == {"matplotlib"}
+    assert extras["matplotlib"] == ["matplotlib>=3.11,<3.12"]
     assert {"dev", "codspeed"} <= groups.keys()
     group_names = {
         _dependency_name(requirement)

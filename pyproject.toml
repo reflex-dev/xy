@@ -14,6 +14,13 @@ dependencies = [
     "anywidget>=0.9",
 ]
 
+[project.optional-dependencies]
+# Matplotlib supplies its mature Figure/Axes/Artist semantics in pyplot's
+# opt-in compatibility mode.  The XY backend remains the renderer.
+matplotlib = [
+    "matplotlib>=3.11,<3.12",
+]
+
 [project.urls]
 Repository = "https://github.com/reflex-dev/xy"
 Issues = "https://github.com/reflex-dev/xy/issues"
@@ -117,6 +124,9 @@ include = [
     "package-lock.json",
     "benchmarks",
     "docs",
+    # Hash-locked Matplotlib 3.11 gallery contract.  The matching tests are
+    # shipped, so the corpus and its provenance must also survive an sdist.
+    "gallery/matplotlib-3.11.1",
     "spec",
     "examples/fastapi/*.py",
     "examples/fastapi/pyproject.toml",
@@ -161,6 +171,10 @@ exclude = [
 line-length = 100
 target-version = "py311"
 src = ["python", "tests", "scripts", "benchmarks"]
+# Exact vendored upstream sources are hash-locked gallery inputs. Formatting
+# or lint autofixes would invalidate both their provenance and notebook AST
+# equivalence.
+extend-exclude = ["gallery/matplotlib-3.11.1/examples"]
 
 [tool.ruff.lint]
 select = [

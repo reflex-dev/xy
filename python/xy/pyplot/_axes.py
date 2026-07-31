@@ -11,6 +11,7 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+import importlib
 import math
 import warnings
 
@@ -1238,6 +1239,143 @@ def _patch_placement(patch: Any) -> tuple[Any, Any]:
     return patch_transform, artist_transform
 
 
+def _patch_fillability(patch: Any) -> Optional[bool]:
+    """Return FancyArrowPatch's renderer fill decision when it exposes one.
+
+    Matplotlib arrow styles return fillability separately from their Path.
+    ``FancyArrowPatch.get_path()`` deliberately drops that bit while combining
+    multiple subpaths, so treating its ordinary ``get_fill()`` flag as the
+    answer paints open bracket and ``->`` styles as giant closed polygons.
+    """
+    getter = getattr(patch, "_get_path_in_displaycoord", None)
+    if not callable(getter):
+        return None
+    try:
+        _path, raw = getter()
+    except (AttributeError, TypeError, ValueError):
+        return None
+    values = np.asarray(raw if np.iterable(raw) else [raw], dtype=bool).reshape(-1)
+    return bool(np.any(values)) if values.size else None
+
+
+def _open_path_polylines(path: Any, transform: Any) -> list[np.ndarray]:
+    """Flatten an unfillable Path while preserving its MOVETO breaks.
+
+    ``Path.to_polygons`` closes every subpath, even when the authored path is
+    an open bracket or arrow shaft. That is useful for fills but invents long
+    diagonal outline segments here. ``cleaned(curves=False)`` flattens curves
+    without changing those open/closed semantics.
+    """
+    try:
+        flattened = path.cleaned(transform=transform, curves=False, simplify=False)
+        vertices = np.asarray(flattened.vertices, dtype=np.float64)
+        codes = flattened.codes
+    except (AttributeError, TypeError, ValueError):
+        vertices = np.asarray(transform.transform(path.vertices), dtype=np.float64)
+        codes = getattr(path, "codes", None)
+    if codes is None:
+        return [vertices]
+    lines: list[np.ndarray] = []
+    current: list[np.ndarray] = []
+    for vertex, code in zip(vertices, np.asarray(codes).reshape(-1), strict=True):
+        numeric_code = int(code)
+        if numeric_code == 0:  # STOP
+            break
+        if numeric_code == 1:  # MOVETO
+            if current:
+                lines.append(np.asarray(current, dtype=np.float64))
+            current = [vertex]
+            continue
+        if not current:
+            current = [vertex]
+        else:
+            current.append(vertex)
+    if current:
+        lines.append(np.asarray(current, dtype=np.float64))
+    return lines
+
+
+def _fancy_arrow_geometry(
+    patch: Any,
+    axes: Any,
+) -> Optional[tuple[list[np.ndarray], list[bool]]]:
+    """Resolve a Matplotlib FancyArrowPatch in display space, then return data paths.
+
+    Arrow mutation sizes, endpoint shrinking, brackets, and connection curves
+    are measured in display points. Calling ``get_path`` on an unattached
+    external patch treats those points as data units, producing plot-spanning
+    heads and brackets. Matplotlib's own draw path temporarily gets the Axes
+    data transform and renderer DPI; reproduce that only for this duck-typed
+    interop object and immediately map the finished paths back to data space.
+    """
+    getter = getattr(patch, "_get_path_in_displaycoord", None)
+    if not callable(getter) or getattr(patch, "is_transform_set", lambda: True)():
+        return None
+    host = axes._y2_of or axes
+    if any(host._scale_specs[key]["name"] != "linear" for key in ("x", "y")):
+        return None
+    try:
+        mpl_transforms = importlib.import_module("matplotlib.transforms")
+        width, height = rc_figsize_px(axes.figure._figsize, axes.figure._dpi)
+        left, bottom, rect_width, rect_height = axes.get_position().bounds
+        x0, x1 = axes.get_xlim()
+        y0, y1 = axes.get_ylim()
+        if x0 == x1 or y0 == y1:
+            return None
+        sx = rect_width * width / (x1 - x0)
+        sy = rect_height * height / (y1 - y0)
+        data_to_display = mpl_transforms.Affine2D(
+            np.asarray(
+                [
+                    [sx, 0.0, left * width - sx * x0],
+                    [0.0, sy, bottom * height - sy * y0],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=np.float64,
+            )
+        )
+    except (AttributeError, ImportError, TypeError, ValueError):
+        return None
+
+    old_transform = getattr(patch, "_transform", None)
+    old_transform_set = getattr(patch, "_transformSet", False)
+    old_dpi_correction = getattr(patch, "_dpi_cor", 1.0)
+    try:
+        patch.set_transform(data_to_display)
+        patch._dpi_cor = axes._point_scale()
+        raw_paths, raw_fillable = getter()
+        paths = list(raw_paths) if isinstance(raw_paths, (list, tuple)) else [raw_paths]
+        fillable = (
+            [bool(value) for value in raw_fillable]
+            if np.iterable(raw_fillable)
+            else [bool(raw_fillable)]
+        )
+        if len(fillable) != len(paths):
+            return None
+        display_identity = mpl_transforms.IdentityTransform()
+        display_to_data = data_to_display.inverted()
+        outlines: list[np.ndarray] = []
+        flags: list[bool] = []
+        for path, may_fill in zip(paths, fillable, strict=True):
+            pieces = (
+                list(path.to_polygons())
+                if may_fill
+                else _open_path_polylines(path, display_identity)
+            )
+            for piece in pieces:
+                points = np.asarray(display_to_data.transform(piece), dtype=np.float64)
+                if len(points) >= 2:
+                    outlines.append(points)
+                    flags.append(may_fill)
+        return (outlines, flags) if outlines else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+    finally:
+        patch._transform = old_transform
+        patch._transformSet = old_transform_set
+        patch._dpi_cor = old_dpi_correction
+
+
 def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
     """Data-space rings of a patch, curves flattened and its transform applied.
 
@@ -1259,12 +1397,15 @@ def _patch_outline(patch: Any, pixels: float = 1024.0) -> list[np.ndarray]:
         to_polygons = getattr(path, "to_polygons", None)
         if to_polygons is not None:
             transform, after = _patch_placement(patch)
-            rings = list(to_polygons(transform))
-            if rings:
-                # A duck path that cannot be rebuilt from vertices and codes
-                # keeps its data-space flattening rather than losing geometry.
-                with suppress(AttributeError, TypeError, ValueError):
-                    rings = list(_refine_at_pixel_scale(path, transform, rings, pixels))
+            if _patch_fillability(patch) is False:
+                rings = _open_path_polylines(path, transform)
+            else:
+                rings = list(to_polygons(transform))
+                if rings:
+                    # A duck path that cannot be rebuilt from vertices and codes
+                    # keeps its data-space flattening rather than losing geometry.
+                    with suppress(AttributeError, TypeError, ValueError):
+                        rings = list(_refine_at_pixel_scale(path, transform, rings, pixels))
             if after is not None:
                 rings = [np.asarray(after.transform(ring), dtype=np.float64) for ring in rings]
     if not rings:
@@ -1322,6 +1463,8 @@ def _patch_fill_color(patch: Any) -> Any:
     """The patch's own face color, or None when it asks not to be filled."""
     if not getattr(patch, "get_fill", lambda: True)():
         return None
+    if _patch_fillability(patch) is False:
+        return None
     return _opaque_or_none(getattr(patch, "get_facecolor", lambda: None)())
 
 
@@ -1360,7 +1503,12 @@ class Axes(PlotTypeMixin):
         self._aspect_bounds: Optional[tuple[float, float, float, float]] = None
         self._insets: list[tuple["Axes", tuple[float, float, float, float]]] = []
         self._insets_materialized = False
+        self._inset_parent: Optional["Axes"] = None
+        self._inset_bounds: Optional[tuple[float, float, float, float]] = None
+        self._inset_layout_base: Optional[tuple[float, float, float, float]] = None
         self._figure_rect: Optional[tuple[float, float, float, float]] = None
+        self._tree_node: Any = None
+        self._twin_parent: Optional["Axes"] = y2_of
         # The originating gridspec span, when _figure_rect came from one —
         # subplots_adjust() re-resolves the rect instead of keeping it frozen.
         self._subplot_spec: Optional[Any] = None
@@ -4283,7 +4431,8 @@ class Axes(PlotTypeMixin):
             abs(ty1 - ty0) * self._aspect_value,
             np.finfo(float).eps,
         )
-        fig_width, fig_height = self.figure.get_size_inches()
+        root_figure = self.get_figure(root=True)
+        fig_width, fig_height = root_figure.get_size_inches()
         left, bottom, width, height = rect
         physical_ratio = width * fig_width / max(height * fig_height, np.finfo(float).eps)
         if physical_ratio > data_ratio:
@@ -5229,8 +5378,10 @@ class Axes(PlotTypeMixin):
         return self.yaxis
 
     def get_figure(self, root: bool | None = None) -> Any:
-        """The owning figure (``root`` is a compat-noop)."""
-        del root  # compat-noop: no nested subfigures; both roots are self.figure
+        """Return the direct subfigure owner or the root figure."""
+        if root and self.figure is not None:
+            getter = getattr(self.figure, "get_figure", None)
+            return getter(root=True) if callable(getter) else self.figure
         return self.figure
 
     def get_lines(self) -> list[Line2D]:
@@ -5482,22 +5633,68 @@ class Axes(PlotTypeMixin):
     def inset_axes(
         self, bounds: tuple[float, float, float, float] | Sequence[float], **kwargs: Any
     ) -> "Axes":
-        """Add a child inset axes.
+        """Add an independently rendered child axes.
 
         ``bounds`` is ``(left, bottom, width, height)`` in parent-axes
-        fractions; ``sharex``/``sharey`` hints link the figure's axes. The
-        inset's contents are drawn into the parent when the chart
-        materializes.
+        fractions.  Matplotlib insets are full axes (and bounds outside
+        ``[0, 1]`` are commonly used for marginal plots), so convert the
+        rectangle to figure coordinates and let the normal free-form panel
+        compositor render it instead of projecting its artists into the
+        parent's data coordinates.
         """
-        inset = Axes(self.figure)
         parsed = tuple(float(value) for value in bounds)
-        if len(parsed) != 4:
+        if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
             raise ValueError("inset_axes bounds must be [left, bottom, width, height]")
-        self._insets.append((inset, parsed))
-        if kwargs.get("sharex") is not None:
-            self.figure._sharex = True
-        if kwargs.get("sharey") is not None:
-            self.figure._sharey = True
+
+        parent = self.get_position().bounds
+        left, bottom, width, height = parsed
+        figure_rect = (
+            parent[0] + left * parent[2],
+            parent[1] + bottom * parent[3],
+            width * parent[2],
+            height * parent[3],
+        )
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        root = self.get_figure(root=True)
+        absolute_creator = getattr(self.figure, "_add_axes_absolute", None)
+        inset = (
+            absolute_creator(figure_rect, **kwargs)
+            if callable(absolute_creator)
+            else root.add_axes(figure_rect, **kwargs)
+        )
+        inset._inset_parent = self
+        inset._inset_bounds = parsed
+        parent_node = root._tree.node_for(self)
+        if parent_node is not None:
+            root._register_axes(inset, parent=parent_node, kind="inset_axes")
+        self.figure._share_subplot_axes(inset, sharex=sharex, sharey=sharey)
+        if self.figure._layout_options.get("engine") == "tight":
+            # Constrained layout must leave figure room for marginal axes
+            # whose parent-relative coordinates extend above/right (or below/
+            # left) of the main panel. Preserve the first solved parent box
+            # and fit the whole inset family inside that allocation.
+            if self._inset_layout_base is None:
+                self._inset_layout_base = self.get_position().bounds
+            family = [
+                child._inset_bounds
+                for child in self.figure.axes
+                if child._inset_parent is self and child._inset_bounds is not None
+            ]
+            min_x = min([0.0, *(item[0] for item in family)])
+            min_y = min([0.0, *(item[1] for item in family)])
+            max_x = max([1.0, *(item[0] + item[2] for item in family)])
+            max_y = max([1.0, *(item[1] + item[3] for item in family)])
+            base_x, base_y, base_w, base_h = self._inset_layout_base
+            fitted_w = base_w / (max_x - min_x)
+            fitted_h = base_h / (max_y - min_y)
+            self._figure_rect = (
+                base_x - min_x * fitted_w,
+                base_y - min_y * fitted_h,
+                fitted_w,
+                fitted_h,
+            )
+            self._invalidate()
         return inset
 
     def _materialize_insets(self) -> None:
@@ -5857,13 +6054,20 @@ class Axes(PlotTypeMixin):
         from xy import kernels
 
         canvas = rc_figsize_px(self.figure._figsize, self.figure._dpi)
-        outline = _patch_outline(patch, pixels=float(max(canvas)))
+        fancy_geometry = _fancy_arrow_geometry(patch, self)
+        if fancy_geometry is None:
+            outline = _patch_outline(patch, pixels=float(max(canvas)))
+            fillable = [True] * len(outline)
+        else:
+            outline, fillable = fancy_geometry
         face = _patch_fill_color(patch)
         edge = _patch_edge_color(patch)
         width = float(getattr(patch, "get_linewidth", lambda: 1.0)()) * self._point_scale()
         entries: list[dict[str, Any]] = []
         if face is not None and not _rings_are_nested(outline):
-            for ring in outline:
+            for ring, may_fill in zip(outline, fillable, strict=True):
+                if not may_fill:
+                    continue
                 xv, yv = ring[:, 0], ring[:, 1]
                 # Non-finite vertices have no triangulation, as in `Axes.fill`.
                 finite = np.isfinite(xv) & np.isfinite(yv)
@@ -6832,6 +7036,15 @@ class Axes(PlotTypeMixin):
             raise ValueError("twinx() of a twin axes is not supported")
         if self._twin is None:
             self._twin = Axes(self.figure, y2_of=self)
+            root = self.get_figure(root=True)
+            parent_node = root._tree.node_for(self)
+            if parent_node is not None:
+                root._register_axes(
+                    self._twin,
+                    parent=parent_node,
+                    kind="twin_axes",
+                    rendered=False,
+                )
         return self._twin
 
     def twiny(self) -> "Axes":
@@ -6843,10 +7056,14 @@ class Axes(PlotTypeMixin):
         if self.figure is None:
             raise ValueError("twiny() requires an Axes attached to a Figure")
         twin = Axes(self.figure)
+        twin._twin_parent = self
         twin._axis["y"] = self._axis_props("y")
-        self.figure._axes.append(twin)
-        self.figure._current_ax = twin
-        self.figure._invalidate()
+        root = self.get_figure(root=True)
+        root._axes.append(twin)
+        parent_node = root._tree.node_for(self)
+        root._register_axes(twin, parent=parent_node, kind="twin_axes")
+        root._current_ax = twin
+        root._invalidate()
         return twin
 
     def legend(self, *args: Any, **kwargs: Any) -> Any:

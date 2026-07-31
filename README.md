@@ -43,6 +43,18 @@ pip install xy
 uv add xy
 ```
 
+The base install includes the dependency-free native 2-D `xy.pyplot`
+implementation. For Matplotlib 3.11 Figure, Axes, Artist, layout, toolkit,
+widget, animation, and 3-D semantics rendered by XY, install the optional
+compatibility extra:
+
+```bash
+pip install "xy[matplotlib]"
+
+# or, with uv
+uv add "xy[matplotlib]"
+```
+
 ## Getting started
 
 A chart is a container plus the marks inside it. Any sequence works; NumPy is
@@ -100,9 +112,13 @@ chart = xy.scatter_chart(
 chart
 ```
 
-### Coming from matplotlib
+### Coming from Matplotlib
 
-For common pyplot workflows, change the import and keep the plotting code:
+`xy.pyplot` has two implementations. The configured default is `auto`: a base
+install resolves it to the dependency-free, high-performance 2-D `native`
+shim, while an install with the supported Matplotlib 3.11 extra resolves it to
+`compat`. With a base install, common pyplot workflows can change only the
+import:
 
 ```python
 import numpy as np
@@ -115,8 +131,45 @@ ax.legend()
 plt.show()
 ```
 
-See the [compatibility guide](spec/matplotlib/compat.md); not all charts and
-functionality are supported yet.
+For broader Matplotlib 3.11 compatibility, select `compat` before creating a
+figure:
+
+```python
+import xy.pyplot as plt
+
+plt.set_mode("compat")
+fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+```
+
+Compat mode returns genuine Matplotlib Figure, Axes, and Artist objects.
+Matplotlib supplies units, transforms, layout, `mplot3d`, toolkits, widgets,
+and animation semantics; the public
+`module://xy.backends.backend_xy` backend converts the resulting draw traversal
+to one XY display list. Browser, SVG, HTML, and native raster output consume
+that representation. Accepted gallery results may not fall back to Agg or
+another Matplotlib renderer.
+
+`plt.set_mode("native" | "compat" | "auto")` and `XY_PYPLOT_MODE` configure
+the process. `auto` selects `compat` when supported Matplotlib 3.11 is
+installed and `native` otherwise. Use explicit `native` to pin the lightweight
+implementation. Explicit `compat` fails with an installation hint when the
+supported extra is unavailable. Switching modes requires all figures to be
+closed.
+
+The permanent contract represents all 507 sources in the exact supplied
+Matplotlib stable-gallery snapshot (3.11.1 documentation sources evaluated
+against the pinned 3.11.0 oracle): 485 are pyplot import-swap cases (472
+standard-profile and 13 extended-environment cases), while 22
+backend/font/server/GUI sources are classified separately and never counted
+as pyplot successes or failures. The current compatibility report passes
+472/472 standard and 13/13 extended cases with no execution, visual,
+behavioral, or fallback waivers. Compatibility requires the charts to agree
+in structure, labels, limits, layout, major geometry, and tolerant visual
+appearance—not exact pixels.
+
+See the [Matplotlib integration guide](docs/integrations/matplotlib.md) and
+[compatibility specification](spec/matplotlib/compat.md) for the current
+boundary and measured status.
 
 ## Customize every layer
 
@@ -291,8 +344,11 @@ For the full design, see the [design dossier](spec/design-dossier.md).
 
 ## Roadmap
 
-Broad 2D coverage first, then geographic, 3D, and volume visualization. Queued
-next, no dates implied:
+The declarative API and dependency-free native pyplot path prioritize broad 2-D
+coverage before geographic, native 3-D, and volume visualization. Compat mode
+can use Matplotlib's 3-D projection semantics through the XY display-list
+backend, but that does not add native XY 3-D marks. Queued next, no dates
+implied:
 
 - **Categorical distributions:** strip, swarm, beeswarm, boxen, rug
 - **Regression diagnostics:** trendline, residual, QQ, PP
@@ -305,7 +361,8 @@ next, no dates implied:
 - **Treemap, sunburst, and icicle**
 - **Gauge / indicator:** build on the shipped polar axes and composable radial marks
 - **Slope, bump, and dumbbell**
-- **3D and volume:** scatter, surfaces, meshes, isosurfaces, and volumetric views
+- **Native 3-D and volume:** scatter, surfaces, meshes, isosurfaces, and
+  volumetric views
 
 The full ranked backlog is in the [chart roadmap](spec/api/chart-roadmap.md).
 Want a chart or feature that isn't listed?
