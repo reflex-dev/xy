@@ -198,6 +198,8 @@ def test_verify_sdist_rejects_missing_static_bundle(tmp_path: Path) -> None:
         "docs/index.md",
         "examples/demo.ipynb",
         "pr-assets/review.png",
+        "python/other-package/__init__.py",
+        "python/reflex-xy/reflex_xy/__init__.py",
         "scripts/verify_local.py",
         "spec/design-dossier.md",
         "tests/test_import.py",
@@ -266,6 +268,14 @@ def test_verify_sdist_rejects_regular_file_at_distribution_root(tmp_path: Path) 
     _write_sdist(sdist, root_file=True)
 
     with pytest.raises(AssertionError, match="top-level entry must be a directory"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_file_directory_path_collisions(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, extra={"README.md/repository-only.txt": b"not extractable"})
+
+    with pytest.raises(AssertionError, match="file/directory path collisions"):
         verify_sdist.verify_sdist(str(sdist))
 
 

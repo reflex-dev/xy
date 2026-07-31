@@ -131,13 +131,14 @@ def _member_path(name: str) -> PurePosixPath:
 def _normalized_files(path: str) -> tuple[str, set[str]]:
     roots: set[str] = set()
     files: set[str] = set()
+    directories: set[str] = set()
     with tarfile.open(path, "r:gz") as tf:
         for member in tf.getmembers():
             member_path = _member_path(member.name)
             root = member_path.parts[0]
             roots.add(root)
+            relative_parts = member_path.parts[1:]
             if member.isfile():
-                relative_parts = member_path.parts[1:]
                 if not relative_parts:
                     raise AssertionError(
                         f"sdist top-level entry must be a directory: {member.name!r}"
@@ -147,7 +148,8 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
                     raise AssertionError(f"sdist contains duplicate file member: {rel}")
                 files.add(rel)
             elif member.isdir():
-                continue
+                if relative_parts:
+                    directories.add("/".join(relative_parts))
             else:
                 raise AssertionError(f"sdist contains non-regular member: {member.name}")
     if len(roots) != 1:
@@ -157,6 +159,16 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     root = next(iter(roots))
     if not ROOT_RE.match(root):
         raise AssertionError(f"sdist top-level directory has unexpected name: {root!r}")
+
+    collisions = sorted(files & directories)
+    for name in files | directories:
+        parts = PurePosixPath(name).parts
+        if any("/".join(parts[:index]) in files for index in range(1, len(parts))):
+            collisions.append(name)
+    if collisions:
+        raise AssertionError(
+            f"sdist contains file/directory path collisions: {sorted(set(collisions))}"
+        )
     return root, files
 
 
@@ -250,6 +262,10 @@ def verify_sdist(path: str) -> None:
         name
         for name in files
         if PurePosixPath(name).parts[0] not in ALLOWED_TOP_LEVEL
+        or (
+            PurePosixPath(name).parts[0] == "python"
+            and PurePosixPath(name).parts[:2] != ("python", "xy")
+        )
         or any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
         or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
     )
