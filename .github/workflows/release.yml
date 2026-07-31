@@ -310,12 +310,112 @@ jobs:
     permissions:
       # Keep repository write access out of every build and PyPI job.
       contents: write
+      # Sign a manifest that binds the generated notes and every distribution
+      # byte to this exact tag workflow.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           pattern: dist-*
           merge-multiple: true
+      - name: Inspect existing release
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          immutable=false
+          if release_json="$(
+            gh release view "$TAG" \
+              --repo "$REPO" \
+              --json isImmutable \
+              2>/dev/null
+          )" && [[ "$(jq -r '.isImmutable' <<<"$release_json")" == "true" ]]; then
+            immutable=true
+          fi
+          echo "immutable=${immutable}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release provenance
+        if: steps.release_state.outputs.immutable != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          artifacts=("${wheels[@]}" "${sdists[@]}")
+          if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then
+            echo "::error::Expected at least one wheel and exactly one sdist"
+            exit 1
+          fi
+
+          distributions_json="$(
+            for artifact in "${artifacts[@]}"; do
+              artifact_sha256="$(sha256sum "$artifact" | cut -d ' ' -f 1)"
+              jq -cn \
+                --arg name "${artifact##*/}" \
+                --arg sha256 "$artifact_sha256" \
+                '{name: $name, sha256: $sha256}'
+            done | jq -sc 'sort_by(.name)'
+          )"
+          if ! jq -e \
+            'length > 1 and
+             ([.[].name] | length) == ([.[].name] | unique | length) and
+             all(.[]; .sha256 | test("^[0-9a-f]{64}$"))' \
+            <<<"$distributions_json" >/dev/null; then
+            echo "::error::Distribution names or SHA-256 digests are invalid"
+            exit 1
+          fi
+
+          notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
+          gh api \
+            --method POST \
+            "repos/${REPO}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq '.body' > "$notes_file"
+          generated_notes="$(<"$notes_file")"
+          if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
+            echo "::error::GitHub generated empty release notes for ${TAG}"
+            exit 1
+          fi
+          notes_sha256="$(
+            printf '%s' "$generated_notes" | sha256sum | cut -d ' ' -f 1
+          )"
+
+          provenance_dir="${RUNNER_TEMP}/xy-${TAG}-release-provenance"
+          mkdir -p "$provenance_dir"
+          provenance_file="${provenance_dir}/xy-release-provenance.json"
+          jq -cS -n \
+            --arg schema "xy-release-provenance/v1" \
+            --arg tag "$TAG" \
+            --arg source_sha "$GITHUB_SHA" \
+            --arg release_notes_sha256 "$notes_sha256" \
+            --argjson distributions "$distributions_json" \
+            '{
+              schema: $schema,
+              tag: $tag,
+              source_sha: $source_sha,
+              release_notes_sha256: $release_notes_sha256,
+              distributions: $distributions
+            }' > "$provenance_file"
+          provenance_sha256="$(
+            sha256sum "$provenance_file" | cut -d ' ' -f 1
+          )"
+          printf '%s\n\n<!-- xy-release-provenance:v1:%s:sha256:%s -->\n' \
+            "$generated_notes" "$TAG" "$provenance_sha256" > "$notes_file"
+
+      - name: Attest release provenance
+        if: steps.release_state.outputs.immutable != 'true'
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ runner.temp }}/xy-${{ github.ref_name }}-release-provenance/xy-release-provenance.json
+
       - name: Create GitHub Release and attach distributions
         env:
           GH_TOKEN: ${{ github.token }}
@@ -331,6 +431,24 @@ jobs:
             exit 1
           fi
 
+          provenance_name="xy-release-provenance.json"
+          provenance_file="${RUNNER_TEMP}/xy-${TAG}-release-provenance/${provenance_name}"
+          notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
+
+          expected_assets_json="$(
+            printf '%s\n' "${artifacts[@]##*/}" |
+              jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
+          )"
+          expected_hashes_json="$(
+            for artifact in "${artifacts[@]}"; do
+              artifact_sha256="$(sha256sum "$artifact" | cut -d ' ' -f 1)"
+              jq -cn \
+                --arg name "${artifact##*/}" \
+                --arg sha256 "$artifact_sha256" \
+                '{name: $name, sha256: $sha256}'
+            done | jq -sc 'sort_by(.name)'
+          )"
+
           prerelease=()
           edit_prerelease=(--prerelease=false)
           expected_prerelease=false
@@ -339,23 +457,132 @@ jobs:
             edit_prerelease=(--prerelease)
             expected_prerelease=true
           fi
-          expected_assets_json="$(
-            printf '%s\n' "${artifacts[@]##*/}" |
-              jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
-          )"
-          notes_file="${RUNNER_TEMP}/xy-${TAG}-release-notes.md"
-          gh api \
-            --method POST \
-            "repos/${REPO}/releases/generate-notes" \
-            -f tag_name="$TAG" \
-            --jq '.body' > "$notes_file"
-          generated_notes="$(<"$notes_file")"
-          if [[ -z "${generated_notes//[[:space:]]/}" ]]; then
-            echo "::error::GitHub generated empty release notes for ${TAG}"
-            exit 1
-          fi
-          printf '\n<!-- xy-release-workflow:%s -->' "$TAG" >> "$notes_file"
-          expected_notes="$(<"$notes_file")"
+
+          release_metadata_matches() {
+            local release_json="$1"
+            jq -e \
+              --arg name "$TAG" \
+              --argjson prerelease "$expected_prerelease" \
+              '.isDraft == false and
+               .name == $name and
+               .tagName == $name and
+               .publishedAt != null and
+               .isPrerelease == $prerelease' \
+              <<<"$release_json" >/dev/null
+          }
+
+          verify_release_payload() {
+            local release_json="$1"
+            local actual_assets_json
+            local actual_hashes_json
+            local actual_notes_sha256
+            local footer
+            local manifest_hashes_json
+            local manifest_notes_sha256
+            local manifest_sha256
+            local notes_body
+            local release_notes
+            local verify_dir
+            local verified_provenance
+
+            actual_assets_json="$(
+              jq -c \
+                '[.assets[]?.name |
+                  select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
+                <<<"$release_json"
+            )"
+            if [[ "$actual_assets_json" != "$expected_assets_json" ]] ||
+               ! jq -e --arg name "$provenance_name" \
+                 '[.assets[]? | select(.name == $name)] | length == 1' \
+                 <<<"$release_json" >/dev/null; then
+              echo "::error::${TAG} release asset names do not match the verified build"
+              return 1
+            fi
+
+            verify_dir="$(mktemp -d "${RUNNER_TEMP}/xy-release-verify.XXXXXX")"
+            if ! gh release download "$TAG" \
+              --repo "$REPO" \
+              --dir "$verify_dir" \
+              --pattern '*.whl' \
+              --pattern '*.tar.gz' \
+              --pattern "$provenance_name"; then
+              echo "::error::Could not download ${TAG} release assets for verification"
+              return 1
+            fi
+            verified_provenance="${verify_dir}/${provenance_name}"
+            if [[ ! -s "$verified_provenance" ]]; then
+              echo "::error::${TAG} release provenance asset is missing or empty"
+              return 1
+            fi
+
+            if ! gh attestation verify "$verified_provenance" \
+              --repo "$REPO" \
+              --signer-workflow "${REPO}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners >/dev/null; then
+              echo "::error::${TAG} release provenance was not signed by this tag workflow"
+              return 1
+            fi
+            if ! jq -e \
+              --arg tag "$TAG" \
+              --arg source_sha "$GITHUB_SHA" \
+              '.schema == "xy-release-provenance/v1" and
+               .tag == $tag and
+               .source_sha == $source_sha and
+               (.release_notes_sha256 | test("^[0-9a-f]{64}$")) and
+               (.distributions | type == "array" and length > 1) and
+               ([.distributions[].name] | length) ==
+                 ([.distributions[].name] | unique | length) and
+               all(.distributions[];
+                 (.name | endswith(".whl") or endswith(".tar.gz")) and
+                 (.sha256 | test("^[0-9a-f]{64}$")))' \
+              "$verified_provenance" >/dev/null; then
+              echo "::error::${TAG} release provenance content is invalid"
+              return 1
+            fi
+
+            actual_hashes_json="$(
+              for artifact in "$verify_dir"/*.whl "$verify_dir"/*.tar.gz; do
+                artifact_sha256="$(sha256sum "$artifact" | cut -d ' ' -f 1)"
+                jq -cn \
+                  --arg name "${artifact##*/}" \
+                  --arg sha256 "$artifact_sha256" \
+                  '{name: $name, sha256: $sha256}'
+              done | jq -sc 'sort_by(.name)'
+            )"
+            manifest_hashes_json="$(
+              jq -c \
+                '[.distributions[] | {name, sha256}] | sort_by(.name)' \
+                "$verified_provenance"
+            )"
+            if [[ "$actual_hashes_json" != "$expected_hashes_json" ||
+                  "$manifest_hashes_json" != "$expected_hashes_json" ]]; then
+              echo "::error::${TAG} release bytes do not match the verified build"
+              return 1
+            fi
+
+            manifest_sha256="$(
+              sha256sum "$verified_provenance" | cut -d ' ' -f 1
+            )"
+            footer="<!-- xy-release-provenance:v1:${TAG}:sha256:${manifest_sha256} -->"
+            release_notes="$(jq -r '.body // ""' <<<"$release_json")"
+            if [[ "$release_notes" != *$'\n\n'"$footer" ]]; then
+              echo "::error::${TAG} release notes are not bound to the signed provenance"
+              return 1
+            fi
+            notes_body="${release_notes%$'\n\n'"$footer"}"
+            actual_notes_sha256="$(
+              printf '%s' "$notes_body" | sha256sum | cut -d ' ' -f 1
+            )"
+            manifest_notes_sha256="$(
+              jq -r '.release_notes_sha256' "$verified_provenance"
+            )"
+            if [[ "$actual_notes_sha256" != "$manifest_notes_sha256" ]]; then
+              echo "::error::${TAG} release notes differ from the signed generated notes"
+              return 1
+            fi
+          }
 
           # `gh release create` publishes immediately. If a previous run made
           # the release but failed partway through uploading assets, refresh
@@ -368,26 +595,13 @@ jobs:
               --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName \
               2>/dev/null
           )"; then
-            is_draft="$(jq -r '.isDraft' <<<"$release_json")"
             is_immutable="$(jq -r '.isImmutable' <<<"$release_json")"
-            is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
-            release_name="$(jq -r '.name' <<<"$release_json")"
-            release_notes="$(jq -r '.body' <<<"$release_json")"
-            published_at="$(jq -r '.publishedAt' <<<"$release_json")"
-            release_tag="$(jq -r '.tagName' <<<"$release_json")"
-            actual_assets_json="$(
-              jq -c \
-                '[.assets[].name | select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
-                <<<"$release_json"
-            )"
             if [[ "$is_immutable" == "true" ]]; then
-              if [[ "$is_draft" == "false" &&
-                    "$is_prerelease" == "$expected_prerelease" &&
-                    "$release_name" == "$TAG" &&
-                    "$published_at" != "null" &&
-                    "$release_tag" == "$TAG" &&
-                    "$release_notes" == "$expected_notes" &&
-                    "$actual_assets_json" == "$expected_assets_json" ]]; then
+              # GitHub's generated-note inputs can change after publication.
+              # Verify the persisted body against its signed manifest instead
+              # of comparing it with freshly regenerated notes.
+              if release_metadata_matches "$release_json" &&
+                 verify_release_payload "$release_json"; then
                 echo "::notice::${TAG} is immutable and already matches the verified release"
                 exit 0
               fi
@@ -395,8 +609,12 @@ jobs:
               exit 1
             fi
 
+            if [[ ! -s "$provenance_file" || ! -s "$notes_file" ]]; then
+              echo "::error::Prepared release notes or provenance are missing"
+              exit 1
+            fi
             echo "::notice::${TAG} already exists; refreshing distribution assets"
-            gh release upload "$TAG" "${artifacts[@]}" --repo "$REPO" --clobber
+            gh release upload "$TAG" "${artifacts[@]}" "$provenance_file" --repo "$REPO" --clobber
             release_json="$(
               gh release view "$TAG" \
                 --repo "$REPO" \
@@ -436,25 +654,8 @@ jobs:
                 --repo "$REPO" \
                 --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
             )"
-            is_draft="$(jq -r '.isDraft' <<<"$release_json")"
-            is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
-            release_name="$(jq -r '.name' <<<"$release_json")"
-            release_notes="$(jq -r '.body' <<<"$release_json")"
-            published_at="$(jq -r '.publishedAt' <<<"$release_json")"
-            release_tag="$(jq -r '.tagName' <<<"$release_json")"
-            actual_assets_json="$(
-              jq -c \
-                '[.assets[].name | select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
-                <<<"$release_json"
-            )"
-            if [[ "$is_draft" != "false" ||
-                  "$is_prerelease" != "$expected_prerelease" ||
-                  "$release_name" != "$TAG" ||
-                  "$published_at" == "null" ||
-                  "$release_tag" != "$TAG" ||
-                  -z "$release_notes" ||
-                  "$release_notes" != "$expected_notes" ||
-                  "$actual_assets_json" != "$expected_assets_json" ]]; then
+            if ! release_metadata_matches "$release_json" ||
+               ! verify_release_payload "$release_json"; then
               echo "::error::${TAG} release metadata, notes, or assets are invalid after normalization"
               exit 1
             fi
@@ -462,9 +663,18 @@ jobs:
             exit 0
           fi
 
-          gh release create "$TAG" "${artifacts[@]}" \
-            --repo "$REPO" \
-            --verify-tag \
-            --title "$TAG" \
-            --notes-file "$notes_file" \
-            "${prerelease[@]}"
+          if [[ ! -s "$provenance_file" || ! -s "$notes_file" ]]; then
+            echo "::error::Prepared release notes or provenance are missing"
+            exit 1
+          fi
+          gh release create "$TAG" "${artifacts[@]}" "$provenance_file" --repo "$REPO" --verify-tag --title "$TAG" --notes-file "$notes_file" "${prerelease[@]}"
+          release_json="$(
+            gh release view "$TAG" \
+              --repo "$REPO" \
+              --json assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName
+          )"
+          if ! release_metadata_matches "$release_json" ||
+             ! verify_release_payload "$release_json"; then
+            echo "::error::${TAG} release metadata, notes, or assets are invalid after creation"
+            exit 1
+          fi

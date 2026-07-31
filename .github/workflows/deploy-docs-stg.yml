@@ -130,6 +130,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      attestations: read
     steps:
       # release.yml runs in parallel on the same tag and its wheel matrix is
       # slow, so poll rather than sample once. Prod must never document a
@@ -138,9 +139,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           REPO: ${{ github.repository }}
         run: |
+          shopt -s nullglob
           PYPI_VERSION="${VERSION#v}"
+          PROVENANCE_NAME="xy-release-provenance.json"
           EXPECTED_PRERELEASE=false
           if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
             EXPECTED_PRERELEASE=true
@@ -148,6 +152,7 @@ jobs:
           for attempt in $(seq 1 30); do
             RELEASED=false
             PUBLISHED=false
+            PROVENANCE_VALID=false
             ASSETS_MATCH=false
             if release_json="$(
               gh release view "$VERSION" \
@@ -162,9 +167,10 @@ jobs:
                  .tagName == $name and
                  .publishedAt != null and
                  .isPrerelease == $prerelease and
-                 (.body | endswith("<!-- xy-release-workflow:" + $name + " -->")) and
                  any(.assets[]?; .name | endswith(".whl")) and
-                 ([.assets[]? | select(.name | endswith(".tar.gz"))] | length) == 1' \
+                 ([.assets[]? | select(.name | endswith(".tar.gz"))] | length) == 1 and
+                 ([.assets[]? | select(.name == "xy-release-provenance.json")] |
+                   length) == 1' \
                 <<<"$release_json" >/dev/null; then
                 RELEASED=true
               fi
@@ -172,35 +178,126 @@ jobs:
             if pypi_json="$(
               curl -fsS "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null
             )"; then
-              PUBLISHED=true
+              # A yank is a withdrawal signal, not a usable release. Reject
+              # the entire version if any uploaded file has been yanked.
+              if jq -e \
+                '(.urls | length > 1) and
+                 all(.urls[]; .yanked == false) and
+                 any(.urls[]; .filename | endswith(".whl")) and
+                 ([.urls[] | select(.filename | endswith(".tar.gz"))] |
+                   length) == 1' \
+                <<<"$pypi_json" >/dev/null; then
+                PUBLISHED=true
+              fi
             fi
             if [[ "$RELEASED" == true && "$PUBLISHED" == true ]]; then
-              if github_assets="$(
-                   jq -c \
-                     '[.assets[]?.name |
-                       select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
-                     <<<"$release_json"
-                 )" &&
-                 pypi_assets="$(
-                   jq -c \
-                     '[.urls[]?.filename |
-                       select(endswith(".whl") or endswith(".tar.gz"))] | sort' \
-                     <<<"$pypi_json"
-                 )" &&
-                 [[ "$github_assets" == "$pypi_assets" ]]; then
-                ASSETS_MATCH=true
+              verify_dir="$(mktemp -d "${RUNNER_TEMP}/xy-promotion-verify.XXXXXX")"
+              if gh release download "$VERSION" \
+                --repo "$REPO" \
+                --dir "$verify_dir" \
+                --pattern '*.whl' \
+                --pattern '*.tar.gz' \
+                --pattern "$PROVENANCE_NAME"; then
+                provenance_file="${verify_dir}/${PROVENANCE_NAME}"
+                if [[ -s "$provenance_file" ]] &&
+                   gh attestation verify "$provenance_file" \
+                     --repo "$REPO" \
+                     --signer-workflow "${REPO}/.github/workflows/release.yml" \
+                     --source-ref "refs/tags/${VERSION}" \
+                     --source-digest "$SOURCE_SHA" \
+                     --deny-self-hosted-runners >/dev/null &&
+                   jq -e \
+                     --arg tag "$VERSION" \
+                     --arg source_sha "$SOURCE_SHA" \
+                     '.schema == "xy-release-provenance/v1" and
+                      .tag == $tag and
+                      .source_sha == $source_sha and
+                      (.release_notes_sha256 |
+                        test("^[0-9a-f]{64}$")) and
+                      (.distributions | type == "array" and length > 1) and
+                      ([.distributions[].name] | length) ==
+                        ([.distributions[].name] | unique | length) and
+                      all(.distributions[];
+                        (.name |
+                          endswith(".whl") or endswith(".tar.gz")) and
+                        (.sha256 | test("^[0-9a-f]{64}$")))' \
+                     "$provenance_file" >/dev/null; then
+                  manifest_sha256="$(
+                    sha256sum "$provenance_file" | cut -d ' ' -f 1
+                  )"
+                  footer="<!-- xy-release-provenance:v1:${VERSION}:sha256:${manifest_sha256} -->"
+                  release_notes="$(jq -r '.body // ""' <<<"$release_json")"
+                  if [[ "$release_notes" == *$'\n\n'"$footer" ]]; then
+                    notes_body="${release_notes%$'\n\n'"$footer"}"
+                    actual_notes_sha256="$(
+                      printf '%s' "$notes_body" |
+                        sha256sum |
+                        cut -d ' ' -f 1
+                    )"
+                    manifest_notes_sha256="$(
+                      jq -r '.release_notes_sha256' "$provenance_file"
+                    )"
+                    if [[ "$actual_notes_sha256" == "$manifest_notes_sha256" ]]; then
+                      PROVENANCE_VALID=true
+                    fi
+                  fi
+                fi
+
+                if [[ "$PROVENANCE_VALID" == true ]]; then
+                  github_hashes_json="$(
+                    for artifact in "$verify_dir"/*.whl "$verify_dir"/*.tar.gz; do
+                      artifact_sha256="$(
+                        sha256sum "$artifact" | cut -d ' ' -f 1
+                      )"
+                      jq -cn \
+                        --arg name "${artifact##*/}" \
+                        --arg sha256 "$artifact_sha256" \
+                        '{name: $name, sha256: $sha256}'
+                    done | jq -sc 'sort_by(.name)'
+                  )"
+                  manifest_hashes_json="$(
+                    jq -c \
+                      '[.distributions[] | {name, sha256}] | sort_by(.name)' \
+                      "$provenance_file"
+                  )"
+                  pypi_hashes_json="$(
+                    jq -c \
+                      '[.urls[] |
+                        select(.filename |
+                          endswith(".whl") or endswith(".tar.gz")) |
+                        {name: .filename, sha256: .digests.sha256}] |
+                       sort_by(.name)' \
+                      <<<"$pypi_json"
+                  )"
+                  if jq -e \
+                       'length > 1 and
+                        ([.[].name] | length) ==
+                          ([.[].name] | unique | length) and
+                        all(.[]; .sha256 |
+                          type == "string" and
+                          test("^[0-9a-f]{64}$"))' \
+                       <<<"$pypi_hashes_json" >/dev/null &&
+                     [[ "$github_hashes_json" == "$manifest_hashes_json" &&
+                        "$github_hashes_json" == "$pypi_hashes_json" ]]; then
+                    ASSETS_MATCH=true
+                  fi
+                fi
               fi
+              # A failed candidate can be retried up to 30 times. Remove the
+              # downloaded wheel set before polling again to bound disk use.
+              rm -rf -- "$verify_dir"
             fi
             if [[ "$RELEASED" == true &&
                   "$PUBLISHED" == true &&
+                  "$PROVENANCE_VALID" == true &&
                   "$ASSETS_MATCH" == true ]]; then
-              echo "::notice::${VERSION} is on GitHub Releases and PyPI"
+              echo "::notice::${VERSION} has signed release provenance and byte-identical, non-yanked GitHub/PyPI distributions"
               exit 0
             fi
-            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED} assets=${ASSETS_MATCH}; retrying in 60s"
+            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED} provenance=${PROVENANCE_VALID} assets=${ASSETS_MATCH}; retrying in 60s"
             sleep 60
           done
-          echo "::error::${VERSION} did not become release-ready (metadata, notes, or GitHub/PyPI assets missing or mismatched) — refusing to promote prod"
+          echo "::error::${VERSION} did not become release-ready (metadata, signed notes provenance, non-yanked PyPI files, or exact asset hashes missing/mismatched) — refusing to promote prod"
           exit 1
 
   helm-pr-prod:
