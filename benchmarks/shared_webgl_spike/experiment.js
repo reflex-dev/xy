@@ -930,8 +930,10 @@ class NativeBackend {
     chart.canvas.addEventListener("webglcontextrestored", () => {
       if (record.destroying) return;
       let rebuilt = false;
+      let nextPrograms = null;
       try {
-        record.programs = createProgramSet(gl);
+        nextPrograms = createProgramSet(gl);
+        record.programs = nextPrograms;
         record.lossExtension = gl.getExtension("WEBGL_lose_context");
         createChartGpu(gl, chart);
         chart.pickTarget = null;
@@ -940,6 +942,13 @@ class NativeBackend {
         this.app.onContextRestored(`Native context ${chart.index + 1} restored.`);
         rebuilt = true;
       } catch (error) {
+        if (!gl.isContextLost()) {
+          destroyChartGpu(gl, chart);
+          destroyProgramSet(gl, nextPrograms);
+        }
+        record.programs = null;
+        chart.gpu = null;
+        chart.pickTarget = null;
         chart.setState("error", "restore failed");
         this.app.log(`Native chart ${chart.index + 1} restore failed: ${error.message}`);
       }
@@ -959,6 +968,13 @@ class NativeBackend {
       createChartGpu(gl, chart);
       chart.setState("live");
     } catch (error) {
+      if (!gl.isContextLost()) {
+        destroyChartGpu(gl, chart);
+        destroyProgramSet(gl, record.programs);
+      }
+      record.programs = null;
+      chart.gpu = null;
+      chart.pickTarget = null;
       chart.setState("error", gl.isContextLost() ? "evicted" : "init failed");
       this.app.log(`Native chart ${chart.index + 1} initialization: ${error.message}`);
     }
@@ -984,7 +1000,21 @@ class NativeBackend {
     chart.frameByte = (chart.frameByte + 1) & 255;
     beginPass(gl, null, chart.pixelWidth, chart.pixelHeight, true);
     const timings = uploadAndDraw(gl, record.programs, chart);
+    if (gl.isContextLost()) {
+      record.programs = null;
+      chart.gpu = null;
+      chart.pickTarget = null;
+      chart.setState("lost", "evicted");
+      return null;
+    }
     if (stressState) poisonState(gl, record.programs, chart.pixelWidth, chart.pixelHeight);
+    if (gl.isContextLost()) {
+      record.programs = null;
+      chart.gpu = null;
+      chart.pickTarget = null;
+      chart.setState("lost", "evicted");
+      return null;
+    }
     return { ...timings, presentMs: 0 };
   }
 
@@ -1042,9 +1072,7 @@ class NativeBackend {
 
   getStats() {
     const created = this.records.filter((record) => record.gl).length;
-    const live = this.records.filter(
-      (record) => record.gl && !record.gl.isContextLost() && record.chart.gpu,
-    ).length;
+    const live = this.getLiveCharts().length;
     return {
       requestedContexts: this.records.length,
       createdContexts: created,
@@ -1060,10 +1088,29 @@ class NativeBackend {
     return record?.gl ? readGlIdentity(record.gl) : null;
   }
 
+  getLiveCharts() {
+    return this.records
+      .filter(
+        (record) =>
+          record.gl &&
+          !record.gl.isContextLost() &&
+          record.programs &&
+          record.chart.gpu &&
+          record.chart.card.dataset.state === "live",
+      )
+      .map((record) => record.chart);
+  }
+
   async cycleContext() {
     const record = this.records.find(
       (item) =>
-        item.gl && !item.gl.isContextLost() && item.lossExtension && !item.cycleResolve,
+        item.gl &&
+        !item.gl.isContextLost() &&
+        item.programs &&
+        item.chart.gpu &&
+        item.chart.card.dataset.state === "live" &&
+        item.lossExtension &&
+        !item.cycleResolve,
     );
     if (!record) return false;
     const extension = record.lossExtension;
@@ -1120,6 +1167,7 @@ class ExperimentApp {
     this.backend = null;
     this.charts = [];
     this.rebuilding = false;
+    this.activeOperation = null;
     this.needsDraw = true;
     this.frameSamples = createSampleBuffer();
     this.presentSamples = createSampleBuffer();
@@ -1178,11 +1226,31 @@ class ExperimentApp {
   }
 
   setStatus(message, state = "working", holdMilliseconds = 0) {
-    this.ui.status.textContent = message;
-    this.ui.health.dataset.state = state;
+    if (this.ui.status.textContent !== message) this.ui.status.textContent = message;
+    if (this.ui.health.dataset.state !== state) this.ui.health.dataset.state = state;
     if (holdMilliseconds > 0) {
       this.statusHoldUntil = performance.now() + holdMilliseconds;
     }
+  }
+
+  beginOperation(name) {
+    if (this.activeOperation) {
+      this.log(`Skipped ${name}; ${this.activeOperation} is already running.`);
+      return false;
+    }
+    this.activeOperation = name;
+    this.ui.verify.disabled = true;
+    this.ui.benchmark.disabled = true;
+    this.ui.cycle.disabled = true;
+    return true;
+  }
+
+  endOperation(name) {
+    if (this.activeOperation !== name) return;
+    this.activeOperation = null;
+    this.ui.verify.disabled = false;
+    this.ui.benchmark.disabled = false;
+    this.ui.cycle.disabled = false;
   }
 
   onContextLost(message) {
@@ -1398,30 +1466,45 @@ class ExperimentApp {
   }
 
   async verify() {
-    if (!this.backend || this.rebuilding) return null;
-    this.ui.verify.disabled = true;
+    if (!this.backend || this.rebuilding || !this.beginOperation("verify")) return null;
+    try {
+      return await this.runVerification();
+    } finally {
+      this.endOperation("verify");
+    }
+  }
+
+  async runVerification({ charts = this.charts, requireFullAvailability = true } = {}) {
     const wasStreaming = this.ui.streaming.checked;
     this.ui.streaming.checked = false;
     const fixedTime = 2.375;
     const canaryFailures = [];
     const pickFailures = [];
+    const renderedCharts = [];
     let rendered = 0;
 
     try {
       const verificationSetup =
-        this.backend.prepareVerification?.(this.charts[0]) || { cropOffsetPixels: 0 };
-      for (const chart of this.charts) {
+        this.backend.prepareVerification?.(charts[0]) || { cropOffsetPixels: 0 };
+
+      // Native charts own independent contexts, so each one needs a priming draw
+      // that leaves its context poisoned before the draw whose canary is inspected.
+      if (this.mode === "native") {
+        for (const chart of charts) this.backend.render(chart, fixedTime, true);
+      }
+
+      for (const chart of charts) {
         const timing = this.backend.render(chart, fixedTime, true);
         if (!timing) continue;
         rendered += 1;
+        renderedCharts.push(chart);
         const inspection = this.backend.inspectCanary(chart);
         if (!inspection.pass) {
           canaryFailures.push({ chart: chart.index + 1, ...inspection });
         }
       }
 
-      const liveCharts = this.charts.filter((chart) => chart.card.dataset.state === "live");
-      const testCharts = liveCharts;
+      const testCharts = renderedCharts;
       const indices = [128, 512, 896];
       for (const chart of testCharts) {
         for (const expected of indices) {
@@ -1434,12 +1517,23 @@ class ExperimentApp {
 
       const stats = this.backend.getStats();
       const fullyLive = stats.liveCharts === stats.requestedCharts;
+      const expectedCharts = charts.length;
+      const currentLiveCharts =
+        this.backend.getLiveCharts?.() ||
+        this.charts.filter((chart) => chart.card.dataset.state === "live");
+      const currentLiveSet = new Set(currentLiveCharts);
+      const liveSetMatches =
+        currentLiveCharts.length === expectedCharts &&
+        charts.every((chart) => currentLiveSet.has(chart));
+      const availabilityPass = requireFullAvailability ? fullyLive : liveSetMatches;
       const contextInvariant = this.mode !== "shared" || stats.liveContexts === 1;
-      const coherentLiveSet = rendered === stats.liveCharts;
+      const coherentLiveSet = requireFullAvailability
+        ? rendered === stats.liveCharts
+        : rendered === expectedCharts && liveSetMatches;
       const coverageComplete =
-        rendered === stats.requestedCharts && testCharts.length === stats.requestedCharts;
+        rendered === expectedCharts && testCharts.length === expectedCharts;
       const pass =
-        fullyLive &&
+        availabilityPass &&
         contextInvariant &&
         coherentLiveSet &&
         coverageComplete &&
@@ -1451,6 +1545,9 @@ class ExperimentApp {
         requestedCharts: stats.requestedCharts,
         liveCharts: stats.liveCharts,
         fullyLive,
+        expectedCharts,
+        requireFullAvailability,
+        liveSetMatches,
         liveContexts: stats.liveContexts,
         contextInvariant,
         coherentLiveSet,
@@ -1466,31 +1563,33 @@ class ExperimentApp {
       };
       window.__LAST_CHECK = this.lastCheck;
       window.__EXPERIMENT_DONE = true;
-      const missingCharts = stats.requestedCharts - stats.liveCharts;
+      const missingCharts = Math.max(0, expectedCharts - rendered);
       this.ui.lastCheck.textContent = pass
         ? `PASS · ${rendered} canaries · ${this.lastCheck.pickChecks} picks`
         : `FAIL · ${missingCharts} unavailable · ${canaryFailures.length} canary · ${pickFailures.length} pick`;
       this.setStatus(
         pass
-          ? `Checks passed: isolated frames, orientation, state reset, and picking are correct.`
-          : `Checks failed: ${missingCharts} unavailable chart(s), ${
+          ? requireFullAvailability
+            ? `Checks passed: isolated frames, orientation, state reset, and picking are correct.`
+            : `Recovery checks passed for all ${expectedCharts} pre-cycle live charts.`
+          : `${requireFullAvailability ? "Checks" : "Recovery checks"} failed: ` +
+            `${missingCharts} expected chart(s) unavailable, ${
               canaryFailures.length + pickFailures.length
             } rendering issue(s).`,
         pass ? "pass" : "fail",
         4000,
       );
-      this.log(pass ? "Correctness checks passed." : "Correctness checks failed.", this.lastCheck);
+      const checkLabel = requireFullAvailability ? "Correctness" : "Recovery";
+      this.log(`${checkLabel} checks ${pass ? "passed" : "failed"}.`, this.lastCheck);
       return this.lastCheck;
     } finally {
       this.ui.streaming.checked = wasStreaming;
-      this.ui.verify.disabled = false;
       this.needsDraw = true;
     }
   }
 
   async benchmark(milliseconds = 3000) {
-    if (!this.backend || this.rebuilding) return null;
-    this.ui.benchmark.disabled = true;
+    if (!this.backend || this.rebuilding || !this.beginOperation("benchmark")) return null;
     const wasStreaming = this.ui.streaming.checked;
     try {
       this.ui.streaming.checked = true;
@@ -1542,10 +1641,13 @@ class ExperimentApp {
           p50: percentile(this.drawSamples, 0.5),
           p95: percentile(this.drawSamples, 0.95),
         },
-        presentMsPerChart: {
-          p50: percentile(this.presentSamples, 0.5),
-          p95: percentile(this.presentSamples, 0.95),
-        },
+        presentMsPerChart:
+          this.mode === "shared"
+            ? {
+                p50: percentile(this.presentSamples, 0.5),
+                p95: percentile(this.presentSamples, 0.95),
+              }
+            : null,
         stateStress: this.ui.poisonState.checked,
         timingScope: "JavaScript CPU submission; not completed GPU execution",
         environment: {
@@ -1581,15 +1683,16 @@ class ExperimentApp {
       return result;
     } finally {
       this.ui.streaming.checked = wasStreaming;
-      this.ui.benchmark.disabled = false;
       this.needsDraw = true;
+      this.endOperation("benchmark");
     }
   }
 
   async cycleContext() {
-    if (!this.backend || this.rebuilding) return false;
-    this.ui.cycle.disabled = true;
+    if (!this.backend || this.rebuilding || !this.beginOperation("cycle")) return false;
     try {
+      const recoveryCharts =
+        this.mode === "native" ? this.backend.getLiveCharts() : this.charts;
       this.setStatus(
         this.mode === "shared"
           ? "Losing the one shared context; every client should pause together…"
@@ -1608,10 +1711,13 @@ class ExperimentApp {
       }
       this.needsDraw = true;
       await nextFrame();
-      const check = await this.verify();
+      const check = await this.runVerification({
+        charts: recoveryCharts,
+        requireFullAvailability: this.mode === "shared",
+      });
       return Boolean(check?.pass);
     } finally {
-      this.ui.cycle.disabled = false;
+      this.endOperation("cycle");
     }
   }
 
@@ -1623,7 +1729,8 @@ class ExperimentApp {
       stats: this.backend?.getStats() || null,
       observedFps: this.fpsObserved,
       frameP95Ms: percentile(this.frameSamples, 0.95),
-      presentP95Ms: percentile(this.presentSamples, 0.95),
+      presentP95Ms:
+        this.mode === "shared" ? percentile(this.presentSamples, 0.95) : null,
       contextLosses: this.contextLosses,
       contextRestores: this.contextRestores,
       lastCheck: this.lastCheck,

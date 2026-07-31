@@ -64,6 +64,17 @@ def _base() -> dict:
     return {"schema_version": 2, "environment": _environment()}
 
 
+def _shared_webgl_spike_report() -> dict:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "shared_webgl_spike"
+        / "results"
+        / "chromium-2026-07-31.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _category_registry(*ids: str) -> tuple[list[dict], list[dict]]:
     categories = [_category(category_id) for category_id in ids]
     return categories, categories
@@ -797,6 +808,7 @@ def _transport_loopback_report() -> dict:
         (_kernel_native_report(), "kernel-native"),
         (_interaction_browser_report(), "interaction-browser"),
         (_dashboard_browser_report(), "dashboard-browser"),
+        (_shared_webgl_spike_report(), "shared-webgl-spike"),
         (_workflow_native_report(), "workflow-native"),
         (_line_decimation_report(), "line-decimation"),
         (_install_footprint_report(), "install-footprint"),
@@ -837,6 +849,80 @@ def test_benchmark_report_summary_groups_status_detail_by_status_class() -> None
     summary = verify_benchmark_report.summarize_report(payload, kind="scatter-vs")
 
     assert "statuses: ok:1, skipped:1" in summary
+
+
+def test_shared_webgl_spike_summary_names_profiles() -> None:
+    summary = verify_benchmark_report.summarize_report(
+        _shared_webgl_spike_report(), kind="shared-webgl-spike"
+    )
+
+    assert "profiles: native, shared" in summary
+
+
+def test_shared_webgl_spike_rejects_workload_mismatch(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["native"]["benchmark"]["points_per_chart"] = 2048
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("workloads must match" in error for error in errors)
+
+
+def test_shared_webgl_spike_rejects_negative_metric(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["benchmark"]["duration_ms"] = -1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("profiles.shared.benchmark.duration_ms must be > 0" in error for error in errors)
+
+
+def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    native = payload["profiles"]["native"]
+    native["live_charts"] = native["requested_charts"]
+    native["live_contexts"] = native["requested_charts"]
+    native["fully_live"] = True
+    native["correctness"]["pass"] = True
+    native["correctness"]["canary_checks"] = native["requested_charts"]
+    native["correctness"]["pick_checks"] = native["requested_charts"] * 3
+    native["correctness"].pop("availability_failure")
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
+def test_shared_webgl_spike_rejects_inconsistent_correctness_coverage(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["correctness"]["pick_checks"] -= 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("pick_checks must equal three checks per live chart" in error for error in errors)
+    assert any("pass is inconsistent with coverage and failures" in error for error in errors)
+
+
+def test_shared_webgl_spike_rejects_inaccurate_state_stress_method(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["native"]["correctness"]["state_stress_method"] = "unprimed"
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("state_stress_method must be" in error for error in errors)
+
+
+def test_shared_webgl_spike_requires_browser_environment(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    del payload["environment"]["webgl"]["renderer"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("environment.webgl" in error and "renderer" in error for error in errors)
 
 
 def test_scatter_report_rejects_ceiling_above_budget(tmp_path: Path) -> None:

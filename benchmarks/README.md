@@ -277,6 +277,9 @@ exercises state isolation, crop/orientation canaries, picking, and context resto
 
 ```bash
 python3 -m http.server 4173 --directory benchmarks/shared_webgl_spike
+make check-benchmark-report \
+  BENCHMARK_JSON=benchmarks/shared_webgl_spike/results/chromium-2026-07-31.json \
+  BENCHMARK_KIND=shared-webgl-spike
 ```
 
 This is architecture evidence, not the production `ChartView` implementation or a performance

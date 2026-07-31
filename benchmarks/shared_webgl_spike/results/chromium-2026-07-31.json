@@ -1,13 +1,64 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "kind": "shared-webgl-spike",
   "source_issue": "https://github.com/reflex-dev/xy/issues/407",
   "base_commit": "d505ef57",
+  "benchmark_categories": [
+    {
+      "id": "many_chart_dashboards",
+      "name": "Many-chart dashboards",
+      "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
+      "metrics": "payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
+      "harness": "benchmarks/bench_dashboard.py",
+      "status": "tracked",
+      "goal": "Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics."
+    }
+  ],
+  "tracked_categories": [
+    {
+      "id": "many_chart_dashboards",
+      "name": "Many-chart dashboards",
+      "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
+      "metrics": "payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
+      "harness": "benchmarks/bench_dashboard.py",
+      "status": "tracked",
+      "goal": "Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics."
+    }
+  ],
   "environment": {
-    "date": "2026-07-31",
+    "generated_at_utc": "2026-07-31T23:14:14Z",
+    "python": {
+      "version": "3.14.6",
+      "implementation": "CPython",
+      "compiler": "Clang 21.0.0 (clang-2100.0.123.102)"
+    },
+    "platform": {
+      "system": "Darwin",
+      "release": "25.5.0",
+      "version": "Darwin Kernel Version 25.5.0: Tue Jun  9 22:28:34 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6050",
+      "machine": "arm64",
+      "processor": "arm"
+    },
+    "cpu_count": 18,
+    "package_versions": {
+      "xy": null
+    },
+    "executables": {
+      "node": "v26.0.0",
+      "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26) (Homebrew)",
+      "cargo": "cargo 1.96.1 (356927216 2026-06-26) (Homebrew)",
+      "chromium": "Chrome 150.0.0.0 (Codex in-app browser)"
+    },
+    "xy_backend": null,
+    "browser_renderer": "hardware",
+    "git": {
+      "commit": "2e169101f16cfdbe4881a704e3fe095379dc7b9e",
+      "branch": "agent/shared-webgl-spike",
+      "dirty": true
+    },
     "browser": "Codex in-app browser",
     "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-    "platform": "MacIntel",
+    "browser_platform": "MacIntel",
     "webgl": {
       "vendor": "Google Inc. (Apple)",
       "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
@@ -37,7 +88,9 @@
         "pick_checks": 150,
         "pick_failures": 0,
         "crop_offset_pixels": 17,
-        "state_stress": true
+        "state_stress": true,
+        "state_stress_method": "sequential-poison-between-chart-renders",
+        "verified_at_utc": "2026-07-31T23:12:10Z"
       },
       "recovery": {
         "context_losses": 1,
@@ -84,7 +137,9 @@
         "canary_failures": 0,
         "pick_checks": 48,
         "pick_failures": 0,
-        "state_stress": true
+        "state_stress": true,
+        "state_stress_method": "poisoned-prime-then-inspected-render",
+        "verified_at_utc": "2026-07-31T23:14:14Z"
       },
       "benchmark": {
         "duration_ms": 3000.5999999046326,

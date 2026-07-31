@@ -606,7 +606,7 @@ footer {
   text-align: center;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1380px) {
   .control-deck {
     grid-template-columns: 170px minmax(180px, 1fr) 112px repeat(3, auto);
   }
@@ -614,13 +614,25 @@ footer {
   .button-group {
     grid-column: 1 / -1;
   }
+}
 
+@media (max-width: 1280px) {
   .chart-grid--dense {
     grid-template-columns: repeat(8, minmax(108px, 1fr));
   }
 }
 
-@media (max-width: 940px) {
+@media (max-width: 992px) {
+  .control-deck {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .switch {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 952px) {
   .hero {
     grid-template-columns: 1fr;
     padding-top: 46px;
@@ -632,11 +644,6 @@ footer {
 
   .control-deck {
     position: static;
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .switch {
-    justify-content: center;
   }
 
   .metrics {
@@ -725,6 +732,12 @@ footer {
   .chart-grid,
   .chart-grid--dense {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  .control-deck {
+    grid-template-columns: 1fr;
   }
 }
 

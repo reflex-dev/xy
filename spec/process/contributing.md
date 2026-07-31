@@ -100,7 +100,7 @@ make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter
 
 `BENCHMARK_KIND` accepts `auto`, `scatter-vs`, `core-2d`,
 `pyplot-vs-matplotlib`, `scatter-native`, `heatmap-native`, `kernel-native`,
-`interaction-browser`, `dashboard-browser`, `workflow-native`,
+`interaction-browser`, `dashboard-browser`, `shared-webgl-spike`, `workflow-native`,
 `line-decimation`, `install-footprint`, and `transport-loopback`; the
 authoritative list is `KNOWN_KINDS` in `scripts/verify_benchmark_report.py`. The
 verifier prints a compact report summary with the detected kind, row count,

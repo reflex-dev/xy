@@ -27,6 +27,7 @@ KNOWN_KINDS = (
     "kernel-native",
     "interaction-browser",
     "dashboard-browser",
+    "shared-webgl-spike",
     "workflow-native",
     "line-decimation",
     "install-footprint",
@@ -147,6 +148,11 @@ def _require_nonnegative_integer(
         errors.append(f"{path}.{key} must be a nonnegative integer")
     elif value < 0:
         errors.append(f"{path}.{key} must be >= 0")
+
+
+def _require_boolean(obj: dict[str, Any], key: str, path: str, errors: list[str]) -> None:
+    if not isinstance(obj.get(key), bool):
+        errors.append(f"{path}.{key} must be a boolean")
 
 
 def _require_optional_nonnegative_number(
@@ -1840,6 +1846,300 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         errors.append(f"{path}.render_status must be {expected_status!r}")
 
 
+def _validate_shared_webgl_quantiles(
+    value: Any, path: str, keys: tuple[str, ...], errors: list[str]
+) -> None:
+    _require_keys(value, set(keys), path, errors)
+    if not isinstance(value, dict):
+        return
+    for key in keys:
+        _require_nonnegative_number(value, key, path, errors)
+    ordered = [value.get(key) for key in keys]
+    if all(_is_number(item) for item in ordered) and ordered != sorted(ordered):
+        errors.append(f"{path} quantiles must be nondecreasing")
+
+
+def _validate_shared_webgl_environment(report: dict[str, Any], errors: list[str]) -> None:
+    env = report.get("environment")
+    required = {
+        "browser",
+        "user_agent",
+        "browser_platform",
+        "webgl",
+        "viewport_css_pixels",
+        "device_pixel_ratio",
+        "canvas_pixels",
+    }
+    _require_keys(env, required, "environment", errors)
+    if not isinstance(env, dict):
+        return
+    for key in ("browser", "user_agent", "browser_platform"):
+        _require_string_value(env.get(key), f"environment.{key}", errors)
+
+    webgl = env.get("webgl")
+    webgl_keys = {"vendor", "renderer", "version", "shading_language_version"}
+    _require_keys(webgl, webgl_keys, "environment.webgl", errors)
+    if isinstance(webgl, dict):
+        for key in webgl_keys:
+            _require_string_value(webgl.get(key), f"environment.webgl.{key}", errors)
+
+    for key in ("viewport_css_pixels", "canvas_pixels"):
+        size = env.get(key)
+        size_path = f"environment.{key}"
+        _require_keys(size, {"width", "height"}, size_path, errors)
+        if isinstance(size, dict):
+            _require_positive_integer(size, "width", size_path, errors)
+            _require_positive_integer(size, "height", size_path, errors)
+    _require_positive_number(env, "device_pixel_ratio", "environment", errors)
+
+    executables = env.get("executables")
+    if isinstance(executables, dict):
+        _require_string_value(
+            executables.get("chromium"), "environment.executables['chromium']", errors
+        )
+
+
+def _validate_shared_webgl_profile(
+    profile_value: Any, profile: str, errors: list[str]
+) -> tuple[Any, Any, Any] | None:
+    path = f"profiles.{profile}"
+    required = {
+        "requested_charts",
+        "live_charts",
+        "live_contexts",
+        "fully_live",
+        "correctness",
+        "benchmark",
+    }
+    required.add("recovery" if profile == "shared" else "created_contexts")
+    _require_keys(profile_value, required, path, errors)
+    if not isinstance(profile_value, dict):
+        return None
+
+    _require_positive_integer(profile_value, "requested_charts", path, errors)
+    _require_nonnegative_integer(profile_value, "live_charts", path, errors)
+    _require_nonnegative_integer(profile_value, "live_contexts", path, errors)
+    _require_boolean(profile_value, "fully_live", path, errors)
+    requested = profile_value.get("requested_charts")
+    live = profile_value.get("live_charts")
+    contexts = profile_value.get("live_contexts")
+    if (
+        isinstance(requested, int)
+        and not isinstance(requested, bool)
+        and isinstance(live, int)
+        and not isinstance(live, bool)
+    ):
+        if live > requested:
+            errors.append(f"{path}.live_charts must be <= requested_charts")
+        if isinstance(profile_value.get("fully_live"), bool) and profile_value["fully_live"] != (
+            live == requested
+        ):
+            errors.append(f"{path}.fully_live is inconsistent with chart counts")
+    if profile == "shared" and isinstance(live, int) and live > 0 and contexts != 1:
+        errors.append(f"{path}.live_contexts must be 1 while shared charts are live")
+    if profile == "native":
+        _require_nonnegative_integer(profile_value, "created_contexts", path, errors)
+        if isinstance(live, int) and not isinstance(live, bool) and contexts != live:
+            errors.append(f"{path}.live_contexts must equal live_charts")
+
+    correctness = profile_value.get("correctness")
+    correctness_path = f"{path}.correctness"
+    correctness_keys = {
+        "pass",
+        "canary_checks",
+        "canary_failures",
+        "pick_checks",
+        "pick_failures",
+        "state_stress",
+        "state_stress_method",
+        "verified_at_utc",
+    }
+    if profile == "shared":
+        correctness_keys.add("crop_offset_pixels")
+    elif profile_value.get("fully_live") is False:
+        correctness_keys.add("availability_failure")
+    _require_keys(correctness, correctness_keys, correctness_path, errors)
+    if isinstance(correctness, dict):
+        _require_boolean(correctness, "pass", correctness_path, errors)
+        _require_boolean(correctness, "state_stress", correctness_path, errors)
+        _require_string_value(
+            correctness.get("state_stress_method"),
+            f"{correctness_path}.state_stress_method",
+            errors,
+        )
+        expected_stress_method = (
+            "sequential-poison-between-chart-renders"
+            if profile == "shared"
+            else "poisoned-prime-then-inspected-render"
+        )
+        if correctness.get("state_stress_method") != expected_stress_method:
+            errors.append(
+                f"{correctness_path}.state_stress_method must be {expected_stress_method!r}"
+            )
+        verified_at_utc = correctness.get("verified_at_utc")
+        if not isinstance(verified_at_utc, str) or not verified_at_utc.endswith("Z"):
+            errors.append(
+                f"{correctness_path}.verified_at_utc must be an ISO UTC string ending in Z"
+            )
+        for key in ("canary_checks", "canary_failures", "pick_checks", "pick_failures"):
+            _require_nonnegative_integer(correctness, key, correctness_path, errors)
+        canary_checks = correctness.get("canary_checks")
+        canary_failures = correctness.get("canary_failures")
+        pick_checks = correctness.get("pick_checks")
+        pick_failures = correctness.get("pick_failures")
+        if isinstance(live, int) and not isinstance(live, bool):
+            if canary_checks != live:
+                errors.append(f"{correctness_path}.canary_checks must equal live_charts")
+            if pick_checks != live * 3:
+                errors.append(
+                    f"{correctness_path}.pick_checks must equal three checks per live chart"
+                )
+        if (
+            isinstance(canary_checks, int)
+            and not isinstance(canary_checks, bool)
+            and isinstance(canary_failures, int)
+            and not isinstance(canary_failures, bool)
+            and canary_failures > canary_checks
+        ):
+            errors.append(f"{correctness_path}.canary_failures must be <= canary_checks")
+        if (
+            isinstance(pick_checks, int)
+            and not isinstance(pick_checks, bool)
+            and isinstance(pick_failures, int)
+            and not isinstance(pick_failures, bool)
+            and pick_failures > pick_checks
+        ):
+            errors.append(f"{correctness_path}.pick_failures must be <= pick_checks")
+        expected_pass = (
+            profile_value.get("fully_live") is True
+            and correctness.get("state_stress") is True
+            and canary_checks == live
+            and canary_failures == 0
+            and isinstance(live, int)
+            and not isinstance(live, bool)
+            and pick_checks == live * 3
+            and pick_failures == 0
+        )
+        if isinstance(correctness.get("pass"), bool) and correctness["pass"] != expected_pass:
+            errors.append(f"{correctness_path}.pass is inconsistent with coverage and failures")
+        if profile == "shared":
+            _require_positive_integer(correctness, "crop_offset_pixels", correctness_path, errors)
+        elif profile_value.get("fully_live") is False:
+            _require_string_value(
+                correctness.get("availability_failure"),
+                f"{correctness_path}.availability_failure",
+                errors,
+            )
+
+    if profile == "shared":
+        recovery = profile_value.get("recovery")
+        recovery_path = f"{path}.recovery"
+        recovery_keys = {
+            "context_losses",
+            "context_restores",
+            "live_charts_after_restore",
+            "correctness_after_restore",
+            "visible_frames_during_loss_checked",
+        }
+        _require_keys(recovery, recovery_keys, recovery_path, errors)
+        if isinstance(recovery, dict):
+            for key in ("context_losses", "context_restores", "live_charts_after_restore"):
+                _require_nonnegative_integer(recovery, key, recovery_path, errors)
+            _require_boolean(recovery, "correctness_after_restore", recovery_path, errors)
+            _require_boolean(recovery, "visible_frames_during_loss_checked", recovery_path, errors)
+
+    benchmark = profile_value.get("benchmark")
+    benchmark_path = f"{path}.benchmark"
+    benchmark_keys = {
+        "duration_ms",
+        "points_per_chart",
+        "dense",
+        "target_fps",
+        "observed_fps",
+        "productive_batches",
+        "expected_batches",
+        "dropped_intervals",
+        "chart_presentations",
+        "chart_presentations_per_second",
+        "frame_ms",
+        "state_stress",
+        "context_losses_during_run",
+        "context_restores_during_run",
+    }
+    if profile == "shared":
+        benchmark_keys.add("present_ms_per_chart")
+    _require_keys(benchmark, benchmark_keys, benchmark_path, errors)
+    if not isinstance(benchmark, dict):
+        return None
+    for key in ("duration_ms", "target_fps"):
+        _require_positive_number(benchmark, key, benchmark_path, errors)
+    for key in ("observed_fps", "chart_presentations_per_second"):
+        _require_nonnegative_number(benchmark, key, benchmark_path, errors)
+    _require_positive_integer(benchmark, "points_per_chart", benchmark_path, errors)
+    for key in (
+        "productive_batches",
+        "expected_batches",
+        "dropped_intervals",
+        "chart_presentations",
+        "context_losses_during_run",
+        "context_restores_during_run",
+    ):
+        _require_nonnegative_integer(benchmark, key, benchmark_path, errors)
+    _require_boolean(benchmark, "dense", benchmark_path, errors)
+    _require_boolean(benchmark, "state_stress", benchmark_path, errors)
+    _validate_shared_webgl_quantiles(
+        benchmark.get("frame_ms"),
+        f"{benchmark_path}.frame_ms",
+        ("p50", "p95", "p99"),
+        errors,
+    )
+    present = benchmark.get("present_ms_per_chart")
+    if profile == "shared" or present is not None:
+        _validate_shared_webgl_quantiles(
+            present, f"{benchmark_path}.present_ms_per_chart", ("p50", "p95"), errors
+        )
+    return (
+        benchmark.get("points_per_chart"),
+        benchmark.get("dense"),
+        benchmark.get("target_fps"),
+    )
+
+
+def _validate_shared_webgl_spike(report: dict[str, Any], errors: list[str]) -> None:
+    required = {
+        "kind",
+        "source_issue",
+        "base_commit",
+        "benchmark_categories",
+        "tracked_categories",
+        "profiles",
+        "timing_scope",
+    }
+    _require_keys(report, required, "report", errors)
+    if report.get("kind") != "shared-webgl-spike":
+        errors.append("report.kind must be 'shared-webgl-spike'")
+    for key in ("source_issue", "base_commit", "timing_scope"):
+        _require_string_value(report.get(key), f"report.{key}", errors)
+
+    category_ids = _validate_categories(report, errors)
+    if "many_chart_dashboards" not in category_ids:
+        errors.append("shared-webgl-spike must register the many_chart_dashboards category")
+    _validate_shared_webgl_environment(report, errors)
+
+    profiles = report.get("profiles")
+    _require_keys(profiles, {"shared", "native"}, "profiles", errors)
+    if not isinstance(profiles, dict):
+        return
+    shared_workload = _validate_shared_webgl_profile(profiles.get("shared"), "shared", errors)
+    native_workload = _validate_shared_webgl_profile(profiles.get("native"), "native", errors)
+    if (
+        shared_workload is not None
+        and native_workload is not None
+        and shared_workload != native_workload
+    ):
+        errors.append("shared and native benchmark workloads must match")
+
+
 def _validate_workflow_native(report: dict[str, Any], errors: list[str]) -> None:
     _require_native_backend(report, "workflow-native", errors)
     _require_keys(
@@ -2083,10 +2383,9 @@ def summarize_report(report: dict[str, Any], *, kind: str) -> list[str]:
     env = report.get("environment") if isinstance(report.get("environment"), dict) else {}
     git = env.get("git") if isinstance(env.get("git"), dict) else {}
 
-    summary = [
-        f"kind: {kind}",
-        f"rows: {len(rows)}",
-    ]
+    summary = [f"kind: {kind}"]
+    if kind != "shared-webgl-spike":
+        summary.append(f"rows: {len(rows)}")
 
     status_counts = _count_statuses(rows)
     if status_counts:
@@ -2102,6 +2401,10 @@ def summarize_report(report: dict[str, Any], *, kind: str) -> list[str]:
         summary.append(f"benchmark_categories: {len(categories)}")
     if isinstance(tracked, list):
         summary.append(f"tracked_categories: {len(tracked)}")
+    if kind == "shared-webgl-spike":
+        profiles = report.get("profiles")
+        if isinstance(profiles, dict):
+            summary.append(f"profiles: {', '.join(sorted(profiles))}")
     if env.get("xy_backend") is not None:
         summary.append(f"backend: {env['xy_backend']}")
     commit = git.get("commit")
@@ -2143,6 +2446,8 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_interaction_browser(report, errors)
     elif selected == "dashboard-browser":
         _validate_dashboard_browser(report, errors)
+    elif selected == "shared-webgl-spike":
+        _validate_shared_webgl_spike(report, errors)
     elif selected == "workflow-native":
         _validate_workflow_native(report, errors)
     elif selected == "transport-loopback":
