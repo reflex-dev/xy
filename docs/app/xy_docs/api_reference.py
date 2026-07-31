@@ -73,8 +73,8 @@ CHART_FACTORY_GROUPS = (
             xy.triangle_mesh_chart,
         ),
     ),
-    ("Annotations", (xy.chart,)),
-    ("Facets and Layers", (xy.chart, xy.facet_chart)),
+    ("Annotations and Layers", (xy.chart,)),
+    ("Facets", (xy.facet_chart,)),
 )
 _CHART_FACTORY_COMPONENTS = frozenset(
     factory for _group_name, factories in CHART_FACTORY_GROUPS for factory in factories
