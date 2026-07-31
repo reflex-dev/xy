@@ -21,11 +21,11 @@ screen-bounded performance core, but the stable commitments today are narrower:
   wheels, the Rust core. The JS bundles are a generated artifact (not committed to
   git): the build hook builds them into the wheel/sdist, so **end users do not need
   Rust, Node, npm, or a CDN.**
-- Source distributions include the release support surface: docs, tests,
-  benchmark harnesses/baselines, scripts, Rust/JS source, and the example apps'
-  source (FastAPI and Reflex). Charts are generated live by the apps, so no
-  static chart HTML is committed or packaged. The prebuilt render client is built
-  into the sdist by the hook, so installing from an sdist needs no Node.
+- Source distributions are deliberately build-only: the `xy` package, Rust and
+  render-client source, package manifests, build hook, project metadata, and
+  license/readme files. Repository-only docs, tests, gallery evidence,
+  benchmarks, scripts, and examples stay out. The prebuilt render client is
+  built into the sdist by the hook, so installing from an sdist needs no Node.
 - Building from a raw source checkout (`pip install` from a clone, or the dev
   workflow) requires a Rust toolchain for the native core and Node/npm for the
   render client — the same two toolchains CI uses. The two differ in strictness:
@@ -85,7 +85,7 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching the archive's own `xy-<version>` root, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| sdist | Source archive contains only required package/Rust/JS build inputs and bundles, with `PKG-INFO` version/dependencies matching the archive's own `xy-<version>` root, no repository-only content, no duplicate or unsafe members, and no generated/native junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | reflex-xy dist | The adapter's single pure `py3-none-any` wheel + sdist carry the `reflex_xy` package with its `XYChart.jsx` asset, no compiled library, **no render-client copy** (the client links out of the installed xy wheel), coherent name/version/floor/dependency metadata, and — on a tag build — a version exactly equal to the `reflex-xy-vX.Y.Z` tag | `python scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/* [--tag reflex-xy-vX.Y.Z]` |
@@ -384,16 +384,16 @@ Before tagging a release:
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected
-  `PKG-INFO` package name, Python floor, runtime dependencies, docs, tests,
-  scripts, benchmark harnesses/baselines, the example apps' source, and no
-  native binaries or generated caches.
+  `PKG-INFO` package name, Python floor, runtime dependencies and optional
+  extras, complete package/Rust/JS build inputs, and no repository-only files,
+  native binaries, generated caches, unsafe paths, or duplicate members.
 - Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
   install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
-  `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
-  file exactly once with matching `sha256` and size fields. Wheels must stay
-  package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
-  are sdist-only.
+  `anywidget>=0.9`, `numpy>=1.24`, and the pinned Matplotlib compatibility
+  extra; wheel `RECORD` must list every archive file exactly once with matching
+  `sha256` and size fields. Wheels and sdists both exclude repository-only docs,
+  tests, benchmarks, scripts, gallery evidence, and example apps.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm `spec/api/api-examples.md` runs against the tagged API.
 ### reflex-xy releases

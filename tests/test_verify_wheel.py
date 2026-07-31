@@ -409,11 +409,23 @@ def test_verify_wheel_rejects_missing_text_resource_renderer(
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
-def test_verify_wheel_rejects_missing_generated_pyplot_inventory(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "member",
+    [
+        "xy/pyplot/_compat_inventory.py",
+        "xy/pyplot/_figure_tree.py",
+        "xy/pyplot/_mode.py",
+        "xy/pyplot/typing.py",
+    ],
+)
+def test_verify_wheel_rejects_missing_pyplot_compat_runtime(
+    tmp_path: Path,
+    member: str,
+) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, omit={"xy/pyplot/_compat_inventory.py"})
+    _write_wheel(whl, omit={member})
 
-    with pytest.raises(AssertionError, match="_compat_inventory"):
+    with pytest.raises(AssertionError, match=Path(member).name):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

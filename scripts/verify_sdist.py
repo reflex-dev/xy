@@ -12,8 +12,6 @@ before installing anything.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import re
 import sys
 import tarfile
@@ -22,47 +20,14 @@ from pathlib import PurePosixPath
 from typing import Optional
 
 REQUIRED_FILES = {
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/release-reflex-xy.yml",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "Cargo.lock",
     "Cargo.toml",
     "LICENSE",
-    "Makefile",
     "PKG-INFO",
+    "README.md",
     "SECURITY.md",
-    "benchmarks/__init__.py",
-    "benchmarks/_browser.py",
-    "benchmarks/_xy_browser.py",
-    "benchmarks/baseline.json",
-    "benchmarks/bench.py",
-    "benchmarks/bench_2d_charts.py",
-    "benchmarks/bench_pyplot_vs_matplotlib.py",
-    "benchmarks/bench_dashboard.py",
-    "benchmarks/bench_install.py",
-    "benchmarks/bench_interaction.py",
-    "benchmarks/bench_line.py",
-    "benchmarks/bench_native.py",
-    "benchmarks/bench_scatter_native.py",
-    "benchmarks/bench_vs.py",
-    "benchmarks/bench_workflows.py",
-    "benchmarks/categories.py",
-    "benchmarks/environment.py",
-    "spec/design-dossier.md",
-    "spec/api/api-examples.md",
-    "spec/api/chart-roadmap.md",
-    "spec/benchmarks/results.md",
-    "spec/design/renderer-architecture.md",
-    "spec/matplotlib/backend-xy.md",
-    "spec/matplotlib/compat.md",
-    "spec/matplotlib/live-canvas.md",
-    "spec/process/contributing.md",
-    "spec/process/production-readiness.md",
-    "spec/assets/benchmark-snapshot.svg",
-    "spec/assets/launch-benchmark-comparison.svg",
     "hatch_build.py",
     "pyproject.toml",
     "js/build.mjs",
@@ -73,8 +38,15 @@ REQUIRED_FILES = {
     "js/src/30_ticks.ts",
     "js/src/40_gl.ts",
     "js/src/45_lod.ts",
+    "js/src/46_worker.ts",
     "js/src/50_chartview.ts",
+    "js/src/51_annotations.ts",
+    "js/src/52_tooltip.ts",
+    "js/src/53_interaction.ts",
+    "js/src/54_kernel.ts",
     "js/src/55_marks.ts",
+    "js/src/56_animation.ts",
+    "js/src/57_viewstate.ts",
     "js/src/60_entries.ts",
     "package.json",
     "package-lock.json",
@@ -94,78 +66,47 @@ REQUIRED_FILES = {
     "python/xy/backends/backend_xy_widget.py",
     "python/xy/backends/display_list.py",
     "python/xy/backends/raster.py",
+    "python/xy/pyplot/__init__.py",
+    "python/xy/pyplot/_artists.py",
+    "python/xy/pyplot/_axes.py",
+    "python/xy/pyplot/_axisgrid.py",
+    "python/xy/pyplot/_colors.py",
+    "python/xy/pyplot/_compat_inventory.py",
+    "python/xy/pyplot/_figure_tree.py",
+    "python/xy/pyplot/_fmt.py",
+    "python/xy/pyplot/_grid.py",
+    "python/xy/pyplot/_markers.py",
+    "python/xy/pyplot/_mathtext.py",
+    "python/xy/pyplot/_mode.py",
+    "python/xy/pyplot/_mplfig.py",
+    "python/xy/pyplot/_plot_types.py",
+    "python/xy/pyplot/_rc.py",
+    "python/xy/pyplot/_state.py",
+    "python/xy/pyplot/_ticker.py",
+    "python/xy/pyplot/_transforms.py",
+    "python/xy/pyplot/_translate.py",
+    "python/xy/pyplot/dates.py",
+    "python/xy/pyplot/typing.py",
     "python/xy/channel.py",
     "python/xy/interaction.py",
     "python/xy/kernels.py",
     "python/xy/lod.py",
     "python/xy/plugins.py",
-    "python/xy/pyplot/_compat_inventory.py",
     "python/xy/py.typed",
     "python/xy/styling/__init__.py",
     "python/xy/styling/capabilities.py",
     "python/xy/static/index.js",
     "python/xy/static/standalone.js",
     "python/xy/widget.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/app.py",
-    "examples/fastapi/charts.py",
-    "examples/fastapi/live_drilldown.py",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/__init__.py",
-    "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
-    "gallery/matplotlib-3.11.1/LICENSE",
-    "gallery/matplotlib-3.11.1/README.md",
-    "gallery/matplotlib-3.11.1/baseline.json",
-    "gallery/matplotlib-3.11.1/extended-environment.json",
-    "gallery/matplotlib-3.11.1/manifest.json",
-    "gallery/matplotlib-3.11.1/provenance.json",
-    "scripts/check_public_api.py",
-    "scripts/gen_capability_matrix.py",
-    "scripts/generate_pyplot_compat_inventory.py",
-    "scripts/check_python_floor.py",
-    "scripts/check_regressions.py",
-    "scripts/bench_dashboard.py",
-    "scripts/bench_interaction.py",
-    "scripts/bench_pyplot_vs_matplotlib.py",
-    "scripts/verify_ci_workflow.py",
-    "scripts/verify_benchmark_report.py",
-    "scripts/verify_local.py",
-    "scripts/verify_reflex_xy_dist.py",
-    "scripts/verify_sdist.py",
-    "scripts/verify_wheel.py",
-    "scripts/pyplot_gallery/__init__.py",
-    "scripts/pyplot_gallery/contract.py",
-    "scripts/pyplot_gallery/extended_drivers.py",
-    "scripts/pyplot_gallery/extended_environment.py",
-    "scripts/pyplot_gallery/metrics.py",
-    "scripts/pyplot_gallery/rewrite.py",
-    "scripts/pyplot_gallery/run_case.py",
-    "scripts/pyplot_gallery/run_gallery.py",
-    "scripts/pyplot_gallery/runtime.py",
-    "spec/matplotlib/gallery-contract.md",
+    "src/css.rs",
+    "src/font.rs",
     "src/kernels.rs",
     "src/lib.rs",
-    "tests/test_public_api.py",
-    "tests/test_benchmark_environment.py",
-    "tests/test_bench_pyplot_vs_matplotlib.py",
-    "tests/test_check_regressions.py",
-    "tests/test_example_apps.py",
-    "tests/test_type_surface.py",
-    "tests/test_verify_benchmark_report.py",
-    "tests/test_verify_ci_workflow.py",
-    "tests/test_verify_local.py",
-    "tests/test_verify_reflex_xy_dist.py",
-    "tests/test_verify_sdist.py",
-    "tests/test_verify_wheel.py",
-    "tests/backends/pyplot_svg_gallery_probe.mjs",
-    "tests/backends/test_backend_xy.py",
-    "tests/backends/test_backend_xy_widget.py",
-    "tests/backends/test_display_list.py",
-    "tests/backends/test_pyplot_svg_gallery_browser.py",
-    "tests/pyplot/test_gallery_contract.py",
-    "tests/pyplot/test_gallery_extended_environment.py",
-    "tests/pyplot/test_gallery_metrics.py",
+    "src/raster.rs",
+    "src/simd.rs",
+    "src/svg.rs",
+    "src/tiles.rs",
+    "src/transition.rs",
 }
 
 FORBIDDEN_PARTS = {
@@ -185,6 +126,26 @@ FORBIDDEN_PARTS = {
     "wheelhouse",
 }
 FORBIDDEN_SUFFIXES = {".dll", ".dylib", ".pyd", ".pyc", ".pyo", ".so", ".whl"}
+ALLOWED_TOP_LEVEL = {
+    # Hatchling force-includes the active VCS exclusion file so builds from the
+    # unpacked sdist preserve the source-selection rules.
+    ".gitignore",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "PKG-INFO",
+    "README.md",
+    "SECURITY.md",
+    "hatch_build.py",
+    "js",
+    "package-lock.json",
+    "package.json",
+    "pyproject.toml",
+    "python",
+    "src",
+}
 ROOT_RE = re.compile(r"^xy-\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
 
 
@@ -198,18 +159,25 @@ def _member_path(name: str) -> PurePosixPath:
 def _normalized_files(path: str) -> tuple[str, set[str]]:
     roots: set[str] = set()
     files: set[str] = set()
+    directories: set[str] = set()
     with tarfile.open(path, "r:gz") as tf:
         for member in tf.getmembers():
             member_path = _member_path(member.name)
             root = member_path.parts[0]
             roots.add(root)
+            relative_parts = member_path.parts[1:]
             if member.isfile():
-                rel = "/".join(member_path.parts[1:])
+                if not relative_parts:
+                    raise AssertionError(
+                        f"sdist top-level entry must be a directory: {member.name!r}"
+                    )
+                rel = "/".join(relative_parts)
                 if rel in files:
                     raise AssertionError(f"sdist contains duplicate file member: {rel}")
                 files.add(rel)
             elif member.isdir():
-                continue
+                if relative_parts:
+                    directories.add("/".join(relative_parts))
             else:
                 raise AssertionError(f"sdist contains non-regular member: {member.name}")
     if len(roots) != 1:
@@ -219,6 +187,16 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     root = next(iter(roots))
     if not ROOT_RE.match(root):
         raise AssertionError(f"sdist top-level directory has unexpected name: {root!r}")
+
+    collisions = sorted(files & directories)
+    for name in files | directories:
+        parts = PurePosixPath(name).parts
+        if any("/".join(parts[:index]) in files for index in range(1, len(parts))):
+            collisions.append(name)
+    if collisions:
+        raise AssertionError(
+            f"sdist contains file/directory path collisions: {sorted(set(collisions))}"
+        )
     return root, files
 
 
@@ -322,184 +300,29 @@ def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> N
         raise AssertionError(f"{member} must be an empty full-package PEP 561 marker")
 
 
-def _require_baseline_json(path: str, root: str) -> None:
-    with tarfile.open(path, "r:gz") as tf:
-        data = tf.extractfile(f"{root}/benchmarks/baseline.json")
-        if data is None:
-            raise AssertionError("benchmarks/baseline.json is missing")
-        text = data.read().decode("utf-8")
-    try:
-        baseline = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise AssertionError(f"benchmarks/baseline.json is not valid JSON: {exc}") from exc
-    metrics = baseline.get("metrics") if isinstance(baseline, dict) else None
-    if not isinstance(metrics, dict) or not metrics:
-        raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
-
-
-def _require_gallery_contract(path: str, root: str, files: set[str]) -> None:
-    gallery_root = "gallery/matplotlib-3.11.1"
-    source_prefix = f"{gallery_root}/examples/"
-    source_paths = sorted(
-        member.removeprefix(source_prefix)
-        for member in files
-        if member.startswith(source_prefix) and member.endswith(".py")
-    )
-    if len(source_paths) != 507:
-        raise AssertionError(
-            f"sdist gallery must contain exactly 507 Python sources, got {len(source_paths)}"
-        )
-    notebook_members = [
-        member for member in files if member.startswith(source_prefix) and member.endswith(".ipynb")
-    ]
-    if notebook_members:
-        raise AssertionError("sdist gallery must not duplicate the 507 Jupyter notebooks")
-
-    with tarfile.open(path, "r:gz") as tf:
-        documents: dict[str, dict[str, object]] = {}
-        for name in (
-            "manifest.json",
-            "baseline.json",
-            "provenance.json",
-            "extended-environment.json",
-        ):
-            member = tf.extractfile(f"{root}/{gallery_root}/{name}")
-            if member is None:
-                raise AssertionError(f"{gallery_root}/{name} is missing")
-            try:
-                documents[name] = json.loads(member.read().decode("utf-8"))
-            except json.JSONDecodeError as exc:
-                raise AssertionError(f"{gallery_root}/{name} is invalid JSON: {exc}") from exc
-
-        manifest = documents["manifest.json"]
-        examples = manifest.get("examples")
-        if not isinstance(examples, list) or len(examples) != 507:
-            raise AssertionError("gallery manifest must describe exactly 507 examples")
-        manifest_paths = [entry.get("path") for entry in examples if isinstance(entry, dict)]
-        if manifest_paths != sorted(source_paths):
-            raise AssertionError("gallery manifest paths do not exactly match sdist sources")
-        for entry in examples:
-            member = tf.extractfile(f"{root}/{source_prefix}{entry['path']}")
-            if member is None:
-                raise AssertionError(f"gallery source is missing: {entry['path']}")
-            source = member.read()
-            if hashlib.sha256(source).hexdigest() != entry.get("sha256"):
-                raise AssertionError(f"gallery source hash differs: {entry['path']}")
-            if len(source) != entry.get("byte_count"):
-                raise AssertionError(f"gallery source byte count differs: {entry['path']}")
-            if entry.get("notebook_ast_matches") is not True:
-                raise AssertionError(f"gallery notebook AST proof is false: {entry['path']}")
-            if entry.get("notebook_code_ast_sha256") != entry.get("normalized_ast_sha256"):
-                raise AssertionError(f"gallery notebook/source AST proof differs: {entry['path']}")
-
-    if manifest.get("source_count") != 507 or manifest.get("notebook_count") != 507:
-        raise AssertionError("gallery manifest source/notebook counts must both be 507")
-    if manifest.get("pyplot_eligible_count") != 485:
-        raise AssertionError("gallery manifest must contain 485 pyplot-eligible examples")
-    if manifest.get("profile_counts") != {
-        "extended": 13,
-        "non_pyplot": 22,
-        "standard": 472,
-    }:
-        raise AssertionError("gallery manifest profile counts changed")
-
-    extended = documents["extended-environment.json"]
-    extended_examples = extended.get("examples")
-    if not isinstance(extended_examples, list) or len(extended_examples) != 13:
-        raise AssertionError("extended gallery environment must describe exactly 13 examples")
-    extended_paths = {entry.get("path") for entry in extended_examples if isinstance(entry, dict)}
-    manifest_extended_paths = {
-        entry.get("path")
-        for entry in examples
-        if isinstance(entry, dict) and entry.get("profile") == "extended"
-    }
-    if extended_paths != manifest_extended_paths:
-        raise AssertionError("extended gallery environment paths differ from manifest")
-    if any(entry.get("argv") != [] for entry in extended_examples):
-        raise AssertionError("extended gallery examples must preserve clean argv")
-    if any(
-        entry.get("backends", {}).get("xy") != "module://xy.backends.backend_xy"
-        for entry in extended_examples
-    ):
-        raise AssertionError("extended gallery xy cases must use the XY backend")
-
-    baseline = documents["baseline.json"]
-    expected_baseline = {
-        "source_count": 507,
-        "pyplot_eligible_count": 485,
-        "standard_profile_count": 472,
-        "extended_profile_count": 13,
-        "xy_execution_passed": 485,
-        "capture_parity_passed": 485,
-        "dimension_parity_passed": 485,
-        "exact_dimension_parity_passed": 481,
-        "visual_gate_passed": 485,
-        "semantic_gate_passed": 485,
-        "behavior_gate_passed": 485,
-        "accepted_examples": 485,
-        "temporary_waiver_count": 0,
-        "acceptance_complete": True,
-    }
-    summary = baseline.get("summary", {})
-    for key, expected in expected_baseline.items():
-        if summary.get(key) != expected:
-            raise AssertionError(f"gallery baseline {key} must be {expected}")
-    baseline_examples = baseline.get("examples")
-    if not isinstance(baseline_examples, dict) or set(baseline_examples) != set(source_paths):
-        raise AssertionError("gallery baseline paths do not exactly match sdist sources")
-
-    provenance = documents["provenance.json"]
-    archive_hashes = {
-        kind: metadata.get("sha256")
-        for kind, metadata in provenance.get("archives", {}).items()
-        if isinstance(metadata, dict)
-    }
-    if archive_hashes != {
-        "jupyter": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870",
-        "python": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc",
-    }:
-        raise AssertionError("gallery archive provenance hashes changed")
-
-
-# Every grouped subdirectory of spec/ must survive packaging. Pinning
-# individual files alone would let a whole group be dropped as long as the
-# pinned member stayed, so require each group to be non-empty in its own right.
-SPEC_SUBDIRS = ("api", "benchmarks", "design", "matplotlib", "process")
-
-
-def _require_spec_layout(files: set[str]) -> None:
-    empty = [
-        name
-        for name in SPEC_SUBDIRS
-        if not any(f.startswith(f"spec/{name}/") and f.endswith(".md") for f in files)
-    ]
-    if empty:
-        raise AssertionError(f"sdist has no markdown under spec/ subdirectories: {empty}")
-
-    svgs = sorted(f for f in files if f.startswith("spec/assets/") and f.endswith(".svg"))
-    if len(svgs) < 2:
-        raise AssertionError(f"sdist is missing spec/assets SVG evidence snapshots: {svgs}")
-
-
 def verify_sdist(path: str) -> None:
     root, files = _normalized_files(path)
     missing = sorted(REQUIRED_FILES - files)
     if missing:
         raise AssertionError(f"sdist missing required files: {missing}")
-    _require_spec_layout(files)
 
     forbidden = sorted(
         name
         for name in files
-        if any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
+        if PurePosixPath(name).parts[0] not in ALLOWED_TOP_LEVEL
+        or (
+            PurePosixPath(name).parts[0] == "python"
+            and PurePosixPath(name).parts[:2] != ("python", "xy")
+        )
+        or any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
         or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
     )
     if forbidden:
-        raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
+        raise AssertionError(
+            f"sdist contains repository-only/generated/native artifacts: {forbidden}"
+        )
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
-    _require_baseline_json(path, root)
-    _require_gallery_contract(path, root, files)
     _require_file_contains(
         path,
         root,
@@ -524,95 +347,6 @@ def verify_sdist(path: str) -> None:
             "export function render(",
             "export function renderStandalone(",
             "export default { render, decodeFrame };",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/api/api-examples.md",
-        {
-            "Chart Family Quick Reference",
-            "Small Business Chart",
-            "Revenue vs pipeline",
-            "xy.heatmap(",
-            "xy.heatmap_chart",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/benchmarks/results.md",
-        {
-            "benchmark-report",
-            "regression-benchmark-report",
-            "spec/benchmarks/metrics.md",
-            "scatter.json",
-            "kernel.json",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/process/production-readiness.md",
-        {
-            "Release-Blocking Gates",
-            "make check-artifacts",
-            "make check-examples",
-            "example apps' source",
-            "package-only",
-            "sdist-only",
-            "scripts/verify_benchmark_report.py",
-            "scripts/verify_wheel.py",
-            "import xy",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/process/contributing.md",
-        {
-            "Pull Request Checklist",
-            "make check-full",
-            "make check-sdist",
-            "make check-examples",
-            "make check-benchmark-report",
-            "Competitive Evidence",
-            "outperform every competing charting library",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/ci.yml",
-        {"scripts/verify_ci_workflow.py", "actions/upload-artifact@", "continue-on-error: true"},
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/codspeed.yml",
-        {"CodSpeedHQ/action@", "pytest-codspeed", 'k.BACKEND == "native"'},
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/release.yml",
-        {
-            "pypa/gh-action-pypi-publish@",
-            "scripts/verify_wheel.py",
-            "scripts/verify_sdist.py",
-            "id-token: write",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/release-reflex-xy.yml",
-        {
-            'tags: ["reflex-xy-v*"]',
-            "pypa/gh-action-pypi-publish@",
-            "scripts/verify_reflex_xy_dist.py",
-            "scripts/check_release_version.py --package reflex-xy",
-            "id-token: write",
         },
     )
 

@@ -80,5 +80,6 @@ dependencies alone never counts as compatibility.
 
 Matplotlib's license and required copyright notice are retained in `LICENSE`.
 The archive URLs and SHA-256 digests are recorded in `provenance.json`.
-The complete contract is included in xy source distributions so the shipped
-gallery scripts and verification tests remain runnable after unpacking.
+The complete contract is retained in the repository and exercised by CI. It is
+intentionally excluded from xy source distributions, which contain only the
+inputs needed to build and install the package.

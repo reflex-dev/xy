@@ -7,14 +7,19 @@ components:
 
 # Wind Rose Charts in Python
 
-A **wind rose** summarizes how often observations arrive from each compass
-direction and how those observations are distributed across speed bands. XY
-bins the raw direction/speed pairs in Python and renders the result as stacked
-polar bars.
+A **wind rose** (also called a wind rose chart, wind rose plot, or wind rose
+diagram) summarizes
+how often observations arrive from each compass direction and how those
+observations are distributed across speed bands. XY bins the raw direction/speed
+pairs in Python and renders the result as stacked polar bars.
 
 Use `wind_rose()` when you have one bearing and one magnitude per observation.
 If the directional counts are already aggregated, use a
 [radial bar chart](/docs/xy/charts/radial-bar-chart/) instead.
+
+Jump to [directional sectors](#choose-directional-sectors),
+[speed bands](#configure-speed-bands), or
+[the input contract](#follow-the-input-contract).
 
 ## Create a Wind Rose
 
@@ -85,6 +90,72 @@ values. When `speed_bins` is omitted, it derives up to four readable bands from
 the speed quartiles and rounds the top edge upward so every finite observation
 is covered.
 
+## Set Sector Count and Band Edges Together
+
+Lower the sector count when the sample is small or the source records only the
+eight principal bearings, and pass matching band edges so each petal stays thick
+enough to read:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+coarse_rng = np.random.default_rng(7)
+coarse_directions = np.mod(coarse_rng.normal(270.0, 45.0, 500), 360.0)
+coarse_speeds = np.clip(coarse_rng.gamma(shape=2.0, scale=3.0, size=500), 0.3, 17.0)
+
+coarse_rose = xy.wind_rose(
+    coarse_directions,
+    coarse_speeds,
+    sectors=8,
+    speed_bins=[3, 6, 9, 12, 18],
+    title="Eight-sector wind rose",
+)
+
+
+def wind_rose_sectors_demo():
+    return reflex_xy.chart(coarse_rose, height="440px")
+~~~
+
+## Plot a Full Year of Observations
+
+With thousands of records a high sector count resolves the prevailing wind, and
+narrow speed bands separate calm air from gales — add `xy.legend()` to place the
+band labels where you want them:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+met_rng = np.random.default_rng(2024)
+met_directions = np.mod(
+    np.concatenate(
+        [
+            met_rng.normal(240.0, 22.0, 5200),
+            met_rng.normal(60.0, 40.0, 1800),
+            met_rng.uniform(0.0, 360.0, 1000),
+        ]
+    ),
+    360.0,
+)
+met_speeds = np.clip(met_rng.weibull(2.0, 8000) * 7.5, 0.2, 28.0)
+
+annual_rose = xy.wind_rose(
+    met_directions,
+    met_speeds,
+    xy.legend(loc="right", title="speed (m/s)"),
+    sectors=32,
+    speed_bins=[2, 4, 6, 8, 11, 14, 18, 25],
+    title="Wind rose, 8,000 hourly observations",
+)
+
+
+def wind_rose_annual_demo():
+    return reflex_xy.chart(annual_rose, height="440px")
+~~~
+
 ## Follow the Input Contract
 
 - `directions` and `speeds` must have the same length.
@@ -144,5 +215,6 @@ edge upward to include the maximum observation.
 
 ### Why are some observations missing?
 
-Non-finite direction/speed pairs are dropped. With authored `speed_bins`, make
-sure the final upper edge covers the fastest finite observation.
+Non-finite direction/speed pairs are dropped before the wind rose graph is
+binned. With authored `speed_bins`, make sure the final upper edge covers the
+fastest finite observation.

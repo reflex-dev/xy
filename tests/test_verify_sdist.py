@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import io
-import json
 import sys
 import tarfile
 from pathlib import Path
@@ -29,93 +27,6 @@ ENTRIES_JS = (
     "const padding = '" + ("x" * 1000) + "';\n"
     "export default { render, decodeFrame };\n"
 )
-API_EXAMPLES_MD = (
-    "# API Examples\n\n"
-    "## Chart Family Quick Reference\n\n"
-    "| Chart family | Fluent API | Composition API |\n"
-    "|---|---|---|\n"
-    "| Heatmap | `Figure().heatmap(z, x=x, y=y)` | `xy.heatmap_chart(xy.heatmap(...))` |\n"
-    "\n## Small Business Chart\n\n"
-    "Revenue vs pipeline\n" + ("api examples padding\n" * 100)
-)
-BENCHMARK_MD = (
-    "# Benchmark\n\n"
-    "The docs/benchmark_ci.md numbers land in the benchmark-report artifact.\n"
-    "The spec/benchmarks/metrics.md regression table, scatter.json, and kernel.json "
-    "land in the regression-benchmark-report artifact.\n" + ("benchmark padding\n" * 100)
-)
-PRODUCTION_READINESS_MD = (
-    "# Production Readiness\n\n"
-    "## Release-Blocking Gates\n\n"
-    "`import xy` stays lightweight.\n"
-    "Use `make check-artifacts` for exact artifact verification.\n"
-    "Use `make check-examples` for docs and example-app checks.\n"
-    "The sdist includes the example apps' source, while wheels stay package-only. "
-    "Docs, tests, benchmarks, scripts, and the examples/ apps are sdist-only.\n"
-    "Run scripts/verify_benchmark_report.py, scripts/verify_wheel.py, and "
-    "scripts/verify_sdist.py before releases.\n" + ("production readiness padding\n" * 100)
-)
-CONTRIBUTING_MD = (
-    "# Contributing\n\n"
-    "## Pull Request Checklist\n\n"
-    "Run make check-full, make check-sdist, make check-wheel, and "
-    "make check-benchmark-report.\n"
-    "Run make check-examples for spec/api/api-examples.md and "
-    "the example apps.\n\n"
-    "## Competitive Evidence\n\n"
-    "XY aims to outperform every competing charting library.\n" + ("contributing padding\n" * 100)
-)
-CI_YML = (
-    "name: CI\n"
-    "jobs:\n"
-    "  benchmark:\n"
-    "    continue-on-error: true\n"
-    "    steps:\n"
-    "      - run: python scripts/verify_ci_workflow.py\n"
-    "      - uses: actions/upload-artifact@v4\n" + ("ci workflow padding\n" * 100)
-)
-CODSPEED_YML = (
-    "name: CodSpeed\n"
-    "jobs:\n"
-    "  benchmarks:\n"
-    "    steps:\n"
-    "      - uses: CodSpeedHQ/action@v4\n"
-    "      - run: uv pip install pytest-codspeed\n"
-    "      - run: python -c 'import xy.kernels as k; assert k.BACKEND == \"native\"'\n"
-    + ("codspeed workflow padding\n" * 100)
-)
-RELEASE_YML = (
-    "name: Release\n"
-    "jobs:\n"
-    "  wheels:\n"
-    "    steps:\n"
-    "      - run: python scripts/verify_wheel.py dist/example.whl --expect-native\n"
-    "  sdist:\n"
-    "    steps:\n"
-    "      - run: python scripts/verify_sdist.py dist/example.tar.gz\n"
-    "  publish:\n"
-    "    permissions:\n"
-    "      id-token: write\n"
-    "    steps:\n"
-    "      - uses: pypa/gh-action-pypi-publish@release/v1\n" + ("release workflow padding\n" * 100)
-)
-RELEASE_REFLEX_XY_YML = (
-    "name: Release reflex-xy\n"
-    "on:\n"
-    "  push:\n"
-    '    tags: ["reflex-xy-v*"]\n'
-    "jobs:\n"
-    "  build:\n"
-    "    steps:\n"
-    "      - run: python3 scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/*\n"
-    "  publish:\n"
-    "    permissions:\n"
-    "      id-token: write\n"
-    "    steps:\n"
-    "      - run: python3 scripts/check_release_version.py --package reflex-xy\n"
-    "      - uses: pypa/gh-action-pypi-publish@release/v1\n"
-    + ("adapter release workflow padding\n" * 40)
-)
 DEFAULT_PKG_INFO = (
     "Metadata-Version: 2.4\n"
     "Name: xy\n"
@@ -125,86 +36,6 @@ DEFAULT_PKG_INFO = (
     "Requires-Dist: numpy>=1.24\n"
     "Provides-Extra: matplotlib\n"
     "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n"
-)
-BASELINE_JSON = '{"metrics": {"scatter.tier.100000": "direct"}}\n'
-GALLERY_SOURCES = {
-    f"section-{index // 100}/example-{index:03d}.py": (
-        b"import matplotlib.pyplot as plt\n" if index < 485 else b"import matplotlib\n"
-    )
-    for index in range(507)
-}
-GALLERY_EXAMPLES = [
-    {
-        "path": path,
-        "sha256": hashlib.sha256(source).hexdigest(),
-        "byte_count": len(source),
-        "notebook_ast_matches": True,
-        "normalized_ast_sha256": hashlib.sha256(source).hexdigest(),
-        "notebook_code_ast_sha256": hashlib.sha256(source).hexdigest(),
-        "pyplot_eligible": index < 485,
-        "profile": ("standard" if index < 472 else ("extended" if index < 485 else "non_pyplot")),
-    }
-    for index, (path, source) in enumerate(GALLERY_SOURCES.items())
-]
-GALLERY_MANIFEST = json.dumps(
-    {
-        "source_count": 507,
-        "notebook_count": 507,
-        "pyplot_eligible_count": 485,
-        "profile_counts": {"extended": 13, "non_pyplot": 22, "standard": 472},
-        "examples": GALLERY_EXAMPLES,
-    }
-)
-GALLERY_BASELINE = json.dumps(
-    {
-        "schema_version": 2,
-        "summary": {
-            "source_count": 507,
-            "pyplot_eligible_count": 485,
-            "standard_profile_count": 472,
-            "extended_profile_count": 13,
-            "xy_execution_passed": 485,
-            "capture_parity_passed": 485,
-            "dimension_parity_passed": 485,
-            "exact_dimension_parity_passed": 481,
-            "visual_gate_passed": 485,
-            "semantic_gate_passed": 485,
-            "behavior_gate_passed": 485,
-            "accepted_examples": 485,
-            "temporary_waiver_count": 0,
-            "acceptance_complete": True,
-        },
-        "examples": {path: {} for path in GALLERY_SOURCES},
-    }
-)
-GALLERY_EXTENDED_ENVIRONMENT = json.dumps(
-    {
-        "example_count": 13,
-        "examples": [
-            {
-                "path": entry["path"],
-                "argv": [],
-                "backends": {
-                    "matplotlib": "Agg",
-                    "xy": "module://xy.backends.backend_xy",
-                },
-            }
-            for entry in GALLERY_EXAMPLES
-            if entry["profile"] == "extended"
-        ],
-    }
-)
-GALLERY_PROVENANCE = json.dumps(
-    {
-        "archives": {
-            "jupyter": {
-                "sha256": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870"
-            },
-            "python": {
-                "sha256": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc"
-            },
-        }
-    }
 )
 
 
@@ -234,12 +65,15 @@ def _write_sdist(
     omit: Optional[set[str]] = None,
     extra: Optional[dict[str, bytes]] = None,
     replacements: Optional[dict[str, Union[bytes, str]]] = None,
+    root_file: bool = False,
 ) -> None:
     root = "xy-0.0.1"
     omit = omit or set()
     extra = extra or {}
     replacements = replacements or {}
     with tarfile.open(path, "w:gz") as tf:
+        if root_file:
+            _add_file(tf, root, b"not a directory")
         for name in sorted(verify_sdist.REQUIRED_FILES - omit):
             data = b""
             if name == "PKG-INFO" and pkg_info is not None:
@@ -249,50 +83,13 @@ def _write_sdist(
             elif name in replacements:
                 raw = replacements[name]
                 data = raw.encode("utf-8") if isinstance(raw, str) else raw
-            elif name == "benchmarks/baseline.json":
-                data = BASELINE_JSON.encode("utf-8")
-            elif name == "gallery/matplotlib-3.11.1/manifest.json":
-                data = GALLERY_MANIFEST.encode("utf-8")
-            elif name == "gallery/matplotlib-3.11.1/baseline.json":
-                data = GALLERY_BASELINE.encode("utf-8")
-            elif name == "gallery/matplotlib-3.11.1/extended-environment.json":
-                data = GALLERY_EXTENDED_ENVIRONMENT.encode("utf-8")
-            elif name == "gallery/matplotlib-3.11.1/provenance.json":
-                data = GALLERY_PROVENANCE.encode("utf-8")
-            elif name == "gallery/matplotlib-3.11.1/LICENSE":
-                data = b"Matplotlib license fixture\n"
-            elif name == "gallery/matplotlib-3.11.1/README.md":
-                data = b"# Matplotlib gallery fixture\n"
             elif name == "python/xy/static/index.js":
                 data = INDEX_JS.encode("utf-8")
             elif name == "python/xy/static/standalone.js":
                 data = STANDALONE_JS.encode("utf-8")
             elif name == "js/src/60_entries.ts":
                 data = ENTRIES_JS.encode("utf-8")
-            elif name == "spec/api/api-examples.md":
-                data = API_EXAMPLES_MD.encode("utf-8")
-            elif name == "spec/benchmarks/results.md":
-                data = BENCHMARK_MD.encode("utf-8")
-            elif name == "spec/process/production-readiness.md":
-                data = PRODUCTION_READINESS_MD.encode("utf-8")
-            elif name == "spec/process/contributing.md":
-                data = CONTRIBUTING_MD.encode("utf-8")
-            elif name == ".github/workflows/ci.yml":
-                data = CI_YML.encode("utf-8")
-            elif name == ".github/workflows/codspeed.yml":
-                data = CODSPEED_YML.encode("utf-8")
-            elif name == ".github/workflows/release.yml":
-                data = RELEASE_YML.encode("utf-8")
-            elif name == ".github/workflows/release-reflex-xy.yml":
-                data = RELEASE_REFLEX_XY_YML.encode("utf-8")
             _add_file(tf, f"{root}/{name}", data)
-        for name, source in GALLERY_SOURCES.items():
-            member = f"gallery/matplotlib-3.11.1/examples/{name}"
-            if member in omit:
-                continue
-            raw = replacements.get(member, source)
-            data = raw.encode("utf-8") if isinstance(raw, str) else raw
-            _add_file(tf, f"{root}/{member}", data)
         for name, data in extra.items():
             _add_file(tf, f"{root}/{name}", data)
 
@@ -302,6 +99,22 @@ def test_verify_sdist_accepts_required_source_shape(tmp_path: Path) -> None:
     _write_sdist(sdist)
 
     verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "root",
+    [".github", "benchmarks", "docs", "examples", "gallery", "scripts", "spec", "tests"],
+)
+def test_readme_does_not_reference_excluded_sdist_content(root: str) -> None:
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    relative_references = (
+        f"]({root}/",
+        f'href="{root}/',
+        f'src="{root}/',
+        f'srcset="{root}/',
+    )
+
+    assert not any(reference in readme for reference in relative_references)
 
 
 def test_verify_sdist_accepts_normalized_metadata_spacing(tmp_path: Path) -> None:
@@ -358,6 +171,16 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
             "only the matplotlib published extra",
         ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n", ""
+            ),
+            r"matplotlib>=3\.11,<3\.12",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Provides-Extra: matplotlib\n", ""),
+            "only the matplotlib published extra",
+        ),
     ],
 )
 def test_verify_sdist_rejects_invalid_pkg_info(tmp_path: Path, pkg_info: str, match: str) -> None:
@@ -387,50 +210,17 @@ def test_verify_sdist_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -
 @pytest.mark.parametrize(
     "member",
     [
-        "python/xy/pyplot/_compat_inventory.py",
-        "scripts/generate_pyplot_compat_inventory.py",
-    ],
-)
-def test_verify_sdist_rejects_missing_generated_pyplot_inventory_contract(
-    tmp_path: Path,
-    member: str,
-) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={member})
-
-    with pytest.raises(AssertionError, match=Path(member).name):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-@pytest.mark.parametrize(
-    "member",
-    [
-        "tests/backends/pyplot_svg_gallery_probe.mjs",
-        "tests/backends/test_pyplot_svg_gallery_browser.py",
-    ],
-)
-def test_verify_sdist_rejects_missing_svg_gallery_browser_gate(
-    tmp_path: Path,
-    member: str,
-) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={member})
-
-    with pytest.raises(AssertionError, match=Path(member).name):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-@pytest.mark.parametrize(
-    "member",
-    [
         "python/xy/backends/backend_xy.py",
+        "python/xy/backends/backend_xy_widget.js",
         "python/xy/backends/display_list.py",
         "python/xy/backends/raster.py",
-        "tests/backends/test_backend_xy.py",
-        "tests/backends/test_display_list.py",
+        "python/xy/pyplot/_compat_inventory.py",
+        "python/xy/pyplot/_figure_tree.py",
+        "python/xy/pyplot/_mode.py",
+        "python/xy/pyplot/typing.py",
     ],
 )
-def test_verify_sdist_rejects_missing_text_resource_renderer_contract(
+def test_verify_sdist_requires_pyplot_compat_runtime_files(
     tmp_path: Path,
     member: str,
 ) -> None:
@@ -441,21 +231,32 @@ def test_verify_sdist_rejects_missing_text_resource_renderer_contract(
         verify_sdist.verify_sdist(str(sdist))
 
 
-def test_verify_sdist_rejects_missing_gallery_source(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".agents/config.json",
+        ".binder/environment.yml",
+        ".github/workflows/ci.yml",
+        "AGENTS.md",
+        "Makefile",
+        "benchmarks/bench.py",
+        "docs/index.md",
+        "examples/demo.ipynb",
+        "gallery/matplotlib-3.11.1/manifest.json",
+        "pr-assets/review.png",
+        "python/other-package/__init__.py",
+        "python/reflex-xy/reflex_xy/__init__.py",
+        "scripts/verify_local.py",
+        "spec/design-dossier.md",
+        "tests/test_import.py",
+        "uv.lock",
+    ],
+)
+def test_verify_sdist_rejects_repository_only_content(tmp_path: Path, name: str) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
-    missing = "gallery/matplotlib-3.11.1/examples/section-0/example-000.py"
-    _write_sdist(sdist, omit={missing})
+    _write_sdist(sdist, extra={name: b"repository-only content"})
 
-    with pytest.raises(AssertionError, match="exactly 507 Python sources"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_modified_gallery_source(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    modified = "gallery/matplotlib-3.11.1/examples/section-0/example-000.py"
-    _write_sdist(sdist, replacements={modified: b"print('modified')\n"})
-
-    with pytest.raises(AssertionError, match="gallery source hash differs"):
+    with pytest.raises(AssertionError, match="generated/native artifacts"):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -464,199 +265,6 @@ def test_verify_sdist_rejects_partial_type_marker(tmp_path: Path) -> None:
     _write_sdist(sdist, replacements={"python/xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_production_docs_or_tooling(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={"spec/process/production-readiness.md", "scripts/verify_local.py"})
-
-    with pytest.raises(AssertionError, match="production-readiness"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_requires_every_spec_subdirectory(tmp_path: Path) -> None:
-    """A pinned member per group is not enough — the group itself must survive."""
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={"spec/matplotlib/compat.md"})
-
-    with pytest.raises(AssertionError, match="spec/matplotlib/compat"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-@pytest.mark.parametrize("subdir", verify_sdist.SPEC_SUBDIRS)
-def test_require_spec_layout_rejects_empty_subdirectory(subdir: str) -> None:
-    files = {f"spec/{name}/doc.md" for name in verify_sdist.SPEC_SUBDIRS}
-    files |= {
-        "spec/assets/benchmark-snapshot.svg",
-        "spec/assets/launch-benchmark-comparison.svg",
-    }
-    verify_sdist._require_spec_layout(files)
-
-    files.discard(f"spec/{subdir}/doc.md")
-    with pytest.raises(AssertionError, match=subdir):
-        verify_sdist._require_spec_layout(files)
-
-
-def test_require_spec_layout_rejects_missing_asset_snapshots() -> None:
-    files = {f"spec/{name}/doc.md" for name in verify_sdist.SPEC_SUBDIRS}
-    files.add("spec/assets/benchmark-snapshot.svg")
-
-    with pytest.raises(AssertionError, match="spec/assets"):
-        verify_sdist._require_spec_layout(files)
-
-
-def test_require_spec_layout_ignores_non_markdown_group_members() -> None:
-    """A group left holding only stray non-markdown files is still empty."""
-    files = {f"spec/{name}/doc.md" for name in verify_sdist.SPEC_SUBDIRS}
-    files |= {
-        "spec/assets/benchmark-snapshot.svg",
-        "spec/assets/launch-benchmark-comparison.svg",
-    }
-    files.discard("spec/design/doc.md")
-    files.add("spec/design/notes.txt")
-
-    with pytest.raises(AssertionError, match="design"):
-        verify_sdist._require_spec_layout(files)
-
-
-def test_verify_sdist_rejects_missing_benchmark_harness(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={"benchmarks/bench_vs.py", "benchmarks/environment.py"})
-
-    with pytest.raises(AssertionError, match="benchmarks/bench_vs"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_workflow_benchmark(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={"benchmarks/bench_workflows.py"})
-
-    with pytest.raises(AssertionError, match="benchmarks/bench_workflows"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_regression_gate_files(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        omit={
-            "benchmarks/baseline.json",
-            "benchmarks/bench_line.py",
-            "benchmarks/bench_install.py",
-            "scripts/check_regressions.py",
-            "tests/test_check_regressions.py",
-        },
-    )
-
-    with pytest.raises(AssertionError, match=r"benchmarks/baseline\.json"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_corrupt_benchmark_baseline(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, replacements={"benchmarks/baseline.json": '{"metrics": {}}'})
-
-    with pytest.raises(AssertionError, match="non-empty metrics object"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_example_app_files(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        omit={
-            "examples/fastapi/app.py",
-            "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
-            "tests/test_example_apps.py",
-        },
-    )
-
-    with pytest.raises(AssertionError, match="examples/"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_stale_api_examples_doc(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={"spec/api/api-examples.md": "# API Examples\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match="api-examples"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_stale_benchmark_doc(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={"spec/benchmarks/results.md": "# Benchmark\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match="benchmark"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_stale_production_readiness_doc(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={
-            "spec/process/production-readiness.md": "# Production Readiness\n" + ("padding\n" * 200)
-        },
-    )
-
-    with pytest.raises(AssertionError, match="production-readiness"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_stale_contributing_doc(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={"spec/process/contributing.md": "# Contributing\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match="contributing"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_release_workflow(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={".github/workflows/release.yml"})
-
-    with pytest.raises(AssertionError, match=r"release\.yml"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_missing_codspeed_workflow(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(sdist, omit={".github/workflows/codspeed.yml"})
-
-    with pytest.raises(AssertionError, match=r"codspeed\.yml"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_corrupt_codspeed_workflow(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={".github/workflows/codspeed.yml": "name: CodSpeed\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match=r"codspeed\.yml"):
-        verify_sdist.verify_sdist(str(sdist))
-
-
-def test_verify_sdist_rejects_corrupt_release_workflow(tmp_path: Path) -> None:
-    sdist = tmp_path / "xy-0.0.1.tar.gz"
-    _write_sdist(
-        sdist,
-        replacements={".github/workflows/release.yml": "name: Release\n" + ("padding\n" * 200)},
-    )
-
-    with pytest.raises(AssertionError, match=r"release\.yml"):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -698,6 +306,22 @@ def test_verify_sdist_rejects_duplicate_file_member(tmp_path: Path) -> None:
     _write_sdist(sdist, extra={"LICENSE": b"duplicate"})
 
     with pytest.raises(AssertionError, match="duplicate file member"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_regular_file_at_distribution_root(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, root_file=True)
+
+    with pytest.raises(AssertionError, match="top-level entry must be a directory"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_file_directory_path_collisions(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, extra={"README.md/repository-only.txt": b"not extractable"})
+
+    with pytest.raises(AssertionError, match="file/directory path collisions"):
         verify_sdist.verify_sdist(str(sdist))
 
 
