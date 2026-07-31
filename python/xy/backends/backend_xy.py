@@ -12,6 +12,7 @@ requires Matplotlib 3.11.
 from __future__ import annotations
 
 import math
+import operator
 import os
 import sys
 import time
@@ -19,7 +20,7 @@ import weakref
 import webbrowser
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, Literal, TextIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, SupportsIndex, TextIO, cast
 
 if TYPE_CHECKING:
     from .backend_xy_host import LoopbackHost
@@ -861,36 +862,86 @@ class TimerXY(TimerBase):
             self.fire()
 
 
-class _RegionXY:
-    """Opaque snapshot used by XY's display-list blit protocol."""
+class _RegionXY(np.ndarray):
+    """Opaque pixel-region snapshot used by XY's display-list blit protocol."""
 
     __slots__ = (
         "bbox",
-        "commands",
         "fallback_reason",
         "fallback_used",
         "generation",
+        "geometry_epoch",
+        "owner",
+        "pixel_bounds",
         "renderer_key",
-        "resources",
     )
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         bbox: tuple[float, float, float, float],
+        pixel_bounds: tuple[int, int, int, int],
+        pixels: Any,
         generation: int,
+        geometry_epoch: int,
+        owner: Any,
         renderer_key: tuple[float, float, float],
         display_list: DisplayList,
-    ) -> None:
-        self.bbox = bbox
-        self.generation = generation
-        self.renderer_key = renderer_key
-        # Commands and resources are immutable JSON values after insertion.
-        # Copy only their outer containers so even a 100,000-point path gets a
-        # constant-time background snapshot instead of a deep copy.
-        self.commands = tuple(display_list.commands)
-        self.resources = dict(display_list.resources)
-        self.fallback_used = display_list.fallback_used
-        self.fallback_reason = display_list.fallback_reason
+    ) -> _RegionXY:
+        region = np.asarray(pixels, dtype=np.uint8).view(cls)
+        region.bbox = bbox
+        region.pixel_bounds = pixel_bounds
+        region.generation = generation
+        region.geometry_epoch = geometry_epoch
+        region.owner = weakref.ref(owner)
+        region.renderer_key = renderer_key
+        region.fallback_used = display_list.fallback_used
+        region.fallback_reason = display_list.fallback_reason
+        return region
+
+    def __array_finalize__(self, source: Any) -> None:
+        """Retain BufferRegion metadata when NumPy creates a derived view."""
+        if source is None:
+            return
+        self.bbox = getattr(source, "bbox", (0.0, 0.0, 0.0, 0.0))
+        self.pixel_bounds = getattr(source, "pixel_bounds", (0, 0, 0, 0))
+        self.generation = getattr(source, "generation", 0)
+        self.geometry_epoch = getattr(source, "geometry_epoch", 0)
+        self.owner = getattr(source, "owner", lambda: None)
+        self.renderer_key = getattr(source, "renderer_key", (0.0, 0.0, 0.0))
+        self.fallback_used = getattr(source, "fallback_used", False)
+        self.fallback_reason = getattr(source, "fallback_reason", None)
+
+    def __bool__(self) -> bool:
+        """Match BufferRegion object truthiness instead of ndarray ambiguity."""
+        return True
+
+    def __eq__(self, other: object) -> bool:
+        """BufferRegion equality is identity equality, not pixel equality."""
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return self is not other
+
+    __hash__ = object.__hash__
+
+    @property
+    def pixels(self) -> Any:
+        """Expose the writable RGBA storage without its metadata subclass."""
+        return self.view(np.ndarray)
+
+    def get_extents(self) -> tuple[int, int, int, int]:
+        """Return RendererAgg-compatible top-origin buffer extents."""
+        return self.pixel_bounds
+
+    def set_x(self, value: SupportsIndex) -> None:
+        """Move the region's default restore position horizontally."""
+        left, top, right, bottom = self.pixel_bounds
+        self.pixel_bounds = operator.index(value), top, right, bottom
+
+    def set_y(self, value: SupportsIndex) -> None:
+        """Move the region's default restore position vertically."""
+        left, top, right, bottom = self.pixel_bounds
+        self.pixel_bounds = left, operator.index(value), right, bottom
 
 
 class FigureCanvasXY(FigureCanvasBase):
@@ -905,6 +956,7 @@ class FigureCanvasXY(FigureCanvasBase):
     fixed_dpi = None
 
     def __init__(self, figure: Any = None) -> None:
+        self._blit_geometry_epoch = 0
         super().__init__(figure)
         self.renderer: RendererXY | None = None
         self._last_key: tuple[float, float, float] | None = None
@@ -912,6 +964,13 @@ class FigureCanvasXY(FigureCanvasBase):
         self._draw_generation = 0
         self._widget: FigureCanvasXYWidget | None = None
         self._cursor_name = "pointer"
+        self._blit_work: Any = None
+        self._blit_front: Any = None
+        self._blit_command_count = 0
+        self._blit_renderer_key: tuple[float, float, float] | None = None
+        self._full_draw_depth = 0
+        self._blit_published_during_draw = False
+        self._blit_work_mutated_during_draw = False
 
     @classmethod
     def get_default_filetype(cls) -> str:
@@ -926,11 +985,188 @@ class FigureCanvasXY(FigureCanvasBase):
         width, height = (float(value) for value in self.figure.bbox.size)
         key = width, height, float(self.figure.dpi)
         if self.renderer is None or self._last_key != key:
+            if self.renderer is not None:
+                self._blit_geometry_epoch += 1
             self.renderer = RendererXY(width, height, self.figure.dpi)
             self._last_key = key
         elif cleared:
             self.renderer.clear()
         return self.renderer
+
+    def _current_renderer_key(self) -> tuple[float, float, float]:
+        width, height = (float(value) for value in self.figure.bbox.size)
+        return width, height, float(self.figure.dpi)
+
+    @staticmethod
+    def _renderer_key(renderer: RendererXY) -> tuple[float, float, float]:
+        return float(renderer.width), float(renderer.height), float(renderer.dpi)
+
+    def _begin_full_draw(self, renderer: RendererXY) -> None:
+        """Invalidate incremental state before Matplotlib rebuilds the Figure."""
+        self._blit_published_during_draw = False
+        self._blit_work_mutated_during_draw = False
+        self._blit_work = None
+        self._blit_front = None
+        self._blit_command_count = 0
+        self._blit_renderer_key = (
+            float(renderer.width),
+            float(renderer.height),
+            float(renderer.dpi),
+        )
+
+    def _finish_full_draw(self, renderer: RendererXY) -> None:
+        """Record the static command boundary after a complete Figure draw."""
+        command_count = len(renderer.display_list.commands)
+        # A draw-event callback may already have requested and materialized a
+        # background.  Seal any commands drawn by later callbacks, then make
+        # the complete work surface the newly presented front surface.
+        if self._blit_work is not None:
+            self._seal_blit_work()
+            self._blit_front = self._blit_work.copy()
+            if self._blit_published_during_draw or self._blit_work_mutated_during_draw:
+                self._publish_blit_front(renderer.display_list)
+        else:
+            self._blit_command_count = command_count
+        self._blit_renderer_key = (
+            float(renderer.width),
+            float(renderer.height),
+            float(renderer.dpi),
+        )
+
+    def _display_list_slice_rgba(
+        self,
+        display_list: DisplayList,
+        start: int = 0,
+        stop: int | None = None,
+    ) -> Any:
+        """Rasterize a command slice with XY's renderer-neutral consumer."""
+        sliced = DisplayList(
+            display_list.width,
+            display_list.height,
+            display_list.dpi,
+            commands=list(display_list.commands[start:stop]),
+            resources=dict(display_list.resources),
+            fallback_used=display_list.fallback_used,
+            fallback_reason=display_list.fallback_reason,
+            metadata=dict(display_list.metadata),
+        )
+        return sliced.to_rgba()
+
+    def _ensure_blit_work(self) -> Any:
+        """Materialize the renderer work surface at its command boundary."""
+        assert self.renderer is not None
+        if self._blit_work is None:
+            self._blit_work = self._display_list_slice_rgba(
+                self.renderer.display_list,
+                stop=self._blit_command_count,
+            )
+        return self._blit_work
+
+    def _ensure_blit_front(self) -> Any:
+        """Materialize the last fully presented browser surface."""
+        if self._blit_front is None:
+            self._blit_front = self._ensure_blit_work().copy()
+        return self._blit_front
+
+    def _seal_blit_work(self) -> Any:
+        """Apply newly drawn renderer commands to WORK, without presenting."""
+        assert self.renderer is not None
+        display_list = self.renderer.display_list
+        if len(display_list.commands) > self._blit_command_count:
+            work = self._ensure_blit_work()
+            # FRONT must retain the pixels from before these commands.  It is
+            # intentionally independent because draw_artist mutates a native
+            # renderer immediately while canvas.blit controls presentation.
+            self._ensure_blit_front()
+            overlay = self._display_list_slice_rgba(
+                display_list,
+                start=self._blit_command_count,
+            )
+            self._blit_work = self._source_over(work, overlay)
+            self._blit_command_count = len(display_list.commands)
+        return self._ensure_blit_work()
+
+    @staticmethod
+    def _bbox_extents(bbox: Any, label: str) -> tuple[float, float, float, float]:
+        value = getattr(bbox, "extents", bbox)
+        try:
+            extents = tuple(float(item) for item in value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} requires four bbox extents") from exc
+        if len(extents) != 4:
+            raise ValueError(f"{label} requires four bbox extents")
+        return cast(tuple[float, float, float, float], extents)
+
+    @staticmethod
+    def _pixel_bounds(
+        bbox: Any,
+        width: int,
+        height: int,
+    ) -> tuple[int, int, int, int]:
+        """Convert a bottom-origin Matplotlib bbox to clipped pixel bounds."""
+        if bbox is None:
+            return 0, 0, width, height
+        x0, y0, x1, y1 = FigureCanvasXY._bbox_extents(bbox, "a blit bbox")
+        left = max(0, min(width, math.floor(min(x0, x1))))
+        right = max(0, min(width, math.ceil(max(x0, x1))))
+        bottom = max(0, min(height, math.floor(min(y0, y1))))
+        top = max(0, min(height, math.ceil(max(y0, y1))))
+        return left, bottom, right, top
+
+    @staticmethod
+    def _source_over(destination: Any, source: Any) -> Any:
+        """Composite straight-alpha RGBA8 source pixels over destination."""
+        destination_float = destination.astype(np.float32) / 255
+        source_float = source.astype(np.float32) / 255
+        destination_alpha = destination_float[:, :, 3:4]
+        source_alpha = source_float[:, :, 3:4]
+        output_alpha = source_alpha + destination_alpha * (1 - source_alpha)
+        premultiplied = source_float[:, :, :3] * source_alpha + destination_float[
+            :, :, :3
+        ] * destination_alpha * (1 - source_alpha)
+        output = np.zeros_like(destination_float)
+        np.divide(
+            premultiplied,
+            output_alpha,
+            out=output[:, :, :3],
+            where=output_alpha > 0,
+        )
+        output[:, :, 3:4] = output_alpha
+        return np.rint(np.clip(output, 0, 1) * 255).astype(np.uint8)
+
+    def _publish_blit_front(self, display_list: DisplayList) -> None:
+        """Replace transient commands with one bounded XY-owned front image."""
+        assert self.renderer is not None
+        assert self._blit_front is not None
+        from xy import _png
+
+        height, width = self._blit_front.shape[:2]
+        flattened = self.renderer._new_display_list()
+        resource = flattened.add_png_resource(
+            _png.png_truecolor(width, height, self._blit_front),
+            width=width,
+            height=height,
+        )
+        flattened.add(
+            "image",
+            resource=resource,
+            x=0.0,
+            y=0.0,
+            width=float(self.renderer.width),
+            height=float(self.renderer.height),
+            transform=None,
+            interpolation="nearest",
+            alpha=1.0,
+            clip=None,
+            url=None,
+            gid=None,
+        )
+        flattened.fallback_used = display_list.fallback_used
+        flattened.fallback_reason = display_list.fallback_reason
+        self.renderer.display_list = flattened
+        self._blit_command_count = 1
+        if self._full_draw_depth:
+            self._blit_published_during_draw = True
 
     def draw(self, *args: Any, **kwargs: Any) -> None:
         manager = getattr(self, "manager", None)
@@ -943,7 +1179,29 @@ class FigureCanvasXY(FigureCanvasBase):
             else nullcontext()
         )
         with wait_cursor:
-            self.figure.draw(renderer)
+            self._full_draw_depth += 1
+            try:
+                # A draw-event callback may synchronously resize the Figure
+                # and ask for its renderer.  That replaces ``self.renderer``
+                # while the local renderer still contains the just-completed
+                # old-size draw.  Repeat with the final geometry so the public
+                # renderer and every browser consumer cannot be left blank or
+                # stale.  A callback that changes geometry forever is invalid;
+                # bound the retries instead of hanging the process.
+                for _attempt in range(8):
+                    self._begin_full_draw(renderer)
+                    self.figure.draw(renderer)
+                    if (
+                        self.renderer is renderer
+                        and self._renderer_key(renderer) == self._current_renderer_key()
+                    ):
+                        self._finish_full_draw(renderer)
+                        break
+                    renderer = self.get_renderer(cleared=True)
+                else:
+                    raise RuntimeError("figure geometry changed repeatedly during draw_event")
+            finally:
+                self._full_draw_depth -= 1
             self._draw_generation += 1
             super().draw(*args, **kwargs)
         if self._widget is not None:
@@ -1013,27 +1271,58 @@ class FigureCanvasXY(FigureCanvasBase):
         self._sync_browser_ui()
 
     def copy_from_bbox(self, bbox: Any) -> _RegionXY:
-        """Snapshot the current display list for Matplotlib's blit protocol.
+        """Snapshot one canvas region for Matplotlib's blit protocol.
 
-        XY restores the complete display-list background rather than copying a
-        pixel rectangle.  Animated Artists can then append their current
-        device-space operations and publish that frame without re-rendering
-        every static Artist in the Figure.
+        The pixels come exclusively from XY's shared display-list rasterizer.
+        Keeping a real regional snapshot is what lets independent animations,
+        widgets, and partial ``bbox``/``xy`` restores coexist without one
+        display-list cache rewinding another.
         """
-        if self.renderer is None:
+        current_key = self._current_renderer_key()
+        if (
+            self.renderer is None
+            or self._blit_renderer_key != current_key
+            or self._renderer_key(self.renderer) != current_key
+        ):
             self.draw()
         assert self.renderer is not None
-        extents = tuple(float(value) for value in bbox.extents)
-        if len(extents) != 4:
-            raise ValueError("copy_from_bbox requires four bbox extents")
+        extents = self._bbox_extents(bbox, "copy_from_bbox")
+        work = self._seal_blit_work()
+        height, width = work.shape[:2]
+        x0, y0, x1, y1 = (int(float(value)) for value in extents)
+        left = x0
+        right = x1
+        top = height - y1
+        bottom = height - y0
+        # BufferRegion's advanced restore API follows RendererAgg's top-origin
+        # buffer coordinates even though copy_from_bbox accepts Matplotlib's
+        # normal bottom-origin bbox.  Retain those internal extents so
+        # restore_region(region, bbox=..., xy=...) is a drop-in operation.
+        pixel_bounds = left, top, right, bottom
+        region_width = max(0, right - left)
+        region_height = max(0, bottom - top)
+        pixels = np.zeros((region_height, region_width, 4), dtype=np.uint8)
+        source_left = max(0, left)
+        source_top = max(0, top)
+        source_right = min(width, right)
+        source_bottom = min(height, bottom)
+        if source_left < source_right and source_top < source_bottom:
+            pixels[
+                source_top - top : source_bottom - top,
+                source_left - left : source_right - left,
+            ] = work[source_top:source_bottom, source_left:source_right]
         renderer_key = (
             float(self.renderer.width),
             float(self.renderer.height),
             float(self.renderer.dpi),
         )
         return _RegionXY(
-            cast(tuple[float, float, float, float], extents),
+            extents,
+            pixel_bounds,
+            pixels,
             self._draw_generation,
+            self._blit_geometry_epoch,
+            self,
             renderer_key,
             self.renderer.display_list,
         )
@@ -1044,33 +1333,154 @@ class FigureCanvasXY(FigureCanvasBase):
         bbox: Any = None,
         xy: tuple[float, float] | None = None,
     ) -> None:
-        """Restore a display-list background before animated Artists draw."""
+        """Restore saved pixels without disturbing content outside the region."""
         if not isinstance(region, _RegionXY):
             raise TypeError("restore_region requires a region returned by copy_from_bbox")
-        renderer = self.renderer
-        if renderer is None:
+        region_owner = region.owner()
+        current_key = self._current_renderer_key()
+        redrawn = False
+        if (
+            self.renderer is None
+            or self._blit_renderer_key != current_key
+            or self._renderer_key(self.renderer) != current_key
+        ):
             self.draw()
-            renderer = self.renderer
-        assert renderer is not None
-        renderer_key = (float(renderer.width), float(renderer.height), float(renderer.dpi))
-        if renderer_key != region.renderer_key:
+            redrawn = True
+        assert self.renderer is not None
+        if region_owner is self and (
+            current_key != region.renderer_key or region.geometry_epoch != self._blit_geometry_epoch
+        ):
             # A resize invalidates a device-space background.  A normal draw
             # also refreshes Matplotlib's widget background caches through its
             # draw-event callbacks.
-            self.draw()
+            if not redrawn:
+                self.draw()
             return
-        display_list = renderer.display_list
-        display_list.commands[:] = region.commands
-        display_list.resources.clear()
-        display_list.resources.update(region.resources)
-        display_list.fallback_used = region.fallback_used
-        display_list.fallback_reason = region.fallback_reason
+
+        display_list = self.renderer.display_list
+        work = self._seal_blit_work()
+        # Restoring changes the renderer immediately, but not the browser
+        # until a later blit.  Freeze FRONT before modifying WORK.
+        self._ensure_blit_front()
+        height, width = work.shape[:2]
+
+        region_left, region_top, _region_right, _region_bottom = region.pixel_bounds
+        region_height, region_width = region.pixels.shape[:2]
+        buffer_right = region_left + region_width
+        buffer_bottom = region_top + region_height
+        if bbox is None and xy is None:
+            source_left, source_top = region_left, region_top
+            source_right, source_bottom = buffer_right, buffer_bottom
+            anchor_left, anchor_top = region_left, region_top
+        else:
+            requested = (
+                region.pixel_bounds if bbox is None else self._bbox_extents(bbox, "a restore bbox")
+            )
+            requested_left, requested_top, requested_right, requested_bottom = (
+                int(value) for value in requested
+            )
+            if xy is None:
+                anchor_left, anchor_top = requested_left, requested_top
+            else:
+                anchor_left, anchor_top = int(float(xy[0])), int(float(xy[1]))
+            source_left = max(region_left, requested_left)
+            source_top = max(region_top, requested_top)
+            # RendererAgg's partial BufferRegion overload treats the supplied
+            # maximum endpoint as inclusive, unlike the full-region overload.
+            source_right = min(buffer_right, requested_right + 1)
+            source_bottom = min(buffer_bottom, requested_bottom + 1)
+        if source_left >= source_right or source_top >= source_bottom:
+            return
+
+        destination_left = anchor_left + source_left - region_left
+        destination_top = anchor_top + source_top - region_top
+        copy_width = source_right - source_left
+        copy_height = source_bottom - source_top
+        destination_right = destination_left + copy_width
+        destination_bottom = destination_top + copy_height
+
+        clipped_left = max(0, destination_left)
+        clipped_top = max(0, destination_top)
+        clipped_right = min(width, destination_right)
+        clipped_bottom = min(height, destination_bottom)
+        if clipped_left >= clipped_right or clipped_top >= clipped_bottom:
+            return
+
+        source_left += clipped_left - destination_left
+        source_top += clipped_top - destination_top
+        source_right = source_left + clipped_right - clipped_left
+        source_bottom = source_top + clipped_bottom - clipped_top
+        region_row_start = source_top - region_top
+        region_row_stop = source_bottom - region_top
+        region_column_start = source_left - region_left
+        region_column_stop = source_right - region_left
+        work[clipped_top:clipped_bottom, clipped_left:clipped_right] = region.pixels[
+            region_row_start:region_row_stop,
+            region_column_start:region_column_stop,
+        ]
+        if self._full_draw_depth:
+            self._blit_work_mutated_during_draw = True
+        if region.fallback_used and not display_list.fallback_used:
+            display_list.mark_fallback(region.fallback_reason or "restored fallback region")
 
     def blit(self, bbox: Any = None) -> None:
-        """Publish the restored background plus freshly drawn animated Artists."""
+        """Copy the requested WORK damage region onto the presented FRONT."""
         if self.renderer is None:
             self.draw()
             return
+        current_key = self._current_renderer_key()
+        renderer_key = self._renderer_key(self.renderer)
+        if renderer_key != current_key:
+            # This is the previous geometry's complete display list, not a
+            # foreground drawn at the new size.  Discard it and rebuild once.
+            self.draw()
+        elif self._blit_renderer_key != current_key:
+            # ``draw_artist`` can allocate a new renderer after a silent
+            # Figure resize.  Preserve those foreground commands, rebuild the
+            # correctly sized static Figure, then composite the foreground.
+            foreground = self.renderer.display_list
+            foreground_key = renderer_key
+            commands = tuple(foreground.commands)
+            resources = dict(foreground.resources)
+            fallback_used = foreground.fallback_used
+            fallback_reason = foreground.fallback_reason
+            self.draw()
+            assert self.renderer is not None
+            if self._renderer_key(self.renderer) == foreground_key:
+                self.renderer.display_list.commands.extend(commands)
+                self.renderer.display_list.resources.update(resources)
+                if fallback_used:
+                    self.renderer.display_list.fallback_used = True
+                    self.renderer.display_list.fallback_reason = fallback_reason
+            else:
+                # A draw-event callback changed geometry again during the
+                # repair draw.  Device-space commands from the intermediate
+                # renderer are invalid.  A complete draw already includes all
+                # ordinary Artists; redraw the animated Artists that
+                # Matplotlib intentionally omits from that static pass.
+                animated = [
+                    artist
+                    for artist in self.figure.findobj()
+                    if artist is not self.figure and artist.get_animated() and artist.get_visible()
+                ]
+                for artist in sorted(animated, key=lambda item: item.get_zorder()):
+                    artist.draw(self.renderer)
+
+        assert self.renderer is not None
+        display_list = self.renderer.display_list
+        work = self._seal_blit_work()
+        front = self._ensure_blit_front()
+        height, width = work.shape[:2]
+        left, bottom, right, top = self._pixel_bounds(bbox, width, height)
+        row_start = height - top
+        row_stop = height - bottom
+        if left < right and row_start < row_stop:
+            front[row_start:row_stop, left:right] = work[
+                row_start:row_stop,
+                left:right,
+            ]
+
+        self._publish_blit_front(display_list)
         self._draw_generation += 1
         if self._widget is not None:
             self._widget.refresh(self.renderer.display_list)

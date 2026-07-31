@@ -21,6 +21,7 @@ matplotlib = pytest.importorskip("matplotlib")
 np = pytest.importorskip("numpy")
 FuncAnimation = pytest.importorskip("matplotlib.animation").FuncAnimation
 Figure = pytest.importorskip("matplotlib.figure").Figure
+Rectangle = pytest.importorskip("matplotlib.patches").Rectangle
 backend_tools = pytest.importorskip("matplotlib.backend_tools")
 ToolBase = backend_tools.ToolBase
 ToolToggleBase = backend_tools.ToolToggleBase
@@ -29,6 +30,7 @@ FontProperties = font_manager.FontProperties
 get_font = font_manager.get_font
 fontManager = font_manager.fontManager
 LoadFlags = pytest.importorskip("matplotlib.ft2font").LoadFlags
+Bbox = pytest.importorskip("matplotlib.transforms").Bbox
 backend_xy = pytest.importorskip("xy.backends.backend_xy")
 FigureCanvasXY = backend_xy.FigureCanvasXY
 NavigationToolbar2XY = backend_xy.NavigationToolbar2XY
@@ -596,28 +598,459 @@ def test_canvas_region_copy_restore_publishes_incremental_display_list() -> None
     figure = Figure(figsize=(2, 2), dpi=72)
     canvas = FigureCanvasXY(figure)
     axes = figure.subplots()
-    (line,) = axes.plot([0, 1], [0, 1])
+    (line,) = axes.plot([0, 1], [0, 1], animated=True)
     canvas.draw()
     generation = canvas._draw_generation
     assert canvas.renderer is not None
-    background_commands = tuple(canvas.renderer.display_list.commands)
 
     region = canvas.copy_from_bbox(axes.bbox)
+    canvas.restore_region(region)
     line.set_ydata([1, 0])
     axes.draw_artist(line)
-    assert tuple(canvas.renderer.display_list.commands) != background_commands
-    canvas.restore_region(region)
-    assert tuple(canvas.renderer.display_list.commands) == background_commands
-    axes.draw_artist(line)
-    animated_commands = tuple(canvas.renderer.display_list.commands)
-    assert animated_commands != background_commands
     canvas.blit(axes.bbox)
+    incremental = canvas.renderer.display_list.to_rgba()
 
     assert region.bbox == tuple(float(value) for value in axes.bbox.extents)
     assert region.generation == generation
     assert canvas._draw_generation == generation + 1
-    assert tuple(canvas.renderer.display_list.commands) == animated_commands
+    assert [command["type"] for command in canvas.renderer.display_list.commands] == ["image"]
+    assert len(canvas.renderer.display_list.resources) == 1
     assert canvas.fallback_used is False
+
+    line.set_animated(False)
+    canvas.draw()
+    reference = canvas.renderer.display_list.to_rgba()
+    assert np.array_equal(incremental, reference)
+
+
+def test_canvas_region_restore_preserves_an_independent_axes_overlay() -> None:
+    figure = Figure(figsize=(4, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    left, right = figure.subplots(1, 2)
+    (left_line,) = left.plot([0, 1], [0, 1], color="red", animated=True)
+    (right_line,) = right.plot([0, 1], [1, 0], color="blue", animated=True)
+    canvas.draw()
+    left_background = canvas.copy_from_bbox(left.bbox)
+    right_background = canvas.copy_from_bbox(right.bbox)
+
+    canvas.restore_region(left_background)
+    left_line.set_ydata([0.2, 0.8])
+    left.draw_artist(left_line)
+    canvas.blit(left.bbox)
+    canvas.restore_region(right_background)
+    right_line.set_ydata([0.8, 0.2])
+    right.draw_artist(right_line)
+    canvas.blit(right.bbox)
+    before_left_update = canvas.renderer.display_list.to_rgba()
+
+    canvas.restore_region(left_background)
+    left_line.set_ydata([0.8, 0.2])
+    left.draw_artist(left_line)
+    canvas.blit(left.bbox)
+    incremental = canvas.renderer.display_list.to_rgba()
+
+    height = incremental.shape[0]
+    right_left, right_bottom, right_right, right_top = canvas._pixel_bounds(
+        right.bbox,
+        incremental.shape[1],
+        height,
+    )
+    assert np.array_equal(
+        incremental[height - right_top : height - right_bottom, right_left:right_right],
+        before_left_update[
+            height - right_top : height - right_bottom,
+            right_left:right_right,
+        ],
+    )
+    assert [command["type"] for command in canvas.renderer.display_list.commands] == ["image"]
+    assert len(canvas.renderer.display_list.resources) == 1
+
+    left_line.set_animated(False)
+    right_line.set_animated(False)
+    canvas.draw()
+    reference = canvas.renderer.display_list.to_rgba()
+    differing = np.abs(incremental.astype(int) - reference.astype(int))
+    assert np.count_nonzero(differing) <= 4
+
+
+def test_canvas_work_surface_survives_interleaved_partial_blits_and_copies() -> None:
+    figure = Figure(figsize=(4, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    left, right = figure.subplots(1, 2)
+    (left_line,) = left.plot([0, 1], [1, 0], color="red", animated=True)
+    (right_line,) = right.plot([0, 1], [0, 1], color="blue", animated=True)
+    canvas.draw()
+    left_background = canvas.copy_from_bbox(left.bbox)
+    right_background = canvas.copy_from_bbox(right.bbox)
+
+    canvas.restore_region(left_background)
+    canvas.restore_region(right_background)
+    left.draw_artist(left_line)
+    right.draw_artist(right_line)
+    canvas.blit(left.bbox)
+
+    assert canvas._blit_work is not None
+    assert canvas._blit_front is not None
+    right_left, right_top, right_right, right_bottom = right_background.pixel_bounds
+    rows = slice(right_top, right_bottom)
+    columns = slice(right_left, right_right)
+    assert not np.array_equal(
+        canvas._blit_front[rows, columns],
+        canvas._blit_work[rows, columns],
+    )
+
+    # A background copy reads renderer WORK, including the as-yet-unpresented
+    # right artist, rather than accidentally sampling browser FRONT.
+    copied = canvas.copy_from_bbox(right.bbox)
+    assert np.array_equal(copied.pixels, canvas._blit_work[rows, columns])
+    canvas.blit(right.bbox)
+    assert np.array_equal(
+        canvas._blit_front[rows, columns],
+        canvas._blit_work[rows, columns],
+    )
+
+
+def test_canvas_repeated_region_blits_are_bounded_without_full_redraws() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    (line,) = axes.plot([0, 1], [0, 1], animated=True)
+    draw_events: list[int] = []
+    canvas.mpl_connect("draw_event", lambda _event: draw_events.append(1))
+    canvas.draw()
+    background = canvas.copy_from_bbox(axes.bbox)
+
+    for index in range(20):
+        canvas.restore_region(background)
+        line.set_ydata([index / 20, 1 - index / 20])
+        axes.draw_artist(line)
+        canvas.blit(axes.bbox)
+        assert [command["type"] for command in canvas.renderer.display_list.commands] == ["image"]
+        assert len(canvas.renderer.display_list.resources) == 1
+
+    assert len(draw_events) == 1
+    assert canvas._draw_generation == 21
+
+
+def test_canvas_full_draw_repairs_a_partial_blit_from_draw_event() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    axes.plot([0, 1], [0, 1])
+    canvas.mpl_connect("draw_event", lambda _event: canvas.blit(axes.bbox))
+
+    canvas.draw()
+
+    published = canvas.renderer.display_list.to_rgba()
+    assert canvas._blit_work is not None
+    assert canvas._blit_front is not None
+    assert np.array_equal(published, canvas._blit_work)
+    assert np.array_equal(published, canvas._blit_front)
+    assert published[0, 0].tolist() == [255, 0, 0, 255]
+
+
+def test_canvas_full_draw_publishes_a_restore_from_draw_event() -> None:
+    figure = Figure(figsize=(1, 1), dpi=50, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    canvas.draw()
+    red = canvas.copy_from_bbox(figure.bbox)
+    figure.set_facecolor("blue")
+    canvas.mpl_connect("draw_event", lambda _event: canvas.restore_region(red))
+
+    canvas.draw()
+
+    published = canvas.renderer.display_list.to_rgba()
+    assert canvas._blit_work is not None
+    assert canvas._blit_front is not None
+    assert np.array_equal(published, canvas._blit_work)
+    assert np.array_equal(published, canvas._blit_front)
+    assert published[0, 0].tolist() == [255, 0, 0, 255]
+
+
+def test_canvas_full_draw_reconciles_a_draw_event_resize() -> None:
+    figure = Figure(figsize=(2, 2), dpi=50, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    resize_events = 0
+
+    def resize_once(_event: object) -> None:
+        nonlocal resize_events
+        resize_events += 1
+        figure.set_size_inches(3, 3, forward=False)
+        canvas.get_renderer()
+
+    canvas.mpl_connect("draw_event", resize_once)
+    canvas.draw()
+
+    assert resize_events == 2
+    assert canvas.renderer is not None
+    assert canvas._renderer_key(canvas.renderer) == (150.0, 150.0, 50.0)
+    assert canvas._blit_renderer_key == (150.0, 150.0, 50.0)
+    assert canvas.renderer.display_list.commands
+    rendered = canvas.renderer.display_list.to_rgba()
+    assert rendered.shape == (150, 150, 4)
+    assert rendered[0, 0].tolist() == [255, 0, 0, 255]
+
+
+def test_canvas_nested_draw_event_preserves_the_outer_incremental_state() -> None:
+    figure = Figure(figsize=(1, 1), dpi=50, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    canvas.draw()
+    red = canvas.copy_from_bbox(figure.bbox)
+    figure.set_facecolor("blue")
+    nested = False
+
+    def nested_draw_then_restore(_event: object) -> None:
+        nonlocal nested
+        if nested:
+            return
+        nested = True
+        canvas.draw()
+        canvas.restore_region(red)
+
+    canvas.mpl_connect("draw_event", nested_draw_then_restore)
+    canvas.draw()
+
+    published = canvas.renderer.display_list.to_rgba()
+    assert canvas._full_draw_depth == 0
+    assert canvas._blit_work is not None
+    assert canvas._blit_front is not None
+    assert np.array_equal(published, canvas._blit_work)
+    assert np.array_equal(published, canvas._blit_front)
+    assert published[0, 0].tolist() == [255, 0, 0, 255]
+
+
+def test_canvas_transparent_region_restore_source_replaces_pixels() -> None:
+    figure = Figure(figsize=(1, 1), dpi=50, facecolor="none")
+    canvas = FigureCanvasXY(figure)
+    canvas.draw()
+    transparent = canvas.copy_from_bbox(figure.bbox)
+    assert np.count_nonzero(transparent.pixels[:, :, 3]) == 0
+
+    figure.set_facecolor("red")
+    canvas.draw()
+    assert np.all(canvas.renderer.display_list.to_rgba()[:, :, 3] == 255)
+    canvas.restore_region(transparent)
+    canvas.blit(figure.bbox)
+
+    restored = canvas.renderer.display_list.to_rgba()
+    assert np.count_nonzero(restored[:, :, 3]) == 0
+
+
+def test_canvas_partial_region_restore_honors_bbox_and_xy() -> None:
+    figure = Figure(figsize=(2, 2), dpi=50)
+    canvas = FigureCanvasXY(figure)
+    for xy, color in (
+        ((0, 0), "red"),
+        ((0.5, 0), "green"),
+        ((0, 0.5), "blue"),
+        ((0.5, 0.5), "yellow"),
+    ):
+        figure.add_artist(
+            Rectangle(
+                xy,
+                0.5,
+                0.5,
+                transform=figure.transFigure,
+                facecolor=color,
+                edgecolor="none",
+            )
+        )
+    canvas.draw()
+    original = canvas.renderer.display_list.to_rgba()
+    region = canvas.copy_from_bbox(Bbox.from_extents(10, 10, 90, 70))
+    assert region.pixel_bounds == (10, 30, 90, 90)
+    assert region.get_extents() == (10, 30, 90, 90)
+
+    for patch in figure.artists:
+        patch.set_facecolor("black")
+    canvas.draw()
+    changed = canvas.renderer.display_list.to_rgba()
+    source = (30, 40, 49, 59)
+    # Advanced restore coordinates are top-origin.  Relative to the region's
+    # (10, 30) origin, this source begins at (20, 10), so an anchor of (5, 7)
+    # places the 20x20 destination at top-origin (25, 17).
+    destination = Bbox.from_extents(25, 63, 45, 83)
+    canvas.restore_region(region, bbox=source, xy=(5, 7))
+    canvas.blit(destination)
+    restored = canvas.renderer.display_list.to_rgba()
+
+    # Match RendererAgg's BufferRegion convention: advanced source and
+    # destination coordinates are top-origin buffer coordinates.
+    assert np.array_equal(restored[17:37, 25:45], original[40:60, 30:50])
+    outside = np.ones(restored.shape[:2], dtype=bool)
+    outside[17:37, 25:45] = False
+    assert np.array_equal(restored[outside], changed[outside])
+
+
+def test_canvas_region_retains_out_of_bounds_extent_and_buffer_shape() -> None:
+    figure = Figure(figsize=(2, 2), dpi=50, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    canvas.draw()
+
+    region = canvas.copy_from_bbox(Bbox.from_extents(-10, -20, 40, 30))
+
+    assert region.get_extents() == (-10, 70, 40, 120)
+    assert region.pixels.shape == (50, 50, 4)
+    assert np.count_nonzero(region.pixels[30:, :, 3]) == 0
+    assert np.count_nonzero(region.pixels[:, :10, 3]) == 0
+    assert np.all(region.pixels[:30, 10:, 3] == 255)
+    array = np.asarray(region)
+    buffer = memoryview(region)
+    assert array.shape == (50, 50, 4)
+    assert array.dtype == np.uint8
+    assert array.flags.writeable
+    assert buffer.shape == (50, 50, 4)
+    assert buffer.format == "B"
+    assert not buffer.readonly
+    assert bool(region) is True
+    assert region == region
+    assert region != region.copy()
+    assert hash(region) == hash(region)
+    array[0, 0] = [1, 2, 3, 4]
+    assert region.pixels[0, 0].tolist() == [1, 2, 3, 4]
+    region.set_x(5)
+    region.set_y(7)
+    assert region.get_extents() == (5, 7, 40, 120)
+    with pytest.raises(TypeError):
+        region.set_x(5.9)
+    with pytest.raises(TypeError):
+        region.set_y(7.9)
+
+
+def test_canvas_region_set_position_preserves_the_pixel_buffer_dimensions() -> None:
+    figure = Figure(figsize=(2, 2), dpi=50, facecolor="red")
+    canvas = FigureCanvasXY(figure)
+    canvas.draw()
+    region = canvas.copy_from_bbox(Bbox.from_extents(10, 10, 90, 90))
+    region.set_x(5)
+    region.set_y(15)
+    assert region.get_extents() == (5, 15, 90, 90)
+    assert np.asarray(region).shape == (80, 80, 4)
+
+    figure.set_facecolor("black")
+    canvas.draw()
+    canvas.restore_region(region)
+    canvas.blit()
+    restored = canvas.renderer.display_list.to_rgba()
+
+    assert np.all(restored[15:95, 5:85] == [255, 0, 0, 255])
+    outside = np.ones(restored.shape[:2], dtype=bool)
+    outside[15:95, 5:85] = False
+    assert np.all(restored[outside] == [0, 0, 0, 255])
+
+    # Supplying only xy selects RendererAgg's advanced overload.  It uses the
+    # mutable extents as an inclusive source bbox, so moving the lower bounds
+    # inward crops the unchanged 80x80 backing buffer to 76x76.
+    region.set_x(15)
+    figure.set_facecolor("black")
+    canvas.draw()
+    canvas.restore_region(region, xy=(2, 3))
+    canvas.blit()
+    advanced = canvas.renderer.display_list.to_rgba()
+    assert np.all(advanced[3:79, 2:78] == [255, 0, 0, 255])
+    outside = np.ones(advanced.shape[:2], dtype=bool)
+    outside[3:79, 2:78] = False
+    assert np.all(advanced[outside] == [0, 0, 0, 255])
+
+
+def test_canvas_stale_region_after_silent_resize_rebuilds_the_figure() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    (line,) = axes.plot([0, 1], [0, 1], animated=True)
+    canvas.draw()
+    old_region = canvas.copy_from_bbox(axes.bbox)
+
+    figure.set_size_inches(4, 3, forward=False)
+    canvas.restore_region(old_region)
+    line.set_ydata([1, 0])
+    axes.draw_artist(line)
+    canvas.blit(axes.bbox)
+    incremental = canvas.renderer.display_list.to_rgba()
+
+    assert incremental.shape == (216, 288, 4)
+    line.set_animated(False)
+    canvas.draw()
+    reference = canvas.renderer.display_list.to_rgba()
+    assert np.array_equal(incremental, reference)
+
+
+def test_canvas_blit_after_silent_resize_discards_the_old_geometry() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    axes.plot([0, 1], [0, 1])
+    canvas.draw()
+
+    figure.set_size_inches(4, 3, forward=False)
+    canvas.blit()
+    resized = canvas.renderer.display_list.to_rgba()
+
+    assert resized.shape == (216, 288, 4)
+    canvas.draw()
+    reference = canvas.renderer.display_list.to_rgba()
+    assert np.array_equal(resized, reference)
+
+
+def test_canvas_resize_during_blit_repair_redraws_animated_artists() -> None:
+    figure = Figure(figsize=(2, 2), dpi=50)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    (line,) = axes.plot([0, 1], [1, 0], color="red", animated=True)
+    canvas.draw()
+
+    figure.set_size_inches(3, 3, forward=False)
+    axes.draw_artist(line)
+    resized = False
+
+    def resize_once(_event: object) -> None:
+        nonlocal resized
+        if resized:
+            return
+        resized = True
+        figure.set_size_inches(4, 4, forward=False)
+        canvas.get_renderer()
+
+    canvas.mpl_connect("draw_event", resize_once)
+    canvas.blit(axes.bbox)
+    incremental = canvas.renderer.display_list.to_rgba()
+
+    assert incremental.shape == (200, 200, 4)
+    line.set_animated(False)
+    canvas.draw()
+    reference = canvas.renderer.display_list.to_rgba()
+    assert np.array_equal(incremental, reference)
+
+
+def test_canvas_region_geometry_epoch_survives_resize_away_and_back() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.subplots()
+    axes.plot([0, 1], [0, 1])
+    canvas.draw()
+    region = canvas.copy_from_bbox(axes.bbox)
+
+    figure.set_size_inches(3, 3, forward=False)
+    canvas.get_renderer()
+    figure.set_size_inches(2, 2, forward=False)
+    generation = canvas._draw_generation
+    canvas.restore_region(region)
+
+    assert canvas._draw_generation == generation + 1
+    assert canvas._blit_geometry_epoch > region.geometry_epoch
+    assert canvas._renderer_key(canvas.renderer) == canvas._current_renderer_key()
+
+    other = FigureCanvasXY(Figure(figsize=(2, 2), dpi=72, facecolor="blue"))
+    other.draw()
+    other.restore_region(region)
+    other.blit()
+
+    assert other._blit_work is not None
+    left, top, right, bottom = region.pixel_bounds
+    assert np.array_equal(
+        other._blit_work[top:bottom, left:right],
+        region.pixels,
+    )
 
 
 def test_matplotlib_hatches_and_artist_gids_survive_all_xy_consumers() -> None:
