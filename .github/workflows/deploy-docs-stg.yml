@@ -144,6 +144,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           REPO: ${{ github.repository }}
+        shell: bash
         run: |
           shopt -s nullglob
           PYPI_VERSION="${VERSION#v}"

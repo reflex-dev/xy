@@ -39,6 +39,10 @@ REQUIRED_CI_JOBS = {
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm", "github-release"}
 REQUIRED_REFLEX_XY_RELEASE_JOBS = {"build", "publish"}
+RELEASE_DOWNLOAD_ACTION = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+RELEASE_ATTEST_ACTION = "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d"
+RELEASE_CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+PYPI_PUBLISH_ACTION = "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -135,6 +139,169 @@ def _step_name(step_text: str) -> str | None:
     return None if match is None else match.group(1)
 
 
+def _step_uses(step_text: str) -> list[str]:
+    """Return every active action reference declared by one step."""
+    uses: list[str] = []
+    for line in step_text.splitlines():
+        match = re.match(r"^      -\s+uses\s*:\s*(.*?)\s*$", line)
+        if match is None:
+            match = re.match(r"^        uses\s*:\s*(.*?)\s*$", line)
+        if match is not None:
+            uses.append(_strip_yaml_inline_comment(match.group(1)))
+    return uses
+
+
+def _step_declares_run(step_text: str) -> bool:
+    """Return whether a step declares an active ``run`` key."""
+    return bool(_step_scalar_values(step_text, "run"))
+
+
+def _step_scalar_values(step_text: str, key: str) -> list[str]:
+    """Return every direct scalar value for one step key."""
+    values: list[str] = []
+    for match in re.finditer(
+        rf"^        {re.escape(key)}\s*:\s*(.*?)\s*$",
+        step_text,
+        re.MULTILINE,
+    ):
+        values.append(_strip_yaml_inline_comment(match.group(1)))
+    return values
+
+
+def _step_direct_keys(step_text: str) -> list[str]:
+    """Return every direct step key, preserving duplicates and source order."""
+    keys: list[str] = []
+    for line in step_text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 6 and line.startswith("      -"):
+            match = re.fullmatch(r"      -\s+([^:]+?)\s*:.*", line)
+        elif indent == 8:
+            match = re.fullmatch(r"        ([^#\s][^:]*?)\s*:.*", line)
+        else:
+            continue
+        keys.append("<unsupported>" if match is None else match.group(1).strip())
+    return keys
+
+
+def _step_mapping(step_text: str, key: str) -> dict[str, str] | None:
+    """Return one direct step mapping with unique plain-scalar children."""
+    lines = step_text.splitlines()
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(rf"        {re.escape(key)}\s*:\s*", line)
+    ]
+    if len(starts) != 1:
+        return None
+
+    mapping: dict[str, str] = {}
+    for line in lines[starts[0] + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= 8:
+            break
+        match = re.fullmatch(r"          ([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*", line)
+        if match is None or match.group(1) in mapping:
+            return None
+        mapping[match.group(1)] = _strip_yaml_inline_comment(match.group(2))
+    return mapping
+
+
+def _job_direct_keys(job_text: str) -> list[str]:
+    """Return active job-level keys, preserving duplicates and source order."""
+    keys: list[str] = []
+    for line in job_text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if len(line) - len(line.lstrip()) != 4:
+            continue
+        match = re.fullmatch(r"    ([^#\s][^:]*?)\s*:.*", line)
+        keys.append("<unsupported>" if match is None else match.group(1).strip())
+    return keys
+
+
+def _workflow_direct_keys(workflow_text: str) -> list[str]:
+    """Return active workflow-level keys, preserving duplicates and order."""
+    keys: list[str] = []
+    for line in workflow_text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if len(line) - len(line.lstrip()) != 0:
+            continue
+        match = re.fullmatch(r"([^#\s][^:]*?)\s*:.*", line)
+        keys.append("<unsupported>" if match is None else match.group(1).strip())
+    return keys
+
+
+def _workflow_mapping(workflow_text: str, key: str) -> dict[str, str] | None:
+    """Return one canonical flat workflow-level mapping."""
+    lines = workflow_text.splitlines()
+    starts = [index for index, line in enumerate(lines) if line == f"{key}:"]
+    if len(starts) != 1:
+        return None
+
+    mapping: dict[str, str] = {}
+    for line in lines[starts[0] + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*(.*?)\s*", line)
+        if match is None or match.group(1) in mapping:
+            return None
+        mapping[match.group(1)] = _strip_yaml_inline_comment(match.group(2))
+    return mapping
+
+
+def _release_trigger_is_exact(workflow_text: str) -> bool:
+    """Return whether core releases have only the canonical tag/manual triggers."""
+    lines = workflow_text.splitlines()
+    starts = [position for position, line in enumerate(lines) if line == "on:"]
+    if len(starts) != 1:
+        return False
+
+    entries: list[tuple[int, str]] = []
+    for line in lines[starts[0] + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            break
+        entries.append((indent, line.strip()))
+
+    fixed_prefix = [
+        (2, "push:"),
+        (4, 'tags: ["v*"]'),
+        (2, "workflow_dispatch:"),
+        (4, "inputs:"),
+        (6, "dry_run:"),
+        (8, "description: >-"),
+    ]
+    if entries[: len(fixed_prefix)] != fixed_prefix:
+        return False
+
+    position = len(fixed_prefix)
+    description_lines = 0
+    while position < len(entries) and entries[position][0] >= 10:
+        description_lines += 1
+        position += 1
+    return description_lines > 0 and entries[position:] == [
+        (8, "type: boolean"),
+        (8, "default: true"),
+    ]
+
+
+def _step_has_exact_bash_run(step_text: str) -> bool:
+    """Return whether a step has one direct run and one exact Bash shell."""
+    return len(_step_scalar_values(step_text, "run")) == 1 and _step_scalar_values(
+        step_text, "shell"
+    ) == ["bash"]
+
+
 def _step_run(step_text: str) -> str | None:
     """Return one step's shell from a literal block or one-line ``run`` value.
 
@@ -173,8 +340,10 @@ def _step_run(step_text: str) -> str | None:
 def _step_uses_uninspectable_run(step_text: str) -> bool:
     """Return whether a shell step is not a supported literal YAML block."""
     for line in step_text.splitlines():
-        match = re.match(r"^        run:\s*(.*?)\s*$", line)
+        match = re.match(r"^        run\s*:\s*(.*?)\s*$", line)
         if match is not None:
+            if not line.startswith("        run:"):
+                return True
             value = _strip_yaml_inline_comment(match.group(1))
             return re.fullmatch(r"\|[+-]?", value) is None
     return False
@@ -188,8 +357,8 @@ def _job_scalar(job_text: str, key: str) -> str | None:
 
 def _step_scalar(step_text: str, key: str) -> str | None:
     """Return an active named-step scalar, ignoring comments and nested keys."""
-    match = re.search(rf"^        {re.escape(key)}:\s*(.*?)\s*$", step_text, re.MULTILINE)
-    return None if match is None else _strip_yaml_inline_comment(match.group(1))
+    values = _step_scalar_values(step_text, key)
+    return values[0] if len(values) == 1 else None
 
 
 def _strip_yaml_inline_comment(value: str) -> str:
@@ -223,21 +392,21 @@ def _strip_yaml_inline_comment(value: str) -> str:
 def _job_mapping(job_text: str, key: str) -> dict[str, str] | None:
     """Return an active job-level mapping with direct scalar children."""
     lines = job_text.splitlines()
-    try:
-        start = lines.index(f"    {key}:")
-    except ValueError:
+    starts = [index for index, line in enumerate(lines) if line == f"    {key}:"]
+    if len(starts) != 1:
         return None
 
     mapping: dict[str, str] = {}
-    for line in lines[start + 1 :]:
+    for line in lines[starts[0] + 1 :]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip())
         if indent <= 4:
             break
         match = re.fullmatch(r"      ([A-Za-z0-9_-]+):\s*(.*?)\s*", line)
-        if match:
-            mapping[match.group(1)] = _strip_yaml_inline_comment(match.group(2))
+        if match is None or match.group(1) in mapping:
+            return None
+        mapping[match.group(1)] = _strip_yaml_inline_comment(match.group(2))
     return mapping
 
 
@@ -309,10 +478,77 @@ _SHELL_COMMAND_BOUNDARIES = {
     "!",
 }
 _SHELL_ASSIGNMENT_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SHELL_REDIRECTION_TOKEN = re.compile(
+    r"^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?"
+    r"(?:<<<|<<-|<<|<>|>>|>|<)(.*)$"
+)
+_ALLOWED_PROTECTED_ARITHMETIC_LINES = {
+    "POLL_DEADLINE=$((SECONDS + 30 * 60))",
+    "if (( SECONDS >= POLL_DEADLINE )); then",
+    "if (( ${#wheels[@]} == 0 || ${#sdists[@]} != 1 )); then",
+    "if (( attempt < 12 )); then",
+    "if (( attempt == MAX_ATTEMPTS )); then",
+    "remaining_seconds=$((POLL_DEADLINE - SECONDS))",
+    "if (( remaining_seconds <= 0 )); then",
+    "if (( sleep_seconds > remaining_seconds )); then",
+}
+_ALLOWED_PYPI_CURL_COMMANDS = {
+    (
+        "curl",
+        "-fsS",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "20",
+        f"https://pypi.org/pypi/xy/${{{version_variable}}}/json",
+        "2>/dev/null",
+    )
+    for version_variable in ("pypi_version", "PYPI_VERSION")
+}
+
+
+def _shell_control_joins_redirection(tokens: list[str], position: int) -> bool:
+    """Return whether ``&`` or ``|`` completes the preceding redirect."""
+    if tokens[position] not in {"&", "|"} or position == 0 or position + 1 >= len(tokens):
+        return False
+    return (
+        re.fullmatch(
+            r"(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?[<>]",
+            tokens[position - 1],
+        )
+        is not None
+    )
+
+
+def _shell_prefix_without_redirections(prefix: list[str]) -> list[str] | None:
+    """Remove complete Bash redirections from a simple-command prefix."""
+    cleaned: list[str] = []
+    index = 0
+    while index < len(prefix):
+        match = _SHELL_REDIRECTION_TOKEN.fullmatch(prefix[index])
+        if match is None:
+            cleaned.append(prefix[index])
+            index += 1
+            continue
+        if match.group(1):
+            index += 1
+            continue
+        if index + 1 >= len(prefix):
+            return None
+        if prefix[index + 1] in {"&", "|"}:
+            if index + 2 >= len(prefix):
+                return None
+            index += 3
+        else:
+            index += 2
+    return cleaned
 
 
 def _shell_prefix_is_wrappers(prefix: list[str]) -> bool:
     """Return whether ``prefix`` only wraps the command that follows it."""
+    prefix = _shell_prefix_without_redirections(prefix)
+    if prefix is None:
+        return False
     index = 0
     while index < len(prefix) and _SHELL_ASSIGNMENT_TOKEN.match(prefix[index]):
         index += 1
@@ -402,7 +638,9 @@ def _shell_token_starts_command(tokens: list[str], token_position: int) -> bool:
     """Return whether one token is executable at a shell command boundary."""
     command_start = 0
     for prefix_position in range(token_position - 1, -1, -1):
-        if tokens[prefix_position] in _SHELL_COMMAND_BOUNDARIES:
+        if tokens[prefix_position] in _SHELL_COMMAND_BOUNDARIES and not (
+            _shell_control_joins_redirection(tokens, prefix_position)
+        ):
             command_start = prefix_position + 1
             break
     return _shell_prefix_is_wrappers(tokens[command_start:token_position])
@@ -412,14 +650,578 @@ def _shell_command_arguments(tokens: list[str], token_position: int) -> list[str
     """Return arguments up to the next shell control boundary."""
     command_end = len(tokens)
     for suffix_position in range(token_position + 1, len(tokens)):
-        if tokens[suffix_position] in _SHELL_COMMAND_BOUNDARIES:
+        if tokens[suffix_position] in _SHELL_COMMAND_BOUNDARIES and not (
+            _shell_control_joins_redirection(tokens, suffix_position)
+        ):
             command_end = suffix_position
             break
     return tokens[token_position + 1 : command_end]
 
 
+def _shell_backtick_end(shell: str, start: int) -> int | None:
+    """Return the closing backtick after ``start``, honoring escapes."""
+    position = start
+    while position < len(shell):
+        if shell[position] == "\\":
+            position += 2
+            continue
+        if shell[position] == "`":
+            return position
+        position += 1
+    return None
+
+
+def _shell_command_substitution_end(shell: str, start: int) -> int | None:
+    """Return the closing parenthesis for a command substitution body."""
+    depth = 1
+    quote: str | None = None
+    position = start
+    while position < len(shell):
+        character = shell[position]
+        if quote == "'":
+            if character == "'":
+                quote = None
+            position += 1
+            continue
+        if quote == '"':
+            if character == "\\":
+                position += 2
+                continue
+            if character == '"':
+                quote = None
+                position += 1
+                continue
+            if shell.startswith("$(", position) and not shell.startswith("$((", position):
+                nested_end = _shell_command_substitution_end(shell, position + 2)
+                if nested_end is None:
+                    return None
+                position = nested_end + 1
+                continue
+            if character == "`":
+                nested_end = _shell_backtick_end(shell, position + 1)
+                if nested_end is None:
+                    return None
+                position = nested_end + 1
+                continue
+            position += 1
+            continue
+        if character == "\\":
+            position += 2
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            position += 1
+            continue
+        if character == "#" and (
+            position == 0 or shell[position - 1].isspace() or shell[position - 1] in ";|&()"
+        ):
+            newline = shell.find("\n", position)
+            if newline < 0:
+                return None
+            position = newline + 1
+            continue
+        if shell.startswith("$(", position) and not shell.startswith("$((", position):
+            nested_end = _shell_command_substitution_end(shell, position + 2)
+            if nested_end is None:
+                return None
+            position = nested_end + 1
+            continue
+        if character == "`":
+            nested_end = _shell_backtick_end(shell, position + 1)
+            if nested_end is None:
+                return None
+            position = nested_end + 1
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return position
+        position += 1
+    return None
+
+
+def _shell_substitution_scan(shell: str) -> tuple[list[str], str] | None:
+    """Extract active substitution bodies and mask them in the outer shell."""
+    bodies: list[str] = []
+    masked: list[str] = []
+    quote: str | None = None
+    position = 0
+    while position < len(shell):
+        character = shell[position]
+        if quote == "'":
+            if character == "'":
+                quote = None
+            masked.append(character)
+            position += 1
+            continue
+        if character == "\\":
+            if position + 1 < len(shell) and shell[position + 1] == "\n":
+                position += 2
+                continue
+            masked.append(shell[position : position + 2])
+            position += 2
+            continue
+        if character == '"':
+            quote = None if quote == '"' else '"'
+            masked.append(character)
+            position += 1
+            continue
+        if quote is None and character == "'":
+            quote = "'"
+            masked.append(character)
+            position += 1
+            continue
+        if (
+            quote is None
+            and character == "#"
+            and (position == 0 or shell[position - 1].isspace() or shell[position - 1] in ";|&()")
+        ):
+            newline = shell.find("\n", position)
+            if newline < 0:
+                break
+            masked.append(shell[position:newline])
+            masked.append("\n")
+            position = newline + 1
+            continue
+        if shell.startswith("$(", position) and not shell.startswith("$((", position):
+            end = _shell_command_substitution_end(shell, position + 2)
+            if end is None:
+                return None
+            bodies.append(shell[position + 2 : end])
+            masked.append("__SHELL_SUBSTITUTION__")
+            position = end + 1
+            continue
+        if quote is None and shell.startswith(("<(", ">("), position):
+            end = _shell_command_substitution_end(shell, position + 2)
+            if end is None:
+                return None
+            bodies.append(shell[position + 2 : end])
+            masked.append("__SHELL_SUBSTITUTION__")
+            position = end + 1
+            continue
+        if character == "`":
+            end = _shell_backtick_end(shell, position + 1)
+            if end is None:
+                return None
+            bodies.append(shell[position + 1 : end])
+            masked.append("__SHELL_SUBSTITUTION__")
+            position = end + 1
+            continue
+        masked.append(character)
+        position += 1
+    return None if quote is not None else (bodies, "".join(masked))
+
+
+def _shell_command_substitutions(shell: str) -> list[str] | None:
+    """Extract active command- and process-substitution bodies from shell source."""
+    scan = _shell_substitution_scan(shell)
+    return None if scan is None else scan[0]
+
+
+def _strip_active_shell_comments(shell: str) -> str | None:
+    """Strip active Bash comments without treating parameter ``#`` as one."""
+    stripped: list[str] = []
+    quote: str | None = None
+    position = 0
+    while position < len(shell):
+        character = shell[position]
+        if quote == "'":
+            stripped.append(character)
+            if character == "'":
+                quote = None
+            position += 1
+            continue
+        if character == "\\":
+            if position + 1 < len(shell) and shell[position + 1] == "\n":
+                position += 2
+                continue
+            stripped.append(shell[position : position + 2])
+            position += 2
+            continue
+        if character == '"':
+            quote = None if quote == '"' else '"'
+            stripped.append(character)
+            position += 1
+            continue
+        if quote is None and character == "'":
+            quote = "'"
+            stripped.append(character)
+            position += 1
+            continue
+        if (
+            quote is None
+            and character == "#"
+            and (position == 0 or shell[position - 1].isspace() or shell[position - 1] in ";|&()")
+        ):
+            newline = shell.find("\n", position)
+            if newline < 0:
+                break
+            stripped.append("\n")
+            position = newline + 1
+            continue
+        stripped.append(character)
+        position += 1
+    return None if quote is not None else "".join(stripped)
+
+
+def _shell_script_tokens(shell: str) -> list[str] | None:
+    """Tokenize a complete Bash script while preserving command newlines.
+
+    Keeping the script intact prevents multiline quoted jq programs from being
+    mistaken for shell commands. Active substitutions are checked recursively
+    and masked before this outer lexical pass.
+    """
+    scan = _shell_substitution_scan(shell)
+    if scan is None:
+        return None
+    _, masked = scan
+    uncommented = _strip_active_shell_comments(masked)
+    if uncommented is None:
+        return None
+    lexer = shlex.shlex(uncommented, posix=True, punctuation_chars=";&|()\n")
+    lexer.commenters = ""
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    try:
+        raw_tokens = list(lexer)
+    except ValueError:
+        return None
+
+    tokens: list[str] = []
+    two_character_operators = {"&&", "||", ";;", "((", "))"}
+    punctuation = set(";&|()\n")
+    for token in raw_tokens:
+        if not token or any(character not in punctuation for character in token):
+            tokens.append(token)
+            continue
+        position = 0
+        while position < len(token):
+            pair = token[position : position + 2]
+            if pair in two_character_operators:
+                tokens.append(pair)
+                position += 2
+            else:
+                tokens.append(token[position])
+                position += 1
+    return tokens
+
+
+def _shell_command_end(tokens: list[str], start: int) -> int:
+    """Return the first unambiguous simple-command boundary after ``start``."""
+    for position in range(start, len(tokens)):
+        if tokens[position] in {"\n", ";", ";;", "&", "&&", "|", "||"} and not (
+            _shell_control_joins_redirection(tokens, position)
+        ):
+            return position
+    return len(tokens)
+
+
+def _skip_balanced_shell_tokens(
+    tokens: list[str],
+    start: int,
+    opening: str,
+    closing: str,
+) -> int | None:
+    """Return the position after one balanced token expression."""
+    depth = 0
+    for position in range(start, len(tokens)):
+        if tokens[position] == opening:
+            depth += 1
+        elif tokens[position] == closing:
+            depth -= 1
+            if depth == 0:
+                return position + 1
+    return None
+
+
+_ALLOWED_PROTECTED_COMMANDS = {
+    ":",
+    "break",
+    "cat",
+    "curl",
+    "cut",
+    "diff",
+    "echo",
+    "exit",
+    "gh",
+    "jq",
+    "local",
+    "mkdir",
+    "mktemp",
+    "printf",
+    "read",
+    "release_metadata_matches",
+    "return",
+    "rm",
+    "seq",
+    "sha256sum",
+    "shopt",
+    "sleep",
+    "timeout",
+    "verify_release_payload",
+    "verify_tag_source",
+}
+_ALLOWED_PROTECTED_FUNCTIONS = {
+    "release_metadata_matches",
+    "verify_release_payload",
+    "verify_tag_source",
+}
+
+
+def _has_unapproved_shell_command(shell: str) -> bool:
+    """Reject every executable command head outside a small positive allowlist."""
+    scan = _shell_substitution_scan(shell)
+    if scan is None:
+        return True
+    substitutions, _ = scan
+    if any(_has_unapproved_shell_command(body) for body in substitutions):
+        return True
+
+    tokens = _shell_script_tokens(shell)
+    if tokens is None:
+        return True
+
+    command_expected = True
+    for_header = False
+    position = 0
+    while position < len(tokens):
+        token = tokens[position]
+
+        if for_header:
+            if token == "do":
+                for_header = False
+                command_expected = True
+            position += 1
+            continue
+
+        if token in {"\n", ";", ";;", "&", "&&", "|", "||"}:
+            if not _shell_control_joins_redirection(tokens, position):
+                command_expected = True
+            position += 1
+            continue
+
+        if not command_expected:
+            position += 1
+            continue
+
+        if token in {"if", "elif", "while", "until", "!", "then", "else", "do", "{"}:
+            command_expected = True
+            position += 1
+            continue
+        if token in {"fi", "done", "esac", "}"}:
+            command_expected = False
+            position += 1
+            continue
+        if token in {"for", "select"}:
+            for_header = True
+            command_expected = False
+            position += 1
+            continue
+        if token == "[[":
+            try:
+                position = tokens.index("]]", position + 1) + 1
+            except ValueError:
+                return True
+            command_expected = False
+            continue
+        if token == "((":
+            end = _skip_balanced_shell_tokens(tokens, position, "((", "))")
+            if end is None:
+                return True
+            position = end
+            command_expected = False
+            continue
+        if token == "(":
+            command_expected = True
+            position += 1
+            continue
+        if token == ")":
+            command_expected = False
+            position += 1
+            continue
+
+        redirection = _SHELL_REDIRECTION_TOKEN.fullmatch(token)
+        if redirection is not None:
+            if redirection.group(1):
+                position += 1
+            elif position + 2 < len(tokens) and tokens[position + 1] in {"&", "|"}:
+                position += 3
+            elif position + 1 < len(tokens):
+                position += 2
+            else:
+                return True
+            continue
+
+        if _SHELL_ASSIGNMENT_TOKEN.match(token):
+            if position + 1 < len(tokens) and tokens[position + 1] in {"(", "(("}:
+                opening = tokens[position + 1]
+                closing = ")" if opening == "(" else "))"
+                end = _skip_balanced_shell_tokens(tokens, position + 1, opening, closing)
+                if end is None:
+                    return True
+                position = end
+                command_expected = False
+            else:
+                position += 1
+            continue
+
+        if token in _ALLOWED_PROTECTED_FUNCTIONS and tokens[position + 1 : position + 4] == [
+            "(",
+            ")",
+            "{",
+        ]:
+            position += 4
+            command_expected = True
+            continue
+
+        # Trust exact raw command names only. A generated `/tmp/gh`, dynamic
+        # path, or other executable must not inherit trust from its basename.
+        if token not in _ALLOWED_PROTECTED_COMMANDS:
+            return True
+        if token == "timeout":
+            end = _shell_command_end(tokens, position + 1)
+            arguments = tokens[position + 1 : end]
+            if not (
+                len(arguments) >= 5
+                and arguments[:2] == ["--signal=TERM", "--kill-after=5s"]
+                and arguments[2] in {"30s", "60s", "180s"}
+                and arguments[3] == "gh"
+            ):
+                return True
+
+        command_expected = False
+        position += 1
+
+    return for_header
+
+
+def _has_deferred_shell_execution(shell: str) -> bool:
+    """Reject inert-looking text that Bash can later reevaluate as arithmetic.
+
+    Bash recursively interprets variable values used by arithmetic commands.
+    Consequently, a single-quoted assignment such as
+    ``payload='index[$(command)]'`` becomes executable when a later
+    ``(( payload ))`` evaluates it. Treat executable substitution syntax in a
+    single-quoted value as indirect execution instead of trying to prove every
+    later arithmetic data flow safe.
+    """
+    in_single_quote = False
+    position = 0
+    while position < len(shell):
+        character = shell[position]
+        if character == "\\" and not in_single_quote:
+            position += 2
+            continue
+        if character == "'":
+            in_single_quote = not in_single_quote
+            position += 1
+            continue
+        if in_single_quote and (shell.startswith(("$(", "<(", ">("), position) or character == "`"):
+            return True
+        position += 1
+    return False
+
+
+def _has_unapproved_shell_arithmetic(shell: str) -> bool:
+    """Reject arithmetic evaluation outside the exact protected gate expressions."""
+    return any(
+        "((" in tokens and line not in _ALLOWED_PROTECTED_ARITHMETIC_LINES
+        for _, line, tokens in _shell_command_records(shell)
+    )
+
+
+def _has_unapproved_network_access(shell: str) -> bool:
+    """Reject network-capable commands outside the exact PyPI/GitHub surface."""
+    substitutions = _shell_command_substitutions(shell)
+    if substitutions is None or any(_has_unapproved_network_access(body) for body in substitutions):
+        return True
+    if re.search(r"/dev/(?:tcp|udp)/", shell):
+        return True
+
+    network_tools = {
+        "aria2c",
+        "busybox",
+        "ftp",
+        "http",
+        "httpie",
+        "nc",
+        "ncat",
+        "netcat",
+        "openssl",
+        "sftp",
+        "socat",
+        "ssh",
+        "telnet",
+        "wget",
+    }
+    sensitive_assignments = {
+        "CURL_HOME",
+        "GH_CONFIG_DIR",
+        "HOME",
+        "PATH",
+        "XDG_CONFIG_HOME",
+    }
+    logical_lines = _shell_logical_lines(shell)
+    if any(_assignment_lines(logical_lines, name) for name in sensitive_assignments):
+        return True
+    allowed_gh_commands = {"api", "attestation", "release"}
+    for _, _, tokens in _shell_command_records(shell):
+        if any(
+            "=" in token and _assignment_target_is(token, name)
+            for token in tokens
+            for name in sensitive_assignments
+        ):
+            return True
+        for position, token in enumerate(tokens):
+            command = token.rsplit("/", 1)[-1]
+            command_position = _shell_token_starts_command(tokens, position)
+            if command in {"curl", "gh", *network_tools} and not command_position:
+                # Unknown wrappers such as strace/taskset can execute a later
+                # network-capable token. Fail closed instead of assuming the
+                # token is inert merely because the prefix is unsupported.
+                return True
+            if not command_position:
+                continue
+            arguments = _shell_command_arguments(tokens, position)
+            if command == "curl":
+                if token != "curl" or tuple([command, *arguments]) not in (
+                    _ALLOWED_PYPI_CURL_COMMANDS
+                ):
+                    return True
+            elif command in network_tools:
+                return True
+            elif command == "gh":
+                subcommand, _ = _gh_subcommand(arguments)
+                if (
+                    subcommand not in allowed_gh_commands
+                    or subcommand is None
+                    or any(marker in subcommand for marker in ("$", "`", "*", "?", "[", "{"))
+                ):
+                    return True
+    return False
+
+
 def _has_indirect_shell_execution(shell: str) -> bool:
     """Reject commands that can hide unparsed shell from protected validators."""
+    substitutions = _shell_command_substitutions(shell)
+    active_shell = _strip_active_shell_comments(shell)
+    if (
+        substitutions is None
+        or active_shell is None
+        or _has_deferred_shell_execution(shell)
+        or _has_unapproved_shell_arithmetic(shell)
+        or _has_unapproved_network_access(shell)
+        or _has_unapproved_shell_command(shell)
+        or re.search(r"\$(?:GITHUB_ENV|GITHUB_PATH)\b", shell)
+        or re.search(r"\$\{(?:GITHUB_ENV|GITHUB_PATH)\}", shell)
+        or any(
+            marker in active_shell for marker in ("_runner_file_commands", "set_env_", "add_path_")
+        )
+        or any(_has_indirect_shell_execution(body) for body in substitutions)
+    ):
+        return True
     shell_interpreters = {
         "$SHELL",
         "${SHELL}",
@@ -432,6 +1234,55 @@ def _has_indirect_shell_execution(shell: str) -> bool:
         "sh",
         "zsh",
     }
+    code_interpreters = {
+        "awk",
+        "bun",
+        "deno",
+        "gawk",
+        "lua",
+        "mawk",
+        "node",
+        "perl",
+        "php",
+        "ruby",
+        "sed",
+    }
+    indirect_commands = {
+        ".",
+        "alias",
+        "chroot",
+        "chrt",
+        "coproc",
+        "enable",
+        "eval",
+        "exec",
+        "find",
+        "hash",
+        "ionice",
+        "let",
+        "parallel",
+        "script",
+        "setsid",
+        "source",
+        "strace",
+        "sudo",
+        "systemd-run",
+        "taskset",
+        "trap",
+        "unshare",
+        "watch",
+        "xargs",
+    }
+    dangerous_shell_environment = {
+        "BASH_ENV",
+        "CDPATH",
+        "ENV",
+        "PROMPT_COMMAND",
+    }
+    if any(
+        _assignment_lines(_shell_logical_lines(shell), name) for name in dangerous_shell_environment
+    ):
+        return True
     double_bracket_open = False
     for _, line, tokens in _shell_command_records(shell):
         expression_positions: set[int] = set()
@@ -462,33 +1313,36 @@ def _has_indirect_shell_execution(shell: str) -> bool:
         for token_position, token in enumerate(tokens):
             if token_position in expression_positions:
                 continue
-            if not _shell_token_starts_command(tokens, token_position):
-                continue
             command = token.rsplit("/", 1)[-1]
             dynamic_command = token.startswith(("$", "`")) and not (
                 len(tokens) > 1 and _SHELL_ASSIGNMENT_TOKEN.match(tokens[0]) and tokens[1] == "("
             )
-            if (
-                command
-                in {
-                    ".",
-                    "alias",
-                    "enable",
-                    "eval",
-                    "find",
-                    "hash",
-                    "parallel",
-                    "source",
-                    "trap",
-                    "xargs",
-                }
+            command_position = _shell_token_starts_command(tokens, token_position)
+            potentially_executable = (
+                command in indirect_commands
                 or command in shell_interpreters
+                or command in code_interpreters
+                or command.startswith(("pypy", "python"))
                 or dynamic_command
-            ):
+            )
+            if not command_position:
+                if (
+                    command in shell_interpreters
+                    or command in code_interpreters
+                    or command.startswith(("pypy", "python"))
+                ):
+                    return True
+                continue
+            if potentially_executable:
                 return True
             if command == "env" and any(
                 argument in {"-S", "--split-string"}
                 or argument.startswith(("-S", "--split-string="))
+                for argument in _shell_command_arguments(tokens, token_position)
+            ):
+                return True
+            if command in {"declare", "local", "readonly", "typeset"} and any(
+                argument.startswith(("-i", "+i"))
                 for argument in _shell_command_arguments(tokens, token_position)
             ):
                 return True
@@ -654,6 +1508,11 @@ def _gh_subcommand(arguments: list[str]) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def _shell_token_is_dynamic(token: str) -> bool:
+    """Return whether a shell token's value is computed at runtime."""
+    return any(marker in token for marker in ("$", "`", "*", "?", "[", "]", "{", "}"))
+
+
 def _has_gh_release_mutation(shell: str) -> bool:
     """Return whether shell directly invokes a GitHub Release write command."""
     mutations = {"create", "delete", "delete-asset", "edit", "new", "upload"}
@@ -663,10 +1522,13 @@ def _has_gh_release_mutation(shell: str) -> bool:
                 continue
             gh_arguments = _shell_command_arguments(tokens, index)
             subcommand, subcommand_arguments = _gh_subcommand(gh_arguments)
+            if subcommand is not None and _shell_token_is_dynamic(subcommand):
+                # A computed top-level command can become `release` or `api`.
+                return True
             if subcommand == "release":
                 release_command, _ = _gh_subcommand(subcommand_arguments)
                 if release_command in mutations or (
-                    release_command is not None and release_command.startswith(("$", "`"))
+                    release_command is not None and _shell_token_is_dynamic(release_command)
                 ):
                     return True
                 continue
@@ -697,6 +1559,24 @@ def _has_gh_release_mutation(shell: str) -> bool:
     return False
 
 
+def _gh_api_write_requests(shell: str) -> list[tuple[str, str | None]]:
+    """Return every non-read ``gh api`` request declared by a shell body."""
+    requests: list[tuple[str, str | None]] = []
+    for _, _, tokens in _shell_command_records(shell):
+        for index, token in enumerate(tokens):
+            if token != "gh" or not _shell_token_starts_command(tokens, index):
+                continue
+            subcommand, subcommand_arguments = _gh_subcommand(
+                _shell_command_arguments(tokens, index)
+            )
+            if subcommand != "api":
+                continue
+            method, endpoint = _gh_api_request(subcommand_arguments)
+            if method not in {"GET", "HEAD"}:
+                requests.append((method, endpoint))
+    return requests
+
+
 def _is_release_metadata_read(tokens: list[str]) -> bool:
     """Recognize the complete GitHub Release metadata read used by the gate."""
     fields = "assets,body,isDraft,isImmutable,isPrerelease,name,publishedAt,tagName"
@@ -714,7 +1594,11 @@ def _is_release_metadata_read(tokens: list[str]) -> bool:
         "--json",
         fields,
     ]
-    return tokens in (command, [*command, "2>/dev/null"])
+    return tokens in (
+        command,
+        [*command, "2>/dev/null"],
+        [*command, "2>$release_lookup_error"],
+    )
 
 
 def _is_release_payload_verification(tokens: list[str]) -> bool:
@@ -1171,12 +2055,20 @@ def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
 PYPI_PUBLISH_GATE = (
     "if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'"
 )
+CORE_PYPI_PUBLISH_GATE = (
+    "if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || "
+    "(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')"
+)
 CORE_PRERELEASE_TAG_PATTERN = r"^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$"
 
 
-def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
+def _step_carries_publish_gate(
+    job_text: str,
+    step_needle: str,
+    expected_gate: str = PYPI_PUBLISH_GATE,
+) -> bool:
     block = _step_block(job_text, step_needle)
-    return block is not None and PYPI_PUBLISH_GATE in block
+    return block is not None and expected_gate in block
 
 
 def _require_workflow_contains(
@@ -1688,6 +2580,18 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    if _workflow_direct_keys(text) != ["name", "on", "permissions", "jobs"]:
+        errors.append(
+            "release workflow must use exact top-level controls with no inherited "
+            "environment or run defaults"
+        )
+    if not _release_trigger_is_exact(text):
+        errors.append(
+            "release workflow triggers must be exactly v* tag pushes plus a "
+            "boolean workflow_dispatch dry_run input defaulting to true"
+        )
+    if _workflow_mapping(text, "permissions") != {"contents": "read"}:
+        errors.append("release workflow top-level permissions must be exactly contents: read")
     _require_unshallow_checkouts(errors, text, "release")
     missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
     if missing_jobs:
@@ -1815,6 +2719,26 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "default: true",
     )
     publish = jobs.get("publish", "")
+    if _job_direct_keys(publish) != [
+        "name",
+        "needs",
+        "runs-on",
+        "environment",
+        "permissions",
+        "steps",
+    ]:
+        errors.append(
+            "release publish job must use exact control keys with no inherited "
+            "environment, defaults, or continue-on-error bypass"
+        )
+    if _job_scalar(publish, "runs-on") != "ubuntu-latest":
+        errors.append("release publish job must run on the exact trusted ubuntu-latest runner")
+    if _job_scalar(publish, "needs") != "[wheels, sdist, wasm]":
+        errors.append(
+            "release publish job must depend on the exact wheel, sdist, and wasm build jobs"
+        )
+    if _job_scalar(publish, "environment") != "pypi":
+        errors.append("release publish job must use the exact protected pypi environment")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
     expected_publish_permissions = {"contents": "read", "id-token": "write"}
@@ -1824,13 +2748,93 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         )
     publish_tag_block = _named_step_blocks(publish).get("Verify release tag source before PyPI")
     publish_tag_shell = _named_step_run(publish, "Verify release tag source before PyPI")
+    publish_steps = _job_step_blocks(publish)
+    expected_publish_step_names = [
+        None,
+        "Release version gate (tag == CHANGELOG)",
+        None,
+        "List artifacts",
+        "Dry run summary (no PyPI publish)",
+        "Verify release tag source before PyPI",
+        None,
+    ]
+    publish_step_names = [_step_name(step) for step in publish_steps]
+    publish_step_uses = [_step_uses(step) for step in publish_steps]
+    publish_steps_are_exact = (
+        publish_step_names == expected_publish_step_names
+        and publish_step_uses
+        == [
+            [RELEASE_CHECKOUT_ACTION],
+            [],
+            [RELEASE_DOWNLOAD_ACTION],
+            [],
+            [],
+            [],
+            [PYPI_PUBLISH_ACTION],
+        ]
+        and [_step_direct_keys(step) for step in publish_steps]
+        == [
+            ["uses", "with"],
+            ["name", "if", "run"],
+            ["uses", "with"],
+            ["name", "run"],
+            ["name", "if", "run"],
+            ["name", "if", "env", "shell", "run"],
+            ["uses", "if", "with"],
+        ]
+        and _step_mapping(publish_steps[0], "with") == {"fetch-depth": "0"}
+        and _step_scalar(publish_steps[1], "if") == "github.event_name == 'push'"
+        and _step_run(publish_steps[1]) == "python3 scripts/check_release_version.py"
+        and _step_mapping(publish_steps[2], "with")
+        == {"merge-multiple": "true", "path": "dist", "pattern": "dist-*"}
+        and _step_run(publish_steps[3]) == "ls -la dist/"
+        and _step_scalar(publish_steps[4], "if")
+        == "github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'"
+        and _step_run(publish_steps[4])
+        == (
+            'echo "::notice::Dry run — built and verified '
+            "$(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ') "
+            'artifacts across the full release matrix. Skipping PyPI publish."\n'
+            'echo "Re-run this workflow with dry_run=false, or push a v* tag, '
+            'to publish for real."'
+        )
+        and _step_scalar(publish_steps[6], "if")
+        == (
+            "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || "
+            "(github.event_name == 'workflow_dispatch' && "
+            "github.event.inputs.dry_run == 'false')"
+        )
+        and _step_mapping(publish_steps[6], "with")
+        == {"packages-dir": "dist/", "skip-existing": "true"}
+    )
+    if not publish_steps_are_exact:
+        errors.append(
+            "release publish job must contain exactly the pinned artifact download, "
+            "fixed diagnostics, verified tag guard, and pinned PyPI publisher steps"
+        )
     publish_action_position = publish.find("pypa/gh-action-pypi-publish@")
     publish_tag_position = publish.find("- name: Verify release tag source before PyPI")
     if publish_tag_block is None or publish_tag_shell is None:
         errors.append("release publish job must verify the current tag source before PyPI")
     else:
+        expected_release_env = {
+            "GH_TOKEN": "${{ github.token }}",
+            "REPO": "${{ github.repository }}",
+            "TAG": "${{ github.ref_name }}",
+        }
+        if not (
+            _step_has_exact_bash_run(publish_tag_block)
+            and _step_direct_keys(publish_tag_block) == ["name", "if", "env", "shell", "run"]
+            and _step_mapping(publish_tag_block, "env") == expected_release_env
+        ):
+            errors.append(
+                "release publish tag guard must use exact step controls, environment, "
+                "one direct `run`, and exact step-local `shell: bash`"
+            )
         if _has_indirect_shell_execution(publish_tag_shell):
             errors.append("release publish tag guard must not use indirect shell execution")
+        if _gh_api_write_requests(publish_tag_shell):
+            errors.append("release publish tag guard must not make write-mode gh api requests")
         publish_tag_lines = _shell_logical_lines(publish_tag_shell)
         lookup_tokens = [
             "timeout",
@@ -1865,11 +2869,13 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 "guard immediately before the PyPI publisher"
             )
     if "pypa/gh-action-pypi-publish@" in publish and not _step_carries_publish_gate(
-        publish, "pypa/gh-action-pypi-publish@"
+        publish,
+        "pypa/gh-action-pypi-publish@",
+        CORE_PYPI_PUBLISH_GATE,
     ):
         errors.append(
             "release publish job's PyPI upload step is not gated by the dry-run "
-            f"predicate on the step itself (`{PYPI_PUBLISH_GATE}`) — a missing or "
+            f"predicate on the step itself (`{CORE_PYPI_PUBLISH_GATE}`) — a missing or "
             "unrelated condition (e.g. `if: always()`) would let a manual "
             "dispatch publish unintentionally"
         )
@@ -1891,6 +2897,24 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     github_release = jobs.get("github-release")
     if github_release is not None:
         job_steps = _job_step_blocks(github_release)
+        expected_job_keys = [
+            "name",
+            "if",
+            "needs",
+            "runs-on",
+            "timeout-minutes",
+            "permissions",
+            "steps",
+        ]
+        if _job_direct_keys(github_release) != expected_job_keys:
+            errors.append(
+                "release github-release job must use exact control keys with no defaults, "
+                "environment overrides, or continue-on-error bypass"
+            )
+        if _job_scalar(github_release, "runs-on") != "ubuntu-latest":
+            errors.append(
+                "release github-release job must run on the exact trusted ubuntu-latest runner"
+            )
         protected_step_names = (
             "Inspect existing release",
             "Prepare release provenance",
@@ -1906,6 +2930,97 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             errors.append(
                 "release github-release job must declare each protected step exactly once: "
                 f"{duplicate_protected_steps}"
+            )
+        step_identities = [
+            (
+                _step_name(step),
+                tuple(_step_uses(step)),
+                _step_declares_run(step),
+            )
+            for step in job_steps
+        ]
+        expected_step_identities = [
+            (None, (RELEASE_DOWNLOAD_ACTION,), False),
+            ("Inspect existing release", (), True),
+            ("Prepare release provenance", (), True),
+            ("Attest release provenance", (RELEASE_ATTEST_ACTION,), False),
+            ("Create GitHub Release and attach distributions", (), True),
+        ]
+        if step_identities != expected_step_identities:
+            errors.append(
+                "release github-release job must contain exactly the pinned download, "
+                "immutable preflight, provenance preparation, pinned attestation, and "
+                f"publication steps in that order; found {step_identities!r}"
+            )
+        expected_step_keys = [
+            ["uses", "with"],
+            ["name", "id", "env", "shell", "run"],
+            ["name", "if", "env", "shell", "run"],
+            ["name", "if", "uses", "with"],
+            ["name", "env", "shell", "run"],
+        ]
+        if [_step_direct_keys(step) for step in job_steps] != expected_step_keys:
+            errors.append(
+                "release github-release steps must use exact control keys; explicit "
+                "`if`, `continue-on-error`, working-directory, or duplicate keys are forbidden"
+            )
+        expected_release_env = {
+            "GH_TOKEN": "${{ github.token }}",
+            "REPO": "${{ github.repository }}",
+            "TAG": "${{ github.ref_name }}",
+        }
+        step_mappings_are_exact = len(job_steps) == 5 and (
+            _step_mapping(job_steps[0], "with")
+            == {
+                "path": "dist",
+                "pattern": "dist-*",
+                "merge-multiple": "true",
+            }
+            and _step_scalar(job_steps[1], "id") == "release_state"
+            and _step_mapping(job_steps[1], "env") == expected_release_env
+            and _step_mapping(job_steps[2], "env") == expected_release_env
+            and _step_mapping(job_steps[3], "with")
+            == {
+                "subject-path": (
+                    "${{ runner.temp }}/xy-${{ github.ref_name }}"
+                    "-release-provenance/xy-release-provenance.json"
+                )
+            }
+            and _step_mapping(job_steps[4], "env") == expected_release_env
+        )
+        if not step_mappings_are_exact:
+            errors.append(
+                "release github-release steps must use exact environments, action inputs, "
+                "and immutable-state output identity"
+            )
+        invalid_step_shapes = [
+            _step_name(step) or "<unnamed>"
+            for step in job_steps
+            if _step_declares_run(step) == bool(_step_uses(step))
+        ]
+        if invalid_step_shapes:
+            errors.append(
+                "release github-release job steps must declare exactly one inspectable "
+                f"`run` or allowlisted `uses` action; found {invalid_step_shapes}"
+            )
+        action_uses = [uses for step in job_steps for uses in _step_uses(step)]
+        expected_action_uses = [RELEASE_DOWNLOAD_ACTION, RELEASE_ATTEST_ACTION]
+        if action_uses != expected_action_uses:
+            errors.append(
+                "release github-release job action steps must be exactly the pinned "
+                "download and provenance-attestation actions; found "
+                f"{action_uses!r}"
+            )
+        unsupported_shell_steps = [
+            _step_name(step) or "<unnamed>"
+            for step in job_steps
+            if _step_declares_run(step) and not _step_has_exact_bash_run(step)
+        ]
+        if unsupported_shell_steps:
+            errors.append(
+                "release github-release job must give every inspected shell step exactly "
+                "one direct `run` and one exact step-local `shell: bash`; found "
+                f"{unsupported_shell_steps}"
             )
         uninspectable_run_steps = [
             _step_name(step) or "<unnamed>"
@@ -1927,6 +3042,25 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
             errors.append(
                 "release github-release job must not hide release behavior behind "
                 f"indirect shell execution; found it in {indirect_shell_steps}"
+            )
+        expected_api_writes = {
+            "Inspect existing release": [],
+            "Prepare release provenance": [("POST", "repos/${REPO}/releases/generate-notes")],
+            "Create GitHub Release and attach distributions": [
+                ("DELETE", "repos/${REPO}/releases/assets/${asset_id}")
+            ],
+        }
+        unexpected_api_write_steps = [
+            _step_name(step) or "<unnamed>"
+            for step in job_steps
+            if (shell := _step_run(step)) is not None
+            and _gh_api_write_requests(shell) != expected_api_writes.get(_step_name(step), [])
+        ]
+        if unexpected_api_write_steps:
+            errors.append(
+                "release github-release shell steps may declare only the exact "
+                "generated-notes POST and release-asset DELETE API writes; found "
+                f"unexpected writes in {unexpected_api_write_steps}"
             )
         sibling_release_mutations = [
             _step_name(step) or "<unnamed>"
@@ -2154,7 +3288,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 )
 
         attest_block = step_blocks.get("Attest release provenance")
-        attest_pin = "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d"
+        attest_pin = RELEASE_ATTEST_ACTION
         if attest_block is None:
             errors.append("release github-release job is missing provenance attestation")
         else:
@@ -2623,6 +3757,52 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                 and sum(tokens == attestation_tokens for _, _, tokens in command_records) == 1
                 and len(metadata_read_positions) == 4
             )
+            release_lookup_is_fail_closed = (
+                _assignment_lines(logical_lines, "release_lookup_error")
+                == [
+                    'release_lookup_error="$(mktemp "${RUNNER_TEMP}/xy-release-view-error.XXXXXX")"'
+                ]
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position - 2,
+                    'release_lookup_error="$(mktemp '
+                    '"${RUNNER_TEMP}/xy-release-view-error.XXXXXX")"',
+                )
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position + 4,
+                    "elif ! jq -eRs '. == \"release not found\\n\"' "
+                    '"$release_lookup_error" >/dev/null; then',
+                )
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position + 5,
+                    'cat "$release_lookup_error" >&2',
+                )
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position + 6,
+                    'rm -f "$release_lookup_error"',
+                )
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position + 7,
+                    'echo "::error::Could not inspect existing GitHub Release '
+                    '${TAG}; refusing to create it"',
+                )
+                and _logical_line_is(logical_lines, initial_view_position + 8, "exit 1")
+                and _logical_line_is(logical_lines, initial_view_position + 9, "fi")
+                and _logical_line_is(
+                    logical_lines,
+                    initial_view_position + 10,
+                    'rm -f "$release_lookup_error"',
+                )
+            )
+            if not release_lookup_is_fail_closed:
+                errors.append(
+                    "release github-release job must treat only an exact `release not found` "
+                    "lookup result as absent and fail closed on every other metadata-read error"
+                )
             immutable_state_is_exact = (
                 _assignment_lines(logical_lines, "release_exists")
                 == ["release_exists=false", "release_exists=true"]
@@ -2631,6 +3811,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                     "is_immutable=false",
                     'is_immutable="$(jq -r \'.isImmutable\' <<<"$release_json")"',
                 ]
+                and release_lookup_is_fail_closed
                 and _logical_line_is(
                     logical_lines,
                     initial_view_position - 1,
@@ -2647,7 +3828,6 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
                     initial_view_position + 3,
                     'is_immutable="$(jq -r \'.isImmutable\' <<<"$release_json")"',
                 )
-                and _logical_line_is(logical_lines, initial_view_position + 4, "fi")
                 and logical_lines.count('if [[ "$release_exists" == true ]]; then') == 1
                 and logical_lines.count('if [[ "$is_immutable" == "true" ]]; then') == 1
             )
@@ -2703,6 +3883,19 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
 
     jobs = _job_blocks(text)
     errors: list[str] = []
+    if _workflow_direct_keys(text) != [
+        "name",
+        "on",
+        "permissions",
+        "concurrency",
+        "jobs",
+    ]:
+        errors.append(
+            "docs deploy workflow must use exact top-level controls with no inherited "
+            "environment or run defaults"
+        )
+    if _workflow_mapping(text, "permissions") != {"contents": "read"}:
+        errors.append("docs deploy workflow top-level permissions must be exactly contents: read")
     _require_job_contains(
         errors,
         jobs,
@@ -2718,6 +3911,22 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
     release_gate = jobs.get("verify-library-release")
     if release_gate is None:
         return errors
+    if _job_direct_keys(release_gate) != [
+        "name",
+        "needs",
+        "runs-on",
+        "timeout-minutes",
+        "permissions",
+        "steps",
+    ]:
+        errors.append(
+            "docs deploy release gate job must use exact control keys with no inherited "
+            "environment, defaults, or continue-on-error bypass"
+        )
+    if _job_scalar(release_gate, "runs-on") != "ubuntu-latest":
+        errors.append(
+            "docs deploy release gate job must run on the exact trusted ubuntu-latest runner"
+        )
     if _job_scalar(release_gate, "needs") != "[prepare, await-prod-approval]":
         errors.append(
             "docs deploy verify-library-release job must actively depend on "
@@ -2733,14 +3942,30 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
     production = jobs.get("helm-pr-prod")
     if production is None:
         errors.append("docs deploy workflow is missing the production Helm promotion job")
-    elif _job_scalar(production, "needs") != (
-        "[prepare, await-prod-approval, verify-library-release]"
-    ):
-        errors.append(
-            "docs deploy production Helm promotion must actively depend on verify-library-release"
-        )
+    else:
+        expected_production_needs = "[prepare, await-prod-approval, verify-library-release]"
+        expected_production_with = {
+            "auto_merge": "true",
+            "environment": "prod",
+            "image_tag": "${{ needs.prepare.outputs.version }}",
+            "source_ref": "${{ needs.prepare.outputs.source_sha }}",
+        }
+        if not (
+            _job_direct_keys(production)
+            == ["name", "needs", "permissions", "uses", "with", "secrets"]
+            and _job_scalar(production, "needs") == expected_production_needs
+            and _job_mapping(production, "permissions") == {"contents": "read"}
+            and _job_scalar(production, "uses") == "./.github/workflows/_helm-docs-pr.yml"
+            and _job_mapping(production, "with") == expected_production_with
+            and _job_scalar(production, "secrets") == "inherit"
+        ):
+            errors.append(
+                "docs deploy production Helm promotion must use the exact reusable "
+                "workflow controls and depend on verify-library-release without bypasses"
+            )
 
     gate_step = _named_step_blocks(release_gate).get("Await GitHub Release and PyPI availability")
+    gate_steps = _job_step_blocks(release_gate)
     gate_shell = _named_step_run(
         release_gate,
         "Await GitHub Release and PyPI availability",
@@ -2748,8 +3973,29 @@ def validate_docs_deploy_workflow(path: Path = DEFAULT_DOCS_DEPLOY_WORKFLOW) -> 
     if gate_step is None or gate_shell is None:
         errors.append("docs deploy release gate is missing its active polling shell step")
         return errors
+    if len(gate_steps) != 1 or gate_steps[0] != gate_step:
+        errors.append(
+            "docs deploy release gate job must contain exactly its one verified polling step"
+        )
+    expected_gate_env = {
+        "GH_TOKEN": "${{ github.token }}",
+        "VERSION": "${{ needs.prepare.outputs.version }}",
+        "SOURCE_SHA": "${{ needs.prepare.outputs.source_sha }}",
+        "REPO": "${{ github.repository }}",
+    }
+    if not (
+        _step_has_exact_bash_run(gate_step)
+        and _step_direct_keys(gate_step) == ["name", "env", "shell", "run"]
+        and _step_mapping(gate_step, "env") == expected_gate_env
+    ):
+        errors.append(
+            "docs deploy release gate must use exact step controls, environment, "
+            "one direct `run`, and exact step-local `shell: bash`"
+        )
     if _has_indirect_shell_execution(gate_shell):
         errors.append("docs deploy release gate must not use indirect shell execution")
+    if _gh_api_write_requests(gate_shell):
+        errors.append("docs deploy release gate must not make write-mode gh api requests")
     if not re.search(
         r"^          SOURCE_SHA:\s*"
         r"\$\{\{ needs\.prepare\.outputs\.source_sha \}\}\s*$",

@@ -41,6 +41,11 @@ def _load_verify_module():
 verify_ci_workflow = _load_verify_module()
 
 
+def _replace_once(text: str, marker: str, replacement: str) -> str:
+    assert text.count(marker) == 1, f"expected exactly one workflow marker: {marker!r}"
+    return text.replace(marker, replacement, 1)
+
+
 def test_named_step_run_stops_before_following_step_metadata() -> None:
     job = """\
   example:
@@ -110,6 +115,17 @@ def test_step_run_rejects_explicit_indentation_blocks(indicator: str) -> None:
         "trap 'exit 0' EXIT",
         '$DYNAMIC_COMMAND "exit 0"',
         "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+        'if [[ x &&\n  $(eval "$payload") ]]; then :; fi',
+        'if [[ "$(eval "$payload")" == x ]]; then :; fi',
+        'if [[ x && `eval "$payload"` ]]; then :; fi',
+        'if [[ -e <(eval "$payload") ]]; then :; fi',
+        'if [[ -e >(eval "$payload") ]]; then :; fi',
+        'value="$(printf %s "$(eval "$payload")")"',
+        "payload='index[$(eval \"$command\")]'; (( payload )) || :",
+        'payload="index[\\$(eval \\"$command\\")]"; (( payload )) || :',
+        'let "$payload"',
+        'declare -i result="$payload"',
+        'coproc gh release create "$TAG"; wait "$COPROC_PID"',
         'VALUE=1 $DYNAMIC_COMMAND "exit 0"',
         "function exit { :; }",
         "gh() { :; }",
@@ -117,6 +133,20 @@ def test_step_run_rejects_explicit_indentation_blocks(indicator: str) -> None:
 )
 def test_indirect_shell_execution_is_detected(shell: str) -> None:
     assert verify_ci_workflow._has_indirect_shell_execution(shell)
+
+
+@pytest.mark.parametrize(
+    "shell",
+    [
+        'if [[ x &&\n  "$value" == y ]]; then :; fi',
+        'value="$(jq -r .value <<<"$payload")"',
+        'digest="$(printf %s "$value" | sha256sum | cut -d " " -f 1)"',
+        'diff <(printf %s "$left") <(printf %s "$right")',
+        "if (( attempt < 12 )); then",
+    ],
+)
+def test_safe_shell_expressions_and_substitutions_are_not_indirect(shell: str) -> None:
+    assert not verify_ci_workflow._has_indirect_shell_execution(shell)
 
 
 @pytest.mark.parametrize("kind", ["eval", "source", "dot", "bash"])
@@ -911,6 +941,48 @@ def test_release_workflow_rejects_missing_dry_run_input(tmp_path: Path) -> None:
     assert any("dry-run input" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    "extra_trigger",
+    ["pull_request_target:", "schedule:", "workflow_call:"],
+)
+def test_release_workflow_rejects_additional_triggers(
+    tmp_path: Path,
+    extra_trigger: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "  workflow_dispatch:\n"
+    path = tmp_path / "release.yml"
+    path.write_text(
+        _replace_once(workflow, marker, f"  {extra_trigger}\n{marker}"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("triggers must be exactly" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("marker", "replacement"),
+    [
+        ("        type: boolean\n", "        type: string # type: boolean\n"),
+        ("        default: true\n", "        default: false # default: true\n"),
+    ],
+)
+def test_release_workflow_rejects_commented_dry_run_control_spoofs(
+    tmp_path: Path,
+    marker: str,
+    replacement: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("triggers must be exactly" in error for error in errors)
+
+
 def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> None:
     """A sibling step's `if:` (the dry-run summary) must not mask a missing
     gate on the actual PyPI upload step — regression for a bug where the
@@ -919,8 +991,10 @@ def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> N
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
-            "        if: github.event_name != 'workflow_dispatch' "
-            "|| github.event.inputs.dry_run != 'true'\n",
+            "        if: (github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/v')) || "
+            "(github.event_name == 'workflow_dispatch' && "
+            "github.event.inputs.dry_run == 'false')\n",
             "",
         ),
         encoding="utf-8",
@@ -1126,6 +1200,31 @@ def test_release_workflow_rejects_unvalidated_existing_github_release(
     )
 
 
+def test_release_workflow_rejects_lookup_errors_falling_through_to_create(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    failure_guard = """\
+          elif ! jq -eRs '. == "release not found\\n"' "$release_lookup_error" >/dev/null; then
+            cat "$release_lookup_error" >&2
+            rm -f "$release_lookup_error"
+            echo "::error::Could not inspect existing GitHub Release ${TAG}; refusing to create it"
+            exit 1
+"""
+    assert workflow.count(failure_guard) == 1
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace(failure_guard, "", 1), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "only an exact `release not found`" in error
+        and "fail closed" in error
+        and "metadata-read error" in error
+        for error in errors
+    )
+
+
 def test_release_workflow_rejects_missing_post_create_payload_validation(
     tmp_path: Path,
 ) -> None:
@@ -1283,6 +1382,514 @@ def test_release_workflow_rejects_sibling_release_api_mutation(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
+    "shell_value",
+    ["python", "pwsh", "bash {0}", "bash -c", "${{ matrix.release_shell }}"],
+)
+def test_release_workflow_rejects_noncanonical_protected_shells(
+    tmp_path: Path,
+    shell_value: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = (
+        "          TAG: ${{ github.ref_name }}\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          immutable=false\n"
+    )
+    replacement = marker.replace("shell: bash", f"shell: {shell_value}")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact step-local `shell: bash`" in error for error in errors)
+
+
+def test_release_workflow_rejects_job_default_replacing_step_local_bash(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    job = "  github-release:\n"
+    before, separator, after = workflow.partition(job)
+    assert separator
+    after = _replace_once(
+        after,
+        "    runs-on: ubuntu-latest\n    timeout-minutes: 30\n",
+        "    runs-on: ubuntu-latest\n"
+        "    defaults:\n"
+        "      run:\n"
+        "        shell: python\n"
+        "    timeout-minutes: 30\n",
+    )
+    inspect_shell = (
+        "          TAG: ${{ github.ref_name }}\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          immutable=false\n"
+    )
+    after = _replace_once(
+        after,
+        inspect_shell,
+        inspect_shell.replace("        shell: bash\n", ""),
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(before + separator + after, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact step-local `shell: bash`" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "duplicate_key",
+    ["        shell: python\n", "        run: python hidden_release_writer.py\n"],
+)
+def test_release_workflow_rejects_duplicate_run_or_shell_keys(
+    tmp_path: Path,
+    duplicate_key: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = (
+        "          TAG: ${{ github.ref_name }}\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          immutable=false\n"
+    )
+    replacement = marker.replace("        run: |\n", duplicate_key + "        run: |\n")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exactly one direct `run`" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("marker", "replacement"),
+    [
+        (
+            "  github-release:\n    name: Publish GitHub Release\n",
+            "  github-release:\n    name: Publish GitHub Release\n    continue-on-error: true\n",
+        ),
+        (
+            "      - name: Attest release provenance\n"
+            "        if: steps.release_state.outputs.immutable != 'true'\n",
+            "      - name: Attest release provenance\n"
+            "        if: steps.release_state.outputs.immutable != 'true'\n"
+            "        continue-on-error: true\n",
+        ),
+        (
+            "      - name: Create GitHub Release and attach distributions\n        env:\n",
+            "      - name: Create GitHub Release and attach distributions\n"
+            "        if: always()\n"
+            "        env:\n",
+        ),
+        (
+            "      - name: Create GitHub Release and attach distributions\n        env:\n",
+            "      - name: Create GitHub Release and attach distributions\n"
+            "        continue-on-error: true\n"
+            "        env:\n",
+        ),
+        (
+            "      - name: Create GitHub Release and attach distributions\n        env:\n",
+            "      - name: Create GitHub Release and attach distributions\n"
+            "        ? continue-on-error\n"
+            "        : true\n"
+            "        env:\n",
+        ),
+    ],
+)
+def test_release_workflow_rejects_privileged_control_bypasses(
+    tmp_path: Path,
+    marker: str,
+    replacement: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact control keys" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "inherited_control",
+    [
+        "env:\n  BASH_ENV: ./hidden-release-writer.sh\n\n",
+        "defaults:\n  run:\n    working-directory: ./unverified-release\n\n",
+        "? env\n:\n  BASH_ENV: ./hidden-release-writer.sh\n\n",
+    ],
+)
+def test_release_workflow_rejects_inherited_workflow_controls(
+    tmp_path: Path,
+    inherited_control: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        _replace_once(workflow, "jobs:\n", inherited_control + "jobs:\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact top-level controls" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        "permissions:\n  contents: write\n",
+        'permissions:\n  contents: read\n  "packages": write\n',
+    ],
+)
+def test_release_workflow_rejects_broad_top_level_permissions(
+    tmp_path: Path,
+    permissions: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "permissions:\n  contents: read\n"
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, permissions), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("top-level permissions must be exactly" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("marker", "replacement"),
+    [
+        (
+            "          TAG: ${{ github.ref_name }}\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          immutable=false\n",
+            "          TAG: ${{ github.ref_name }}\n"
+            "          BASH_ENV: ./hidden-release-writer.sh\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          immutable=false\n",
+        ),
+        (
+            "          pattern: dist-*\n"
+            "          merge-multiple: true\n"
+            "      - name: Inspect existing release\n",
+            "          pattern: dist-*\n"
+            "          merge-multiple: true\n"
+            "          repository: attacker/unverified-artifacts\n"
+            "      - name: Inspect existing release\n",
+        ),
+    ],
+)
+def test_release_workflow_rejects_privileged_mapping_extensions(
+    tmp_path: Path,
+    marker: str,
+    replacement: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact environments, action inputs" in error for error in errors)
+
+
+def test_release_workflow_rejects_noncanonical_permission_keys(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = (
+        "    permissions:\n      # Keep repository write access out of every build and PyPI job.\n"
+    )
+    replacement = (
+        "    permissions:\n"
+        '      "packages": write\n'
+        "      # Keep repository write access out of every build and PyPI job.\n"
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("permissions must be exactly" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "unapproved_command",
+    [
+        'curl -fsS -X DELETE -H "Authorization: Bearer $GH_TOKEN" '
+        '"https://api.github.com/repos/${REPO}/releases/123"',
+        'wget -qO- "https://api.github.com/repos/${REPO}/releases"',
+        "python3 -c 'import urllib.request; urllib.request.urlopen(\"https://api.github.com\")'",
+        'gh extension exec release-writer -- "$TAG"',
+        'strace gh release create "$TAG" --repo "$REPO"',
+        'taskset -c 0 gh release create "$TAG" --repo "$REPO"',
+        'git -c alias.pwn=\'!gh release create "$TAG" --repo "$REPO"\' pwn',
+        'make --no-print-directory --eval=$\'all:\\n\\tgh release create "$TAG" --repo "$REPO"\'',
+        "printf '%s\\n' 'gh release create \"$TAG\" --repo \"$REPO\"' "
+        "> /tmp/xy-writer; chmod +x /tmp/xy-writer; /tmp/xy-writer",
+        "printf '%s\\n' 'gh release create \"$TAG\" --repo \"$REPO\"' "
+        "> /tmp/xy-env-writer; "
+        "echo 'BASH_ENV=/tmp/xy-env-writer' >> \"$GITHUB_ENV\"",
+        "printf '%s\\n' '/tmp/xy-bin' > \"$GITHUB_PATH\"",
+        "printf '%s\\n' 'gh release create \"$TAG\" --repo \"$REPO\"' "
+        "> /tmp/xy-env-writer; "
+        "printf 'BASH_%s=/tmp/xy-env-writer\\n' ENV >> "
+        "/home/runner/work/_temp/_runner_file_commands/set_env_*",
+        "printf '/tmp/xy-bin\\n' >> /home/runner/work/_temp/_runner_file_commands/add_path_*",
+        "BASH_ENV=/tmp/xy-env-writer",
+        "ENV=/tmp/xy-env-writer",
+        "CDPATH=/tmp/xy-path",
+        "PROMPT_COMMAND=/tmp/xy-writer",
+        'printf "DELETE / HTTP/1.1\\r\\n\\r\\n" > /dev/tcp/api.github.com/443',
+        "CURL_HOME=/tmp/unverified curl -fsS --connect-timeout 5 --max-time 20 "
+        '"https://pypi.org/pypi/xy/${pypi_version}/json" 2>/dev/null',
+    ],
+)
+def test_release_workflow_rejects_unapproved_clients_inside_trusted_steps(
+    tmp_path: Path,
+    unapproved_command: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "          immutable=false\n"
+    replacement = f"          {unapproved_command}\n{marker}"
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("indirect shell execution" in error for error in errors)
+
+
+@pytest.mark.parametrize("shell_value", ["python", "bash {0}", "${{ env.RELEASE_SHELL }}"])
+def test_release_workflow_rejects_noncanonical_publish_tag_guard_shell(
+    tmp_path: Path,
+    shell_value: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = (
+        "      - name: Verify release tag source before PyPI\n"
+        "        if: github.event_name == 'push'\n"
+        "        env:\n"
+        "          GH_TOKEN: ${{ github.token }}\n"
+        "          REPO: ${{ github.repository }}\n"
+        "          TAG: ${{ github.ref_name }}\n"
+        "        shell: bash\n"
+    )
+    replacement = marker.replace("shell: bash", f"shell: {shell_value}")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("publish tag guard" in error and "exact step-local" in error for error in errors)
+
+
+def test_release_workflow_rejects_publish_tag_guard_control_bypass(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = (
+        "      - name: Verify release tag source before PyPI\n"
+        "        if: github.event_name == 'push'\n"
+    )
+    replacement = marker + "        continue-on-error: true\n"
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("publish tag guard" in error and "exact step controls" in error for error in errors)
+
+
+def test_release_workflow_rejects_publish_job_inherited_environment(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "  publish:\n    name: Publish to PyPI\n"
+    replacement = (
+        "  publish:\n"
+        "    name: Publish to PyPI\n"
+        "    env:\n"
+        "      BASH_ENV: ./hidden-release-writer.sh\n"
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("publish job must use exact control keys" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("marker", "replacement", "message"),
+    [
+        (
+            "    needs: [wheels, sdist, wasm]\n",
+            "    needs: [wheels, sdist]\n",
+            "exact wheel, sdist, and wasm",
+        ),
+        (
+            "    environment: pypi\n",
+            "    environment: unprotected\n",
+            "exact protected pypi environment",
+        ),
+    ],
+)
+def test_release_workflow_rejects_changed_publish_job_identity(
+    tmp_path: Path,
+    marker: str,
+    replacement: str,
+    message: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("job_name", "next_job"),
+    [("publish", "github-release"), ("github-release", None)],
+)
+def test_release_workflow_rejects_self_hosted_privileged_jobs(
+    tmp_path: Path,
+    job_name: str,
+    next_job: str | None,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    job_marker = f"  {job_name}:\n"
+    before, separator, after = workflow.partition(job_marker)
+    assert separator
+    job_body, next_separator, remainder = (
+        after.partition(f"\n  {next_job}:\n") if next_job is not None else (after, "", "")
+    )
+    job_body = _replace_once(
+        job_body,
+        "    runs-on: ubuntu-latest\n",
+        "    runs-on: self-hosted\n",
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + separator + job_body + next_separator + remainder,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exact trusted ubuntu-latest runner" in error for error in errors)
+
+
+def test_release_workflow_rejects_sibling_step_in_pypi_oidc_job(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b"
+    sibling = (
+        "      - name: Unverified OIDC publisher\n"
+        "        uses: attacker/publish@0123456789012345678901234567890123456789\n"
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("exactly the pinned artifact download" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "api_write",
+    [
+        'gh api --method PUT "repos/${REPO}/contents/SECURITY.md" -f message=pwn -f content=eA==',
+        'gh api --method POST "repos/${REPO}/git/refs" -f ref=refs/tags/pwn -f sha="$GITHUB_SHA"',
+    ],
+)
+def test_release_workflow_rejects_non_release_api_writes(
+    tmp_path: Path,
+    api_write: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    step = "      - name: Prepare release provenance\n"
+    before, separator, after = workflow.partition(step)
+    assert separator
+    prepare, next_step, remainder = after.partition("\n      - name: Attest release provenance\n")
+    assert next_step
+    prepare = _replace_once(
+        prepare,
+        "          shopt -s nullglob\n",
+        f"          shopt -s nullglob\n          {api_write}\n",
+    )
+    path = tmp_path / "release.yml"
+    path.write_text(
+        before + separator + prepare + next_step + remainder,
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("only the exact generated-notes POST" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "action_step",
+    [
+        "      - name: Unverified release action\n"
+        "        uses: owner/release-writer@0123456789012345678901234567890123456789\n",
+        "      - uses: ./release-writer\n",
+        "      - name: Container release action\n"
+        "        uses: docker://example/release-writer:latest\n",
+        "      - name: Dynamic release action\n"
+        "        uses: ${{ github.repository }}/release-writer@main\n",
+        "      - name: Unpinned download action\n        uses: actions/download-artifact@v8\n",
+        "      - name: Duplicate attest action\n"
+        "        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d\n",
+    ],
+)
+def test_release_workflow_rejects_non_allowlisted_action_steps(
+    tmp_path: Path,
+    action_step: str,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, action_step + marker), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "exactly the pinned download and provenance-attestation actions" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_unexpected_bash_sibling_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    marker = "      - name: Create GitHub Release and attach distributions\n"
+    sibling = """\
+      - name: Unverified network client
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          curl -X POST -H "Authorization: Bearer $GH_TOKEN" \\
+            "https://api.github.com/repos/${REPO}/releases"
+"""
+    path = tmp_path / "release.yml"
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "must contain exactly" in error and "steps in that order" in error for error in errors
+    )
+
+
+@pytest.mark.parametrize(
     "api_command",
     [
         'gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
@@ -1308,6 +1915,29 @@ def test_release_workflow_rejects_sibling_release_api_mutation(tmp_path: Path) -
         'env -u UNUSED gh release create "$TAG"',
         '/usr/bin/gh release new "$TAG"',
         'gh release -R "$REPO" delete-asset "$TAG" 42 --yes',
+        'gh "$command" create "$TAG"',
+        'gh "${command}" "repos/${REPO}/releases" -f tag_name="$TAG"',
+        'gh "$(printf release)" create "$TAG"',
+        'gh "rel${suffix}" create "$TAG"',
+        'gh releas? create "$TAG"',
+        'gh relea* create "$TAG"',
+        'gh {release,api} create "$TAG"',
+        'gh --repo "$REPO" "$command" create "$TAG"',
+        'gh release "cr${suffix}" "$TAG"',
+        'gh release cr* "$TAG"',
+        '>release.log gh release create "$TAG"',
+        '> release.log gh release create "$TAG"',
+        '1>release.log gh release create "$TAG"',
+        '2>>release.log gh release create "$TAG"',
+        '<payload.json gh api "repos/${REPO}/releases" -f tag_name="$TAG"',
+        '3>&1 gh release create "$TAG"',
+        '3>"$log_file" gh release create "$TAG"',
+        '{release_fd}>release.log gh release create "$TAG"',
+        '&>release.log gh release create "$TAG"',
+        '>|release.log gh release create "$TAG"',
+        '>| release.log gh release create "$TAG"',
+        '2>|release.log gh release create "$TAG"',
+        '2>| release.log gh release create "$TAG"',
     ],
 )
 def test_release_workflow_rejects_sibling_mutation_forms(
@@ -1321,7 +1951,7 @@ def test_release_workflow_rejects_sibling_mutation_forms(
         run: {api_command}
 """
     path = tmp_path / "release.yml"
-    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
@@ -1373,7 +2003,7 @@ def test_release_workflow_rejects_folded_sibling_run(tmp_path: Path) -> None:
           -f tag_name="$TAG"
 """
     path = tmp_path / "release.yml"
-    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
@@ -1401,22 +2031,39 @@ def test_release_workflow_rejects_other_uninspectable_sibling_runs(
       - name: Hidden release API write
         run: {run}"""
     path = tmp_path / "release.yml"
-    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("every shell step can be inspected" in error for error in errors)
 
 
-def test_release_workflow_rejects_indirect_sibling_shell(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "indirect_command",
+    [
+        'bash -c \'gh api "repos/${REPO}/releases" -f tag_name="$TAG"\'',
+        'exec gh release create "$TAG"',
+        'exec -- gh release create "$TAG"',
+        'exec -a release-writer gh release create "$TAG"',
+        'command exec gh release create "$TAG"',
+        'coproc gh release create "$TAG"; wait "$COPROC_PID"',
+        'if [[ -e <(eval "$payload") ]]; then :; fi',
+        "payload='index[$(gh release create \"$TAG\")]'; (( payload )) || :",
+    ],
+)
+def test_release_workflow_rejects_indirect_sibling_shell(
+    tmp_path: Path,
+    indirect_command: str,
+) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     marker = "      - name: Create GitHub Release and attach distributions\n"
-    sibling = """\
+    sibling = f"""\
       - name: Hidden release API write
-        run: bash -c 'gh api "repos/${REPO}/releases" -f tag_name="$TAG"'
+        shell: bash
+        run: {indirect_command}
 """
     path = tmp_path / "release.yml"
-    path.write_text(workflow.replace(marker, sibling + marker, 1), encoding="utf-8")
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
@@ -1435,6 +2082,9 @@ def test_release_workflow_rejects_indirect_sibling_shell(tmp_path: Path) -> None
         "trap 'exit 0' EXIT",
         '$DYNAMIC_COMMAND "exit 0"',
         "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+        'if [[ x &&\n            $(eval "$payload") ]]; then :; fi',
+        'if [[ "$(eval "$payload")" == x ]]; then :; fi',
+        'if [[ x && `eval "$payload"` ]]; then :; fi',
     ],
 )
 def test_release_workflow_rejects_indirect_publication_shell(
@@ -1445,7 +2095,7 @@ def test_release_workflow_rejects_indirect_publication_shell(
     marker = "          prerelease=()\n"
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace(marker, f"          {indirect_command}\n{marker}", 1),
+        _replace_once(workflow, marker, f"          {indirect_command}\n{marker}"),
         encoding="utf-8",
     )
 
@@ -1484,7 +2134,7 @@ def test_release_workflow_rejects_builtin_security_state_writes(
     marker = "          is_immutable=false\n"
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace(marker, marker + f"          {builtin_write}\n", 1),
+        _replace_once(workflow, marker, marker + f"          {builtin_write}\n"),
         encoding="utf-8",
     )
 
@@ -1942,6 +2592,140 @@ def test_docs_deploy_rejects_folded_release_gate_run(tmp_path: Path) -> None:
     assert any("missing its active polling shell step" in error for error in errors)
 
 
+@pytest.mark.parametrize("shell_value", ["python", "pwsh", "bash {0}", "${{ env.SHELL }}"])
+def test_docs_deploy_rejects_noncanonical_release_gate_shell(
+    tmp_path: Path,
+    shell_value: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    step = "      - name: Await GitHub Release and PyPI availability\n"
+    before, separator, after = workflow.partition(step)
+    assert separator
+    after = _replace_once(after, "        shell: bash\n", f"        shell: {shell_value}\n")
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(before + separator + after, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exact step-local `shell: bash`" in error for error in errors)
+
+
+def test_docs_deploy_rejects_release_gate_control_bypass(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "      - name: Await GitHub Release and PyPI availability\n        env:\n"
+    replacement = (
+        "      - name: Await GitHub Release and PyPI availability\n"
+        "        continue-on-error: true\n"
+        "        env:\n"
+    )
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exact step controls" in error for error in errors)
+
+
+def test_docs_deploy_rejects_release_gate_job_inherited_environment(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "  verify-library-release:\n    name: Verify Library Release Published\n"
+    replacement = (
+        "  verify-library-release:\n"
+        "    name: Verify Library Release Published\n"
+        "    env:\n"
+        "      BASH_ENV: ./hidden-release-writer.sh\n"
+    )
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(_replace_once(workflow, marker, replacement), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("release gate job must use exact control keys" in error for error in errors)
+
+
+def test_docs_deploy_rejects_self_hosted_release_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    job = "  verify-library-release:\n"
+    before, separator, after = workflow.partition(job)
+    assert separator
+    after = _replace_once(
+        after,
+        "    runs-on: ubuntu-latest\n",
+        "    runs-on: self-hosted\n",
+    )
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(before + separator + after, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exact trusted ubuntu-latest runner" in error for error in errors)
+
+
+def test_docs_deploy_rejects_sibling_step_before_release_gate(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "      - name: Await GitHub Release and PyPI availability\n"
+    sibling = """\
+      - name: Poison following Bash step
+        shell: bash
+        run: |
+          printf '%s\\n' 'exit 0' > /tmp/xy-gate-bypass
+          echo 'BASH_ENV=/tmp/xy-gate-bypass' >> "$GITHUB_ENV"
+"""
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(_replace_once(workflow, marker, sibling + marker), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exactly its one verified polling step" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "inherited_control",
+    [
+        "env:\n  BASH_ENV: ./hidden-release-writer.sh\n\n",
+        "defaults:\n  run:\n    working-directory: ./unverified-release\n\n",
+        "? env\n:\n  BASH_ENV: ./hidden-release-writer.sh\n\n",
+    ],
+)
+def test_docs_deploy_rejects_inherited_workflow_controls(
+    tmp_path: Path,
+    inherited_control: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        _replace_once(workflow, "jobs:\n", inherited_control + "jobs:\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exact top-level controls" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        "permissions:\n  contents: write\n",
+        'permissions:\n  contents: read\n  "packages": write\n',
+    ],
+)
+def test_docs_deploy_rejects_broad_top_level_permissions(
+    tmp_path: Path,
+    permissions: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    marker = "permissions:\n  contents: read\n"
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(_replace_once(workflow, marker, permissions), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("top-level permissions must be exactly" in error for error in errors)
+
+
 @pytest.mark.parametrize(
     "indirect_command",
     [
@@ -1954,6 +2738,11 @@ def test_docs_deploy_rejects_folded_release_gate_run(tmp_path: Path) -> None:
         "trap 'exit 0' EXIT",
         '$DYNAMIC_COMMAND "exit 0"',
         "[[ x == x ]] && $DYNAMIC_COMMAND -c 'exit 0'",
+        'if [[ x &&\n            $(eval "$payload") ]]; then :; fi',
+        'if [[ "$(eval "$payload")" == x ]]; then :; fi',
+        'if [[ x && `eval "$payload"` ]]; then :; fi',
+        "echo 'BASH_ENV=/tmp/xy-gate-bypass' >> \"$GITHUB_ENV\"",
+        "printf '%s\\n' '/tmp/xy-bin' > \"$GITHUB_PATH\"",
     ],
 )
 def test_docs_deploy_rejects_indirect_release_gate_shell(
@@ -1964,7 +2753,7 @@ def test_docs_deploy_rejects_indirect_release_gate_shell(
     marker = "          EXPECTED_PRERELEASE=false\n"
     path = tmp_path / "deploy-docs-stg.yml"
     path.write_text(
-        workflow.replace(marker, f"          {indirect_command}\n{marker}", 1),
+        _replace_once(workflow, marker, f"          {indirect_command}\n{marker}"),
         encoding="utf-8",
     )
 
@@ -2005,7 +2794,7 @@ def test_docs_deploy_rejects_builtin_readiness_state_writes(
     marker = "            TAG_MATCH=false\n"
     path = tmp_path / "deploy-docs-stg.yml"
     path.write_text(
-        workflow.replace(marker, marker + f"            {builtin_write}\n", 1),
+        _replace_once(workflow, marker, marker + f"            {builtin_write}\n"),
         encoding="utf-8",
     )
 
@@ -2307,6 +3096,33 @@ def test_docs_deploy_rejects_bypassed_production_release_gate(
     errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
 
     assert any("production Helm promotion" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "bypass",
+    [
+        "    needs: [prepare, await-prod-approval]\n",
+        '    "needs": [prepare, await-prod-approval]\n',
+        "    ? needs\n    : [prepare, await-prod-approval]\n",
+        "    if: always()\n",
+        "    continue-on-error: true\n",
+    ],
+)
+def test_docs_deploy_rejects_duplicate_or_conditional_production_gate(
+    tmp_path: Path,
+    bypass: str,
+) -> None:
+    workflow = Path(".github/workflows/deploy-docs-stg.yml").read_text(encoding="utf-8")
+    dependency = "    needs: [prepare, await-prod-approval, verify-library-release]\n"
+    path = tmp_path / "deploy-docs-stg.yml"
+    path.write_text(
+        _replace_once(workflow, dependency, dependency + bypass),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_docs_deploy_workflow(path)
+
+    assert any("exact reusable workflow controls" in error for error in errors)
 
 
 def _write_passthrough_timeout(fake_bin: Path) -> None:
@@ -2728,6 +3544,7 @@ def _run_immutable_release(
     github_wheel: bytes,
     local_wheel: bytes = b"wheel",
     pypi_wheel: bytes = b"wheel",
+    release_lookup_error: str | None = None,
     tag_source_sha: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -2780,6 +3597,12 @@ printf '%s\n' "$*" >> "$GH_LOG"
 if [[ "$1" == "api" && "$*" == *"/commits/$TAG"* ]]; then
   printf '%s\n' "$TAG_SOURCE_SHA"
 elif [[ "$1" == "release" && "$2" == "view" ]]; then
+  if [[ "${GH_RELEASE_LOOKUP_FAIL:-}" == true ]]; then
+    if [[ -n "${GH_RELEASE_LOOKUP_ERROR:-}" ]]; then
+      printf '%s\n' "$GH_RELEASE_LOOKUP_ERROR" >&2
+    fi
+    exit 1
+  fi
   cat "$GH_RELEASE_JSON"
 elif [[ "$1" == "release" && "$2" == "download" ]]; then
   download_dir=""
@@ -2856,6 +3679,8 @@ cat "$PYPI_JSON"
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "CURRENT_NOTES": current_notes,
         "GH_LOG": str(log),
+        "GH_RELEASE_LOOKUP_FAIL": str(release_lookup_error is not None).lower(),
+        "GH_RELEASE_LOOKUP_ERROR": release_lookup_error or "",
         "GH_RELEASE_JSON": str(release_json),
         "GH_REMOTE": str(remote),
         "GH_TOKEN": "test",
@@ -2878,6 +3703,60 @@ cat "$PYPI_JSON"
     )
     calls = log.read_text(encoding="utf-8") if log.exists() else ""
     return result, calls, fixture["body"], current_notes
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+@pytest.mark.parametrize(
+    "lookup_error",
+    [
+        "",
+        "request timed out",
+        "HTTP 429: rate limit exceeded",
+        "HTTP 401: authentication required",
+    ],
+)
+def test_release_workflow_fails_closed_on_existing_release_lookup_errors(
+    tmp_path: Path,
+    lookup_error: str,
+) -> None:
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+        release_lookup_error=lookup_error,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "Could not inspect existing GitHub Release v1.2.3; refusing to create it" in result.stdout
+    )
+    assert result.stderr == (f"{lookup_error}\n" if lookup_error else "")
+    assert "release view v1.2.3" in calls
+    assert "release download" not in calls
+    assert "release upload" not in calls
+    assert "release edit" not in calls
+    assert "release create" not in calls
+
+
+@pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="release workflow runtime simulation requires bash and jq",
+)
+def test_release_workflow_treats_exact_not_found_lookup_as_absent(
+    tmp_path: Path,
+) -> None:
+    result, calls, _, _ = _run_immutable_release(
+        tmp_path,
+        github_wheel=b"wheel",
+        release_lookup_error="release not found",
+    )
+
+    assert result.returncode == 1
+    assert "Could not inspect existing GitHub Release" not in result.stdout
+    assert "Prepared release notes or provenance are missing" in result.stdout
+    assert "release view v1.2.3" in calls
 
 
 @pytest.mark.skipif(
@@ -3389,8 +4268,10 @@ def test_release_workflow_rejects_always_conditioned_pypi_publish(tmp_path: Path
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
     gate = (
-        "        if: github.event_name != 'workflow_dispatch' "
-        "|| github.event.inputs.dry_run != 'true'\n"
+        "        if: (github.event_name == 'push' && "
+        "startsWith(github.ref, 'refs/tags/v')) || "
+        "(github.event_name == 'workflow_dispatch' && "
+        "github.event.inputs.dry_run == 'false')\n"
     )
     assert gate in workflow
     path.write_text(workflow.replace(gate, "        if: always()\n"), encoding="utf-8")
