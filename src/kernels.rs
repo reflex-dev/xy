@@ -4603,13 +4603,14 @@ pub fn stratified_sample_mask<T: Copy + Sync + Into<u64>>(
 pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
     assert!(x1_gt_x0(lo, hi));
     assert!(!out.is_empty());
-    histogram_uniform_impl(
-        data,
-        lo,
-        hi,
-        par_threads_above(data.len(), PAR_THRESHOLD_COMPUTE),
-        out,
-    )
+    histogram_uniform_impl(data, lo, hi, histogram_threads(data.len(), out.len()), out)
+}
+
+/// Workers for a uniform histogram. Each owns a full bin vector and the merge
+/// is `threads * n_bins`, so points per bin caps the row gate — same rule as
+/// `bin_2d_threads`, whose per-thread grids are this kernel's per-thread bins.
+fn histogram_threads(n: usize, n_bins: usize) -> usize {
+    (n / n_bins.max(1)).clamp(1, par_threads_above(n, PAR_THRESHOLD_COMPUTE))
 }
 
 /// Per-bin u64 counting shared by the serial and parallel paths. Stays scalar
@@ -6876,6 +6877,47 @@ mod tests {
             MAX_ROW_THREADS
         );
         assert_eq!(par_threads_above_for(PAR_THRESHOLD, PAR_THRESHOLD, 1), 1);
+    }
+
+    #[test]
+    fn histogram_threads_bin_aware() {
+        let n = PAR_THRESHOLD_COMPUTE;
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        // Below the compute gate: serial regardless of bin count.
+        assert_eq!(histogram_threads(PAR_THRESHOLD_COMPUTE - 1, 8), 1);
+        // Chart-sized bin counts (512 is the benchmark config): pure row gate.
+        assert_eq!(histogram_threads(n, 512), cap);
+        assert_eq!(histogram_threads(n, 8), cap);
+        // Bins as numerous as the rows: merge dwarfs the scan — stay serial.
+        assert_eq!(histogram_threads(n, n), 1);
+        assert_eq!(histogram_threads(200_000, 1_000_000), 1);
+        // In between, workers track points per bin.
+        assert_eq!(histogram_threads(1 << 18, 1 << 15), 8.min(cap));
+    }
+
+    #[test]
+    fn histogram_high_bin_count_matches_serial() {
+        // 128k-512k band: high bin counts route serial, and the public path
+        // stays bit-identical to the serial impl either way.
+        let n = PAR_THRESHOLD_COMPUTE + 1_000;
+        let bins = 300_000;
+        let data: Vec<f64> = (0..n).map(|i| (i % 977) as f64 * 0.25).collect();
+        assert_eq!(histogram_threads(n, bins), 1);
+        let mut serial = vec![0f64; bins];
+        let ts = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut serial);
+        let mut routed = vec![0f64; bins];
+        let tr = histogram_uniform(&data, 0.0, 244.0, &mut routed);
+        assert_eq!(ts, tr);
+        assert_eq!(serial, routed);
+        // Same rows, ordinary bin count: still fans out.
+        let cap = par_threads_above(n, PAR_THRESHOLD_COMPUTE);
+        assert_eq!(histogram_threads(n, 512), cap);
+        let mut small_serial = vec![0f64; 512];
+        let ss = histogram_uniform_impl(&data, 0.0, 244.0, 1, &mut small_serial);
+        let mut small_routed = vec![0f64; 512];
+        let sr = histogram_uniform(&data, 0.0, 244.0, &mut small_routed);
+        assert_eq!(ss, sr);
+        assert_eq!(small_serial, small_routed);
     }
 
     #[test]

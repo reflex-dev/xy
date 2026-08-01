@@ -232,7 +232,10 @@ formats only; the SVG and PDF export paths have their own text contracts.
   class, each a named constant in `kernels.rs` with its measured serial
   ns/row and break-even: compute-bound scans (M4, uniform histogram,
   ~2.5–3 ns/row) cross at 128k rows; general scans (min/max, sortedness,
-  range/validity, f32 encode/normalize) keep the 512k gate. Zone maps cross
+  range/validity, f32 encode/normalize) keep the 512k gate. Where each worker
+  owns a private accumulator the row gate is only a floor: `bin_2d` caps
+  workers at points per cell and `histogram_uniform` at points per bin, so an
+  accumulator as large as the input stays serial. Zone maps cross
   earlier, at two complete 65,536-row chunks, because chunks are independent
   and require no merge; worker count is also capped by actual chunks. All
   gates scale to at most 18 workers. CodSpeed stays serial because its
