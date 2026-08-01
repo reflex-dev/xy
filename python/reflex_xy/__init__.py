@@ -41,37 +41,26 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-_EXPORTS = {
-    "XYPlugin": ".app",
-    "append": ".app",
-    "clear_selection": ".app",
-    "reset_view": ".app",
-    "select": ".app",
-    "set_view": ".app",
-    "setup": ".app",
-    "chart": ".component",
-    "CanonicalRowIdGroup": ".events",
-    "DataBounds": ".events",
-    "Modifiers": ".events",
-    "PointClickEvent": ".events",
-    "PointData": ".events",
-    "PointHoverEvent": ".events",
-    "ScreenPoint": ".events",
-    "SelectEndEvent": ".events",
-    "SelectionPayload": ".events",
-    "ViewChangeEvent": ".events",
-    "XY_NAMESPACE": ".namespace",
-    "XYNamespace": ".namespace",
-    "FigureRegistry": ".registry",
-    "registry": ".registry",
-    "resolve_selection": ".selections",
-    "AsyncFigureVar": ".vars",
-    "FigureVar": ".vars",
-    "figure": ".vars",
-}
+from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
+from .component import chart
+from .events import (
+    CanonicalRowIdGroup,
+    DataBounds,
+    Modifiers,
+    PointClickEvent,
+    PointData,
+    PointHoverEvent,
+    ScreenPoint,
+    SelectEndEvent,
+    SelectionPayload,
+    ViewChangeEvent,
+)
+from .namespace import XY_NAMESPACE, XYNamespace
+from .registry import FigureRegistry, _figure_of, registry
+from .selections import resolve_selection
+from .vars import AsyncFigureVar, FigureVar, figure
 
 __all__ = [
     "XY_NAMESPACE",
@@ -106,16 +95,7 @@ __all__ = [
 ]
 
 
-def _load_export(name: str) -> Any:
-    module_name = _EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module_name, __name__), name)
-    globals()[name] = value
-    return value
-
-
-def _load_version() -> str:
+def __getattr__(name: str) -> str:
     """Resolve ``__version__`` lazily from the installed distribution.
 
     The version is not written down in the source tree — it is derived from
@@ -124,25 +104,17 @@ def _load_version() -> str:
     runtime. An uninstalled source tree reports the same unreal ``0.0.0`` the
     build-time fallback uses.
     """
-    from importlib.metadata import PackageNotFoundError
-    from importlib.metadata import version as _distribution_version
-
-    try:
-        return _distribution_version("xy")
-    except PackageNotFoundError:
-        return "0.0.0"
-
-
-def __getattr__(name: str) -> Any:
     if name == "__version__":
-        value = _load_version()
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _distribution_version
+
+        try:
+            value = _distribution_version("xy")
+        except PackageNotFoundError:
+            value = "0.0.0"
         globals()["__version__"] = value
         return value
-    return _load_export(name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def register(chart_or_figure: Any) -> str:
@@ -152,10 +124,6 @@ def register(chart_or_figure: Any) -> str:
     rebuilt after a worker restart or on another node — prefer
     `@reflex_xy.figure` for anything long-lived (see the module doc).
     """
-    from .registry import _figure_of, registry
-
-    globals()["registry"] = registry
-
     return registry.register(_figure_of(chart_or_figure))
 
 
@@ -183,10 +151,6 @@ def inline(chart_or_figure: Any) -> str:
     no kernel at all can be passed straight to `reflex_xy.chart()` (static
     payload tier).
     """
-    from .registry import _figure_of, registry
-
-    globals()["registry"] = registry
-
     fig = _figure_of(chart_or_figure)
     spec, blob = fig.build_payload()
     canonical = json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
@@ -198,29 +162,4 @@ def inline(chart_or_figure: Any) -> str:
 
 def release(token: str) -> None:
     """Drop a registered figure (idempotent)."""
-    from .registry import registry
-
-    globals()["registry"] = registry
-
     registry.release(token)
-
-
-if TYPE_CHECKING:
-    from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
-    from .component import chart
-    from .events import (
-        CanonicalRowIdGroup,
-        DataBounds,
-        Modifiers,
-        PointClickEvent,
-        PointData,
-        PointHoverEvent,
-        ScreenPoint,
-        SelectEndEvent,
-        SelectionPayload,
-        ViewChangeEvent,
-    )
-    from .namespace import XY_NAMESPACE, XYNamespace
-    from .registry import FigureRegistry, registry
-    from .selections import resolve_selection
-    from .vars import AsyncFigureVar, FigureVar, figure

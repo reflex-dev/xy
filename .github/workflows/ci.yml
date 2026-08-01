@@ -621,6 +621,7 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
@@ -640,29 +641,25 @@ jobs:
           sdist=$(ls dist/*.tar.gz)
           python scripts/verify_sdist.py "$sdist"
 
-      - name: Verify sdist without Rust errors clearly on import
+      - name: Build and load native core from sdist
         shell: bash
         env:
-          XY_SKIP_CARGO: "1"
+          XY_REQUIRE_CARGO: "1"
         run: |
           uv venv smoke
-          uv pip install -p smoke dist/*.tar.gz numpy anywidget
+          uv pip install -p smoke dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
           ./smoke/bin/python - <<'PY'
-          # No native core and no fallback: importing the compute layer must
-          # raise a clear, actionable error (§33: no-wheel behavior is defined
-          # as a loud failure, not a silent degrade).
-          import xy
+          import importlib.metadata as metadata
 
-          assert xy.__version__
-          try:
-              import xy.kernels  # noqa: F401
-          except ImportError as err:
-              msg = str(err)
-              assert "native Rust core" in msg, msg
-              assert "rustup.rs" in msg, msg
-              print("sdist without Rust errors clearly on import")
-          else:
-              raise SystemExit("expected ImportError without the native core")
+          import reflex_xy
+          import xy
+          import xy.kernels as kernels
+
+          version = metadata.version("xy")
+          assert xy.__version__ == version
+          assert reflex_xy.__version__ == version
+          assert kernels.BACKEND == "native", kernels.BACKEND
+          print("sdist built and loaded the native Rust core")
           PY
 
   # Linux and Windows wheel smoke matrix (§33). macOS wheels are built only by
