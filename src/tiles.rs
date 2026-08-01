@@ -287,9 +287,10 @@ fn reduce_color_level(prev_counts: &[u32], prev_color: &[[u16; 4]], dim: usize) 
 fn center_range(lo: f64, hi: f64, full_lo: f64, full_hi: f64, dim: usize) -> (usize, usize) {
     let cell = (full_hi - full_lo) / dim as f64;
     // center of cell i is full_lo + (i + 0.5) * cell; inside ⇔ lo <= c < hi
-    let first = ((lo - full_lo) / cell - 0.5).ceil().max(0.0).min(usize::MAX as f64) as usize;
-    let last = (((hi - full_lo) / cell - 0.5).floor().min(isize::MAX as f64 - 1.0) as isize + 1).max(0) as usize;
-    (first.min(dim), last.min(dim))
+    let first = ((lo - full_lo) / cell - 0.5).ceil().max(0.0).min(dim as f64) as usize;
+    let last = (((hi - full_lo) / cell - 0.5).floor()).max(0.0) as usize;
+    let last = last.saturating_add(1).min(dim);
+    (first, last)
 }
 
 /// Approximate in-window count from the finest level (whole cells whose
