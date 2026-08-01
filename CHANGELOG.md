@@ -8,6 +8,8 @@ in the README).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-31
+
 ### Added
 - Reflex integration is now bundled in the `xy` distribution and installed as
   `xy[reflex]`. The `reflex_xy` import namespace and JSX wrapper ship in every
