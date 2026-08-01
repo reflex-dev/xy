@@ -8,6 +8,14 @@ in the README).
 
 ## [Unreleased]
 
+### Fixed
+- Importing the bundled `reflex_xy` integration, including reading its
+  `__version__`, no longer eagerly loads XY's native Rust core. Public adapter
+  exports resolve lazily on first use, so a source-only installation can import
+  the package and report its version before the documented native-core error is
+  raised at the first chart operation. This also restores the no-Rust sdist
+  release smoke that blocked the `v0.0.5` PyPI publish.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added

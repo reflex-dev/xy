@@ -91,6 +91,26 @@ def test_public_metadata_and_dir_are_lazy() -> None:
     )
 
 
+def test_reflex_integration_import_is_lazy_and_light() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import reflex_xy
+
+        assert reflex_xy.__version__
+        assert "XYPlugin" in dir(reflex_xy)
+        assert "chart" in reflex_xy.__all__
+        assert "reflex" not in sys.modules
+        assert "numpy" not in sys.modules
+        assert "xy.channels" not in sys.modules
+        assert "xy.kernels" not in sys.modules
+        assert "xy._native" not in sys.modules
+        assert not any(name.startswith("reflex_xy.") for name in sys.modules)
+        """
+    )
+
+
 def test_export_helpers_do_not_load_widget_numpy_or_kernels() -> None:
     _run_fresh(
         f"""
