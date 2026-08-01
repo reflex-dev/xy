@@ -2502,7 +2502,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         n_buckets,
         start,
         end,
-        par_threads_above(end - start, PAR_THRESHOLD_COMPUTE),
+        par_threads_above(end - start, PAR_THRESHOLD_COMPUTE).min(n_buckets),
     )
 }
 
