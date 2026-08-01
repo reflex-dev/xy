@@ -6,6 +6,8 @@ import sys
 import textwrap
 from typing import Optional
 
+import pytest
+
 HEAVY_MODULES = {
     "anywidget",
     "numpy",
@@ -112,6 +114,7 @@ def test_reflex_integration_import_is_lazy_and_light() -> None:
 
 
 def test_reflex_registry_export_survives_lazy_app_import() -> None:
+    pytest.importorskip("reflex")
     _run_fresh(
         """
         import reflex_xy
