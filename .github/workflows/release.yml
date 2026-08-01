@@ -230,9 +230,9 @@ jobs:
         env:
           XY_REQUIRE_CARGO: "1"
         run: |
-          uv venv smoke
-          uv pip install -p smoke dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
-          ./smoke/bin/python - <<'PY'
+          uv venv smoke-native
+          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          ./smoke-native/bin/python - <<'PY'
           import importlib.metadata as metadata
 
           import reflex_xy
@@ -244,6 +244,32 @@ jobs:
           assert reflex_xy.__version__ == version
           assert kernels.BACKEND == "native", kernels.BACKEND
           print("sdist built and loaded the native Rust core")
+          PY
+      - name: Verify coreless sdist imports reflex_xy
+        shell: bash
+        env:
+          XY_SKIP_CARGO: "1"
+        run: |
+          uv venv smoke-no-rust
+          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          ./smoke-no-rust/bin/python - <<'PY'
+          import importlib.metadata as metadata
+
+          import reflex_xy
+          import xy
+
+          version = metadata.version("xy")
+          assert xy.__version__ == version
+          assert reflex_xy.__version__ == version
+          try:
+              import xy.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("coreless sdist imports reflex_xy and errors clearly on compute")
+          else:
+              raise SystemExit("expected ImportError without the native core")
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

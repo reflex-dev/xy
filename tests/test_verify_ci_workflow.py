@@ -1376,39 +1376,89 @@ def test_release_workflow_rejects_pyemscripten_artifact_outside_pypi_batch(
 def test_ci_workflow_rejects_missing_sdist_rust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
-    path.write_text(
-        workflow.replace(
-            "      - name: Build and load native core from sdist\n"
-            "        shell: bash\n"
-            "        env:\n"
-            '          XY_REQUIRE_CARGO: "1"\n',
-            "      - name: Build and load native core from sdist\n        shell: bash\n",
-        ),
-        encoding="utf-8",
+    moved = workflow.replace(
+        "      - name: Build sdist\n",
+        '      - name: Build sdist\n        env:\n          XY_REQUIRE_CARGO: "1"\n',
+        1,
+    ).replace(
+        "      - name: Build and load native core from sdist\n"
+        "        shell: bash\n"
+        "        env:\n"
+        '          XY_REQUIRE_CARGO: "1"\n',
+        "      - name: Build and load native core from sdist\n        shell: bash\n",
     )
+    path.write_text(moved, encoding="utf-8")
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("CI sdist job" in error and "XY_REQUIRE_CARGO" in error for error in errors)
+    assert any(
+        "Build and load native core from sdist" in error and "XY_REQUIRE_CARGO" in error
+        for error in errors
+    )
 
 
 def test_release_workflow_rejects_missing_sdist_rust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
+    moved = workflow.replace(
+        "      - name: Build sdist\n",
+        '      - name: Build sdist\n        env:\n          XY_REQUIRE_CARGO: "1"\n',
+        1,
+    ).replace(
+        "      - name: Build and load native core from sdist\n"
+        "        shell: bash\n"
+        "        env:\n"
+        '          XY_REQUIRE_CARGO: "1"\n',
+        "      - name: Build and load native core from sdist\n        shell: bash\n",
+    )
+    path.write_text(moved, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "Build and load native core from sdist" in error and "XY_REQUIRE_CARGO" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_missing_coreless_sdist_reflex_import(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    prefix, smoke = workflow.split("      - name: Verify coreless sdist imports reflex_xy\n", 1)
+    path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace(
-            "      - name: Build and load native core from sdist\n"
-            "        shell: bash\n"
-            "        env:\n"
-            '          XY_REQUIRE_CARGO: "1"\n',
-            "      - name: Build and load native core from sdist\n        shell: bash\n",
-        ),
+        prefix
+        + "      - name: Verify coreless sdist imports reflex_xy\n"
+        + smoke.replace("          import reflex_xy\n", "          import removed_reflex_xy\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Verify coreless sdist imports reflex_xy" in error and "import reflex_xy" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_missing_coreless_sdist_reflex_import(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    prefix, smoke = workflow.split("      - name: Verify coreless sdist imports reflex_xy\n", 1)
+    path = tmp_path / "release.yml"
+    path.write_text(
+        prefix
+        + "      - name: Verify coreless sdist imports reflex_xy\n"
+        + smoke.replace("          import reflex_xy\n", "          import removed_reflex_xy\n", 1),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any("release sdist job" in error and "XY_REQUIRE_CARGO" in error for error in errors)
+    assert any(
+        "Verify coreless sdist imports reflex_xy" in error and "import reflex_xy" in error
+        for error in errors
+    )
 
 
 def test_release_workflow_rejects_missing_trusted_publishing(tmp_path: Path) -> None:
