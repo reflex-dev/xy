@@ -287,8 +287,8 @@ fn reduce_color_level(prev_counts: &[u32], prev_color: &[[u16; 4]], dim: usize) 
 fn center_range(lo: f64, hi: f64, full_lo: f64, full_hi: f64, dim: usize) -> (usize, usize) {
     let cell = (full_hi - full_lo) / dim as f64;
     // center of cell i is full_lo + (i + 0.5) * cell; inside ⇔ lo <= c < hi
-    let first = ((lo - full_lo) / cell - 0.5).ceil().max(0.0) as usize;
-    let last = (((hi - full_lo) / cell - 0.5).floor() as isize + 1).max(0) as usize;
+    let first = ((lo - full_lo) / cell - 0.5).ceil().max(0.0).min(usize::MAX as f64) as usize;
+    let last = (((hi - full_lo) / cell - 0.5).floor().min(isize::MAX as f64 - 1.0) as isize + 1).max(0) as usize;
     (first.min(dim), last.min(dim))
 }
 
@@ -1119,11 +1119,8 @@ mod tests {
         assert_eq!(count(&p, 50.0, 50.0, 0.0, 100.0), 0.0);
     }
 
-    // Release-only: in debug builds center_range's `as isize + 1` panics on
-    // these magnitudes (pre-existing, caught by ffi_guard at the ABI); the
-    // wrap to cx1 < cx0 that reaches compose's row slicing only occurs in
-    // release, where the old indexed loop silently iterated it as empty.
-    #[cfg(not(debug_assertions))]
+    // The center_range function now saturates properly for astronomically large
+    // coordinates, so this test runs in both debug and release builds.
     #[test]
     fn compose_window_astronomically_past_domain_is_empty_not_panic() {
         let (x, y) = cross(4000);
