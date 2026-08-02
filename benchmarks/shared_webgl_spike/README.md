@@ -132,8 +132,10 @@ npx --yes node@22 benchmarks/shared_webgl_spike/capture.mjs \
 Every profile/repetition is written immediately as raw JSON, including failed attempts. The
 same directory receives `summary-input.json`, whose numeric benchmark fields are medians of the
 successful cold-process runs; rate and interval fields are re-derived from those medians so the
-published report remains internally consistent. Commit the capture utility and schema first,
-then run it from that clean revision and record that revision in the final report.
+published report remains internally consistent. The utility rejects a dirty worktree and records
+the Git revision plus Python, Node, Playwright, browser, and platform details. Commit the capture
+utility and schema first, then run it from that clean revision and record that revision in the
+final report.
 
 Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
 Native mode can look faster after browser eviction because it is rendering fewer live charts;

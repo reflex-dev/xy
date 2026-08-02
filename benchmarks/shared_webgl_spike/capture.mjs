@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { chromium } from "playwright";
+
+const require = createRequire(import.meta.url);
 
 function parseArgs(argv) {
   const options = {
@@ -56,6 +60,33 @@ function median(values) {
 
 function medianAt(runs, read) {
   return median(runs.map(read));
+}
+
+function commandOutput(command, args) {
+  return execFileSync(command, args, { encoding: "utf8" }).trim();
+}
+
+function runnerEnvironment() {
+  const status = commandOutput("git", ["status", "--porcelain"]);
+  if (status) throw new Error("capture requires a clean git worktree");
+  const python = JSON.parse(
+    commandOutput("python3.12", [
+      "-c",
+      "import json,platform;print(json.dumps({'version':platform.python_version()," +
+        "'implementation':platform.python_implementation(),'compiler':platform.python_compiler()}))",
+    ]),
+  );
+  return {
+    node: process.version,
+    playwright: require("playwright/package.json").version,
+    python,
+    platform: { name: process.platform, arch: process.arch },
+    git: {
+      commit: commandOutput("git", ["rev-parse", "HEAD"]),
+      branch: commandOutput("git", ["branch", "--show-current"]),
+      dirty: false,
+    },
+  };
 }
 
 function summarizeProfile(runs, mode) {
@@ -127,7 +158,7 @@ function summarizeProfile(runs, mode) {
   };
 }
 
-async function captureProfile(options, mode, repetition) {
+async function captureProfile(options, runner, mode, repetition) {
   const launchOptions = { headless: true };
   if (options.chromium) launchOptions.executablePath = options.chromium;
   const browser = await chromium.launch(launchOptions);
@@ -161,6 +192,7 @@ async function captureProfile(options, mode, repetition) {
       capturedAtUtc: new Date().toISOString(),
       mode,
       repetition,
+      runnerEnvironment: runner,
       browserVersion,
       initialSnapshot,
       correctness,
@@ -184,6 +216,7 @@ async function captureProfile(options, mode, repetition) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const runner = runnerEnvironment();
   await mkdir(options.outputDir, { recursive: true });
   const results = { shared: [], native: [] };
   const rawFiles = { shared: [], native: [] };
@@ -193,7 +226,7 @@ async function main() {
       const stem = `run-${String(repetition).padStart(2, "0")}-${mode}`;
       const file = path.join(options.outputDir, `${stem}.json`);
       try {
-        const result = await captureProfile(options, mode, repetition);
+        const result = await captureProfile(options, runner, mode, repetition);
         results[mode].push(result);
         rawFiles[mode].push(file);
         await writeFile(file, `${JSON.stringify(result, null, 2)}\n`, "utf8");
@@ -220,6 +253,13 @@ async function main() {
     repetitionsRequested: options.repetitions,
     requestedDurationMs: options.durationMs,
     coldBrowserProcessPerProfile: true,
+    runnerEnvironment: runner,
+    captureConfiguration: {
+      baseUrl: options.baseUrl,
+      chromium: options.chromium ?? "playwright default",
+      viewportWidth: options.viewportWidth,
+      viewportHeight: options.viewportHeight,
+    },
     rawFiles,
     failures,
     profiles: {},
