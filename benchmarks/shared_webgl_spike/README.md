@@ -131,11 +131,21 @@ npx --yes node@22 benchmarks/shared_webgl_spike/capture.mjs \
   --output-dir benchmarks/shared_webgl_spike/results/raw/chromium-YYYY-MM-DD
 ```
 
-Every profile/repetition is written immediately as raw JSON, including failed attempts. The
-same directory receives `summary-input.json`, whose numeric benchmark fields are medians of the
-successful cold-process runs; rate and interval fields are re-derived from those medians so the
-published report remains internally consistent. The utility rejects a dirty worktree and records
-the Git revision plus Python, Node, Playwright, browser, and platform details. Commit the capture
+Every profile/repetition is written immediately as raw JSON, including failed attempts, before
+it can enter the successful-run aggregate. Shared-first and native-first ordering alternates by
+repetition. The same directory receives `summary-input.json`, whose numeric benchmark fields are
+medians of the successful cold-process runs; integer counts select the lower observed middle
+value when an even number of attempts succeeds. Rate and interval fields are re-derived from
+those medians, and stable-context presentation totals are derived from productive batches times
+live charts, so the published report remains internally consistent.
+
+The utility rejects a dirty worktree and fingerprints the served `index.html`, `experiment.js`,
+and `styles.css` against the local checkout before associating results with the Git revision. It
+records Python, Node, Playwright, browser, and platform details without retaining an absolute
+browser executable path. Browser evaluation calls have Node-side deadlines. Page errors and all
+warning/error console messages are preserved in raw JSON. They fail the attempt except for two
+source-, phase-, and count-capped Chromium diagnostics: native context eviction while the 50
+contexts initialize, and the shared verifier's intentional Canvas 2D readback. Commit the capture
 utility and schema first, then run it from that clean revision and record that revision in the
 final report.
 

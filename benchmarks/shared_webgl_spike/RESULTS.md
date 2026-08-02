@@ -9,10 +9,11 @@ The reference machine was an AC-powered MacBook Pro (Mac17,8) with an Apple M5 P
 (18 CPU cores and 20 GPU cores), 64 GB RAM, Low Power Mode disabled, and macOS 26.5.2
 (25F84). The static server ran under CPython 3.12.13. The capture runner used Node 22.23.2,
 the repository-locked Playwright 1.61.1, and Chrome for Testing 149.0.7827.55 at a
-1280 × 720 CSS-pixel viewport and device-pixel ratio 1. WebGL2 used ANGLE's Metal renderer
-on the Apple M5 Pro. This was an ordinary developer workstation with no intentional competing
-benchmark workload and no process isolation, so rerun the harness for target-deployment
-decisions.
+1280 × 720 CSS-pixel viewport and device-pixel ratio 1. The installed Rust tools were
+`rustc 1.96.1 (31fca3adb 2026-06-26)` and `cargo 1.96.1 (356927216 2026-06-26)`.
+WebGL2 used ANGLE's Metal renderer on the Apple M5 Pro. This was an ordinary developer
+workstation with no intentional competing benchmark workload and no process isolation, so
+rerun the harness for target-deployment decisions.
 
 The machine-readable median summary is
 [`results/chromium-2026-08-02.json`](./results/chromium-2026-08-02.json). The

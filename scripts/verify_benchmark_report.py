@@ -87,6 +87,9 @@ DASHBOARD_SMOKE_BUDGETS_MS = {
     "scroll_pass_ms": 5_000.0,
     "steady_redraw_p95_ms": 100.0,
 }
+# Browser deadline checks may undershoot by a sub-millisecond timer tick. Keep
+# that allowance small so a materially truncated capture cannot be published.
+SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS = 1.0
 
 
 def _is_number(value: Any) -> bool:
@@ -2020,6 +2023,7 @@ def _validate_shared_webgl_profile(
     requested = profile_value.get("requested_charts")
     live = profile_value.get("live_charts")
     contexts = profile_value.get("live_contexts")
+    created = profile_value.get("created_contexts") if profile == "native" else None
     if (
         isinstance(requested, int)
         and not isinstance(requested, bool)
@@ -2036,7 +2040,6 @@ def _validate_shared_webgl_profile(
         errors.append(f"{path}.live_contexts must be 1 while shared charts are live")
     if profile == "native":
         _require_nonnegative_integer(profile_value, "created_contexts", path, errors)
-        created = profile_value.get("created_contexts")
         if (
             isinstance(created, int)
             and not isinstance(created, bool)
@@ -2166,6 +2169,8 @@ def _validate_shared_webgl_profile(
         restores = recovery.get("context_restores")
         expected_charts = recovery.get("expected_charts")
         live_after_restore = recovery.get("live_charts_after_restore")
+        recovery_capacity = created if profile == "native" else requested
+        recovery_capacity_name = "created_contexts" if profile == "native" else "requested_charts"
         if (
             profile == "shared"
             and isinstance(losses, int)
@@ -2178,11 +2183,11 @@ def _validate_shared_webgl_profile(
         if (
             isinstance(expected_charts, int)
             and not isinstance(expected_charts, bool)
-            and isinstance(requested, int)
-            and not isinstance(requested, bool)
-            and expected_charts > requested
+            and isinstance(recovery_capacity, int)
+            and not isinstance(recovery_capacity, bool)
+            and expected_charts > recovery_capacity
         ):
-            errors.append(f"{recovery_path}.expected_charts must be <= requested_charts")
+            errors.append(f"{recovery_path}.expected_charts must be <= {recovery_capacity_name}")
         if (
             profile == "shared"
             and isinstance(expected_charts, int)
@@ -2195,11 +2200,13 @@ def _validate_shared_webgl_profile(
         if (
             isinstance(live_after_restore, int)
             and not isinstance(live_after_restore, bool)
-            and isinstance(requested, int)
-            and not isinstance(requested, bool)
-            and live_after_restore > requested
+            and isinstance(recovery_capacity, int)
+            and not isinstance(recovery_capacity, bool)
+            and live_after_restore > recovery_capacity
         ):
-            errors.append(f"{recovery_path}.live_charts_after_restore must be <= requested_charts")
+            errors.append(
+                f"{recovery_path}.live_charts_after_restore must be <= {recovery_capacity_name}"
+            )
         if (
             recovery.get("correctness_after_restore") is True
             and isinstance(losses, int)
@@ -2261,6 +2268,18 @@ def _validate_shared_webgl_profile(
         return None
     for key in ("requested_duration_ms", "duration_ms", "target_fps"):
         _require_positive_number(benchmark, key, benchmark_path, errors)
+    requested_duration_ms = benchmark.get("requested_duration_ms")
+    duration_ms = benchmark.get("duration_ms")
+    if (
+        _is_number(requested_duration_ms)
+        and _is_number(duration_ms)
+        and duration_ms + SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS < requested_duration_ms
+    ):
+        errors.append(
+            f"{benchmark_path}.duration_ms must not be more than "
+            f"{SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS:g} ms shorter than "
+            "requested_duration_ms"
+        )
     for key in ("observed_fps", "chart_presentations_per_second"):
         _require_nonnegative_number(benchmark, key, benchmark_path, errors)
     _require_positive_integer(benchmark, "points_per_chart", benchmark_path, errors)
