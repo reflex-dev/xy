@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "shared-webgl-spike-raw",
-  "capturedAtUtc": "2026-08-02T21:07:17.484Z",
+  "capturedAtUtc": "2026-08-02T21:44:31.086Z",
   "mode": "native",
   "repetition": 2,
   "runnerEnvironment": {
@@ -16,13 +16,607 @@
       "name": "darwin",
       "arch": "arm64"
     },
+    "harness": {
+      "algorithm": "sha256",
+      "files": {
+        "index.html": {
+          "sha256": "86366da65a70f0f7509e55ed7004c4d16270e8980f47d3353c5a8a81e9b0ce6d"
+        },
+        "experiment.js": {
+          "sha256": "abfb4e91d03895d210d584852a6a564f46df2bbbbe3daa2f1fac6c04c9a9c627"
+        },
+        "styles.css": {
+          "sha256": "f09c6e7d8886845e68371bfdb57a99dc513e5948c64d1541a1a0293e4deaa9b2"
+        }
+      }
+    },
     "git": {
-      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "commit": "98dc105395221608f0e54d5d744965fb1f57c574",
       "branch": "agent/shared-webgl-spike",
       "dirty": false
     }
   },
   "browserVersion": "149.0.7827.55",
+  "diagnostics": [
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 1,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 2,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 3,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 4,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 5,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 6,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 7,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 8,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 9,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 10,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 11,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 12,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 13,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 14,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 15,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 16,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 17,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 18,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 19,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 20,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 21,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 22,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 23,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 24,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 25,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 26,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 27,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 28,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 29,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 30,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 31,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 32,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 33,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "initialization",
+      "level": "warning",
+      "text": "WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 901,
+        "column": 0,
+        "lineNumber": 901,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-native-webgl-context-limit",
+      "occurrence": 34,
+      "allowlistCap": 50
+    }
+  ],
   "initialSnapshot": {
     "mode": "native",
     "count": 50,
@@ -35,8 +629,8 @@
       "requestedCharts": 50,
       "resourceLabel": "16 sets / 16 VBOs"
     },
-    "observedFps": 50.42515325529411,
-    "frameP95Ms": 0.7999999523162842,
+    "observedFps": 49.910161710111744,
+    "frameP95Ms": 0.5,
     "presentP95Ms": null,
     "contextLosses": 34,
     "contextRestores": 0,
@@ -62,27 +656,27 @@
     "cropOffsetPixels": 0,
     "stateStress": true,
     "dpr": 1,
-    "timestamp": "2026-08-02T21:07:13.779Z"
+    "timestamp": "2026-08-02T21:44:32.720Z"
   },
   "benchmark": {
     "mode": "native",
     "requestedDurationMs": 3000,
-    "durationMs": 3000.7999999523163,
+    "durationMs": 3000.899999976158,
     "requestedCharts": 50,
     "liveCharts": 16,
     "fullyLive": false,
     "liveContexts": 16,
     "targetFps": 60,
-    "observedFps": 60.31724873462948,
-    "productiveBatches": 181,
+    "observedFps": 59.982005398857034,
+    "productiveBatches": 180,
     "expectedBatches": 180,
     "droppedIntervals": 0,
-    "chartPresentations": 2896,
-    "chartPresentationsPerSecond": 965.0759797540717,
+    "chartPresentations": 2880,
+    "chartPresentationsPerSecond": 959.7120863817125,
     "frameMs": {
-      "p50": 0.5,
-      "p95": 0.8000000715255737,
-      "p99": 1.100000023841858
+      "p50": 0.40000009536743164,
+      "p95": 0.6000000238418579,
+      "p99": 0.6000000238418579
     },
     "uploadMsPerChart": {
       "p50": 0,
@@ -120,7 +714,7 @@
     "dense": true,
     "contextLossesDuringRun": 0,
     "contextRestoresDuringRun": 0,
-    "timestamp": "2026-08-02T21:07:16.784Z"
+    "timestamp": "2026-08-02T21:44:35.775Z"
   },
   "preRecovery": {
     "mode": "native",
@@ -135,7 +729,7 @@
       "resourceLabel": "16 sets / 16 VBOs"
     },
     "observedFps": 60.00393468424159,
-    "frameP95Ms": 0.8000000715255737,
+    "frameP95Ms": 0.6000000238418579,
     "presentP95Ms": null,
     "contextLosses": 34,
     "contextRestores": 0,
@@ -159,7 +753,7 @@
       "cropOffsetPixels": 0,
       "stateStress": true,
       "dpr": 1,
-      "timestamp": "2026-08-02T21:07:13.779Z"
+      "timestamp": "2026-08-02T21:44:32.720Z"
     }
   },
   "cycleResult": true,
@@ -175,8 +769,8 @@
       "requestedCharts": 50,
       "resourceLabel": "16 sets / 16 VBOs"
     },
-    "observedFps": 60.00393468424159,
-    "frameP95Ms": 0.7999999523162842,
+    "observedFps": 59.50019833399447,
+    "frameP95Ms": 0.6000000238418579,
     "presentP95Ms": null,
     "contextLosses": 35,
     "contextRestores": 1,
@@ -200,7 +794,7 @@
       "cropOffsetPixels": 0,
       "stateStress": true,
       "dpr": 1,
-      "timestamp": "2026-08-02T21:07:17.479Z"
+      "timestamp": "2026-08-02T21:44:36.476Z"
     }
   },
   "recovery": {

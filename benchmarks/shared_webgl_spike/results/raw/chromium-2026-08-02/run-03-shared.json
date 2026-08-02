@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "shared-webgl-spike-raw",
-  "capturedAtUtc": "2026-08-02T21:07:22.889Z",
+  "capturedAtUtc": "2026-08-02T21:44:42.178Z",
   "mode": "shared",
   "repetition": 3,
   "runnerEnvironment": {
@@ -16,13 +16,879 @@
       "name": "darwin",
       "arch": "arm64"
     },
+    "harness": {
+      "algorithm": "sha256",
+      "files": {
+        "index.html": {
+          "sha256": "86366da65a70f0f7509e55ed7004c4d16270e8980f47d3353c5a8a81e9b0ce6d"
+        },
+        "experiment.js": {
+          "sha256": "abfb4e91d03895d210d584852a6a564f46df2bbbbe3daa2f1fac6c04c9a9c627"
+        },
+        "styles.css": {
+          "sha256": "f09c6e7d8886845e68371bfdb57a99dc513e5948c64d1541a1a0293e4deaa9b2"
+        }
+      }
+    },
     "git": {
-      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "commit": "98dc105395221608f0e54d5d744965fb1f57c574",
       "branch": "agent/shared-webgl-spike",
       "dirty": false
     }
   },
   "browserVersion": "149.0.7827.55",
+  "diagnostics": [
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 1,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 2,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 3,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 4,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 5,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 6,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 7,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 8,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 9,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 10,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 11,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 12,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 13,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 14,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 15,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 16,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 17,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 18,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 19,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 20,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 21,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 22,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 23,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 24,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 25,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 26,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 27,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 28,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 29,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 30,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 31,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 32,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 33,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 34,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 35,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 36,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 37,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 38,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 39,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 40,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 41,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 42,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 43,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 44,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 45,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 46,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 47,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 48,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 49,
+      "allowlistCap": 50
+    },
+    {
+      "source": "console",
+      "phase": "verify",
+      "level": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently",
+      "location": {
+        "url": "http://127.0.0.1:4173/experiment.js",
+        "line": 815,
+        "column": 0,
+        "lineNumber": 815,
+        "columnNumber": 0
+      },
+      "allowed": true,
+      "classification": "expected-shared-canvas-readback",
+      "occurrence": 50,
+      "allowlistCap": 50
+    }
+  ],
   "initialSnapshot": {
     "mode": "shared",
     "count": 50,
@@ -34,7 +900,7 @@
       "requestedCharts": 50,
       "resourceLabel": "1 set / 50 VBOs"
     },
-    "observedFps": 58.84112895462826,
+    "observedFps": 58.306156737602784,
     "frameP95Ms": 1.399999976158142,
     "presentP95Ms": 0.10000002384185791,
     "contextLosses": 0,
@@ -61,27 +927,27 @@
     "cropOffsetPixels": 17,
     "stateStress": true,
     "dpr": 1,
-    "timestamp": "2026-08-02T21:07:19.088Z"
+    "timestamp": "2026-08-02T21:44:43.808Z"
   },
   "benchmark": {
     "mode": "shared",
     "requestedDurationMs": 3000,
-    "durationMs": 3002.5,
+    "durationMs": 3001.2000000476837,
     "requestedCharts": 50,
     "liveCharts": 50,
     "fullyLive": true,
     "liveContexts": 1,
     "targetFps": 60,
-    "observedFps": 60.283097418817654,
-    "productiveBatches": 181,
+    "observedFps": 59.97600959520862,
+    "productiveBatches": 180,
     "expectedBatches": 180,
     "droppedIntervals": 0,
-    "chartPresentations": 9050,
-    "chartPresentationsPerSecond": 3014.1548709408826,
+    "chartPresentations": 9000,
+    "chartPresentationsPerSecond": 2998.8004797604312,
     "frameMs": {
-      "p50": 1.2000000476837158,
-      "p95": 1.600000023841858,
-      "p99": 1.8000000715255737
+      "p50": 1.100000023841858,
+      "p95": 1.3000000715255737,
+      "p99": 1.399999976158142
     },
     "uploadMsPerChart": {
       "p50": 0,
@@ -122,7 +988,7 @@
     "dense": true,
     "contextLossesDuringRun": 0,
     "contextRestoresDuringRun": 0,
-    "timestamp": "2026-08-02T21:07:22.103Z"
+    "timestamp": "2026-08-02T21:44:46.873Z"
   },
   "preRecovery": {
     "mode": "shared",
@@ -135,8 +1001,8 @@
       "requestedCharts": 50,
       "resourceLabel": "1 set / 50 VBOs"
     },
-    "observedFps": 59.50609937518595,
-    "frameP95Ms": 1.600000023841858,
+    "observedFps": 60.00393468424159,
+    "frameP95Ms": 1.3000000715255737,
     "presentP95Ms": 0.10000002384185791,
     "contextLosses": 0,
     "contextRestores": 0,
@@ -160,7 +1026,7 @@
       "cropOffsetPixels": 17,
       "stateStress": true,
       "dpr": 1,
-      "timestamp": "2026-08-02T21:07:19.088Z"
+      "timestamp": "2026-08-02T21:44:43.808Z"
     }
   },
   "cycleResult": true,
@@ -175,8 +1041,8 @@
       "requestedCharts": 50,
       "resourceLabel": "1 set / 50 VBOs"
     },
-    "observedFps": 59.50609937518595,
-    "frameP95Ms": 1.600000023841858,
+    "observedFps": 15.73718894462477,
+    "frameP95Ms": 1.3000000715255737,
     "presentP95Ms": 0.10000002384185791,
     "contextLosses": 1,
     "contextRestores": 1,
@@ -200,7 +1066,7 @@
       "cropOffsetPixels": 17,
       "stateStress": true,
       "dpr": 1,
-      "timestamp": "2026-08-02T21:07:22.882Z"
+      "timestamp": "2026-08-02T21:44:47.647Z"
     }
   },
   "recovery": {

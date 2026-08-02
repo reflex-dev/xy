@@ -1,10 +1,33 @@
 {
   "schemaVersion": 1,
   "kind": "shared-webgl-spike-capture-set",
-  "generatedAtUtc": "2026-08-02T21:07:28.354Z",
+  "generatedAtUtc": "2026-08-02T21:44:53.426Z",
   "repetitionsRequested": 3,
   "requestedDurationMs": 3000,
   "coldBrowserProcessPerProfile": true,
+  "captureOrder": [
+    {
+      "repetition": 1,
+      "modes": [
+        "shared",
+        "native"
+      ]
+    },
+    {
+      "repetition": 2,
+      "modes": [
+        "native",
+        "shared"
+      ]
+    },
+    {
+      "repetition": 3,
+      "modes": [
+        "shared",
+        "native"
+      ]
+    }
+  ],
   "runnerEnvironment": {
     "node": "v22.23.2",
     "playwright": "1.61.1",
@@ -17,28 +40,62 @@
       "name": "darwin",
       "arch": "arm64"
     },
+    "harness": {
+      "algorithm": "sha256",
+      "files": {
+        "index.html": {
+          "sha256": "86366da65a70f0f7509e55ed7004c4d16270e8980f47d3353c5a8a81e9b0ce6d"
+        },
+        "experiment.js": {
+          "sha256": "abfb4e91d03895d210d584852a6a564f46df2bbbbe3daa2f1fac6c04c9a9c627"
+        },
+        "styles.css": {
+          "sha256": "f09c6e7d8886845e68371bfdb57a99dc513e5948c64d1541a1a0293e4deaa9b2"
+        }
+      }
+    },
     "git": {
-      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "commit": "98dc105395221608f0e54d5d744965fb1f57c574",
       "branch": "agent/shared-webgl-spike",
       "dirty": false
     }
   },
   "captureConfiguration": {
     "baseUrl": "http://127.0.0.1:4173/",
-    "chromium": "/Users/alek/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "browserExecutable": "explicit executable (absolute path redacted)",
     "viewportWidth": 1280,
     "viewportHeight": 720
   },
-  "rawFiles": {
+  "attemptedRawFiles": {
     "shared": [
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-01-shared.json",
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-02-shared.json",
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-03-shared.json"
+      "run-01-shared.json",
+      "run-02-shared.json",
+      "run-03-shared.json"
     ],
     "native": [
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-01-native.json",
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-02-native.json",
-      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-03-native.json"
+      "run-01-native.json",
+      "run-02-native.json",
+      "run-03-native.json"
+    ]
+  },
+  "rawFiles": {
+    "shared": [
+      "run-01-shared.json",
+      "run-02-shared.json",
+      "run-03-shared.json"
+    ],
+    "native": [
+      "run-01-native.json",
+      "run-02-native.json",
+      "run-03-native.json"
+    ]
+  },
+  "browserVersions": {
+    "shared": [
+      "149.0.7827.55"
+    ],
+    "native": [
+      "149.0.7827.55"
     ]
   },
   "failures": [],
@@ -57,9 +114,9 @@
         "cropOffsetPixels": 17,
         "stateStress": true,
         "timestamps": [
-          "2026-08-02T21:06:57.524Z",
-          "2026-08-02T21:07:08.339Z",
-          "2026-08-02T21:07:19.088Z"
+          "2026-08-02T21:44:21.674Z",
+          "2026-08-02T21:44:38.168Z",
+          "2026-08-02T21:44:43.808Z"
         ]
       },
       "recovery": {
@@ -72,20 +129,20 @@
       },
       "benchmark": {
         "requestedDurationMs": 3000,
-        "durationMs": 3001.399999976158,
+        "durationMs": 3000.899999976158,
         "pointsPerChart": 1024,
         "dense": true,
         "targetFps": 60,
-        "observedFps": 60.305190911387285,
-        "productiveBatches": 181,
+        "observedFps": 59.982005398857034,
+        "productiveBatches": 180,
         "expectedBatches": 180,
         "droppedIntervals": 0,
-        "chartPresentations": 9050,
-        "chartPresentationsPerSecond": 3015.259545569364,
+        "chartPresentations": 9000,
+        "chartPresentationsPerSecond": 2999.100269942852,
         "frameMs": {
           "p50": 1.1999999284744263,
           "p95": 1.3000000715255737,
-          "p99": 1.4000000953674316
+          "p99": 1.399999976158142
         },
         "stateStress": false,
         "contextLossesDuringRun": 0,
@@ -132,9 +189,9 @@
         "cropOffsetPixels": 0,
         "stateStress": true,
         "timestamps": [
-          "2026-08-02T21:07:02.986Z",
-          "2026-08-02T21:07:13.779Z",
-          "2026-08-02T21:07:24.596Z"
+          "2026-08-02T21:44:27.214Z",
+          "2026-08-02T21:44:32.720Z",
+          "2026-08-02T21:44:49.566Z"
         ]
       },
       "recovery": {
@@ -147,20 +204,20 @@
       },
       "benchmark": {
         "requestedDurationMs": 3000,
-        "durationMs": 3000.7999999523163,
+        "durationMs": 3000.899999976158,
         "pointsPerChart": 1024,
         "dense": true,
         "targetFps": 60,
-        "observedFps": 60.31724873462948,
-        "productiveBatches": 181,
+        "observedFps": 59.982005398857034,
+        "productiveBatches": 180,
         "expectedBatches": 180,
         "droppedIntervals": 0,
-        "chartPresentations": 2896,
-        "chartPresentationsPerSecond": 965.0759797540717,
+        "chartPresentations": 2880,
+        "chartPresentationsPerSecond": 959.7120863817125,
         "frameMs": {
-          "p50": 0.5,
-          "p95": 0.8000000715255737,
-          "p99": 1
+          "p50": 0.40000009536743164,
+          "p95": 0.6000000238418579,
+          "p99": 0.7000000476837158
         },
         "stateStress": false,
         "contextLossesDuringRun": 0,

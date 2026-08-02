@@ -26,9 +26,27 @@
     }
   ],
   "capture": {
-    "aggregation": "fieldwise median of three successful cold-browser-process runs per profile; derived rates and interval counts recomputed from the medians",
+    "aggregation": "structural fields must agree across all three runs; floating metrics use fieldwise medians, integer counts use an observed integer median, and derived rates, interval counts, and stable presentation totals are recomputed",
     "repetitions_per_profile": 3,
     "cold_browser_process_per_profile": true,
+    "profile_order": [
+      "shared, native",
+      "native, shared",
+      "shared, native"
+    ],
+    "browser_versions": [
+      "149.0.7827.55"
+    ],
+    "unexpected_browser_diagnostics": 0,
+    "allowed_browser_diagnostics": {
+      "expected_shared_canvas_readback": 150,
+      "expected_native_webgl_context_limit": 102
+    },
+    "harness_sha256": {
+      "index.html": "86366da65a70f0f7509e55ed7004c4d16270e8980f47d3353c5a8a81e9b0ce6d",
+      "experiment.js": "abfb4e91d03895d210d584852a6a564f46df2bbbbe3daa2f1fac6c04c9a9c627",
+      "styles.css": "f09c6e7d8886845e68371bfdb57a99dc513e5948c64d1541a1a0293e4deaa9b2"
+    },
     "failures": [],
     "raw_directory": "results/raw/chromium-2026-08-02",
     "summary_input": "results/raw/chromium-2026-08-02/summary-input.json",
@@ -42,7 +60,7 @@
     ]
   },
   "environment": {
-    "generated_at_utc": "2026-08-02T21:07:28.354Z",
+    "generated_at_utc": "2026-08-02T21:44:53.426Z",
     "python": {
       "version": "3.12.13",
       "implementation": "CPython",
@@ -81,7 +99,7 @@
     "xy_backend": null,
     "browser_renderer": "hardware",
     "git": {
-      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "commit": "98dc105395221608f0e54d5d744965fb1f57c574",
       "branch": "agent/shared-webgl-spike",
       "dirty": false
     },
@@ -119,7 +137,7 @@
         "crop_offset_pixels": 17,
         "state_stress": true,
         "state_stress_method": "sequential-poison-between-chart-renders",
-        "verified_at_utc": "2026-08-02T21:07:08.339Z"
+        "verified_at_utc": "2026-08-02T21:44:38.168Z"
       },
       "recovery": {
         "attempted": true,
@@ -133,20 +151,20 @@
       },
       "benchmark": {
         "requested_duration_ms": 3000,
-        "duration_ms": 3001.399999976158,
+        "duration_ms": 3000.899999976158,
         "points_per_chart": 1024,
         "dense": true,
         "target_fps": 60,
-        "observed_fps": 60.305190911387285,
-        "productive_batches": 181,
+        "observed_fps": 59.982005398857034,
+        "productive_batches": 180,
         "expected_batches": 180,
         "dropped_intervals": 0,
-        "chart_presentations": 9050,
-        "chart_presentations_per_second": 3015.259545569364,
+        "chart_presentations": 9000,
+        "chart_presentations_per_second": 2999.100269942852,
         "frame_ms": {
           "p50": 1.1999999284744263,
           "p95": 1.3000000715255737,
-          "p99": 1.4000000953674316
+          "p99": 1.399999976158142
         },
         "present_ms_per_chart": {
           "p50": 0,
@@ -172,7 +190,7 @@
         "pick_failures": 0,
         "state_stress": true,
         "state_stress_method": "poisoned-prime-then-inspected-render",
-        "verified_at_utc": "2026-08-02T21:07:13.779Z"
+        "verified_at_utc": "2026-08-02T21:44:32.720Z"
       },
       "recovery": {
         "attempted": true,
@@ -187,20 +205,20 @@
       },
       "benchmark": {
         "requested_duration_ms": 3000,
-        "duration_ms": 3000.7999999523163,
+        "duration_ms": 3000.899999976158,
         "points_per_chart": 1024,
         "dense": true,
         "target_fps": 60,
-        "observed_fps": 60.31724873462948,
-        "productive_batches": 181,
+        "observed_fps": 59.982005398857034,
+        "productive_batches": 180,
         "expected_batches": 180,
         "dropped_intervals": 0,
-        "chart_presentations": 2896,
-        "chart_presentations_per_second": 965.0759797540717,
+        "chart_presentations": 2880,
+        "chart_presentations_per_second": 959.7120863817125,
         "frame_ms": {
-          "p50": 0.5,
-          "p95": 0.8000000715255737,
-          "p99": 1
+          "p50": 0.40000009536743164,
+          "p95": 0.6000000238418579,
+          "p99": 0.7000000476837158
         },
         "state_stress": false,
         "context_losses_during_run": 0,
