@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "kind": "shared-webgl-spike-raw",
+  "capturedAtUtc": "2026-08-02T21:07:12.138Z",
+  "mode": "shared",
+  "repetition": 2,
+  "runnerEnvironment": {
+    "node": "v22.23.2",
+    "playwright": "1.61.1",
+    "python": {
+      "version": "3.12.13",
+      "implementation": "CPython",
+      "compiler": "Clang 22.1.3 "
+    },
+    "platform": {
+      "name": "darwin",
+      "arch": "arm64"
+    },
+    "git": {
+      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "branch": "agent/shared-webgl-spike",
+      "dirty": false
+    }
+  },
+  "browserVersion": "149.0.7827.55",
+  "initialSnapshot": {
+    "mode": "shared",
+    "count": 50,
+    "ready": true,
+    "stats": {
+      "requestedContexts": 1,
+      "liveContexts": 1,
+      "liveCharts": 50,
+      "requestedCharts": 50,
+      "resourceLabel": "1 set / 50 VBOs"
+    },
+    "observedFps": 58.47373637679125,
+    "frameP95Ms": 1.3000000715255737,
+    "presentP95Ms": 0.10000002384185791,
+    "contextLosses": 0,
+    "contextRestores": 0,
+    "lastCheck": null
+  },
+  "correctness": {
+    "pass": true,
+    "mode": "shared",
+    "requestedCharts": 50,
+    "liveCharts": 50,
+    "fullyLive": true,
+    "expectedCharts": 50,
+    "requireFullAvailability": true,
+    "liveSetMatches": true,
+    "liveContexts": 1,
+    "contextInvariant": true,
+    "coherentLiveSet": true,
+    "coverageComplete": true,
+    "canaryChecks": 50,
+    "canaryFailures": [],
+    "pickChecks": 150,
+    "pickFailures": [],
+    "cropOffsetPixels": 17,
+    "stateStress": true,
+    "dpr": 1,
+    "timestamp": "2026-08-02T21:07:08.339Z"
+  },
+  "benchmark": {
+    "mode": "shared",
+    "requestedDurationMs": 3000,
+    "durationMs": 3000.1999999284744,
+    "requestedCharts": 50,
+    "liveCharts": 50,
+    "fullyLive": true,
+    "liveContexts": 1,
+    "targetFps": 60,
+    "observedFps": 60.32931138067965,
+    "productiveBatches": 181,
+    "expectedBatches": 180,
+    "droppedIntervals": 0,
+    "chartPresentations": 9050,
+    "chartPresentationsPerSecond": 3016.4655690339823,
+    "frameMs": {
+      "p50": 1.100000023841858,
+      "p95": 1.2999999523162842,
+      "p99": 1.3000000715255737
+    },
+    "uploadMsPerChart": {
+      "p50": 0,
+      "p95": 0
+    },
+    "drawMsPerChart": {
+      "p50": 0,
+      "p95": 0
+    },
+    "presentMsPerChart": {
+      "p50": 0,
+      "p95": 0.10000002384185791
+    },
+    "stateStress": false,
+    "timingScope": "JavaScript CPU submission; not completed GPU execution",
+    "environment": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.0.0 Safari/537.36",
+      "platform": "MacIntel",
+      "webgl": {
+        "vendor": "Google Inc. (Apple)",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+        "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+        "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+      }
+    },
+    "pointsPerChart": 1024,
+    "dpr": 1,
+    "canvasPixels": {
+      "minWidth": 147,
+      "maxWidth": 147,
+      "minHeight": 66,
+      "maxHeight": 66
+    },
+    "viewportCssPixels": {
+      "width": 1280,
+      "height": 720
+    },
+    "dense": true,
+    "contextLossesDuringRun": 0,
+    "contextRestoresDuringRun": 0,
+    "timestamp": "2026-08-02T21:07:11.352Z"
+  },
+  "preRecovery": {
+    "mode": "shared",
+    "count": 50,
+    "ready": true,
+    "stats": {
+      "requestedContexts": 1,
+      "liveContexts": 1,
+      "liveCharts": 50,
+      "requestedCharts": 50,
+      "resourceLabel": "1 set / 50 VBOs"
+    },
+    "observedFps": 60.00393468424159,
+    "frameP95Ms": 1.2999999523162842,
+    "presentP95Ms": 0.10000002384185791,
+    "contextLosses": 0,
+    "contextRestores": 0,
+    "lastCheck": {
+      "pass": true,
+      "mode": "shared",
+      "requestedCharts": 50,
+      "liveCharts": 50,
+      "fullyLive": true,
+      "expectedCharts": 50,
+      "requireFullAvailability": true,
+      "liveSetMatches": true,
+      "liveContexts": 1,
+      "contextInvariant": true,
+      "coherentLiveSet": true,
+      "coverageComplete": true,
+      "canaryChecks": 50,
+      "canaryFailures": [],
+      "pickChecks": 150,
+      "pickFailures": [],
+      "cropOffsetPixels": 17,
+      "stateStress": true,
+      "dpr": 1,
+      "timestamp": "2026-08-02T21:07:08.339Z"
+    }
+  },
+  "cycleResult": true,
+  "postRecovery": {
+    "mode": "shared",
+    "count": 50,
+    "ready": true,
+    "stats": {
+      "requestedContexts": 1,
+      "liveContexts": 1,
+      "liveCharts": 50,
+      "requestedCharts": 50,
+      "resourceLabel": "1 set / 50 VBOs"
+    },
+    "observedFps": 60.00393468424159,
+    "frameP95Ms": 1.2999999523162842,
+    "presentP95Ms": 0.10000002384185791,
+    "contextLosses": 1,
+    "contextRestores": 1,
+    "lastCheck": {
+      "pass": true,
+      "mode": "shared",
+      "requestedCharts": 50,
+      "liveCharts": 50,
+      "fullyLive": true,
+      "expectedCharts": 50,
+      "requireFullAvailability": true,
+      "liveSetMatches": true,
+      "liveContexts": 1,
+      "contextInvariant": true,
+      "coherentLiveSet": true,
+      "coverageComplete": true,
+      "canaryChecks": 50,
+      "canaryFailures": [],
+      "pickChecks": 150,
+      "pickFailures": [],
+      "cropOffsetPixels": 17,
+      "stateStress": true,
+      "dpr": 1,
+      "timestamp": "2026-08-02T21:07:12.132Z"
+    }
+  },
+  "recovery": {
+    "contextLosses": 1,
+    "contextRestores": 1,
+    "expectedCharts": 50,
+    "liveChartsAfterRestore": 50,
+    "correctnessAfterRestore": true,
+    "visibleFramesDuringLossChecked": false
+  }
+}

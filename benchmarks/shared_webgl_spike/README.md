@@ -64,7 +64,9 @@ window.__sharedWebglExperiment.snapshot();
 Results are also exposed as `window.__LAST_CHECK` and `window.__LAST_BENCHMARK`.
 The captured run used for this spike is preserved as both a
 [readable report](./RESULTS.md) and a
-[machine-readable result summary](./results/chromium-2026-08-02.json).
+[machine-readable result summary](./results/chromium-2026-08-02.json). The six cold-process
+profile runs and generated median input are preserved in the
+[raw capture directory](./results/raw/chromium-2026-08-02/).
 
 ### Harness-to-report mapping
 
@@ -77,7 +79,7 @@ these mappings:
 | --- | --- |
 | `requestedCharts`, `liveCharts`, `liveContexts`, `fullyLive` | `profiles.<mode>.requested_charts`, `live_charts`, `live_contexts`, `fully_live` |
 | `snapshot().stats.createdContexts` (native) | `profiles.native.created_contexts` |
-| `verify().pass`, `canaryChecks`, `canaryFailures`, `pickChecks`, `pickFailures` | `correctness.pass`, `canary_checks`, `canary_failures`, `pick_checks`, `pick_failures` |
+| `verify().pass`, `canaryChecks`, `canaryFailures.length`, `pickChecks`, `pickFailures.length` | `correctness.pass`, `canary_checks`, `canary_failures`, `pick_checks`, `pick_failures` |
 | `verify().stateStress`, `cropOffsetPixels`, `timestamp` | `correctness.state_stress`, `crop_offset_pixels`, `verified_at_utc` |
 | `requestedDurationMs`, `durationMs`, `targetFps`, `observedFps` | `benchmark.requested_duration_ms`, `benchmark.duration_ms`, `benchmark.target_fps`, `benchmark.observed_fps` |
 | `productiveBatches`, `expectedBatches`, `droppedIntervals` | `benchmark.productive_batches`, `expected_batches`, `dropped_intervals` |
@@ -167,5 +169,5 @@ actually ships.
 - Exact-ID checks isolate one requested vertex. Interactive dense hit testing retains
   last-covered-sample semantics rather than a nearest-point oracle.
 - Context recovery rebuilds the synthetic GPU resources; it does not exercise xy pan/zoom state.
-- Timings are one local run of JavaScript submission cost, not completed GPU work or an xy
-  speedup claim.
+- Timings are medians of three local cold-browser-process runs per profile and measure
+  JavaScript submission cost, not completed GPU work or an xy speedup claim.

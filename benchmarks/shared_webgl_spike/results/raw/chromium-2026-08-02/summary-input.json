@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "kind": "shared-webgl-spike-capture-set",
+  "generatedAtUtc": "2026-08-02T21:07:28.354Z",
+  "repetitionsRequested": 3,
+  "requestedDurationMs": 3000,
+  "coldBrowserProcessPerProfile": true,
+  "runnerEnvironment": {
+    "node": "v22.23.2",
+    "playwright": "1.61.1",
+    "python": {
+      "version": "3.12.13",
+      "implementation": "CPython",
+      "compiler": "Clang 22.1.3 "
+    },
+    "platform": {
+      "name": "darwin",
+      "arch": "arm64"
+    },
+    "git": {
+      "commit": "24d5a4ba761bb48fdbd997120a022ca3080f4bbf",
+      "branch": "agent/shared-webgl-spike",
+      "dirty": false
+    }
+  },
+  "captureConfiguration": {
+    "baseUrl": "http://127.0.0.1:4173/",
+    "chromium": "/Users/alek/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "viewportWidth": 1280,
+    "viewportHeight": 720
+  },
+  "rawFiles": {
+    "shared": [
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-01-shared.json",
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-02-shared.json",
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-03-shared.json"
+    ],
+    "native": [
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-01-native.json",
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-02-native.json",
+      "benchmarks/shared_webgl_spike/results/raw/chromium-2026-08-02/run-03-native.json"
+    ]
+  },
+  "failures": [],
+  "profiles": {
+    "shared": {
+      "requestedCharts": 50,
+      "liveCharts": 50,
+      "liveContexts": 1,
+      "fullyLive": true,
+      "correctness": {
+        "pass": true,
+        "canaryChecks": 50,
+        "canaryFailures": 0,
+        "pickChecks": 150,
+        "pickFailures": 0,
+        "cropOffsetPixels": 17,
+        "stateStress": true,
+        "timestamps": [
+          "2026-08-02T21:06:57.524Z",
+          "2026-08-02T21:07:08.339Z",
+          "2026-08-02T21:07:19.088Z"
+        ]
+      },
+      "recovery": {
+        "contextLosses": 1,
+        "contextRestores": 1,
+        "expectedCharts": 50,
+        "liveChartsAfterRestore": 50,
+        "correctnessAfterRestore": true,
+        "visibleFramesDuringLossChecked": false
+      },
+      "benchmark": {
+        "requestedDurationMs": 3000,
+        "durationMs": 3001.399999976158,
+        "pointsPerChart": 1024,
+        "dense": true,
+        "targetFps": 60,
+        "observedFps": 60.305190911387285,
+        "productiveBatches": 181,
+        "expectedBatches": 180,
+        "droppedIntervals": 0,
+        "chartPresentations": 9050,
+        "chartPresentationsPerSecond": 3015.259545569364,
+        "frameMs": {
+          "p50": 1.1999999284744263,
+          "p95": 1.3000000715255737,
+          "p99": 1.4000000953674316
+        },
+        "stateStress": false,
+        "contextLossesDuringRun": 0,
+        "contextRestoresDuringRun": 0,
+        "presentMsPerChart": {
+          "p50": 0,
+          "p95": 0.10000002384185791
+        }
+      },
+      "environment": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.0.0 Safari/537.36",
+        "platform": "MacIntel",
+        "webgl": {
+          "vendor": "Google Inc. (Apple)",
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+          "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+          "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+        }
+      },
+      "dpr": 1,
+      "canvasPixels": {
+        "minWidth": 147,
+        "maxWidth": 147,
+        "minHeight": 66,
+        "maxHeight": 66
+      },
+      "viewportCssPixels": {
+        "width": 1280,
+        "height": 720
+      }
+    },
+    "native": {
+      "requestedCharts": 50,
+      "liveCharts": 16,
+      "liveContexts": 16,
+      "createdContexts": 50,
+      "fullyLive": false,
+      "correctness": {
+        "pass": false,
+        "canaryChecks": 16,
+        "canaryFailures": 0,
+        "pickChecks": 48,
+        "pickFailures": 0,
+        "cropOffsetPixels": 0,
+        "stateStress": true,
+        "timestamps": [
+          "2026-08-02T21:07:02.986Z",
+          "2026-08-02T21:07:13.779Z",
+          "2026-08-02T21:07:24.596Z"
+        ]
+      },
+      "recovery": {
+        "contextLosses": 1,
+        "contextRestores": 1,
+        "expectedCharts": 16,
+        "liveChartsAfterRestore": 16,
+        "correctnessAfterRestore": true,
+        "visibleFramesDuringLossChecked": false
+      },
+      "benchmark": {
+        "requestedDurationMs": 3000,
+        "durationMs": 3000.7999999523163,
+        "pointsPerChart": 1024,
+        "dense": true,
+        "targetFps": 60,
+        "observedFps": 60.31724873462948,
+        "productiveBatches": 181,
+        "expectedBatches": 180,
+        "droppedIntervals": 0,
+        "chartPresentations": 2896,
+        "chartPresentationsPerSecond": 965.0759797540717,
+        "frameMs": {
+          "p50": 0.5,
+          "p95": 0.8000000715255737,
+          "p99": 1
+        },
+        "stateStress": false,
+        "contextLossesDuringRun": 0,
+        "contextRestoresDuringRun": 0
+      },
+      "environment": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/149.0.0.0 Safari/537.36",
+        "platform": "MacIntel",
+        "webgl": {
+          "vendor": "Google Inc. (Apple)",
+          "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+          "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+          "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
+        }
+      },
+      "dpr": 1,
+      "canvasPixels": {
+        "minWidth": 147,
+        "maxWidth": 147,
+        "minHeight": 66,
+        "maxHeight": 66
+      },
+      "viewportCssPixels": {
+        "width": 1280,
+        "height": 720
+      }
+    }
+  }
+}
