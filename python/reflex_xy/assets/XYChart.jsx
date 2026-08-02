@@ -175,10 +175,13 @@ const axisLayoutSpec = (spec) => {
 };
 
 // updatePayload owns new axes/ranges, trace buffers, marks, annotations,
-// tooltip content, and animation. The fields below instead determine DOM
-// topology or layout built only by the ChartView constructor. Projecting just
-// those inputs preserves the fast path for an ordinary data-only publish while
-// still rebuilding title/legend/colorbar/badge/modebar/axis-band chrome.
+// tooltip content, and animation. Finance layers are different: ChartView's
+// constructor derives its volume/oscillator pane layout from them, and finance
+// tool state is likewise constructor-owned. Include both in this signature so
+// a state-driven study/drawing/tool change takes the safe full-remount path
+// instead of keeping the preceding payload's layer list and pane geometry.
+// Projecting only constructor-owned inputs still preserves the fast path for
+// ordinary data-only publishes.
 const mountedChromeSpec = (spec) => ({
   dom: spec?.dom ?? null,
   title: spec?.title ?? null,
@@ -193,6 +196,8 @@ const mountedChromeSpec = (spec) => ({
   export: spec?.export ?? null,
   interaction: spec?.interaction ?? null,
   axes: axisLayoutSpec(spec),
+  layers: spec?.layers ?? null,
+  tools: spec?.tools ?? null,
 });
 
 const sameMountedChromeSpec = (left, right) =>

@@ -33,6 +33,16 @@ class VarDemo(rx.State):
         xs = np.linspace(0.0, 1.0, 4)
         return xy.line_chart(xy.line(xs, xs), width=300, height=200)
 
+    @reflex_xy.figure
+    def finance_chart(self):
+        returns = np.linspace(-0.03, 0.025, self.n)
+        return xy.returns_distribution_chart(
+            returns,
+            bins=12,
+            confidence=0.95,
+            title="risk",
+        )
+
 
 def hydrated_substate(client_token: str) -> VarDemo:
     root = rx.State(_reflex_internal_init=True)
@@ -67,6 +77,21 @@ def test_dep_change_keeps_token_bumps_version(_fresh_registry, client_token):
     entry = _fresh_registry.get(token)
     assert entry.version == 2
     assert entry.figure.traces[0].n_points == 250
+
+
+def test_finance_figure_keeps_layers_in_registered_payload(_fresh_registry, client_token):
+    state = hydrated_substate(client_token)
+    token = state.finance_chart
+    entry = _fresh_registry.get(token)
+    assert entry is not None
+
+    spec, buffers = entry.figure.build_payload_split()
+    assert spec["title"] == "risk"
+    assert spec["traces"] == []
+    assert [layer["kind"] for layer in spec["layers"]] == ["returns_distribution"]
+    assert spec["layers"][0]["props"]["series"]["rows"] == 12
+    assert spec["x_axis"]["range"] == [-0.03, 0.025]
+    assert len(buffers) == 1
 
 
 def test_recompute_broadcasts_to_publish_hook(_fresh_registry, client_token):
