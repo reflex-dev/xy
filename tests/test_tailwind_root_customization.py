@@ -139,6 +139,7 @@ _GRANULAR_SLOT_LAYERS = (
   .xy-tailwind-colorbar-minor-tick { border-color: rgb(139, 92, 246); }
   .xy-tailwind-modebar-drag-handle { background: rgb(236, 72, 153); }
   .xy-tailwind-modebar-menu-label { font-weight: 800; }
+  .xy-tailwind-modebar-indicator { transform: rotate(45deg); }
   .xy-tailwind-axis-band { cursor: crosshair; }
   .xy-tailwind-axis-line { background: rgb(220, 38, 38); }
   .xy-tailwind-tick-mark { background: rgb(22, 163, 74); }
@@ -229,6 +230,37 @@ def test_every_granular_chrome_slot_receives_tailwind_and_yields_visual_defaults
   try {{
     view._drawNow();
     view._raf = null;
+    // A vertical colorbar paints its contour line and minor ticks with
+    // `border-top`; a horizontal one uses `border-left` (js/src/20_theme.ts).
+    // Both orientations render here so each base rule is a real contest —
+    // reading the unpainted side would pass against a declaration that draws
+    // no pixels at all.
+    const wideHost = document.createElement("div");
+    wideHost.style.cssText = "width:560px;height:360px;";
+    document.body.appendChild(wideHost);
+    const wideView = xy.renderStandalone(wideHost, {{
+      ...probeSpec,
+      colorbar: {{ ...probeSpec.colorbar, orientation: "horizontal" }},
+    }}, buf);
+    wideView._drawNow();
+    wideView._raf = null;
+    const borderProbe = (root, side) => {{
+      const line = root.querySelector('[data-xy-slot="colorbar_line"]');
+      const minor = root.querySelector('[data-xy-slot="colorbar_minor_tick"]');
+      if (!line || !minor) throw new Error(`missing colorbar line/minor tick (${{side}})`);
+      const read = (node) => {{
+        const computed = getComputedStyle(node);
+        return {{
+          orientation: node.dataset.xyColorbarOrientation,
+          color: computed.getPropertyValue(`border-${{side}}-color`),
+          style: computed.getPropertyValue(`border-${{side}}-style`),
+          width: computed.getPropertyValue(`border-${{side}}-width`),
+        }};
+      }};
+      return {{ line: read(line), minor: read(minor) }};
+    }};
+    const verticalBorders = borderProbe(view.root, "top");
+    const horizontalBorders = borderProbe(wideView.root, "left");
     const slots = {slots_json};
     const reached = {{}};
     for (const slot of slots) {{
@@ -244,6 +276,7 @@ def test_every_granular_chrome_slot_receives_tailwind_and_yields_visual_defaults
     const minorTick = view.root.querySelector('[data-xy-slot="colorbar_minor_tick"]');
     const drag = view.root.querySelector('[data-xy-slot="modebar_drag_handle"]');
     const menuLabel = view.root.querySelector('[data-xy-slot="modebar_menu_label"]');
+    const indicator = view.root.querySelector('[data-xy-slot="modebar_indicator"]');
     const axisBand = view.root.querySelector('[data-xy-slot="axis_band"]');
     const axisLine = view.root.querySelector('[data-xy-slot="axis_line"]');
     const tickMark = view.root.querySelector('[data-xy-slot="tick_mark"]');
@@ -251,13 +284,16 @@ def test_every_granular_chrome_slot_receives_tailwind_and_yields_visual_defaults
     const tickMarks = [...view.root.querySelectorAll('[data-xy-slot="tick_mark"]')];
     document.body.setAttribute("data-xy-granular-slot-probe", JSON.stringify({{
       reached,
+      verticalBorders,
+      horizontalBorders,
       visual: {{
         annotationOpacity: getComputedStyle(view.overlay).opacity,
         extensionFill: getComputedStyle(extension).fill,
-        colorbarLineBorder: getComputedStyle(colorbarLine).borderLeftColor,
-        minorTickBorder: getComputedStyle(minorTick).borderLeftColor,
         dragBackground: getComputedStyle(drag).backgroundColor,
         menuLabelWeight: getComputedStyle(menuLabel).fontWeight,
+        // The open/closed flip is a custom property, so a utility still wins.
+        indicatorTransform: getComputedStyle(indicator).transform,
+        indicatorInlineTransform: indicator.style.transform,
         axisBandCursor: getComputedStyle(axisBand).cursor,
         axisLineBackground: getComputedStyle(axisLine).backgroundColor,
         tickMarkBackground: getComputedStyle(tickMark).backgroundColor,
@@ -294,13 +330,44 @@ def test_every_granular_chrome_slot_receives_tailwind_and_yields_visual_defaults
     for slot, reached in result["reached"].items():
         assert _GRANULAR_SLOT_CLASSES[slot] in reached["className"].split()
         assert reached["probe"] == slot
+    # The utility must win on the side the orientation actually paints, and that
+    # side must still be drawing (non-zero width, real style) — otherwise the
+    # assertion passes against a declaration that paints nothing.
+    assert result["verticalBorders"] == {
+        "line": {
+            "orientation": "vertical",
+            "color": "rgb(6, 182, 212)",
+            "style": "dashed",
+            "width": "2px",
+        },
+        "minor": {
+            "orientation": "vertical",
+            "color": "rgb(139, 92, 246)",
+            "style": "solid",
+            "width": "1px",
+        },
+    }
+    assert result["horizontalBorders"] == {
+        "line": {
+            "orientation": "horizontal",
+            "color": "rgb(6, 182, 212)",
+            "style": "dashed",
+            "width": "2px",
+        },
+        "minor": {
+            "orientation": "horizontal",
+            "color": "rgb(139, 92, 246)",
+            "style": "solid",
+            "width": "1px",
+        },
+    }
     assert result["visual"] == {
         "annotationOpacity": "0.73",
         "extensionFill": "rgb(249, 115, 22)",
-        "colorbarLineBorder": "rgb(6, 182, 212)",
-        "minorTickBorder": "rgb(139, 92, 246)",
         "dragBackground": "rgb(236, 72, 153)",
         "menuLabelWeight": "800",
+        "indicatorTransform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0)",
+        "indicatorInlineTransform": "",
         "axisBandCursor": "crosshair",
         "axisLineBackground": "rgb(220, 38, 38)",
         "tickMarkBackground": "rgb(22, 163, 74)",

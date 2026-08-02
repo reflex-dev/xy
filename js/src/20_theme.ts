@@ -165,7 +165,7 @@ export const XY_CHROME_CSS = `
 :where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-select-trigger]{min-width:47px;gap:4px;padding:0 6px}
 :where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-action="pan"],:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-export-trigger]{min-width:28px;width:28px;padding:0}
 :where(.xy [data-xy-slot="modebar_icon"],.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
-:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
+:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transform:var(--xy-modebar-indicator-flip,none);transition:transform .15s}
 :where(.xy) button[data-xy-slot="modebar_button"] [data-xy-modebar-menu-indicator] svg{width:10px;height:10px;color:var(--xy-modebar-text-subtle)}
 :where(.xy [data-xy-modebar-menu]){box-sizing:border-box;width:144px;gap:0;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-border);border-radius:8px;color:var(--xy-modebar-text);box-shadow:var(--xy-modebar-menu-shadow)}
 :where(.xy [data-xy-modebar-export-menu]){width:112px}

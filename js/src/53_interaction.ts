@@ -1568,7 +1568,11 @@ Object.assign(ChartView.prototype, {
         zoomTrigger.setAttribute("aria-expanded", String(show));
         if (!show) {
           zoomMenu.style.display = "none";
-          zoomIndicator.style.transform = "none";
+          // The open/closed flip is transient controller state, so it rides a
+          // custom property instead of an inline `transform`. An inline value
+          // would outrank every author declaration, silently making the public
+          // `modebar_indicator` slot unstylable via class_names or styles=.
+          zoomIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
           if (restoreFocus) zoomTrigger.focus();
           return;
         }
@@ -1586,7 +1590,10 @@ Object.assign(ChartView.prototype, {
           + zoomMenu.offsetHeight <= rootRect.bottom
           ? below
           : above;
-        zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+        zoomIndicator.style.setProperty(
+          "--xy-modebar-indicator-flip",
+          preferredTop === above ? "rotate(180deg)" : "none",
+        );
         const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
         const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
         zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
@@ -1605,7 +1612,7 @@ Object.assign(ChartView.prototype, {
       selectTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
         selectMenu.style.display = "none";
-        selectIndicator.style.transform = "none";
+        selectIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
         if (restoreFocus) selectTrigger.focus();
         return;
       }
@@ -1623,7 +1630,10 @@ Object.assign(ChartView.prototype, {
         + selectMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
-      selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+      selectIndicator.style.setProperty(
+        "--xy-modebar-indicator-flip",
+        preferredTop === above ? "rotate(180deg)" : "none",
+      );
       const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
       const menuLeft = triggerRect.left - barRect.left - bar.clientLeft;

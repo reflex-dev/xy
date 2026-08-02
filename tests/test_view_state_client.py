@@ -1657,12 +1657,33 @@ _AXIS_BAND_AUTHORED_CURSOR_PROBE = """
     const authoredAfterPointerUp = bandY.style.getPropertyValue("cursor") === "crosshair"
       && getComputedStyle(bandY).cursor === "crosshair";
 
+    // Overlapping pointers: a second finger lands mid-pan and lifts first.
+    // Snapshotting the authored cursor per-gesture captured the controller's
+    // own `grabbing` here and replayed it back as author intent, latching the
+    // cursor permanently — a later well-formed drag did not heal it either.
+    dispatch("pointerdown", 31, sy);
+    dispatch("pointermove", 31, sy + 40);
+    dispatch("pointerdown", 32, sy);
+    dispatch("pointerup", 32, sy + 40);
+    dispatch("pointerup", 31, sy + 40);
+    const authoredAfterOverlappingPointers =
+      bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 33, sy);
+    dispatch("pointermove", 33, sy + 40);
+    dispatch("pointerup", 33, sy + 40);
+    const authoredAfterRecoveryDrag = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
     document.body.setAttribute("data-xy-axisband-authored-cursor-probe", JSON.stringify({
       authoredInitially,
       grabbingDuringCancelledDrag,
       authoredAfterCancel,
       grabbingDuringCompletedDrag,
       authoredAfterPointerUp,
+      authoredAfterOverlappingPointers,
+      authoredAfterRecoveryDrag,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -1688,6 +1709,8 @@ def test_axis_band_restores_authored_cursor_after_drag(tmp_path: Path) -> None:
         "authoredAfterCancel": True,
         "grabbingDuringCompletedDrag": True,
         "authoredAfterPointerUp": True,
+        "authoredAfterOverlappingPointers": True,
+        "authoredAfterRecoveryDrag": True,
     }
 
 

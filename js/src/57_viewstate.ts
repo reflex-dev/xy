@@ -354,6 +354,23 @@ Object.assign(ChartView.prototype, {
 
   _bindAxisBand(band, axisId, dim) {
     let drag = null;
+    // The authored inline `cursor`, read once here — after `_applySlot` has
+    // written `styles={"axis_band": ...}` and before any gesture can run. It is
+    // a property of the band, not of a drag: snapshotting it per-pointerdown
+    // let a second pointer landing mid-pan capture the controller's own
+    // transient `grabbing` and replay it back as author intent, latching the
+    // cursor for the life of the view and shadowing any authored slot style.
+    const authoredCursor = {
+      value: band.style.getPropertyValue("cursor"),
+      priority: band.style.getPropertyPriority("cursor"),
+    };
+    const restoreAuthoredCursor = () => {
+      if (authoredCursor.value) {
+        band.style.setProperty("cursor", authoredCursor.value, authoredCursor.priority);
+      } else {
+        band.style.removeProperty("cursor");
+      }
+    };
 
     this._listen(band, "wheel", (e) => {
       if (!this._interactionFlag("navigation", true)) return;
@@ -381,10 +398,6 @@ Object.assign(ChartView.prototype, {
         mode: null,
         interactionId: ++this._interactionSeq,
         changedAxes: [],
-        cursor: {
-          value: band.style.getPropertyValue("cursor"),
-          priority: band.style.getPropertyPriority("cursor"),
-        },
       };
       drag.capture = this._captureGesturePointer(band, e, end);
       this.tooltip.style.display = "none";
@@ -474,16 +487,13 @@ Object.assign(ChartView.prototype, {
       const finished = drag;
       drag = null;
       finished.capture.release();
-      // `grabbing` is transient controller state. Restore the exact inline
-      // declaration that preceded it so an authored slot style survives both
-      // completed and cancelled gestures; otherwise expose the CSS cascade.
-      if (finished.cursor.value) {
-        band.style.setProperty(
-          "cursor", finished.cursor.value, finished.cursor.priority,
-        );
-      } else {
-        band.style.removeProperty("cursor");
-      }
+      // `grabbing` is transient controller state. Restore the authored inline
+      // declaration so a slot style survives both completed and cancelled
+      // gestures; otherwise expose the CSS cascade. Unconditional on purpose:
+      // with interleaved pointers the gesture that wrote `grabbing` is not
+      // always the one that ends last, so gating this on `finished.mode` would
+      // leave the transient value behind.
+      restoreAuthoredCursor();
       if (finished.mode === "span") this.selRect.style.display = "none";
       // Only a real release commits a coordinate-dependent gesture; a pan keeps
       // the view it already reached however the gesture ended.
