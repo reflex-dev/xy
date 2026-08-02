@@ -1589,6 +1589,7 @@ def terminal_shell() -> rx.Component:
         font_family=MONO,
         display="flex",
         flex_direction="column",
+        class_name="dark",
     )
 
 

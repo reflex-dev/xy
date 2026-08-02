@@ -394,6 +394,11 @@ def test_reflex_config_wires_the_xy_plugin() -> None:
     assert 'app_name="xy_reflex_demo"' in cfg
 
 
+def test_reflex_config_declares_dark_theme() -> None:
+    config_source = (REFLEX_DIR / "rxconfig.py").read_text(encoding="utf-8")
+    assert 'color_mode="dark"' in config_source
+
+
 def test_reflex_terminal_imports_and_composes_in_temporary_cwd(tmp_path, monkeypatch) -> None:
     pytest.importorskip("reflex")
     pytest.importorskip("reflex_xy")
@@ -408,6 +413,7 @@ def test_reflex_terminal_imports_and_composes_in_temporary_cwd(tmp_path, monkeyp
     assert module.index() is not None
     assert module.app is not None
     assert state.TerminalState is not None
+    assert components.terminal_shell().class_name == "dark"
     assert components.YIELD_CURVE_TOKEN.startswith("xyin-")
     assert "@reflex_xy.figure" in components._source(state.TerminalState.security_figure)
     assert "def stream_quotes" in components._source(state.TerminalState.stream_quotes)

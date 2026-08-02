@@ -433,6 +433,14 @@ def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
     );
     const darkActiveBackground = getComputedStyle(active).backgroundColor;
     const darkBarBackground = getComputedStyle(bar).backgroundColor;
+    const exportTrigger = view.root.querySelector(
+      'button[data-xy-modebar-export-trigger]'
+    );
+    exportTrigger.click();
+    const exportMenu = view.root.querySelector('[data-xy-modebar-export-menu]');
+    const exportItem = exportMenu.querySelector('[data-xy-modebar-menu-item]');
+    const darkMenuBackground = getComputedStyle(exportMenu).backgroundColor;
+    const darkMenuText = getComputedStyle(exportItem).color;
     active.focus();
     const darkFocusShadow = getComputedStyle(active).boxShadow;
     // An app that themes focus once with --chart-focus keeps a single ring
@@ -446,6 +454,8 @@ def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
     document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
       darkActiveBackground,
       darkBarBackground,
+      darkMenuBackground,
+      darkMenuText,
       darkFocusShadow,
       inheritedFocusShadow,
       customActiveBackground,
@@ -458,6 +468,8 @@ def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
 
     assert result["darkActiveBackground"] == "rgb(18, 20, 23)", result
     assert result["darkBarBackground"] == "rgb(27, 29, 32)", result
+    assert result["darkMenuBackground"] == "rgb(27, 29, 32)", result
+    assert result["darkMenuText"] == "rgb(173, 180, 191)", result
     assert "rgb(226, 229, 233)" in result["darkFocusShadow"], result
     assert "rgb(0, 0, 255)" in result["inheritedFocusShadow"], result
     assert result["customActiveBackground"] == "rgb(255, 0, 255)", result
