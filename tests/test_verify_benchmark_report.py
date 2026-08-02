@@ -967,6 +967,40 @@ def test_shared_webgl_spike_rejects_fewer_presentations_than_productive_batches(
     assert any("chart_presentations must be >= productive_batches" in error for error in errors)
 
 
+def test_shared_webgl_spike_rejects_incomplete_stable_presentation_coverage(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    benchmark = payload["profiles"]["native"]["benchmark"]
+    benchmark["chart_presentations"] -= 1
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / benchmark["duration_ms"]
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "chart_presentations must equal productive_batches * live_charts" in error
+        for error in errors
+    )
+
+
+def test_shared_webgl_spike_allows_variable_presentation_coverage_during_context_change(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    benchmark = payload["profiles"]["native"]["benchmark"]
+    benchmark["context_losses_during_run"] = 1
+    benchmark["chart_presentations"] -= 1
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / benchmark["duration_ms"]
+    )
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
 def test_shared_webgl_spike_workload_identity_includes_expected_batches(
     tmp_path: Path,
 ) -> None:
@@ -999,6 +1033,11 @@ def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> 
     native["correctness"]["pick_checks"] = native["requested_charts"] * 3
     native["correctness"].pop("availability_failure")
     native["recovery"]["live_charts_after_restore"] = native["requested_charts"]
+    benchmark = native["benchmark"]
+    benchmark["chart_presentations"] = benchmark["productive_batches"] * native["live_charts"]
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / benchmark["duration_ms"]
+    )
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
@@ -1181,6 +1220,11 @@ def test_shared_webgl_spike_allows_recovery_to_increase_live_chart_count(
     shared["correctness"]["pass"] = False
     shared["correctness"]["canary_checks"] = live_before_restore
     shared["correctness"]["pick_checks"] = live_before_restore * 3
+    benchmark = shared["benchmark"]
+    benchmark["chart_presentations"] = benchmark["productive_batches"] * live_before_restore
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / benchmark["duration_ms"]
+    )
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []

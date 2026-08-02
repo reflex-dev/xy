@@ -1871,7 +1871,7 @@ def _validate_shared_webgl_quantiles(
 
 
 def _validate_shared_webgl_throughput(
-    benchmark: dict[str, Any], path: str, errors: list[str]
+    benchmark: dict[str, Any], live_charts: Any, path: str, errors: list[str]
 ) -> None:
     duration_ms = benchmark.get("duration_ms")
     target_fps = benchmark.get("target_fps")
@@ -1879,6 +1879,8 @@ def _validate_shared_webgl_throughput(
     expected_batches = benchmark.get("expected_batches")
     dropped_intervals = benchmark.get("dropped_intervals")
     chart_presentations = benchmark.get("chart_presentations")
+    context_losses = benchmark.get("context_losses_during_run")
+    context_restores = benchmark.get("context_restores_during_run")
     if (
         isinstance(chart_presentations, int)
         and not isinstance(chart_presentations, bool)
@@ -1887,6 +1889,25 @@ def _validate_shared_webgl_throughput(
         and chart_presentations < productive_batches
     ):
         errors.append(f"{path}.chart_presentations must be >= productive_batches")
+    if (
+        isinstance(chart_presentations, int)
+        and not isinstance(chart_presentations, bool)
+        and isinstance(productive_batches, int)
+        and not isinstance(productive_batches, bool)
+        and isinstance(live_charts, int)
+        and not isinstance(live_charts, bool)
+        and isinstance(context_losses, int)
+        and not isinstance(context_losses, bool)
+        and isinstance(context_restores, int)
+        and not isinstance(context_restores, bool)
+        and context_losses == 0
+        and context_restores == 0
+        and chart_presentations != productive_batches * live_charts
+    ):
+        errors.append(
+            f"{path}.chart_presentations must equal productive_batches * live_charts "
+            "when context counts are stable"
+        )
     if not (
         _is_number(duration_ms) and duration_ms > 0 and _is_number(target_fps) and target_fps > 0
     ):
@@ -2210,7 +2231,7 @@ def _validate_shared_webgl_profile(
         _require_nonnegative_integer(benchmark, key, benchmark_path, errors)
     _require_boolean(benchmark, "dense", benchmark_path, errors)
     _require_boolean(benchmark, "state_stress", benchmark_path, errors)
-    _validate_shared_webgl_throughput(benchmark, benchmark_path, errors)
+    _validate_shared_webgl_throughput(benchmark, live, benchmark_path, errors)
     _validate_shared_webgl_quantiles(
         benchmark.get("frame_ms"),
         f"{benchmark_path}.frame_ms",
