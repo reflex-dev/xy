@@ -1,1 +1,1 @@
-"""XY Reflex showcase app."""
+"""Deterministic terminal example data, charts, and Reflex application."""

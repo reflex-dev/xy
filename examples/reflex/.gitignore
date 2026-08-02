@@ -8,5 +8,6 @@ __pycache__/
 .venv/
 uv.lock
 reflex.lock/
+reflex.log
 assets/external/
 assets/xy/
