@@ -62,53 +62,10 @@ window.__sharedWebglExperiment.snapshot();
 ```
 
 Results are also exposed as `window.__LAST_CHECK` and `window.__LAST_BENCHMARK`.
-The capture utility writes raw profile attempts and a generated median input to a
-caller-selected directory. These generated captures and any assembled validation report are
-local evidence, not tracked repository files. Keep them under the ignored local `results/`
-directory or attach them as ephemeral CI/PR artifacts when they are needed for review.
-
-### Harness-to-report mapping
-
-The browser API returns camelCase JavaScript objects; a local `shared-webgl-spike` validation
-report is a manually assembled, snake_case summary. Preserve the raw
-`verify()`, `benchmark()`, `cycleContext()`, and `snapshot()` results for both modes, then apply
-these mappings:
-
-| Harness field | Report field |
-| --- | --- |
-| `requestedCharts`, `liveCharts`, `liveContexts`, `fullyLive` | `profiles.<mode>.requested_charts`, `live_charts`, `live_contexts`, `fully_live` |
-| `snapshot().stats.createdContexts` (native) | `profiles.native.created_contexts` |
-| `verify().pass`, `canaryChecks`, `canaryFailures.length`, `pickChecks`, `pickFailures.length` | `correctness.pass`, `canary_checks`, `canary_failures`, `pick_checks`, `pick_failures` |
-| `verify().stateStress`, `cropOffsetPixels`, `timestamp` | `correctness.state_stress`, `crop_offset_pixels`, `verified_at_utc` |
-| `requestedDurationMs`, `durationMs`, `targetFps`, `observedFps` | `benchmark.requested_duration_ms`, `benchmark.duration_ms`, `benchmark.target_fps`, `benchmark.observed_fps` |
-| `productiveBatches`, `expectedBatches`, `droppedIntervals` | `benchmark.productive_batches`, `expected_batches`, `dropped_intervals` |
-| `chartPresentations`, `chartPresentationsPerSecond` | `benchmark.chart_presentations`, `chart_presentations_per_second` |
-| `frameMs`, `presentMsPerChart`, `stateStress` | `benchmark.frame_ms`, `present_ms_per_chart`, `state_stress` |
-| `pointsPerChart`, `contextLossesDuringRun`, `contextRestoresDuringRun` | `benchmark.points_per_chart`, `context_losses_during_run`, `context_restores_during_run` |
-| `viewportCssPixels`, `dpr` | `environment.viewport_css_pixels`, `device_pixel_ratio` |
-| `benchmark().environment.webgl.vendor`, `renderer`, `version`, `shadingLanguageVersion` | `environment.webgl.vendor`, `renderer`, `version`, `shading_language_version` |
-| Post-cycle `snapshot().contextLosses` minus pre-cycle `snapshot().contextLosses` | `recovery.context_losses` |
-| Post-cycle `snapshot().contextRestores` minus pre-cycle `snapshot().contextRestores` | `recovery.context_restores` |
-| Post-cycle `snapshot().lastCheck.expectedCharts`, `lastCheck.pass`, and `stats.liveCharts` | `recovery.expected_charts`, `recovery.correctness_after_restore`, `recovery.live_charts_after_restore` |
-
-`requestedDurationMs` is the configured duration passed to `benchmark()`; `durationMs` is the
-observed elapsed time. Keep both values distinct in the report.
-
-`canvasPixels` is a range, while `environment.canvas_pixels` records one exact common chart
-size. Set `canvas_pixels.width` only when `minWidth === maxWidth`, and set
-`canvas_pixels.height` only when `minHeight === maxHeight`. If either range does not collapse,
-do not silently choose one endpoint: rerun with uniform chart sizes or extend the report schema
-to preserve the range.
-
-Run the cycle and record recovery for both profiles. Take one `snapshot()` immediately before
-`cycleContext()` and another after it completes. `contextLosses` and `contextRestores` are
-cumulative lifetime counters, so report each recovery value as the post-cycle counter minus its
-pre-cycle counterpart; do not copy the post-cycle total directly. The post-cycle snapshot's
-`lastCheck` is the recovery verification: map its `expectedCharts` and `pass` values alongside
-`stats.liveCharts` as shown above. If a profile cannot attempt or complete restoration,
-represent that limitation explicitly in the local report and any review notes rather than
-omitting its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when a
-separate canary actually inspected the visible canvases during the loss window.
+The capture utility writes one raw JSON file per attempted profile run plus
+`summary-input.json` to a caller-selected directory. These generated files are local evidence,
+not tracked repository reports. Keep them under the ignored local `results/` directory or attach
+them as ephemeral CI/PR artifacts when they are needed for review.
 
 ### Governed local capture
 
@@ -137,20 +94,18 @@ repetition. The same directory receives `summary-input.json`, whose numeric benc
 medians of the successful cold-process runs; integer counts select the lower observed middle
 value when an even number of attempts succeeds. Rate and interval fields are re-derived from
 those medians, and stable-context presentation totals are derived from productive batches times
-live charts, so the assembled report remains internally consistent.
+live charts, so `summary-input.json` remains internally consistent.
 
-`capture.mjs` produces camelCase raw attempts and `summary-input.json`; it does not create the
-snake_case validation report. Use the mapping above to assemble that report locally, then verify
-it by path:
+The runner self-checks the capture before returning success. Every requested run must complete;
+structural workload fields must agree; productive batch counts must be positive; presentation
+counts must be conserved; per-live-chart correctness coverage and recovery invariants must hold;
+and unexpected page diagnostics fail their attempt. Aggregation failures are recorded in
+`summary-input.json` and make the command exit nonzero. The raw attempts and `summary-input.json`
+are the complete output contract—do not translate them into a separate report or pass them to the
+generic benchmark-report validator.
 
-```bash
-make check-benchmark-report \
-  BENCHMARK_JSON="$CAPTURE_DIRECTORY/shared-webgl-report.json" \
-  BENCHMARK_KIND=shared-webgl-spike
-```
-
-Keep both `$CAPTURE_DIRECTORY/raw` and the assembled report local or upload them as ephemeral
-review artifacts. Do not add them to the repository.
+Keep `$CAPTURE_DIRECTORY/raw` local or upload it as an ephemeral review artifact. Do not add it
+to the repository.
 
 The utility rejects a dirty worktree and fingerprints the served `index.html`, `experiment.js`,
 and `styles.css` against the local checkout before associating results with the Git revision. It
@@ -159,8 +114,8 @@ browser executable path. Browser evaluation calls have Node-side deadlines. Page
 warning/error console messages are preserved in raw JSON. They fail the attempt except for two
 source-, phase-, and count-capped Chromium diagnostics: native context eviction while the 50
 contexts initialize, and the shared verifier's intentional Canvas 2D readback. Commit the capture
-utility and schema first, then run it from that clean revision and record that revision in the
-local report.
+utility and harness first, then run them from that clean revision; the runner records the revision
+in every raw attempt and in `summary-input.json`.
 
 Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
 Native mode can look faster after browser eviction because it is rendering fewer live charts;

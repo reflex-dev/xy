@@ -277,17 +277,12 @@ rendered through one shared WebGL2 host with native one-context-per-chart surfac
 state isolation, crop/orientation canaries, picking, and context restoration.
 
 Follow the [governed local-capture instructions](shared_webgl_spike/README.md) to run the
-harness. After assembling the local snake_case report, validate it by path:
-
-```bash
-make check-benchmark-report \
-  BENCHMARK_JSON=/path/to/shared-webgl-report.json \
-  BENCHMARK_KIND=shared-webgl-spike
-```
+harness. The capture runner self-checks each attempt and its aggregate, then writes raw attempts
+and `summary-input.json`; it does not produce a generic benchmark-validation report.
 
 Local runs provide architecture evidence, not the production `ChartView` implementation or a
 performance claim for xy. The repository contains the harness and capture runner; generated raw
-captures and assembled reports remain local or are shared as ephemeral CI/PR artifacts.
+captures and summaries remain local or are shared as ephemeral CI/PR artifacts.
 
 ## CI Software GL
 
