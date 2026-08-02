@@ -393,7 +393,9 @@ def security_chart(
     last = float(values.close[-1])
     if normalized_drawing in {"long_position", "short_position"}:
         selected_side = "long" if normalized_drawing == "long_position" else "short"
-        selected_ticket = dict(ticket or _default_ticket(meta.symbol, selected_side, last))
+        selected_ticket = dict(
+            _default_ticket(meta.symbol, selected_side, last) if ticket is None else ticket
+        )
         selected_ticket["side"] = selected_side
         selected_ticket.setdefault("symbol", meta.symbol)
         if ticket_metrics(selected_ticket)["valid"]:

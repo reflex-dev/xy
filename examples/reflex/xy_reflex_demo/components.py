@@ -80,6 +80,14 @@ def _signed_color(value: Any) -> str:
     return GREEN if _float(value) >= 0 else RED
 
 
+def _compact_timestamp(value: Any, *, include_date: bool = False) -> str:
+    """Format the deterministic ISO timestamps for dense terminal rows."""
+    text = str(value)
+    if len(text) >= 16 and text[10:11] == "T":
+        return f"{text[5:10]} {text[11:16]}" if include_date else text[11:16]
+    return text
+
+
 def terminal_button(
     label: Any,
     *,
@@ -91,8 +99,12 @@ def terminal_button(
     return rx.button(
         label,
         on_click=on_click,
-        variant="ghost",
+        variant="surface",
         radius="none",
+        box_shadow="none",
+        margin="0",
+        flex_shrink="0",
+        white_space="nowrap",
         min_height="25px" if compact else "30px",
         padding="2px 7px" if compact else "4px 9px",
         border=f"1px solid {AMBER}" if active is True else f"1px solid {BORDER}",
@@ -114,8 +126,12 @@ def state_button(label: str, value: Any, event: Any, *, compact: bool = True) ->
     return rx.button(
         label,
         on_click=event,
-        variant="ghost",
+        variant="surface",
         radius="none",
+        box_shadow="none",
+        margin="0",
+        flex_shrink="0",
+        white_space="nowrap",
         min_height="25px" if compact else "30px",
         padding="2px 7px" if compact else "4px 9px",
         border=f"1px solid {BORDER}",
@@ -146,17 +162,30 @@ def panel(
             font_weight="800",
             letter_spacing="0.08em",
             text_transform="uppercase",
+            overflow="hidden",
+            text_overflow="ellipsis",
+            white_space="nowrap",
         )
     ]
     if subtitle is not None:
         header_children.append(
-            rx.text(subtitle, color=MUTED, font_family=MONO, font_size="9px", margin_left="8px")
+            rx.text(
+                subtitle,
+                color=MUTED,
+                font_family=MONO,
+                font_size="9px",
+                margin_left="8px",
+                min_width="0",
+                overflow="hidden",
+                text_overflow="ellipsis",
+                white_space="nowrap",
+            )
         )
     props.setdefault("width", "100%")
     return rx.box(
         rx.hstack(
-            rx.hstack(*header_children, spacing="1", align="center"),
-            action or rx.box(),
+            rx.hstack(*header_children, spacing="1", align="center", min_width="0"),
+            rx.box(action or rx.box(), flex_shrink="0"),
             justify="between",
             align="center",
             min_height="28px",
@@ -176,7 +205,16 @@ def panel(
 def metric(label: str, value: Any, *, color: str = TEXT, note: Any = None) -> rx.Component:
     return rx.box(
         rx.text(label, color=MUTED, font_family=MONO, font_size="9px", letter_spacing="0.06em"),
-        rx.text(value, color=color, font_family=MONO, font_size="16px", font_weight="750"),
+        rx.text(
+            value,
+            color=color,
+            font_family=MONO,
+            font_size="16px",
+            font_weight="750",
+            overflow="hidden",
+            text_overflow="ellipsis",
+            white_space="nowrap",
+        ),
         rx.text(note, color=MUTED, font_family=MONO, font_size="9px")
         if note is not None
         else rx.box(),
@@ -228,7 +266,13 @@ def command_bar() -> rx.Component:
     return rx.vstack(
         rx.hstack(
             rx.text("XY", color=INK, background=AMBER, padding="3px 7px", font_weight="900"),
-            rx.text("COMMAND", color=AMBER, font_weight="800", font_size="10px"),
+            rx.text(
+                "COMMAND",
+                color=AMBER,
+                font_weight="800",
+                font_size="10px",
+                display=rx.breakpoints(initial="none", md="block"),
+            ),
             rx.input(
                 value=TerminalState.command,
                 on_change=TerminalState.set_command,
@@ -243,10 +287,23 @@ def command_bar() -> rx.Component:
                 font_family=MONO,
                 font_size="12px",
                 flex="1",
-                _placeholder={"color": "#696555"},
+                min_width="0",
+                _placeholder={"color": MUTED},
                 _focus={"border_color": CYAN, "box_shadow": f"0 0 0 1px {CYAN}"},
             ),
             terminal_button("GO", on_click=TerminalState.execute_command, compact=False),
+            rx.text(
+                "SIM DATA",
+                color=INK,
+                background=RED,
+                font_family=MONO,
+                font_size="9px",
+                font_weight="900",
+                padding="4px 7px",
+                white_space="nowrap",
+                display=rx.breakpoints(initial="block", sm="none"),
+                flex_shrink="0",
+            ),
             rx.text(
                 "SIMULATED DATA",
                 color=INK,
@@ -256,10 +313,12 @@ def command_bar() -> rx.Component:
                 font_weight="900",
                 padding="4px 7px",
                 white_space="nowrap",
+                display=rx.breakpoints(initial="none", sm="block"),
+                flex_shrink="0",
             ),
             width="100%",
             align="center",
-            spacing="2",
+            gap=rx.breakpoints(initial="4px", sm="8px"),
         ),
         rx.cond(
             TerminalState.help_visible,
@@ -277,29 +336,6 @@ def command_bar() -> rx.Component:
         ),
         spacing="1",
         width="100%",
-    )
-
-
-def _quote_cell(row: Any) -> rx.Component:
-    symbol = str(_get(row, "symbol", "ticker"))
-    last = _get(row, "last", "price", "close", default=0.0)
-    change = _get(
-        row,
-        "change_percent",
-        "change_pct",
-        "percent_change",
-        "pct_change",
-        default=0.0,
-    )
-    return rx.hstack(
-        rx.text(symbol, color=AMBER, font_weight="800"),
-        rx.text(f"{_float(last):,.2f}", color=TEXT),
-        rx.text(_percent(change), color=_signed_color(change)),
-        spacing="2",
-        align="center",
-        padding="2px 9px",
-        border_right=f"1px solid {BORDER}",
-        white_space="nowrap",
     )
 
 
@@ -354,13 +390,15 @@ def watchlist() -> rx.Component:
                     rx.text(symbol, color=AMBER, font_weight="800"),
                     rx.text(f"{_float(last):,.2f}", color=TEXT, text_align="right"),
                     rx.text(_percent(change), color=_signed_color(change), text_align="right"),
-                    columns="3",
+                    grid_template_columns="minmax(64px, 1fr) minmax(70px, 1fr) 68px",
                     width="100%",
                     align_items="center",
                 ),
                 on_click=TerminalState.select_symbol(symbol),
-                variant="ghost",
+                variant="surface",
                 radius="none",
+                box_shadow="none",
+                background="transparent",
                 width="100%",
                 min_height="27px",
                 padding="3px 5px",
@@ -406,10 +444,14 @@ def _movers_table() -> rx.Component:
             rx.grid(
                 rx.text(symbol, color=AMBER, font_weight="800"),
                 rx.text(
-                    str(_get(row, "name", "label", default=symbol)), color=TEXT, overflow="hidden"
+                    str(_get(row, "name", "label", default=symbol)),
+                    color=TEXT,
+                    overflow="hidden",
+                    text_overflow="ellipsis",
+                    white_space="nowrap",
                 ),
                 rx.text(_percent(change), color=_signed_color(change), text_align="right"),
-                columns="3",
+                grid_template_columns="64px minmax(0, 1fr) 62px",
                 width="100%",
                 padding="4px 2px",
                 border_bottom="1px solid #1d1d19",
@@ -424,10 +466,16 @@ def markets_workspace() -> rx.Component:
     return rx.vstack(
         panel(
             "Market focus · SPY",
-            reflex_xy.chart(
-                charts.MARKET_FOCUS_CHART,
-                height="520px",
-                id="market-finance-chart",
+            rx.box(
+                reflex_xy.chart(
+                    charts.MARKET_FOCUS_CHART,
+                    height=rx.breakpoints(initial="390px", sm="520px"),
+                    min_width=rx.breakpoints(initial="520px", sm="100%"),
+                    id="market-finance-chart",
+                ),
+                width="100%",
+                overflow_x="auto",
+                scrollbar_width="thin",
             ),
             subtitle="native FinanceChart · OHLCV · studies · tools",
             action=terminal_button(
@@ -458,7 +506,7 @@ def markets_workspace() -> rx.Component:
                 reflex_xy.chart(YIELD_CURVE_TOKEN, height="300px", id="yield-curve"),
                 subtitle="inline() kernel token",
             ),
-            columns=rx.breakpoints(initial="1", lg="2"),
+            columns=rx.breakpoints(initial="1", md="2"),
             gap="8px",
             width="100%",
         ),
@@ -501,7 +549,7 @@ def _selected_instrument_card() -> rx.Component:
                 metric("BETA", f"{_float(_get(instrument, 'beta', default=0)):.2f}"),
                 metric("VENUE", str(_get(instrument, "exchange", "venue", default="Global"))),
                 metric("CCY", str(_get(instrument, "currency", default="USD"))),
-                columns=rx.breakpoints(initial="2", md="4"),
+                columns=rx.breakpoints(initial="1", sm="2", md="4"),
                 gap="8px",
                 width="100%",
             ),
@@ -614,7 +662,7 @@ def paper_ticket() -> rx.Component:
                 terminal_input(
                     "TARGET", TerminalState.ticket_target, TerminalState.set_ticket_target
                 ),
-                columns=rx.breakpoints(initial="2", md="4"),
+                columns=rx.breakpoints(initial="1", sm="2", md="4"),
                 gap="7px",
                 width="100%",
             ),
@@ -626,7 +674,7 @@ def paper_ticket() -> rx.Component:
                 metric("RISK AMOUNT", TerminalState.ticket_risk_amount),
                 metric("POSITION SIZE", TerminalState.ticket_position_size),
                 metric("REWARD / RISK", TerminalState.ticket_reward_risk),
-                columns=rx.breakpoints(initial="2", md="5"),
+                columns=rx.breakpoints(initial="1", sm="2", md="5"),
                 gap="8px",
                 width="100%",
             ),
@@ -687,12 +735,18 @@ def security_workspace() -> rx.Component:
                 rx.text("OHLCV ANALYSIS", color=TEXT),
                 spacing="2",
             ),
-            reflex_xy.chart(
-                TerminalState.security_figure,
-                on_hover=TerminalState.on_chart_hover,
-                on_view_change=TerminalState.on_chart_view,
-                height="610px",
-                id="security-chart",
+            rx.box(
+                reflex_xy.chart(
+                    TerminalState.security_figure,
+                    on_hover=TerminalState.on_chart_hover,
+                    on_view_change=TerminalState.on_chart_view,
+                    height=rx.breakpoints(initial="430px", sm="610px"),
+                    min_width=rx.breakpoints(initial="480px", sm="100%"),
+                    id="security-chart",
+                ),
+                width="100%",
+                overflow_x="auto",
+                scrollbar_width="thin",
             ),
             subtitle=TerminalState.view_status,
         ),
@@ -734,6 +788,7 @@ def _summary_metrics() -> rx.Component:
 
 
 def positions_table() -> rx.Component:
+    column_template = "70px 80px 120px 110px 85px"
     rows = []
     for position in data.position_rows():
         symbol = str(_get(position, "symbol", "ticker"))
@@ -764,12 +819,14 @@ def positions_table() -> rx.Component:
                         color=_signed_color(pnl),
                         text_align="right",
                     ),
-                    columns="5",
+                    grid_template_columns=column_template,
                     width="100%",
                 ),
                 on_click=TerminalState.drilldown_position(symbol),
-                variant="ghost",
+                variant="surface",
                 radius="none",
+                box_shadow="none",
+                background="transparent",
                 min_height="30px",
                 padding="4px 3px",
                 width="100%",
@@ -780,20 +837,24 @@ def positions_table() -> rx.Component:
                 _hover={"background": "#231c08"},
             )
         )
-    return rx.vstack(
-        rx.grid(
-            *[
-                rx.text(label, color=MUTED, text_align="right" if index else "left")
-                for index, label in enumerate(("SYMBOL", "QTY", "MKT VALUE", "P&L", "RETURN"))
-            ],
-            columns="5",
+    return rx.box(
+        rx.vstack(
+            rx.grid(
+                *[
+                    rx.text(label, color=MUTED, text_align="right" if index else "left")
+                    for index, label in enumerate(("SYMBOL", "QTY", "MKT VALUE", "P&L", "RETURN"))
+                ],
+                grid_template_columns=column_template,
+                width="100%",
+                padding="3px",
+                font_family=MONO,
+                font_size="9px",
+            ),
+            *rows,
+            spacing="0",
+            min_width="465px",
             width="100%",
-            padding="3px",
-            font_family=MONO,
-            font_size="9px",
         ),
-        *rows,
-        spacing="0",
         width="100%",
         overflow_x="auto",
     )
@@ -831,7 +892,7 @@ def portfolio_workspace() -> rx.Component:
                     charts.portfolio_exposure_chart(), height="245px", id="portfolio-exposure"
                 ),
             ),
-            columns=rx.breakpoints(initial="1", md="3"),
+            columns=rx.breakpoints(initial="1", md="2", lg="3"),
             gap="8px",
             width="100%",
         ),
@@ -841,6 +902,7 @@ def portfolio_workspace() -> rx.Component:
 
 
 def scenario_table(confidence: float = 0.95) -> rx.Component:
+    column_template = "140px minmax(230px, 1fr) 110px"
     scenarios = list(data.stress_scenarios(confidence))
     rows = []
     for scenario in scenarios:
@@ -854,13 +916,19 @@ def scenario_table(confidence: float = 0.95) -> rx.Component:
                         str(_get(scenario, "shock", "description", default="Deterministic shock")),
                         color=MUTED,
                     ),
-                    rx.text(_money(impact), color=_signed_color(impact), text_align="right"),
-                    columns="3",
+                    rx.text(
+                        _money(impact),
+                        color=_signed_color(impact),
+                        text_align="right",
+                        white_space="nowrap",
+                    ),
+                    grid_template_columns=column_template,
                     width="100%",
                 ),
                 on_click=TerminalState.set_scenario(name),
-                variant="ghost",
+                variant="surface",
                 radius="none",
+                box_shadow="none",
                 width="100%",
                 min_height="30px",
                 color=TEXT,
@@ -873,7 +941,11 @@ def scenario_table(confidence: float = 0.95) -> rx.Component:
                 _hover={"background": "#231c08"},
             )
         )
-    return rx.vstack(*rows, spacing="0", width="100%")
+    return rx.box(
+        rx.vstack(*rows, spacing="0", width="100%", min_width="520px"),
+        width="100%",
+        overflow_x="auto",
+    )
 
 
 def risk_workspace() -> rx.Component:
@@ -892,6 +964,7 @@ def risk_workspace() -> rx.Component:
                 ],
                 spacing="1",
                 align="center",
+                wrap="wrap",
             ),
         ),
         rx.grid(
@@ -906,7 +979,7 @@ def risk_workspace() -> rx.Component:
                     charts.risk_correlation_chart(), height="310px", id="risk-correlation"
                 ),
             ),
-            columns=rx.breakpoints(initial="1", lg="2"),
+            columns=rx.breakpoints(initial="1", md="2"),
             gap="8px",
             width="100%",
         ),
@@ -924,7 +997,7 @@ def risk_workspace() -> rx.Component:
                 ),
                 subtitle="select scenario",
             ),
-            columns=rx.breakpoints(initial="1", lg="2"),
+            columns=rx.breakpoints(initial="1", md="2"),
             gap="8px",
             width="100%",
         ),
@@ -943,7 +1016,12 @@ def _story_detail(story: Any) -> rx.Component:
     return rx.vstack(
         rx.hstack(
             rx.text(str(_get(story, "source", default="XY NEWS")), color=CYAN),
-            rx.text(str(_get(story, "timestamp", "time", default="--:--")), color=MUTED),
+            rx.text(
+                _compact_timestamp(
+                    _get(story, "timestamp", "time", default="--:--"), include_date=True
+                ),
+                color=MUTED,
+            ),
             spacing="2",
         ),
         rx.heading(str(_get(story, "headline", "title")), color=TEXT, size="4", font_family=MONO),
@@ -981,8 +1059,15 @@ def news_list() -> rx.Component:
         rows.append(
             rx.button(
                 rx.grid(
-                    rx.text(str(_get(story, "timestamp", "time", default="--:--")), color=CYAN),
-                    rx.text(str(_get(story, "headline", "title")), color=TEXT, text_align="left"),
+                    rx.text(
+                        _compact_timestamp(_get(story, "timestamp", "time", default="--:--")),
+                        color=CYAN,
+                    ),
+                    rx.text(
+                        str(_get(story, "headline", "title")),
+                        color=TEXT,
+                        text_align="left",
+                    ),
                     rx.text(
                         sentiment[:3].upper(),
                         color=GREEN
@@ -992,13 +1077,14 @@ def news_list() -> rx.Component:
                         else AMBER,
                         text_align="right",
                     ),
-                    columns="3",
+                    grid_template_columns="58px minmax(0, 1fr) 40px",
                     width="100%",
                     align_items="start",
                 ),
                 on_click=TerminalState.select_story(story_id),
-                variant="ghost",
+                variant="surface",
                 radius="none",
+                box_shadow="none",
                 width="100%",
                 height="auto",
                 min_height="42px",
@@ -1029,18 +1115,24 @@ def selected_story_detail() -> rx.Component:
 
 
 def calendar_table() -> rx.Component:
+    column_template = "82px 42px minmax(200px, 1fr) 72px 76px 76px"
     rows = []
     for event in data.calendar_events():
         importance = str(_get(event, "importance", "impact", default="Medium"))
         rows.append(
             rx.grid(
-                rx.text(str(_get(event, "time", "timestamp", default="--:--")), color=CYAN),
+                rx.text(
+                    _compact_timestamp(
+                        _get(event, "time", "timestamp", default="--:--"), include_date=True
+                    ),
+                    color=CYAN,
+                ),
                 rx.text(str(_get(event, "country", "region", default="US")), color=AMBER),
                 rx.text(str(_get(event, "event", "name", "title")), color=TEXT),
                 rx.text(importance, color=RED if importance.lower() == "high" else AMBER),
                 rx.text(str(_get(event, "consensus", "forecast", default="—")), text_align="right"),
                 rx.text(str(_get(event, "prior", "previous", default="—")), text_align="right"),
-                columns="6",
+                grid_template_columns=column_template,
                 width="100%",
                 padding="5px 2px",
                 border_bottom="1px solid #1d1d19",
@@ -1048,7 +1140,25 @@ def calendar_table() -> rx.Component:
                 font_size="10px",
             )
         )
-    return rx.vstack(*rows, spacing="0", width="100%", overflow_x="auto")
+    header = rx.grid(
+        *[
+            rx.text(label, color=MUTED, text_align="right" if index >= 4 else "left")
+            for index, label in enumerate(
+                ("TIME", "REGION", "EVENT", "IMPACT", "CONSENSUS", "PRIOR")
+            )
+        ],
+        grid_template_columns=column_template,
+        width="100%",
+        padding="3px 2px",
+        font_family=MONO,
+        font_size="9px",
+        border_bottom=f"1px solid {BORDER}",
+    )
+    return rx.box(
+        rx.vstack(header, *rows, spacing="0", width="100%", min_width="650px"),
+        width="100%",
+        overflow_x="auto",
+    )
 
 
 def news_workspace() -> rx.Component:
@@ -1056,7 +1166,7 @@ def news_workspace() -> rx.Component:
         rx.grid(
             panel("Newswire", news_list(), subtitle="fictional headlines"),
             panel("Story detail", selected_story_detail()),
-            columns=rx.breakpoints(initial="1", lg="2"),
+            columns=rx.breakpoints(initial="1", md="2"),
             gap="8px",
             width="100%",
         ),
@@ -1200,11 +1310,21 @@ def function_keys() -> rx.Component:
                     spacing="1",
                 ),
                 on_click=TerminalState.choose_workspace(label),
-                variant="ghost",
+                variant="surface",
                 radius="none",
+                box_shadow="none",
+                background=rx.cond(TerminalState.workspace == label, "#231c08", "transparent"),
+                margin="0",
+                flex_shrink="0",
+                white_space="nowrap",
                 min_height="27px",
                 padding="2px 6px",
                 border_right=f"1px solid {BORDER}",
+                border_bottom=rx.cond(
+                    TerminalState.workspace == label,
+                    f"2px solid {AMBER}",
+                    "2px solid transparent",
+                ),
                 font_family=MONO,
                 font_size="9px",
                 _hover={"background": "#231c08"},
@@ -1324,66 +1444,142 @@ def developer_drawer() -> rx.Component:
 def terminal_shell() -> rx.Component:
     return rx.box(
         rx.box(
-            rx.hstack(
-                rx.vstack(
-                    rx.hstack(
+            rx.box(
+                rx.hstack(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.text(
+                                "XY TERMINAL",
+                                color=AMBER,
+                                font_family=MONO,
+                                font_size="18px",
+                                font_weight="950",
+                                white_space="nowrap",
+                            ),
+                            rx.text(
+                                "MULTI-ASSET ANALYTICS",
+                                color=MUTED,
+                                font_family=MONO,
+                                font_size="9px",
+                                white_space="nowrap",
+                                display=rx.breakpoints(initial="none", sm="block"),
+                            ),
+                            spacing="2",
+                            align="center",
+                        ),
                         rx.text(
-                            "XY TERMINAL",
-                            color=AMBER,
+                            "INDEPENDENT TERMINAL-STYLE DEMO · NO EXTERNAL MARKET FEED",
+                            color=MUTED,
                             font_family=MONO,
-                            font_size="18px",
-                            font_weight="950",
+                            font_size="8px",
+                            white_space="nowrap",
+                            display=rx.breakpoints(initial="none", md="block"),
                         ),
-                        rx.text(
-                            "MULTI-ASSET ANALYTICS", color=MUTED, font_family=MONO, font_size="9px"
-                        ),
-                        spacing="2",
-                        align="center",
+                        spacing="0",
+                        align="start",
+                        min_width="0",
                     ),
+                    rx.spacer(),
                     rx.text(
-                        "INDEPENDENT TERMINAL-STYLE DEMO · NO EXTERNAL MARKET FEED",
-                        color=MUTED,
+                        f"AS OF {AS_OF}",
+                        color=TEXT,
                         font_family=MONO,
-                        font_size="8px",
+                        font_size="9px",
+                        white_space="nowrap",
+                        flex_shrink="0",
                     ),
-                    spacing="0",
-                    align="start",
+                    align="center",
+                    width="100%",
+                    padding="6px 8px",
                 ),
-                rx.spacer(),
-                rx.text(f"AS OF {AS_OF}", color=TEXT, font_family=MONO, font_size="9px"),
-                align="center",
-                width="100%",
-                padding="6px 8px",
+                command_bar(),
+                padding="0 8px 7px",
+                background="#090a0a",
             ),
-            command_bar(),
-            padding="0 8px 7px",
-            background="#090a0a",
+            ticker_tape(),
+            position="sticky",
+            top="0",
+            z_index="40",
+            background=INK,
         ),
-        ticker_tape(),
         rx.grid(
-            rx.box(watchlist(), min_width="0"),
-            rx.box(workspace(), min_width="0", overflow="hidden"),
-            rx.box(context_rail(), min_width="0"),
+            rx.box(
+                rx.vstack(watchlist(), context_rail(), spacing="2", width="100%"),
+                min_width="0",
+                order=rx.breakpoints(initial="2", sm="1"),
+                display=rx.breakpoints(initial="block", lg="none"),
+                position=rx.breakpoints(initial="static", sm="sticky"),
+                top="112px",
+                max_height=rx.breakpoints(initial="none", sm="calc(100vh - 160px)"),
+                overflow_y=rx.breakpoints(initial="visible", sm="auto"),
+                scrollbar_width="thin",
+            ),
+            rx.box(
+                watchlist(),
+                min_width="0",
+                order="1",
+                display=rx.breakpoints(initial="none", lg="block"),
+                position="sticky",
+                top="112px",
+            ),
+            rx.box(
+                workspace(),
+                min_width="0",
+                overflow="hidden",
+                order=rx.breakpoints(initial="1", sm="2"),
+            ),
+            rx.box(
+                context_rail(),
+                min_width="0",
+                order="3",
+                display=rx.breakpoints(initial="none", lg="block"),
+                position="sticky",
+                top="112px",
+            ),
             grid_template_columns=rx.breakpoints(
                 initial="minmax(0, 1fr)",
+                sm="180px minmax(0, 1fr)",
                 lg="210px minmax(0, 1fr) 225px",
             ),
             gap="8px",
             width="100%",
             padding="8px",
             align_items="start",
+            flex="1",
         ),
-        function_keys(),
-        rx.hstack(
-            rx.text(TerminalState.command_status, color=CYAN),
-            rx.spacer(),
-            rx.text("● LOCAL", color=GREEN),
-            rx.text("NO API KEY", color=MUTED),
-            width="100%",
-            padding="3px 8px",
+        rx.box(
+            function_keys(),
+            rx.hstack(
+                rx.text(
+                    TerminalState.command_status,
+                    color=CYAN,
+                    min_width="0",
+                    overflow="hidden",
+                    text_overflow="ellipsis",
+                    white_space="nowrap",
+                ),
+                rx.spacer(),
+                rx.hstack(
+                    rx.text("● LOCAL", color=GREEN, white_space="nowrap"),
+                    rx.text(
+                        "NO API KEY",
+                        color=MUTED,
+                        white_space="nowrap",
+                        display=rx.breakpoints(initial="none", sm="block"),
+                    ),
+                    spacing="2",
+                    flex_shrink="0",
+                ),
+                width="100%",
+                padding="3px 8px",
+                background="#080909",
+                font_family=MONO,
+                font_size="9px",
+            ),
+            position="sticky",
+            bottom="0",
+            z_index="40",
             background="#080909",
-            font_family=MONO,
-            font_size="9px",
         ),
         developer_drawer(),
         background=INK,
@@ -1391,6 +1587,8 @@ def terminal_shell() -> rx.Component:
         min_height="100vh",
         width="100%",
         font_family=MONO,
+        display="flex",
+        flex_direction="column",
     )
 
 

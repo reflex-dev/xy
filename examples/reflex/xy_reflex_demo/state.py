@@ -111,6 +111,7 @@ class TerminalState(rx.State):
 
     streaming: bool = False
     _stream_step: int = 35
+    _stream_generation: int = 0
     tape_quotes: list[dict[str, str]] = _tape_rows(35)
 
     ticket_side: str = "Long"
@@ -193,7 +194,6 @@ class TerminalState(rx.State):
 
     @reflex_xy.figure
     def security_figure(self):
-        ticket = self._raw_ticket() if self._ticket_result().get("valid") else None
         return charts.security_chart(
             self.selected_symbol,
             range_key=self.range_key,
@@ -201,7 +201,7 @@ class TerminalState(rx.State):
             overlays=tuple(self.overlays),
             oscillator=self.oscillator,
             drawing=self.drawing,
-            ticket=ticket,
+            ticket=self._raw_ticket(),
         )
 
     @reflex_xy.figure
@@ -398,6 +398,8 @@ class TerminalState(rx.State):
     async def stream_quotes(self):
         """Start/stop the single market-pulse producer for this state token."""
         async with self:
+            self._stream_generation += 1
+            generation = self._stream_generation
             if self.streaming:
                 self.streaming = False
                 return
@@ -405,7 +407,11 @@ class TerminalState(rx.State):
             token = self.market_pulse
         while True:
             async with self:
-                if not self.streaming or token != self.market_pulse:
+                if (
+                    not self.streaming
+                    or generation != self._stream_generation
+                    or token != self.market_pulse
+                ):
                     break
                 self._stream_step += 1
                 step = self._stream_step

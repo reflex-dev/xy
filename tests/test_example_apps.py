@@ -253,6 +253,22 @@ def test_terminal_security_chart_exercises_finance_layers(terminal_charts_mod) -
     position = next(layer for layer in position_spec["layers"] if layer["kind"] == "position")
     assert position["anchors"]["entry"]["x"] < position["anchors"]["end"]["x"]
 
+    invalid_position_chart = terminal_charts_mod.security_chart(
+        "AAPL",
+        range_key="6M",
+        drawing="Long position",
+        ticket={
+            "side": "Long",
+            "entry": 100.0,
+            "stop": 105.0,
+            "target": 115.0,
+            "account_size": 100_000.0,
+            "risk_percent": 1.0,
+        },
+    )
+    invalid_position_spec, _ = invalid_position_chart.build_payload()
+    assert "position" not in {layer["kind"] for layer in invalid_position_spec["layers"]}
+
 
 def test_terminal_landing_market_focus_uses_finance_chart(terminal_charts_mod) -> None:
     chart = terminal_charts_mod.market_focus_chart()
@@ -358,6 +374,8 @@ def test_reflex_terminal_preserves_every_linking_tier_and_event() -> None:
         assert marker in src, marker
     assert src.count("@rx.event(background=True)") == 1
     assert src.count("async def stream_quotes") == 1
+    assert "_stream_generation" in src
+    assert "generation != self._stream_generation" in src
 
     for workspace in ("Markets", "Security", "Portfolio", "Risk", "News"):
         assert workspace in src
