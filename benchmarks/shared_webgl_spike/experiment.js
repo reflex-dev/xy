@@ -608,8 +608,15 @@ class SharedBackend {
     this.ready = true;
     this.disposed = false;
     this.charts = [];
-    this.programs = createProgramSet(this.gl);
     this.lossExtension = this.gl.getExtension("WEBGL_lose_context");
+    try {
+      this.programs = createProgramSet(this.gl);
+    } catch (error) {
+      // The constructor has not returned, so ExperimentApp cannot dispose this
+      // otherwise-detached context from its initialization catch path.
+      this.lossExtension?.loseContext();
+      throw error;
+    }
     this._cycleResolve = null;
     this._cycleTimer = 0;
     this._restoreTimer = 0;
@@ -654,6 +661,7 @@ class SharedBackend {
         if (!fullyRebuilt) throw new Error(`Only ${rebuilt}/${this.charts.length} charts rebuilt`);
         this.app.onContextRestored("Shared host restored; all client GPU objects rebuilt.");
       } catch (error) {
+        fullyRebuilt = false;
         this.ready = false;
         this.lost = this.gl.isContextLost();
         if (!this.lost) {
@@ -1522,9 +1530,9 @@ class ExperimentApp {
         this.backend.getLiveCharts?.() ||
         this.charts.filter((chart) => chart.card.dataset.state === "live");
       const currentLiveSet = new Set(currentLiveCharts);
-      const liveSetMatches =
-        currentLiveCharts.length === expectedCharts &&
-        charts.every((chart) => currentLiveSet.has(chart));
+      // Recovery is scoped to the charts that were live before the cycle. An
+      // unrelated context reviving concurrently must not make that recovery fail.
+      const liveSetMatches = charts.every((chart) => currentLiveSet.has(chart));
       const availabilityPass = requireFullAvailability ? fullyLive : liveSetMatches;
       const contextInvariant = this.mode !== "shared" || stats.liveContexts === 1;
       const coherentLiveSet = requireFullAvailability

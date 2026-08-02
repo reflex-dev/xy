@@ -141,6 +141,15 @@
         "state_stress_method": "poisoned-prime-then-inspected-render",
         "verified_at_utc": "2026-07-31T23:14:14Z"
       },
+      "recovery": {
+        "attempted": false,
+        "context_losses": 0,
+        "context_restores": 0,
+        "live_charts_after_restore": 16,
+        "correctness_after_restore": false,
+        "visible_frames_during_loss_checked": false,
+        "limitation": "No native recovery cycle was captured; the 34 unavailable contexts were not restored."
+      },
       "benchmark": {
         "duration_ms": 3000.5999999046326,
         "points_per_chart": 1024,

@@ -66,6 +66,38 @@ The captured run used for this spike is preserved as both a
 [readable report](./RESULTS.md) and a
 [machine-readable result summary](./results/chromium-2026-07-31.json).
 
+### Harness-to-report mapping
+
+The browser API returns camelCase JavaScript objects; the committed
+`shared-webgl-spike` report is a manually assembled, snake_case summary. Preserve the raw
+`verify()`, `benchmark()`, `cycleContext()`, and `snapshot()` results for both modes, then apply
+these mappings:
+
+| Harness field | Report field |
+| --- | --- |
+| `requestedCharts`, `liveCharts`, `liveContexts`, `fullyLive` | `profiles.<mode>.requested_charts`, `live_charts`, `live_contexts`, `fully_live` |
+| `snapshot().stats.createdContexts` (native) | `profiles.native.created_contexts` |
+| `verify().pass`, `canaryChecks`, `canaryFailures`, `pickChecks`, `pickFailures` | `correctness.pass`, `canary_checks`, `canary_failures`, `pick_checks`, `pick_failures` |
+| `verify().stateStress`, `cropOffsetPixels`, `timestamp` | `correctness.state_stress`, `crop_offset_pixels`, `verified_at_utc` |
+| `durationMs`, `targetFps`, `observedFps` | `benchmark.duration_ms`, `target_fps`, `observed_fps` |
+| `productiveBatches`, `expectedBatches`, `droppedIntervals` | `benchmark.productive_batches`, `expected_batches`, `dropped_intervals` |
+| `chartPresentations`, `chartPresentationsPerSecond` | `benchmark.chart_presentations`, `chart_presentations_per_second` |
+| `frameMs`, `presentMsPerChart`, `stateStress` | `benchmark.frame_ms`, `present_ms_per_chart`, `state_stress` |
+| `pointsPerChart`, `contextLossesDuringRun`, `contextRestoresDuringRun` | `benchmark.points_per_chart`, `context_losses_during_run`, `context_restores_during_run` |
+| `viewportCssPixels`, `dpr`, `environment.webgl` | `environment.viewport_css_pixels`, `device_pixel_ratio`, `webgl` |
+| Pre/post-cycle `snapshot().contextLosses`, `contextRestores`, and recovery `verify()` result | `recovery.context_losses`, `context_restores`, `live_charts_after_restore`, `correctness_after_restore` |
+
+`canvasPixels` is a range, while `environment.canvas_pixels` records one exact common chart
+size. Set `canvas_pixels.width` only when `minWidth === maxWidth`, and set
+`canvas_pixels.height` only when `minHeight === maxHeight`. If either range does not collapse,
+do not silently choose one endpoint: rerun with uniform chart sizes or extend the report schema
+to preserve the range.
+
+Run the cycle and record recovery for both profiles. If a profile cannot attempt or complete
+restoration, represent that limitation explicitly in the report and results narrative rather
+than omitting its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when
+a separate canary actually inspected the visible canvases during the loss window.
+
 Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
 Native mode can look faster after browser eviction because it is rendering fewer live charts;
 compare `fullyLive` and `chartPresentationsPerSecond`, not frame time alone.

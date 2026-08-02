@@ -1879,6 +1879,14 @@ def _validate_shared_webgl_throughput(
     expected_batches = benchmark.get("expected_batches")
     dropped_intervals = benchmark.get("dropped_intervals")
     chart_presentations = benchmark.get("chart_presentations")
+    if (
+        isinstance(chart_presentations, int)
+        and not isinstance(chart_presentations, bool)
+        and isinstance(productive_batches, int)
+        and not isinstance(productive_batches, bool)
+        and chart_presentations < productive_batches
+    ):
+        errors.append(f"{path}.chart_presentations must be >= productive_batches")
     if not (
         _is_number(duration_ms) and duration_ms > 0 and _is_number(target_fps) and target_fps > 0
     ):
@@ -1967,7 +1975,7 @@ def _validate_shared_webgl_environment(report: dict[str, Any], errors: list[str]
 
 def _validate_shared_webgl_profile(
     profile_value: Any, profile: str, errors: list[str]
-) -> tuple[Any, Any, Any, Any, Any] | None:
+) -> tuple[Any, Any, Any, Any, Any, Any] | None:
     path = f"profiles.{profile}"
     required = {
         "requested_charts",
@@ -1975,9 +1983,11 @@ def _validate_shared_webgl_profile(
         "live_contexts",
         "fully_live",
         "correctness",
+        "recovery",
         "benchmark",
     }
-    required.add("recovery" if profile == "shared" else "created_contexts")
+    if profile == "native":
+        required.add("created_contexts")
     _require_keys(profile_value, required, path, errors)
     if not isinstance(profile_value, dict):
         return None
@@ -2110,59 +2120,56 @@ def _validate_shared_webgl_profile(
                 errors,
             )
 
-    if profile == "shared":
-        recovery = profile_value.get("recovery")
-        recovery_path = f"{path}.recovery"
-        recovery_keys = {
-            "context_losses",
-            "context_restores",
-            "live_charts_after_restore",
-            "correctness_after_restore",
-            "visible_frames_during_loss_checked",
-        }
-        _require_keys(recovery, recovery_keys, recovery_path, errors)
-        if isinstance(recovery, dict):
-            for key in ("context_losses", "context_restores", "live_charts_after_restore"):
-                _require_nonnegative_integer(recovery, key, recovery_path, errors)
-            _require_boolean(recovery, "correctness_after_restore", recovery_path, errors)
-            _require_boolean(recovery, "visible_frames_during_loss_checked", recovery_path, errors)
-            losses = recovery.get("context_losses")
-            restores = recovery.get("context_restores")
-            live_after_restore = recovery.get("live_charts_after_restore")
-            if (
-                isinstance(losses, int)
-                and not isinstance(losses, bool)
-                and isinstance(restores, int)
-                and not isinstance(restores, bool)
-                and restores > losses
-            ):
-                errors.append(f"{recovery_path}.context_restores must be <= context_losses")
-            if (
-                isinstance(live_after_restore, int)
-                and not isinstance(live_after_restore, bool)
-                and isinstance(requested, int)
-                and not isinstance(requested, bool)
-                and live_after_restore > requested
-            ):
-                errors.append(
-                    f"{recovery_path}.live_charts_after_restore must be <= requested_charts"
-                )
-            if (
-                recovery.get("correctness_after_restore") is True
-                and isinstance(losses, int)
-                and not isinstance(losses, bool)
-                and isinstance(restores, int)
-                and not isinstance(restores, bool)
-                and isinstance(live_after_restore, int)
-                and not isinstance(live_after_restore, bool)
-                and isinstance(requested, int)
-                and not isinstance(requested, bool)
-                and (losses == 0 or restores != losses or live_after_restore != requested)
-            ):
-                errors.append(
-                    f"{recovery_path}.correctness_after_restore is inconsistent with recovery "
-                    "telemetry"
-                )
+    recovery = profile_value.get("recovery")
+    recovery_path = f"{path}.recovery"
+    recovery_keys = {
+        "context_losses",
+        "context_restores",
+        "live_charts_after_restore",
+        "correctness_after_restore",
+        "visible_frames_during_loss_checked",
+    }
+    _require_keys(recovery, recovery_keys, recovery_path, errors)
+    if isinstance(recovery, dict):
+        for key in ("context_losses", "context_restores", "live_charts_after_restore"):
+            _require_nonnegative_integer(recovery, key, recovery_path, errors)
+        _require_boolean(recovery, "correctness_after_restore", recovery_path, errors)
+        _require_boolean(recovery, "visible_frames_during_loss_checked", recovery_path, errors)
+        losses = recovery.get("context_losses")
+        restores = recovery.get("context_restores")
+        live_after_restore = recovery.get("live_charts_after_restore")
+        if (
+            isinstance(losses, int)
+            and not isinstance(losses, bool)
+            and isinstance(restores, int)
+            and not isinstance(restores, bool)
+            and restores > losses
+        ):
+            errors.append(f"{recovery_path}.context_restores must be <= context_losses")
+        if (
+            isinstance(live_after_restore, int)
+            and not isinstance(live_after_restore, bool)
+            and isinstance(requested, int)
+            and not isinstance(requested, bool)
+            and live_after_restore > requested
+        ):
+            errors.append(f"{recovery_path}.live_charts_after_restore must be <= requested_charts")
+        successful_live_count = requested if profile == "shared" else live
+        if (
+            recovery.get("correctness_after_restore") is True
+            and isinstance(losses, int)
+            and not isinstance(losses, bool)
+            and isinstance(restores, int)
+            and not isinstance(restores, bool)
+            and isinstance(live_after_restore, int)
+            and not isinstance(live_after_restore, bool)
+            and isinstance(successful_live_count, int)
+            and not isinstance(successful_live_count, bool)
+            and (losses == 0 or restores != losses or live_after_restore != successful_live_count)
+        ):
+            errors.append(
+                f"{recovery_path}.correctness_after_restore is inconsistent with recovery telemetry"
+            )
 
     benchmark = profile_value.get("benchmark")
     benchmark_path = f"{path}.benchmark"
@@ -2220,6 +2227,7 @@ def _validate_shared_webgl_profile(
         benchmark.get("points_per_chart"),
         benchmark.get("dense"),
         benchmark.get("target_fps"),
+        benchmark.get("expected_batches"),
         benchmark.get("state_stress"),
     )
 

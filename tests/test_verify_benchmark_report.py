@@ -64,15 +64,30 @@ def _base() -> dict:
     return {"schema_version": 2, "environment": _environment()}
 
 
-def _shared_webgl_spike_report() -> dict:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "benchmarks"
-        / "shared_webgl_spike"
-        / "results"
-        / "chromium-2026-07-31.json"
+def _shared_webgl_spike_report(results_directory: Path | None = None) -> dict:
+    results = results_directory or (
+        Path(__file__).resolve().parents[1] / "benchmarks" / "shared_webgl_spike" / "results"
     )
-    return json.loads(path.read_text(encoding="utf-8"))
+    paths = sorted(results.glob("chromium-????-??-??.json"))
+    assert paths, f"no date-stamped shared WebGL Chromium results in {results}"
+    return json.loads(paths[-1].read_text(encoding="utf-8"))
+
+
+def test_shared_webgl_spike_report_uses_latest_date_stamped_capture(tmp_path: Path) -> None:
+    (tmp_path / "chromium-2026-07-30.json").write_text(
+        json.dumps({"capture": "older"}), encoding="utf-8"
+    )
+    (tmp_path / "chromium-2026-07-31.json").write_text(
+        json.dumps({"capture": "latest"}), encoding="utf-8"
+    )
+    (tmp_path / "notes.json").write_text(json.dumps({"capture": "ignored"}), encoding="utf-8")
+
+    assert _shared_webgl_spike_report(tmp_path) == {"capture": "latest"}
+
+
+def test_shared_webgl_spike_report_fails_clearly_without_captures(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match="no date-stamped shared WebGL Chromium results"):
+        _shared_webgl_spike_report(tmp_path)
 
 
 def _category_registry(*ids: str) -> tuple[list[dict], list[dict]]:
@@ -936,6 +951,43 @@ def test_shared_webgl_spike_allows_rate_rounding_within_tolerance(tmp_path: Path
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
 
 
+def test_shared_webgl_spike_rejects_fewer_presentations_than_productive_batches(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    benchmark = payload["profiles"]["shared"]["benchmark"]
+    benchmark["chart_presentations"] = benchmark["productive_batches"] - 1
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / benchmark["duration_ms"]
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("chart_presentations must be >= productive_batches" in error for error in errors)
+
+
+def test_shared_webgl_spike_workload_identity_includes_expected_batches(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    benchmark = payload["profiles"]["native"]["benchmark"]
+    duration_ms = 4000.0
+    expected_batches = int((duration_ms * benchmark["target_fps"]) // 1000)
+    benchmark["duration_ms"] = duration_ms
+    benchmark["expected_batches"] = expected_batches
+    benchmark["dropped_intervals"] = expected_batches - benchmark["productive_batches"]
+    benchmark["observed_fps"] = benchmark["productive_batches"] * 1000 / duration_ms
+    benchmark["chart_presentations_per_second"] = (
+        benchmark["chart_presentations"] * 1000 / duration_ms
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert errors == ["shared and native benchmark workloads must match"]
+
+
 def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> None:
     payload = _shared_webgl_spike_report()
     native = payload["profiles"]["native"]
@@ -966,6 +1018,84 @@ def test_shared_webgl_spike_rejects_native_created_contexts_outside_chart_bounds
         "profiles.native.created_contexts must be between live_charts and requested_charts" in error
         for error in errors
     )
+
+
+def test_shared_webgl_spike_requires_native_recovery(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["native"].pop("recovery", None)
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("profiles.native missing keys: ['recovery']" in error for error in errors)
+
+
+def test_shared_webgl_spike_accepts_partial_native_recovery(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    native = payload["profiles"]["native"]
+    native["recovery"] = {
+        "context_losses": 1,
+        "context_restores": 1,
+        "live_charts_after_restore": native["live_charts"],
+        "correctness_after_restore": True,
+        "visible_frames_during_loss_checked": False,
+    }
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
+def test_shared_webgl_spike_rejects_inconsistent_native_recovery_success(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    native = payload["profiles"]["native"]
+    native["recovery"] = {
+        "context_losses": 1,
+        "context_restores": 1,
+        "live_charts_after_restore": native["live_charts"] - 1,
+        "correctness_after_restore": True,
+        "visible_frames_during_loss_checked": False,
+    }
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "profiles.native.recovery.correctness_after_restore is inconsistent" in error
+        for error in errors
+    )
+
+
+def test_shared_webgl_spike_rejects_multiple_shared_contexts(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["live_contexts"] = 2
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("profiles.shared.live_contexts must be 1" in error for error in errors)
+
+
+def test_shared_webgl_spike_rejects_native_context_count_mismatch(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    native = payload["profiles"]["native"]
+    native["live_contexts"] = native["live_charts"] + 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("profiles.native.live_contexts must equal live_charts" in error for error in errors)
+
+
+def test_shared_webgl_spike_rejects_decreasing_quantiles(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["benchmark"]["frame_ms"]["p99"] = 0.0
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("frame_ms quantiles must be nondecreasing" in error for error in errors)
 
 
 def test_shared_webgl_spike_rejects_inconsistent_correctness_coverage(tmp_path: Path) -> None:
@@ -1037,6 +1167,22 @@ def test_shared_webgl_spike_rejects_false_successful_recovery(
         "correctness_after_restore is inconsistent with recovery telemetry" in error
         for error in errors
     )
+
+
+def test_shared_webgl_spike_allows_recovery_to_increase_live_chart_count(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    shared = payload["profiles"]["shared"]
+    live_before_restore = shared["requested_charts"] - 1
+    shared["live_charts"] = live_before_restore
+    shared["fully_live"] = False
+    shared["correctness"]["pass"] = False
+    shared["correctness"]["canary_checks"] = live_before_restore
+    shared["correctness"]["pick_checks"] = live_before_restore * 3
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
 
 
 @pytest.mark.parametrize(
