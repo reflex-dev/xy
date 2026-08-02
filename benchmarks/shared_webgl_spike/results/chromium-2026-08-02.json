@@ -97,11 +97,13 @@
         "scope": "all 50 requested charts",
         "context_losses": 1,
         "context_restores": 1,
+        "expected_charts": 50,
         "live_charts_after_restore": 50,
         "correctness_after_restore": true,
         "visible_frames_during_loss_checked": false
       },
       "benchmark": {
+        "requested_duration_ms": 3000,
         "duration_ms": 3006.8000000715256,
         "points_per_chart": 1024,
         "dense": true,
@@ -148,12 +150,14 @@
         "scope": "the 16 charts live immediately before the cycle",
         "context_losses": 1,
         "context_restores": 1,
+        "expected_charts": 16,
         "live_charts_after_restore": 16,
         "correctness_after_restore": true,
         "visible_frames_during_loss_checked": false,
         "limitation": "Recovery covered the pre-cycle live set; it did not restore the 34 contexts already unavailable."
       },
       "benchmark": {
+        "requested_duration_ms": 3000,
         "duration_ms": 3001.1999999284744,
         "points_per_chart": 1024,
         "dense": true,

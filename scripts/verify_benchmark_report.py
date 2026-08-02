@@ -2146,27 +2146,52 @@ def _validate_shared_webgl_profile(
     recovery_keys = {
         "context_losses",
         "context_restores",
+        "expected_charts",
         "live_charts_after_restore",
         "correctness_after_restore",
         "visible_frames_during_loss_checked",
     }
     _require_keys(recovery, recovery_keys, recovery_path, errors)
     if isinstance(recovery, dict):
-        for key in ("context_losses", "context_restores", "live_charts_after_restore"):
+        for key in (
+            "context_losses",
+            "context_restores",
+            "expected_charts",
+            "live_charts_after_restore",
+        ):
             _require_nonnegative_integer(recovery, key, recovery_path, errors)
         _require_boolean(recovery, "correctness_after_restore", recovery_path, errors)
         _require_boolean(recovery, "visible_frames_during_loss_checked", recovery_path, errors)
         losses = recovery.get("context_losses")
         restores = recovery.get("context_restores")
+        expected_charts = recovery.get("expected_charts")
         live_after_restore = recovery.get("live_charts_after_restore")
         if (
-            isinstance(losses, int)
+            profile == "shared"
+            and isinstance(losses, int)
             and not isinstance(losses, bool)
             and isinstance(restores, int)
             and not isinstance(restores, bool)
             and restores > losses
         ):
             errors.append(f"{recovery_path}.context_restores must be <= context_losses")
+        if (
+            isinstance(expected_charts, int)
+            and not isinstance(expected_charts, bool)
+            and isinstance(requested, int)
+            and not isinstance(requested, bool)
+            and expected_charts > requested
+        ):
+            errors.append(f"{recovery_path}.expected_charts must be <= requested_charts")
+        if (
+            profile == "shared"
+            and isinstance(expected_charts, int)
+            and not isinstance(expected_charts, bool)
+            and isinstance(requested, int)
+            and not isinstance(requested, bool)
+            and expected_charts != requested
+        ):
+            errors.append(f"{recovery_path}.expected_charts must equal requested_charts")
         if (
             isinstance(live_after_restore, int)
             and not isinstance(live_after_restore, bool)
@@ -2175,7 +2200,6 @@ def _validate_shared_webgl_profile(
             and live_after_restore > requested
         ):
             errors.append(f"{recovery_path}.live_charts_after_restore must be <= requested_charts")
-        successful_live_count = requested if profile == "shared" else live
         if (
             recovery.get("correctness_after_restore") is True
             and isinstance(losses, int)
@@ -2184,9 +2208,28 @@ def _validate_shared_webgl_profile(
             and not isinstance(restores, bool)
             and isinstance(live_after_restore, int)
             and not isinstance(live_after_restore, bool)
-            and isinstance(successful_live_count, int)
-            and not isinstance(successful_live_count, bool)
-            and (losses == 0 or restores != losses or live_after_restore != successful_live_count)
+            and isinstance(expected_charts, int)
+            and not isinstance(expected_charts, bool)
+            and (
+                (
+                    profile == "shared"
+                    and (
+                        losses != 1
+                        or restores != 1
+                        or expected_charts != requested
+                        or live_after_restore != expected_charts
+                    )
+                )
+                or (
+                    profile == "native"
+                    and (
+                        losses == 0
+                        or restores == 0
+                        or expected_charts == 0
+                        or live_after_restore < expected_charts
+                    )
+                )
+            )
         ):
             errors.append(
                 f"{recovery_path}.correctness_after_restore is inconsistent with recovery telemetry"
@@ -2195,6 +2238,7 @@ def _validate_shared_webgl_profile(
     benchmark = profile_value.get("benchmark")
     benchmark_path = f"{path}.benchmark"
     benchmark_keys = {
+        "requested_duration_ms",
         "duration_ms",
         "points_per_chart",
         "dense",
@@ -2215,7 +2259,7 @@ def _validate_shared_webgl_profile(
     _require_keys(benchmark, benchmark_keys, benchmark_path, errors)
     if not isinstance(benchmark, dict):
         return None
-    for key in ("duration_ms", "target_fps"):
+    for key in ("requested_duration_ms", "duration_ms", "target_fps"):
         _require_positive_number(benchmark, key, benchmark_path, errors)
     for key in ("observed_fps", "chart_presentations_per_second"):
         _require_nonnegative_number(benchmark, key, benchmark_path, errors)
@@ -2248,7 +2292,7 @@ def _validate_shared_webgl_profile(
         benchmark.get("points_per_chart"),
         benchmark.get("dense"),
         benchmark.get("target_fps"),
-        benchmark.get("expected_batches"),
+        benchmark.get("requested_duration_ms"),
         benchmark.get("state_stress"),
     )
 

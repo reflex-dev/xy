@@ -5,7 +5,8 @@ hardware-GPU rows into one table.
 
 ## Setup
 
-Use Python 3.12, the repository Rust toolchain, Node 22, and Playwright 1.48:
+Use Python 3.12, the repository Rust toolchain, Node 22, and the Playwright version pinned by
+`package-lock.json` (currently 1.61.1):
 
 ```bash
 cargo build --release

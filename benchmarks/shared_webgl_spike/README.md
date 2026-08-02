@@ -79,13 +79,19 @@ these mappings:
 | `snapshot().stats.createdContexts` (native) | `profiles.native.created_contexts` |
 | `verify().pass`, `canaryChecks`, `canaryFailures`, `pickChecks`, `pickFailures` | `correctness.pass`, `canary_checks`, `canary_failures`, `pick_checks`, `pick_failures` |
 | `verify().stateStress`, `cropOffsetPixels`, `timestamp` | `correctness.state_stress`, `crop_offset_pixels`, `verified_at_utc` |
-| `durationMs`, `targetFps`, `observedFps` | `benchmark.duration_ms`, `target_fps`, `observed_fps` |
+| `requestedDurationMs`, `durationMs`, `targetFps`, `observedFps` | `benchmark.requested_duration_ms`, `benchmark.duration_ms`, `benchmark.target_fps`, `benchmark.observed_fps` |
 | `productiveBatches`, `expectedBatches`, `droppedIntervals` | `benchmark.productive_batches`, `expected_batches`, `dropped_intervals` |
 | `chartPresentations`, `chartPresentationsPerSecond` | `benchmark.chart_presentations`, `chart_presentations_per_second` |
 | `frameMs`, `presentMsPerChart`, `stateStress` | `benchmark.frame_ms`, `present_ms_per_chart`, `state_stress` |
 | `pointsPerChart`, `contextLossesDuringRun`, `contextRestoresDuringRun` | `benchmark.points_per_chart`, `context_losses_during_run`, `context_restores_during_run` |
-| `viewportCssPixels`, `dpr`, `environment.webgl` | `environment.viewport_css_pixels`, `device_pixel_ratio`, `webgl` |
-| Pre/post-cycle `snapshot().contextLosses`, `contextRestores`, and recovery `verify()` result | `recovery.context_losses`, `context_restores`, `live_charts_after_restore`, `correctness_after_restore` |
+| `viewportCssPixels`, `dpr` | `environment.viewport_css_pixels`, `device_pixel_ratio` |
+| `benchmark().environment.webgl.vendor`, `renderer`, `version`, `shadingLanguageVersion` | `environment.webgl.vendor`, `renderer`, `version`, `shading_language_version` |
+| Post-cycle `snapshot().contextLosses` minus pre-cycle `snapshot().contextLosses` | `recovery.context_losses` |
+| Post-cycle `snapshot().contextRestores` minus pre-cycle `snapshot().contextRestores` | `recovery.context_restores` |
+| Post-cycle `snapshot().lastCheck.expectedCharts`, `lastCheck.pass`, and `stats.liveCharts` | `recovery.expected_charts`, `recovery.correctness_after_restore`, `recovery.live_charts_after_restore` |
+
+`requestedDurationMs` is the configured duration passed to `benchmark()`; `durationMs` is the
+observed elapsed time. Keep both values distinct in the report.
 
 `canvasPixels` is a range, while `environment.canvas_pixels` records one exact common chart
 size. Set `canvas_pixels.width` only when `minWidth === maxWidth`, and set
@@ -93,10 +99,41 @@ size. Set `canvas_pixels.width` only when `minWidth === maxWidth`, and set
 do not silently choose one endpoint: rerun with uniform chart sizes or extend the report schema
 to preserve the range.
 
-Run the cycle and record recovery for both profiles. If a profile cannot attempt or complete
-restoration, represent that limitation explicitly in the report and results narrative rather
-than omitting its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when
-a separate canary actually inspected the visible canvases during the loss window.
+Run the cycle and record recovery for both profiles. Take one `snapshot()` immediately before
+`cycleContext()` and another after it completes. `contextLosses` and `contextRestores` are
+cumulative lifetime counters, so report each recovery value as the post-cycle counter minus its
+pre-cycle counterpart; do not copy the post-cycle total directly. The post-cycle snapshot's
+`lastCheck` is the recovery verification: map its `expectedCharts` and `pass` values alongside
+`stats.liveCharts` as shown above. If a profile cannot attempt or complete restoration,
+represent that limitation explicitly in the report and results narrative rather than omitting
+its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when a separate
+canary actually inspected the visible canvases during the loss window.
+
+### Governed reference-hardware capture
+
+Use the versions prescribed by the repository [benchmark runbook](../README.md), start the
+static server with Python 3.12, and run the capture utility under Node 22. It enforces at least
+three repetitions and launches a fresh Chromium process for every shared or native profile run:
+
+```bash
+# Terminal 1:
+python3.12 -m http.server 4173 --directory benchmarks/shared_webgl_spike
+
+# Terminal 2, from the repository root:
+PLAYWRIGHT_CHROMIUM="$(npx --yes node@22 -e \
+  'console.log(require("playwright").chromium.executablePath())')"
+npx --yes node@22 benchmarks/shared_webgl_spike/capture.mjs \
+  --chromium "$PLAYWRIGHT_CHROMIUM" \
+  --repetitions 3 \
+  --duration-ms 3000 \
+  --output-dir benchmarks/shared_webgl_spike/results/raw/chromium-YYYY-MM-DD
+```
+
+Every profile/repetition is written immediately as raw JSON, including failed attempts. The
+same directory receives `summary-input.json`, whose numeric benchmark fields are medians of the
+successful cold-process runs; rate and interval fields are re-derived from those medians so the
+published report remains internally consistent. Commit the capture utility and schema first,
+then run it from that clean revision and record that revision in the final report.
 
 Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
 Native mode can look faster after browser eviction because it is rendering fewer live charts;

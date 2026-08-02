@@ -1600,6 +1600,7 @@ class ExperimentApp {
     if (!this.backend || this.rebuilding || !this.beginOperation("benchmark")) return null;
     const wasStreaming = this.ui.streaming.checked;
     try {
+      const requestedDurationMs = milliseconds;
       this.ui.streaming.checked = true;
       clearSamples(this.frameSamples);
       clearSamples(this.presentSamples);
@@ -1613,7 +1614,7 @@ class ExperimentApp {
       this.setStatus(
         `Benchmarking ${this.mode} mode for ${(milliseconds / 1000).toFixed(1)}s…`,
       );
-      await wait(milliseconds);
+      await wait(requestedDurationMs);
       const elapsed = performance.now() - start;
       const stats = this.backend.getStats();
       const productiveBatches = this.productiveBatchesTotal - startBatches;
@@ -1623,6 +1624,7 @@ class ExperimentApp {
       const chartSizes = this.charts.map((chart) => [chart.pixelWidth, chart.pixelHeight]);
       const result = {
         mode: this.mode,
+        requestedDurationMs,
         durationMs: elapsed,
         requestedCharts: stats.requestedCharts,
         liveCharts: stats.liveCharts,
