@@ -281,7 +281,7 @@ python3 -m http.server 4173 --directory benchmarks/shared_webgl_spike
 
 # Terminal 2:
 make check-benchmark-report \
-  BENCHMARK_JSON=benchmarks/shared_webgl_spike/results/chromium-2026-07-31.json \
+  BENCHMARK_JSON=benchmarks/shared_webgl_spike/results/chromium-2026-08-02.json \
   BENCHMARK_KIND=shared-webgl-spike
 ```
 

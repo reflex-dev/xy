@@ -64,7 +64,7 @@ window.__sharedWebglExperiment.snapshot();
 Results are also exposed as `window.__LAST_CHECK` and `window.__LAST_BENCHMARK`.
 The captured run used for this spike is preserved as both a
 [readable report](./RESULTS.md) and a
-[machine-readable result summary](./results/chromium-2026-07-31.json).
+[machine-readable result summary](./results/chromium-2026-08-02.json).
 
 ### Harness-to-report mapping
 

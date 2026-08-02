@@ -998,6 +998,7 @@ def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> 
     native["correctness"]["canary_checks"] = native["requested_charts"]
     native["correctness"]["pick_checks"] = native["requested_charts"] * 3
     native["correctness"].pop("availability_failure")
+    native["recovery"]["live_charts_after_restore"] = native["requested_charts"]
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []

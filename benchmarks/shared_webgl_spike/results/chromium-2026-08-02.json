@@ -26,7 +26,7 @@
     }
   ],
   "environment": {
-    "generated_at_utc": "2026-07-31T23:14:14Z",
+    "generated_at_utc": "2026-08-02T19:56:47Z",
     "python": {
       "version": "3.14.6",
       "implementation": "CPython",
@@ -52,9 +52,9 @@
     "xy_backend": null,
     "browser_renderer": "hardware",
     "git": {
-      "commit": "2e169101f16cfdbe4881a704e3fe095379dc7b9e",
+      "commit": "81d9e4bfac173d2b8fe8cdef4a6eda9027e38847",
       "branch": "agent/shared-webgl-spike",
-      "dirty": true
+      "dirty": false
     },
     "browser": "Codex in-app browser",
     "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
@@ -66,13 +66,13 @@
       "shading_language_version": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)"
     },
     "viewport_css_pixels": {
-      "width": 2240,
-      "height": 1284
+      "width": 1164,
+      "height": 655
     },
-    "device_pixel_ratio": 1.1,
+    "device_pixel_ratio": 1.100000023841858,
     "canvas_pixels": {
-      "width": 163,
-      "height": 73
+      "width": 146,
+      "height": 66
     }
   },
   "profiles": {
@@ -90,9 +90,11 @@
         "crop_offset_pixels": 17,
         "state_stress": true,
         "state_stress_method": "sequential-poison-between-chart-renders",
-        "verified_at_utc": "2026-07-31T23:12:10Z"
+        "verified_at_utc": "2026-08-02T19:55:06.247Z"
       },
       "recovery": {
+        "attempted": true,
+        "scope": "all 50 requested charts",
         "context_losses": 1,
         "context_restores": 1,
         "live_charts_after_restore": 50,
@@ -100,23 +102,23 @@
         "visible_frames_during_loss_checked": false
       },
       "benchmark": {
-        "duration_ms": 3001.2999999523163,
+        "duration_ms": 3006.8000000715256,
         "points_per_chart": 1024,
         "dense": true,
         "target_fps": 60,
-        "observed_fps": 48.978775864570515,
-        "productive_batches": 147,
+        "observed_fps": 57.53625116265953,
+        "productive_batches": 173,
         "expected_batches": 180,
-        "dropped_intervals": 33,
-        "chart_presentations": 7350,
-        "chart_presentations_per_second": 2448.938793228526,
+        "dropped_intervals": 7,
+        "chart_presentations": 8650,
+        "chart_presentations_per_second": 2876.812558132977,
         "frame_ms": {
-          "p50": 1.2000000476837158,
-          "p95": 1.3000000715255737,
-          "p99": 1.5
+          "p50": 16.699999928474426,
+          "p95": 18.899999976158142,
+          "p99": 23.700000047683716
         },
         "present_ms_per_chart": {
-          "p50": 0.0,
+          "p50": 0,
           "p95": 0.10000002384185791
         },
         "state_stress": false,
@@ -139,32 +141,33 @@
         "pick_failures": 0,
         "state_stress": true,
         "state_stress_method": "poisoned-prime-then-inspected-render",
-        "verified_at_utc": "2026-07-31T23:14:14Z"
+        "verified_at_utc": "2026-08-02T19:55:52.042Z"
       },
       "recovery": {
-        "attempted": false,
-        "context_losses": 0,
-        "context_restores": 0,
+        "attempted": true,
+        "scope": "the 16 charts live immediately before the cycle",
+        "context_losses": 1,
+        "context_restores": 1,
         "live_charts_after_restore": 16,
-        "correctness_after_restore": false,
+        "correctness_after_restore": true,
         "visible_frames_during_loss_checked": false,
-        "limitation": "No native recovery cycle was captured; the 34 unavailable contexts were not restored."
+        "limitation": "Recovery covered the pre-cycle live set; it did not restore the 34 contexts already unavailable."
       },
       "benchmark": {
-        "duration_ms": 3000.5999999046326,
+        "duration_ms": 3001.1999999284744,
         "points_per_chart": 1024,
         "dense": true,
         "target_fps": 60,
-        "observed_fps": 59.32146904141083,
-        "productive_batches": 178,
+        "observed_fps": 59.9760095975909,
+        "productive_batches": 180,
         "expected_batches": 180,
-        "dropped_intervals": 2,
-        "chart_presentations": 2848,
-        "chart_presentations_per_second": 949.1435046625733,
+        "dropped_intervals": 0,
+        "chart_presentations": 2880,
+        "chart_presentations_per_second": 959.6161535614544,
         "frame_ms": {
           "p50": 0.2999999523162842,
-          "p95": 0.40000009536743164,
-          "p99": 0.40000009536743164
+          "p95": 0.5,
+          "p99": 0.5999999046325684
         },
         "state_stress": false,
         "context_losses_during_run": 0,
