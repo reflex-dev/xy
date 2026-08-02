@@ -30,7 +30,16 @@ from xy.components import _MARK_APPLIERS
 # `data`/`key` are resolved into arrays before or after the engine call, and
 # class/axis/animation hooks configure declarative trace metadata rather than
 # changing the shared mark geometry implementation.
-COMPOSITION_ONLY = {"data", "class_name", "key", "animation", "x_axis", "y_axis"}
+COMPOSITION_ONLY = {
+    "data",
+    "class_name",
+    "key",
+    "animation",
+    "x_axis",
+    "y_axis",
+    "id",
+    "volume",
+}
 
 # factory name -> Figure method name (same-named today; the pairing is
 # explicit so a future rename must update the guard deliberately).
@@ -40,6 +49,8 @@ MARK_PAIRS = [
     ("sankey", "sankey"),
     ("line", "line"),
     ("area", "area"),
+    ("candlestick", "candlestick"),
+    ("ohlc", "ohlc"),
     ("histogram", "histogram"),
     ("hist", "hist"),
     ("bar", "bar"),
@@ -66,6 +77,8 @@ SAMPLE_MARKS = {
     "sankey": lambda: xy.sankey([("a", "b", 1.0)]),
     "line": lambda: xy.line(x=[1.0, 2.0], y=[3.0, 4.0]),
     "area": lambda: xy.area(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "candlestick": lambda: xy.candlestick(x=[1.0], open=[2.0], high=[3.0], low=[1.0], close=[2.5]),
+    "ohlc": lambda: xy.ohlc(x=[1.0], open=[2.0], high=[3.0], low=[1.0], close=[2.5]),
     "histogram": lambda: xy.histogram(values=[1.0, 2.0, 3.0]),
     "bar": lambda: xy.bar(x=["a", "b"], y=[1.0, 2.0]),
     "column": lambda: xy.column(x=["a", "b"], y=[1.0, 2.0]),

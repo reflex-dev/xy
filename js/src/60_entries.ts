@@ -1,6 +1,7 @@
 import { bytesToSpan, decodeFrame, payloadBuffers, payloadCoherent } from "./00_header";
 import { ChartView } from "./50_chartview";
 import { MARK_KINDS, markOf } from "./55_marks";
+import { LAYER_KINDS, layerOf } from "./57_layers";
 // Prototype-augmentation modules: imported for their side effect of attaching
 // methods to ChartView.prototype. Every entry point must load them before the
 // first ChartView is constructed.
@@ -96,5 +97,5 @@ export function renderStandalone(el, spec, arrayBuffer) {
 // Public API. The ESM bundle (static/index.js, anywidget's `_esm`) re-exports
 // these directly; the IIFE bundle (static/standalone.js) exposes the same
 // namespace as `window.xy`.
-export { decodeFrame, ChartView, MARK_KINDS, markOf };
+export { decodeFrame, ChartView, MARK_KINDS, markOf, LAYER_KINDS, layerOf };
 export default { render, decodeFrame };

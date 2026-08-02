@@ -242,6 +242,36 @@ export const MARK_KINDS = {
     },
   },
   area: AREA_MARK,
+  candlestick: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawCandles(g, x0, x1, y0, y1);
+    },
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
+      g.candle.wick = g.trace.style.wick_color
+        ? parseColor(view.root, g.trace.style.wick_color, g.candle.wick)
+        : null;
+    },
+  },
+  ohlc: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawOHLC(g, x0, x1, y0, y1);
+    },
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
+      g.candle.wick = g.trace.style.wick_color
+        ? parseColor(view.root, g.trace.style.wick_color, g.candle.wick)
+        : null;
+    },
+  },
 };
 
 // Registry lookup with the scatter fallback every dispatch site shares.

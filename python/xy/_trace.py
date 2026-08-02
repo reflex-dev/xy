@@ -26,6 +26,12 @@ class Trace:
     # Area-style marks keep an explicit baseline column; rectangle-like marks
     # use x0/x1/y0/y1 below.
     base: Optional[Column] = None
+    # Finance marks keep one canonical column per OHLC value. ``y`` mirrors
+    # close for shared point bookkeeping; autorange uses low/high instead.
+    open_: Optional[Column] = None
+    high: Optional[Column] = None
+    low: Optional[Column] = None
+    close: Optional[Column] = None
     # Grid-like marks (heatmap/image) ship one scalar grid plus metadata instead
     # of four rectangle columns per cell.
     grid: Optional[Column] = None
