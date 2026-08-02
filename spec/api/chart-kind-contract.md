@@ -304,6 +304,11 @@ parallel layer registry rather than branching the mark render loop or inflating
 `candlestick()`. See [`docs/quant-finance-roadmap.md`](../../docs/quant-finance-roadmap.md)
 for the detailed API and implementation plan.
 
+Derived finance-study arrays use JSON `null` for non-finite warm-up values;
+layer renderers treat those entries as gaps rather than numeric zeroes. This
+keeps the layer spec valid finite JSON for standalone export without inventing
+indicator values before a rolling window is populated.
+
 ## Registry capabilities
 
 Beyond `build`/`draw`, `MARK_KINDS` entries carry capability flags/hooks so no

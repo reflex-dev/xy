@@ -30,6 +30,9 @@ def _jsonable(value: Any) -> Any:
         return [_jsonable(v) for v in value.tolist()]
     if isinstance(value, np.bool_):
         return bool(value)
+    if isinstance(value, (float, np.floating)):
+        number = float(value)
+        return number if math.isfinite(number) else None
     if isinstance(value, Mapping):
         return {str(k): _jsonable(v) for k, v in value.items() if v is not None}
     if isinstance(value, (list, tuple)):

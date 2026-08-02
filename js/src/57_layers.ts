@@ -346,6 +346,7 @@ function drawAnchoredStudy(view, ctx, layer) {
 }
 
 function layerNumber(v) {
+  if (v === null || v === undefined || v === "") return NaN;
   const n = Number(v);
   if (Number.isFinite(n)) return n;
   const t = Date.parse(v);
@@ -370,7 +371,7 @@ function oscillatorRange(series, keys, fallback) {
     for (const key of keys) {
       const arr = Array.isArray(series && series[key]) ? series[key] : [];
       for (const raw of arr) {
-        const v = Number(raw);
+        const v = layerNumber(raw);
         if (!Number.isFinite(v)) continue;
         yMin = Math.min(yMin, v);
         yMax = Math.max(yMax, v);
@@ -455,7 +456,7 @@ function drawPaneLine(view, ctx, pane, xs, values, yMin, yMax, color, width = 1.
   const n = Math.min(xs.length, values.length);
   for (let i = 0; i < n; i++) {
     const x = view._dataToScreenX(layerNumber(xs[i]));
-    const value = Number(values[i]);
+    const value = layerNumber(values[i]);
     if (!Number.isFinite(x) || !Number.isFinite(value)) {
       started = false;
       continue;
@@ -481,13 +482,13 @@ function drawMacdHistogram(view, ctx, layer, pane, series, yMin, yMax) {
   let visible = 0;
   for (let i = 0; i < Math.min(xs.length, hist.length); i++) {
     const x = layerNumber(xs[i]);
-    const h = Number(hist[i]);
+    const h = layerNumber(hist[i]);
     if (Number.isFinite(x) && Number.isFinite(h) && x >= view.view.x0 && x <= view.view.x1) visible++;
   }
   ctx.save();
   for (let i = 0; i < Math.min(xs.length, hist.length); i++) {
     const x = view._dataToScreenX(layerNumber(xs[i]));
-    const h = Number(hist[i]);
+    const h = layerNumber(hist[i]);
     if (!Number.isFinite(x) || !Number.isFinite(h)) continue;
     const y = paneY(pane, h, yMin, yMax);
     const w = paneSlotWidth(view, pane, xs, i, visible);
@@ -506,7 +507,7 @@ function drawPaneFilledLine(view, ctx, pane, xs, values, yMin, yMax, lineColor, 
   const n = Math.min(xs.length, values.length);
   for (let i = 0; i < n; i++) {
     const x = view._dataToScreenX(layerNumber(xs[i]));
-    const value = Number(values[i]);
+    const value = layerNumber(values[i]);
     if (!Number.isFinite(x) || !Number.isFinite(value)) continue;
     pts.push([x, paneY(pane, value, yMin, yMax)]);
   }

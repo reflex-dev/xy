@@ -22,6 +22,10 @@ def _ohlcv():
     return x, open_, high, low, close, volume
 
 
+def _float_values(values):
+    return np.asarray([np.nan if value is None else value for value in values], dtype=np.float64)
+
+
 def test_finance_factories_return_components():
     assert isinstance(fc.instrument(), Instrument)
     assert isinstance(fc.finance_tools(), FinanceTools)
@@ -320,7 +324,9 @@ def test_finance_chart_materializes_oscillator_layers_from_ohlcv_source():
     assert rsi_series["guides"] == [30.0, 70.0]
     np.testing.assert_allclose(rsi_series["x"], x)
     np.testing.assert_allclose(
-        rsi_series["rsi"], [np.nan, np.nan, np.nan, 100.0, 100.0], equal_nan=True
+        _float_values(rsi_series["rsi"]),
+        [np.nan, np.nan, np.nan, 100.0, 100.0],
+        equal_nan=True,
     )
 
     macd_series = layers["macd"]["props"]["series"]
@@ -338,8 +344,12 @@ def test_finance_chart_materializes_oscillator_layers_from_ohlcv_source():
     assert stoch_series["y_min"] == 0.0
     assert stoch_series["y_max"] == 100.0
     assert stoch_series["guides"] == [20.0, 80.0]
-    np.testing.assert_allclose(stoch_series["k"], expected_stoch["k"], equal_nan=True)
-    np.testing.assert_allclose(stoch_series["d"], expected_stoch["d"], equal_nan=True)
+    np.testing.assert_allclose(
+        _float_values(stoch_series["k"]), expected_stoch["k"], equal_nan=True
+    )
+    np.testing.assert_allclose(
+        _float_values(stoch_series["d"]), expected_stoch["d"], equal_nan=True
+    )
 
 
 def test_finance_chart_materializes_bars_pattern_from_source_window():
@@ -702,6 +712,19 @@ def test_finance_chart_html_export_keeps_layer_spec():
     assert '"kind":"position"' in html
     assert '"id":"risk-1"' in html
     assert '"tools":' in html
+
+
+def test_finance_chart_html_export_serializes_indicator_warmup_as_gaps():
+    x, open_, high, low, close, volume = _ohlcv()
+    chart = fc.finance_chart(
+        fc.candlestick(x, open_, high, low, close, volume=volume, id="price"),
+        fc.rsi(source="price", window=3),
+        fc.stochastic(source="price", k_window=3, d_window=2),
+    )
+    html = chart.to_html()
+    assert '"rsi":[null,null,null,100.0,100.0]' in html
+    assert '"k":[null,null,' in html
+    assert '"d":[null,null,null,' in html
 
 
 def test_forecast_and_measurement_layer_shapes():
