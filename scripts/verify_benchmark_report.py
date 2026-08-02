@@ -87,9 +87,11 @@ DASHBOARD_SMOKE_BUDGETS_MS = {
     "scroll_pass_ms": 5_000.0,
     "steady_redraw_p95_ms": 100.0,
 }
-# Browser deadline checks may undershoot by a sub-millisecond timer tick. Keep
-# that allowance small so a materially truncated capture cannot be published.
-SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS = 1.0
+# Browser deadline checks may undershoot by a sub-millisecond timer tick. Cap
+# the allowance both absolutely and relative to the requested duration so the
+# same tolerance cannot consume most (or all) of a very short benchmark.
+SHARED_WEBGL_DURATION_SHORTFALL_MAX_MS = 1.0
+SHARED_WEBGL_DURATION_SHORTFALL_MAX_FRACTION = 0.01
 
 
 def _is_number(value: Any) -> bool:
@@ -2272,13 +2274,18 @@ def _validate_shared_webgl_profile(
     duration_ms = benchmark.get("duration_ms")
     if (
         _is_number(requested_duration_ms)
+        and requested_duration_ms > 0
         and _is_number(duration_ms)
-        and duration_ms + SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS < requested_duration_ms
+        and duration_ms
+        + min(
+            SHARED_WEBGL_DURATION_SHORTFALL_MAX_MS,
+            requested_duration_ms * SHARED_WEBGL_DURATION_SHORTFALL_MAX_FRACTION,
+        )
+        < requested_duration_ms
     ):
         errors.append(
-            f"{benchmark_path}.duration_ms must not be more than "
-            f"{SHARED_WEBGL_DURATION_SHORTFALL_TOLERANCE_MS:g} ms shorter than "
-            "requested_duration_ms"
+            f"{benchmark_path}.duration_ms must not be more than min(1 ms, 1% of "
+            "requested_duration_ms) shorter than requested_duration_ms"
         )
     for key in ("observed_fps", "chart_presentations_per_second"):
         _require_nonnegative_number(benchmark, key, benchmark_path, errors)

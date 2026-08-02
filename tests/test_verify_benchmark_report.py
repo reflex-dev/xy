@@ -941,13 +941,64 @@ def test_shared_webgl_spike_requires_positive_configured_duration(tmp_path: Path
     )
 
 
-def test_shared_webgl_spike_allows_one_millisecond_duration_shortfall(tmp_path: Path) -> None:
+def test_shared_webgl_spike_allows_one_millisecond_duration_shortfall_for_long_run(
+    tmp_path: Path,
+) -> None:
     payload = _shared_webgl_spike_report()
     benchmark = payload["profiles"]["shared"]["benchmark"]
     _set_shared_webgl_benchmark_duration(benchmark, benchmark["requested_duration_ms"] - 1.0)
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
+def test_shared_webgl_spike_scales_duration_shortfall_tolerance_for_short_run(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    for profile in payload["profiles"].values():
+        benchmark = profile["benchmark"]
+        benchmark["requested_duration_ms"] = 50.0
+        _set_shared_webgl_benchmark_duration(benchmark, 49.5)
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
+def test_shared_webgl_spike_rejects_short_run_beyond_fractional_tolerance(
+    tmp_path: Path,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    for profile in payload["profiles"].values():
+        benchmark = profile["benchmark"]
+        benchmark["requested_duration_ms"] = 50.0
+        _set_shared_webgl_benchmark_duration(benchmark, 49.499)
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "profiles.shared.benchmark.duration_ms must not be more than min(1 ms, 1% of "
+        "requested_duration_ms) shorter than requested_duration_ms" in error
+        for error in errors
+    )
+
+
+def test_shared_webgl_spike_rejects_nearly_empty_sub_millisecond_run(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    for profile in payload["profiles"].values():
+        benchmark = profile["benchmark"]
+        benchmark["requested_duration_ms"] = 0.5
+        _set_shared_webgl_benchmark_duration(benchmark, 0.001)
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "profiles.shared.benchmark.duration_ms must not be more than min(1 ms, 1% of "
+        "requested_duration_ms) shorter than requested_duration_ms" in error
+        for error in errors
+    )
 
 
 def test_shared_webgl_spike_rejects_material_duration_shortfall(tmp_path: Path) -> None:
@@ -959,8 +1010,8 @@ def test_shared_webgl_spike_rejects_material_duration_shortfall(tmp_path: Path) 
     errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
 
     assert any(
-        "profiles.shared.benchmark.duration_ms must not be more than 1 ms shorter "
-        "than requested_duration_ms" in error
+        "profiles.shared.benchmark.duration_ms must not be more than min(1 ms, 1% of "
+        "requested_duration_ms) shorter than requested_duration_ms" in error
         for error in errors
     )
 

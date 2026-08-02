@@ -178,9 +178,9 @@ async function verifyServedHarness(baseUrl, expectedFingerprints = null) {
   return { algorithm: "sha256", files };
 }
 
-function responseMatchesHarnessFile(response, baseUrl, fileName) {
+function urlMatchesHarnessFile(url, baseUrl, fileName) {
   try {
-    const actual = new URL(response.url());
+    const actual = new URL(url);
     const expected = new URL(harnessUrl(baseUrl, fileName));
     return actual.origin === expected.origin && actual.pathname === expected.pathname;
   } catch {
@@ -295,16 +295,6 @@ function outputJson(value, redactions) {
   )}\n`;
 }
 
-function urlMatchesHarnessFile(url, baseUrl, fileName) {
-  try {
-    const actual = new URL(url);
-    const expected = new URL(harnessUrl(baseUrl, fileName));
-    return actual.origin === expected.origin && actual.pathname === expected.pathname;
-  } catch {
-    return false;
-  }
-}
-
 function consoleDiagnostic(mode, phase, baseUrl, allowlistCounts, message) {
   const level = message.type();
   const text = message.text();
@@ -364,6 +354,19 @@ function captureError(message, attempt) {
 }
 
 function summarizeProfile(runs, mode) {
+  for (const run of runs) {
+    if (run.benchmark.productiveBatches <= 0) {
+      throw new Error(
+        `${mode} repetition ${run.repetition} must record a positive productive batch count`,
+      );
+    }
+    if (
+      run.benchmark.chartPresentations !==
+      run.benchmark.productiveBatches * run.benchmark.liveCharts
+    ) {
+      throw new Error(`${mode} raw presentation counts are not count-conserving`);
+    }
+  }
   const first = runs[0];
   const requestedCharts = uniformAt(
     runs,
@@ -460,15 +463,6 @@ function summarizeProfile(runs, mode) {
   );
   const targetFps = first.benchmark.targetFps;
   const expectedBatches = Math.floor((durationMs * targetFps) / 1000);
-  if (
-    !runs.every(
-      (run) =>
-        run.benchmark.chartPresentations ===
-          run.benchmark.productiveBatches * run.benchmark.liveCharts,
-    )
-  ) {
-    throw new Error(`${mode} raw presentation counts are not count-conserving`);
-  }
   const chartPresentations = productiveBatches * liveCharts;
   const benchmark = {
     requestedDurationMs: first.benchmark.requestedDurationMs,
@@ -566,7 +560,7 @@ async function captureProfile(options, runner, mode, repetition) {
     const browserResponses = new Map();
     page.on("response", (response) => {
       for (const fileName of HARNESS_FILES) {
-        if (responseMatchesHarnessFile(response, options.baseUrl, fileName)) {
+        if (urlMatchesHarnessFile(response.url(), options.baseUrl, fileName)) {
           browserResponses.set(fileName, response);
         }
       }
