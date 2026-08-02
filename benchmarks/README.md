@@ -276,7 +276,10 @@ rendered through one shared WebGL2 host with 50 native one-context-per-chart sur
 exercises state isolation, crop/orientation canaries, picking, and context restoration.
 
 ```bash
+# Terminal 1 (blocks while serving the harness):
 python3 -m http.server 4173 --directory benchmarks/shared_webgl_spike
+
+# Terminal 2:
 make check-benchmark-report \
   BENCHMARK_JSON=benchmarks/shared_webgl_spike/results/chromium-2026-07-31.json \
   BENCHMARK_KIND=shared-webgl-spike

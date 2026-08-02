@@ -869,6 +869,30 @@ def test_shared_webgl_spike_rejects_workload_mismatch(tmp_path: Path) -> None:
     assert any("workloads must match" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    ("path_parts", "value"),
+    [
+        (("requested_charts",), 51),
+        (("benchmark", "state_stress"), True),
+    ],
+)
+def test_shared_webgl_spike_workload_identity_includes_chart_count_and_state_stress(
+    tmp_path: Path,
+    path_parts: tuple[str, ...],
+    value: object,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    target = payload["profiles"]["native"]
+    for part in path_parts[:-1]:
+        target = target[part]
+    target[path_parts[-1]] = value
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any("workloads must match" in error for error in errors)
+
+
 def test_shared_webgl_spike_rejects_negative_metric(tmp_path: Path) -> None:
     payload = _shared_webgl_spike_report()
     payload["profiles"]["shared"]["benchmark"]["duration_ms"] = -1
@@ -877,6 +901,39 @@ def test_shared_webgl_spike_rejects_negative_metric(tmp_path: Path) -> None:
     errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
 
     assert any("profiles.shared.benchmark.duration_ms must be > 0" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("expected_batches", 179),
+        ("dropped_intervals", 32),
+        ("observed_fps", 49.0),
+        ("chart_presentations_per_second", 2_448.0),
+    ],
+)
+def test_shared_webgl_spike_rejects_inconsistent_throughput_metrics(
+    tmp_path: Path,
+    field: str,
+    value: int | float,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["benchmark"][field] = value
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(f"profiles.shared.benchmark.{field} is inconsistent" in error for error in errors)
+
+
+def test_shared_webgl_spike_allows_rate_rounding_within_tolerance(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    benchmark = payload["profiles"]["shared"]["benchmark"]
+    benchmark["observed_fps"] *= 1 + 5e-10
+    benchmark["chart_presentations_per_second"] *= 1 + 5e-10
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
 
 
 def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> None:
@@ -892,6 +949,23 @@ def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> 
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
+
+
+@pytest.mark.parametrize("created_contexts", [15, 51])
+def test_shared_webgl_spike_rejects_native_created_contexts_outside_chart_bounds(
+    tmp_path: Path,
+    created_contexts: int,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["native"]["created_contexts"] = created_contexts
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "profiles.native.created_contexts must be between live_charts and requested_charts" in error
+        for error in errors
+    )
 
 
 def test_shared_webgl_spike_rejects_inconsistent_correctness_coverage(tmp_path: Path) -> None:
@@ -913,6 +987,88 @@ def test_shared_webgl_spike_rejects_inaccurate_state_stress_method(tmp_path: Pat
     errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
 
     assert any("state_stress_method must be" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("context_restores", 2, "context_restores must be <= context_losses"),
+        (
+            "live_charts_after_restore",
+            51,
+            "live_charts_after_restore must be <= requested_charts",
+        ),
+    ],
+)
+def test_shared_webgl_spike_cross_checks_recovery_telemetry(
+    tmp_path: Path,
+    field: str,
+    value: int,
+    expected: str,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["recovery"][field] = value
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(expected in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"context_losses": 0, "context_restores": 0},
+        {"context_losses": 2, "context_restores": 1},
+        {"live_charts_after_restore": 49},
+    ],
+)
+def test_shared_webgl_spike_rejects_false_successful_recovery(
+    tmp_path: Path,
+    updates: dict[str, int],
+) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["recovery"].update(updates)
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "correctness_after_restore is inconsistent with recovery telemetry" in error
+        for error in errors
+    )
+
+
+@pytest.mark.parametrize(
+    "verified_at_utc",
+    [
+        "not-a-datetimeZ",
+        "2026-07-31T23:12:10",
+        "2026-07-31T23:12:10+01:00",
+    ],
+)
+def test_shared_webgl_spike_requires_valid_utc_verification_datetime(
+    tmp_path: Path,
+    verified_at_utc: str,
+) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["correctness"]["verified_at_utc"] = verified_at_utc
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
+
+    assert any(
+        "verified_at_utc must be a valid ISO datetime with a UTC offset" in error
+        for error in errors
+    )
+
+
+def test_shared_webgl_spike_accepts_explicit_zero_utc_offset(tmp_path: Path) -> None:
+    payload = _shared_webgl_spike_report()
+    payload["profiles"]["shared"]["correctness"]["verified_at_utc"] = "2026-07-31T23:12:10+00:00"
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
 
 
 def test_shared_webgl_spike_requires_browser_environment(tmp_path: Path) -> None:

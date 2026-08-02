@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -90,6 +91,16 @@ DASHBOARD_SMOKE_BUDGETS_MS = {
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_iso_utc_datetime(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.utcoffset() == timedelta(0)
 
 
 def _status_kind(value: Any) -> str:
@@ -1859,6 +1870,61 @@ def _validate_shared_webgl_quantiles(
         errors.append(f"{path} quantiles must be nondecreasing")
 
 
+def _validate_shared_webgl_throughput(
+    benchmark: dict[str, Any], path: str, errors: list[str]
+) -> None:
+    duration_ms = benchmark.get("duration_ms")
+    target_fps = benchmark.get("target_fps")
+    productive_batches = benchmark.get("productive_batches")
+    expected_batches = benchmark.get("expected_batches")
+    dropped_intervals = benchmark.get("dropped_intervals")
+    chart_presentations = benchmark.get("chart_presentations")
+    if not (
+        _is_number(duration_ms) and duration_ms > 0 and _is_number(target_fps) and target_fps > 0
+    ):
+        return
+
+    calculated_batches = math.floor((duration_ms * target_fps) / 1000)
+    if (
+        isinstance(expected_batches, int)
+        and not isinstance(expected_batches, bool)
+        and expected_batches != calculated_batches
+    ):
+        errors.append(f"{path}.expected_batches is inconsistent with duration_ms and target_fps")
+
+    rate_denominator_ms = max(1.0, duration_ms)
+    if isinstance(productive_batches, int) and not isinstance(productive_batches, bool):
+        calculated_dropped = max(0, calculated_batches - productive_batches)
+        if (
+            isinstance(dropped_intervals, int)
+            and not isinstance(dropped_intervals, bool)
+            and dropped_intervals != calculated_dropped
+        ):
+            errors.append(
+                f"{path}.dropped_intervals is inconsistent with duration_ms, target_fps, "
+                "and productive_batches"
+            )
+        calculated_fps = (productive_batches * 1000) / rate_denominator_ms
+        observed_fps = benchmark.get("observed_fps")
+        if _is_number(observed_fps) and not math.isclose(
+            observed_fps, calculated_fps, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            errors.append(
+                f"{path}.observed_fps is inconsistent with duration_ms and productive_batches"
+            )
+
+    if isinstance(chart_presentations, int) and not isinstance(chart_presentations, bool):
+        calculated_rate = (chart_presentations * 1000) / rate_denominator_ms
+        presentation_rate = benchmark.get("chart_presentations_per_second")
+        if _is_number(presentation_rate) and not math.isclose(
+            presentation_rate, calculated_rate, rel_tol=1e-9, abs_tol=1e-9
+        ):
+            errors.append(
+                f"{path}.chart_presentations_per_second is inconsistent with duration_ms "
+                "and chart_presentations"
+            )
+
+
 def _validate_shared_webgl_environment(report: dict[str, Any], errors: list[str]) -> None:
     env = report.get("environment")
     required = {
@@ -1901,7 +1967,7 @@ def _validate_shared_webgl_environment(report: dict[str, Any], errors: list[str]
 
 def _validate_shared_webgl_profile(
     profile_value: Any, profile: str, errors: list[str]
-) -> tuple[Any, Any, Any] | None:
+) -> tuple[Any, Any, Any, Any, Any] | None:
     path = f"profiles.{profile}"
     required = {
         "requested_charts",
@@ -1939,6 +2005,19 @@ def _validate_shared_webgl_profile(
         errors.append(f"{path}.live_contexts must be 1 while shared charts are live")
     if profile == "native":
         _require_nonnegative_integer(profile_value, "created_contexts", path, errors)
+        created = profile_value.get("created_contexts")
+        if (
+            isinstance(created, int)
+            and not isinstance(created, bool)
+            and isinstance(requested, int)
+            and not isinstance(requested, bool)
+            and isinstance(live, int)
+            and not isinstance(live, bool)
+            and not (live <= created <= requested)
+        ):
+            errors.append(
+                f"{path}.created_contexts must be between live_charts and requested_charts"
+            )
         if isinstance(live, int) and not isinstance(live, bool) and contexts != live:
             errors.append(f"{path}.live_contexts must equal live_charts")
 
@@ -1977,9 +2056,9 @@ def _validate_shared_webgl_profile(
                 f"{correctness_path}.state_stress_method must be {expected_stress_method!r}"
             )
         verified_at_utc = correctness.get("verified_at_utc")
-        if not isinstance(verified_at_utc, str) or not verified_at_utc.endswith("Z"):
+        if not _is_iso_utc_datetime(verified_at_utc):
             errors.append(
-                f"{correctness_path}.verified_at_utc must be an ISO UTC string ending in Z"
+                f"{correctness_path}.verified_at_utc must be a valid ISO datetime with a UTC offset"
             )
         for key in ("canary_checks", "canary_failures", "pick_checks", "pick_failures"):
             _require_nonnegative_integer(correctness, key, correctness_path, errors)
@@ -2047,6 +2126,43 @@ def _validate_shared_webgl_profile(
                 _require_nonnegative_integer(recovery, key, recovery_path, errors)
             _require_boolean(recovery, "correctness_after_restore", recovery_path, errors)
             _require_boolean(recovery, "visible_frames_during_loss_checked", recovery_path, errors)
+            losses = recovery.get("context_losses")
+            restores = recovery.get("context_restores")
+            live_after_restore = recovery.get("live_charts_after_restore")
+            if (
+                isinstance(losses, int)
+                and not isinstance(losses, bool)
+                and isinstance(restores, int)
+                and not isinstance(restores, bool)
+                and restores > losses
+            ):
+                errors.append(f"{recovery_path}.context_restores must be <= context_losses")
+            if (
+                isinstance(live_after_restore, int)
+                and not isinstance(live_after_restore, bool)
+                and isinstance(requested, int)
+                and not isinstance(requested, bool)
+                and live_after_restore > requested
+            ):
+                errors.append(
+                    f"{recovery_path}.live_charts_after_restore must be <= requested_charts"
+                )
+            if (
+                recovery.get("correctness_after_restore") is True
+                and isinstance(losses, int)
+                and not isinstance(losses, bool)
+                and isinstance(restores, int)
+                and not isinstance(restores, bool)
+                and isinstance(live_after_restore, int)
+                and not isinstance(live_after_restore, bool)
+                and isinstance(requested, int)
+                and not isinstance(requested, bool)
+                and (losses == 0 or restores != losses or live_after_restore != requested)
+            ):
+                errors.append(
+                    f"{recovery_path}.correctness_after_restore is inconsistent with recovery "
+                    "telemetry"
+                )
 
     benchmark = profile_value.get("benchmark")
     benchmark_path = f"{path}.benchmark"
@@ -2087,6 +2203,7 @@ def _validate_shared_webgl_profile(
         _require_nonnegative_integer(benchmark, key, benchmark_path, errors)
     _require_boolean(benchmark, "dense", benchmark_path, errors)
     _require_boolean(benchmark, "state_stress", benchmark_path, errors)
+    _validate_shared_webgl_throughput(benchmark, benchmark_path, errors)
     _validate_shared_webgl_quantiles(
         benchmark.get("frame_ms"),
         f"{benchmark_path}.frame_ms",
@@ -2099,9 +2216,11 @@ def _validate_shared_webgl_profile(
             present, f"{benchmark_path}.present_ms_per_chart", ("p50", "p95"), errors
         )
     return (
+        profile_value.get("requested_charts"),
         benchmark.get("points_per_chart"),
         benchmark.get("dense"),
         benchmark.get("target_fps"),
+        benchmark.get("state_stress"),
     )
 
 

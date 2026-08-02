@@ -618,7 +618,7 @@ footer {
 
 @media (max-width: 1280px) {
   .chart-grid--dense {
-    grid-template-columns: repeat(8, minmax(108px, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 }
 

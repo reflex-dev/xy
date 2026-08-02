@@ -9,6 +9,12 @@ The machine-readable capture is
 [`results/chromium-2026-07-31.json`](./results/chromium-2026-07-31.json).
 The charts in this run use the spike's synthetic renderer, not production xy `ChartView`.
 
+This committed capture is not exactly reproducible from Git alone. It records
+`environment.git.dirty: true` at
+`environment.git.commit: 2e169101f16cfdbe4881a704e3fe095379dc7b9e`, while `base_commit` is `d505ef57`.
+Because the run included uncommitted changes, neither revision reconstructs the exact benchmark
+code that produced these numbers.
+
 ## Outcome
 
 | | Shared GLHost | Native contexts |
@@ -33,13 +39,18 @@ and produced about 2.6× as many useful chart presentations per second.
 - 150 exact encoded-ID pick checks passed.
 - Verification forced a 17-pixel non-zero source crop from the grow-only host canvas.
 - A deliberate `WEBGL_lose_context` cycle rebuilt the shared programs and all 50 per-chart GPU
-  object sets, then passed the full checks again. This capture did not inspect the visible 2D
-  canvases during the 650 ms loss window, so visible-frame retention remains unverified.
+  object sets, then passed the full checks again, verifying restoration of all clients. The
+  capture records `recovery.visible_frames_during_loss_checked: false`: it did not inspect the
+  visible 2D canvases during the 650 ms loss window, so it does not verify visible-state
+  preservation during the loss.
 
 ## Three-second production-profile benchmarks
 
-Both timing runs used the dense viewport with 1,024 points per chart. State poisoning was off for
-the timing runs; correctness checks always turn it on.
+Both timing runs used the dense viewport with 1,024 points per chart. Both profiles record
+`correctness.state_stress: true` but `benchmark.state_stress: false`. The timed runs therefore
+omitted the deliberate poison/reset stress workload used by correctness, although every timed
+render still executed its backend's normal `beginPass` GL resets. The shared throughput and its
+roughly 2.6× ratio over native are feasibility-harness measurements, not production estimates.
 
 | Metric | Shared GLHost | Native contexts |
 | --- | ---: | ---: |
