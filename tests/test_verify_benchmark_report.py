@@ -64,13 +64,153 @@ def _base() -> dict:
     return {"schema_version": 2, "environment": _environment()}
 
 
-def _shared_webgl_spike_report(results_directory: Path | None = None) -> dict:
-    results = results_directory or (
-        Path(__file__).resolve().parents[1] / "benchmarks" / "shared_webgl_spike" / "results"
-    )
-    paths = sorted(results.glob("chromium-????-??-??.json"))
-    assert paths, f"no date-stamped shared WebGL Chromium results in {results}"
-    return json.loads(paths[-1].read_text(encoding="utf-8"))
+def _shared_webgl_spike_report() -> dict:
+    """Return a canonical synthetic report with no captured-machine data."""
+    category = {
+        "id": "many_chart_dashboards",
+        "name": "Synthetic many-chart dashboard",
+        "why": "exercise shared WebGL report validation",
+        "metrics": "synthetic chart availability and submission timing",
+        "harness": "synthetic/shared_webgl_fixture",
+        "status": "tracked",
+        "goal": "cover the shared WebGL schema without loading a benchmark artifact",
+    }
+    environment = {
+        "generated_at_utc": "2000-01-01T00:00:00Z",
+        "python": {
+            "version": "synthetic-python",
+            "implementation": "synthetic-runtime",
+            "compiler": "synthetic-compiler",
+        },
+        "platform": {
+            "system": "SyntheticOS",
+            "release": "test-release",
+            "version": "test-version",
+            "machine": "test-machine",
+            "processor": "test-processor",
+        },
+        "cpu_count": 1,
+        "package_versions": {"xy": None, "playwright": "synthetic-playwright"},
+        "executables": {
+            "node": "synthetic-node",
+            "rustc": "synthetic-rustc",
+            "cargo": "synthetic-cargo",
+            "chromium": "synthetic-chromium",
+        },
+        "xy_backend": None,
+        "browser_renderer": "software-gl",
+        "git": {"commit": None, "branch": None, "dirty": False},
+        "browser": "Synthetic Browser",
+        "user_agent": "SyntheticBrowser/1.0",
+        "browser_platform": "SyntheticPlatform",
+        "webgl": {
+            "vendor": "Synthetic WebGL vendor",
+            "renderer": "Synthetic WebGL renderer",
+            "version": "Synthetic WebGL 2",
+            "shading_language_version": "Synthetic GLSL ES 3",
+        },
+        "viewport_css_pixels": {"width": 800, "height": 600},
+        "device_pixel_ratio": 1,
+        "canvas_pixels": {"width": 100, "height": 50},
+    }
+    return {
+        "schema_version": 2,
+        "kind": "shared-webgl-spike",
+        "source_issue": "https://example.invalid/issues/synthetic-shared-webgl",
+        "base_commit": "synthetic-base",
+        "benchmark_categories": [category],
+        "tracked_categories": [dict(category)],
+        "environment": environment,
+        "profiles": {
+            "shared": {
+                "requested_charts": 10,
+                "live_charts": 10,
+                "live_contexts": 1,
+                "fully_live": True,
+                "correctness": {
+                    "pass": True,
+                    "canary_checks": 10,
+                    "canary_failures": 0,
+                    "pick_checks": 30,
+                    "pick_failures": 0,
+                    "crop_offset_pixels": 1,
+                    "state_stress": True,
+                    "state_stress_method": "sequential-poison-between-chart-renders",
+                    "verified_at_utc": "2000-01-01T00:00:00Z",
+                },
+                "recovery": {
+                    "context_losses": 1,
+                    "context_restores": 1,
+                    "expected_charts": 10,
+                    "live_charts_after_restore": 10,
+                    "correctness_after_restore": True,
+                    "visible_frames_during_loss_checked": False,
+                },
+                "benchmark": {
+                    "requested_duration_ms": 1000,
+                    "duration_ms": 1000,
+                    "points_per_chart": 100,
+                    "dense": True,
+                    "target_fps": 10,
+                    "observed_fps": 10,
+                    "productive_batches": 10,
+                    "expected_batches": 10,
+                    "dropped_intervals": 0,
+                    "chart_presentations": 100,
+                    "chart_presentations_per_second": 100,
+                    "frame_ms": {"p50": 1, "p95": 2, "p99": 3},
+                    "present_ms_per_chart": {"p50": 0.1, "p95": 0.2},
+                    "state_stress": False,
+                    "context_losses_during_run": 0,
+                    "context_restores_during_run": 0,
+                },
+            },
+            "native": {
+                "requested_charts": 10,
+                "created_contexts": 10,
+                "live_charts": 4,
+                "live_contexts": 4,
+                "fully_live": False,
+                "correctness": {
+                    "pass": False,
+                    "availability_failure": "6 synthetic charts unavailable",
+                    "canary_checks": 4,
+                    "canary_failures": 0,
+                    "pick_checks": 12,
+                    "pick_failures": 0,
+                    "state_stress": True,
+                    "state_stress_method": "poisoned-prime-then-inspected-render",
+                    "verified_at_utc": "2000-01-01T00:00:00Z",
+                },
+                "recovery": {
+                    "context_losses": 1,
+                    "context_restores": 1,
+                    "expected_charts": 4,
+                    "live_charts_after_restore": 4,
+                    "correctness_after_restore": True,
+                    "visible_frames_during_loss_checked": False,
+                },
+                "benchmark": {
+                    "requested_duration_ms": 1000,
+                    "duration_ms": 1000,
+                    "points_per_chart": 100,
+                    "dense": True,
+                    "target_fps": 10,
+                    "observed_fps": 10,
+                    "productive_batches": 10,
+                    "expected_batches": 10,
+                    "dropped_intervals": 0,
+                    "chart_presentations": 40,
+                    "chart_presentations_per_second": 40,
+                    "frame_ms": {"p50": 0.5, "p95": 1, "p99": 1.5},
+                    "state_stress": False,
+                    "context_losses_during_run": 0,
+                    "context_restores_during_run": 0,
+                },
+            },
+        },
+        "timing_scope": "synthetic JavaScript submission fixture",
+    }
 
 
 def _set_shared_webgl_benchmark_duration(benchmark: dict, duration_ms: float) -> None:
@@ -82,23 +222,6 @@ def _set_shared_webgl_benchmark_duration(benchmark: dict, duration_ms: float) ->
     benchmark["chart_presentations_per_second"] = (
         benchmark["chart_presentations"] * 1000 / duration_ms
     )
-
-
-def test_shared_webgl_spike_report_uses_latest_date_stamped_capture(tmp_path: Path) -> None:
-    (tmp_path / "chromium-2026-07-30.json").write_text(
-        json.dumps({"capture": "older"}), encoding="utf-8"
-    )
-    (tmp_path / "chromium-2026-07-31.json").write_text(
-        json.dumps({"capture": "latest"}), encoding="utf-8"
-    )
-    (tmp_path / "notes.json").write_text(json.dumps({"capture": "ignored"}), encoding="utf-8")
-
-    assert _shared_webgl_spike_report(tmp_path) == {"capture": "latest"}
-
-
-def test_shared_webgl_spike_report_fails_clearly_without_captures(tmp_path: Path) -> None:
-    with pytest.raises(AssertionError, match="no date-stamped shared WebGL Chromium results"):
-        _shared_webgl_spike_report(tmp_path)
 
 
 def _category_registry(*ids: str) -> tuple[list[dict], list[dict]]:
@@ -887,7 +1010,7 @@ def test_shared_webgl_spike_summary_names_profiles() -> None:
 
 def test_shared_webgl_spike_rejects_workload_mismatch(tmp_path: Path) -> None:
     payload = _shared_webgl_spike_report()
-    payload["profiles"]["native"]["benchmark"]["points_per_chart"] = 2048
+    payload["profiles"]["native"]["benchmark"]["points_per_chart"] = 200
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
@@ -898,7 +1021,7 @@ def test_shared_webgl_spike_rejects_workload_mismatch(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("path_parts", "value"),
     [
-        (("requested_charts",), 51),
+        (("requested_charts",), 11),
         (("benchmark", "state_stress"), True),
     ],
 )
@@ -1019,10 +1142,10 @@ def test_shared_webgl_spike_rejects_material_duration_shortfall(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("expected_batches", 179),
-        ("dropped_intervals", 32),
-        ("observed_fps", 49.0),
-        ("chart_presentations_per_second", 2_448.0),
+        ("expected_batches", 9),
+        ("dropped_intervals", 2),
+        ("observed_fps", 9.0),
+        ("chart_presentations_per_second", 99.0),
     ],
 )
 def test_shared_webgl_spike_rejects_inconsistent_throughput_metrics(
@@ -1104,8 +1227,8 @@ def test_shared_webgl_spike_workload_identity_uses_configured_duration(
 ) -> None:
     payload = _shared_webgl_spike_report()
     benchmark = payload["profiles"]["native"]["benchmark"]
-    benchmark["requested_duration_ms"] = 4000
-    _set_shared_webgl_benchmark_duration(benchmark, 4000)
+    benchmark["requested_duration_ms"] = 2000
+    _set_shared_webgl_benchmark_duration(benchmark, 2000)
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="shared-webgl-spike")
@@ -1118,7 +1241,7 @@ def test_shared_webgl_spike_allows_observed_duration_and_batches_to_differ_by_pr
 ) -> None:
     payload = _shared_webgl_spike_report()
     benchmark = payload["profiles"]["native"]["benchmark"]
-    duration_ms = 3017.0
+    duration_ms = 1200.0
     expected_batches = int((duration_ms * benchmark["target_fps"]) // 1000)
     benchmark["duration_ms"] = duration_ms
     benchmark["expected_batches"] = expected_batches
@@ -1154,7 +1277,7 @@ def test_shared_webgl_spike_allows_fully_live_native_profile(tmp_path: Path) -> 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []
 
 
-@pytest.mark.parametrize("created_contexts", [15, 51])
+@pytest.mark.parametrize("created_contexts", [3, 11])
 def test_shared_webgl_spike_rejects_native_created_contexts_outside_chart_bounds(
     tmp_path: Path,
     created_contexts: int,
@@ -1364,10 +1487,10 @@ def test_shared_webgl_spike_rejects_inaccurate_state_stress_method(tmp_path: Pat
     ("field", "value", "expected"),
     [
         ("context_restores", 2, "context_restores must be <= context_losses"),
-        ("expected_charts", 49, "expected_charts must equal requested_charts"),
+        ("expected_charts", 9, "expected_charts must equal requested_charts"),
         (
             "live_charts_after_restore",
-            51,
+            11,
             "live_charts_after_restore must be <= requested_charts",
         ),
     ],
@@ -1393,7 +1516,7 @@ def test_shared_webgl_spike_cross_checks_recovery_telemetry(
         {"context_losses": 0, "context_restores": 0},
         {"context_losses": 2, "context_restores": 1},
         {"context_losses": 2, "context_restores": 2},
-        {"live_charts_after_restore": 49},
+        {"live_charts_after_restore": 9},
     ],
 )
 def test_shared_webgl_spike_rejects_false_successful_recovery(
@@ -1437,8 +1560,8 @@ def test_shared_webgl_spike_allows_recovery_to_increase_live_chart_count(
     "verified_at_utc",
     [
         "not-a-datetimeZ",
-        "2026-07-31T23:12:10",
-        "2026-07-31T23:12:10+01:00",
+        "2000-01-01T00:00:00",
+        "2000-01-01T00:00:00+01:00",
     ],
 )
 def test_shared_webgl_spike_requires_valid_utc_verification_datetime(
@@ -1459,7 +1582,7 @@ def test_shared_webgl_spike_requires_valid_utc_verification_datetime(
 
 def test_shared_webgl_spike_accepts_explicit_zero_utc_offset(tmp_path: Path) -> None:
     payload = _shared_webgl_spike_report()
-    payload["profiles"]["shared"]["correctness"]["verified_at_utc"] = "2026-07-31T23:12:10+00:00"
+    payload["profiles"]["shared"]["correctness"]["verified_at_utc"] = "2000-01-01T00:00:00+00:00"
     path = _write_report(tmp_path, payload)
 
     assert verify_benchmark_report.validate_report(path, kind="shared-webgl-spike") == []

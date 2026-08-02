@@ -98,6 +98,10 @@ numbers into docs or posts:
 make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs
 ```
 
+The shared WebGL spike's raw captures and assembled validation report are local, untracked
+outputs. Pass their local path to `BENCHMARK_JSON`, and attach them as ephemeral CI/PR artifacts
+when reviewers need the evidence; do not add them to the repository.
+
 `BENCHMARK_KIND` accepts `auto`, `scatter-vs`, `core-2d`,
 `pyplot-vs-matplotlib`, `scatter-native`, `heatmap-native`, `kernel-native`,
 `interaction-browser`, `dashboard-browser`, `shared-webgl-spike`, `workflow-native`,

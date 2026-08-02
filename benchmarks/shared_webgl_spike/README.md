@@ -62,16 +62,15 @@ window.__sharedWebglExperiment.snapshot();
 ```
 
 Results are also exposed as `window.__LAST_CHECK` and `window.__LAST_BENCHMARK`.
-The captured run used for this spike is preserved as both a
-[readable report](./RESULTS.md) and a
-[machine-readable result summary](./results/chromium-2026-08-02.json). The six cold-process
-profile runs and generated median input are preserved in the
-[raw capture directory](./results/raw/chromium-2026-08-02/).
+The capture utility writes raw profile attempts and a generated median input to a
+caller-selected directory. These generated captures and any assembled validation report are
+local evidence, not tracked repository files. Keep them under the ignored local `results/`
+directory or attach them as ephemeral CI/PR artifacts when they are needed for review.
 
 ### Harness-to-report mapping
 
-The browser API returns camelCase JavaScript objects; the committed
-`shared-webgl-spike` report is a manually assembled, snake_case summary. Preserve the raw
+The browser API returns camelCase JavaScript objects; a local `shared-webgl-spike` validation
+report is a manually assembled, snake_case summary. Preserve the raw
 `verify()`, `benchmark()`, `cycleContext()`, and `snapshot()` results for both modes, then apply
 these mappings:
 
@@ -107,11 +106,11 @@ cumulative lifetime counters, so report each recovery value as the post-cycle co
 pre-cycle counterpart; do not copy the post-cycle total directly. The post-cycle snapshot's
 `lastCheck` is the recovery verification: map its `expectedCharts` and `pass` values alongside
 `stats.liveCharts` as shown above. If a profile cannot attempt or complete restoration,
-represent that limitation explicitly in the report and results narrative rather than omitting
-its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when a separate
-canary actually inspected the visible canvases during the loss window.
+represent that limitation explicitly in the local report and any review notes rather than
+omitting its recovery outcome. Set `visible_frames_during_loss_checked` to `true` only when a
+separate canary actually inspected the visible canvases during the loss window.
 
-### Governed reference-hardware capture
+### Governed local capture
 
 Use the versions prescribed by the repository [benchmark runbook](../README.md), start the
 static server with Python 3.12, and run the capture utility under Node 22. It enforces at least
@@ -122,13 +121,14 @@ three repetitions and launches a fresh Chromium process for every shared or nati
 python3.12 -m http.server 4173 --directory benchmarks/shared_webgl_spike
 
 # Terminal 2, from the repository root:
+CAPTURE_DIRECTORY="benchmarks/shared_webgl_spike/results/capture-$(date -u +%Y%m%dT%H%M%SZ)"
 PLAYWRIGHT_CHROMIUM="$(npx --yes node@22 -e \
   'console.log(require("playwright").chromium.executablePath())')"
 npx --yes node@22 benchmarks/shared_webgl_spike/capture.mjs \
   --chromium "$PLAYWRIGHT_CHROMIUM" \
   --repetitions 3 \
   --duration-ms 3000 \
-  --output-dir benchmarks/shared_webgl_spike/results/raw/chromium-YYYY-MM-DD
+  --output-dir "$CAPTURE_DIRECTORY/raw"
 ```
 
 Every profile/repetition is written immediately as raw JSON, including failed attempts, before
@@ -137,7 +137,20 @@ repetition. The same directory receives `summary-input.json`, whose numeric benc
 medians of the successful cold-process runs; integer counts select the lower observed middle
 value when an even number of attempts succeeds. Rate and interval fields are re-derived from
 those medians, and stable-context presentation totals are derived from productive batches times
-live charts, so the published report remains internally consistent.
+live charts, so the assembled report remains internally consistent.
+
+`capture.mjs` produces camelCase raw attempts and `summary-input.json`; it does not create the
+snake_case validation report. Use the mapping above to assemble that report locally, then verify
+it by path:
+
+```bash
+make check-benchmark-report \
+  BENCHMARK_JSON="$CAPTURE_DIRECTORY/shared-webgl-report.json" \
+  BENCHMARK_KIND=shared-webgl-spike
+```
+
+Keep both `$CAPTURE_DIRECTORY/raw` and the assembled report local or upload them as ephemeral
+review artifacts. Do not add them to the repository.
 
 The utility rejects a dirty worktree and fingerprints the served `index.html`, `experiment.js`,
 and `styles.css` against the local checkout before associating results with the Git revision. It
@@ -147,7 +160,7 @@ warning/error console messages are preserved in raw JSON. They fail the attempt 
 source-, phase-, and count-capped Chromium diagnostics: native context eviction while the 50
 contexts initialize, and the shared verifier's intentional Canvas 2D readback. Commit the capture
 utility and schema first, then run it from that clean revision and record that revision in the
-final report.
+local report.
 
 Timing around `drawImage` measures JavaScript submission cost, not completed GPU work.
 Native mode can look faster after browser eviction because it is rendering fewer live charts;
@@ -157,13 +170,13 @@ The default benchmark profile leaves **State stress** off to approximate product
 correctness check always enables state poisoning regardless of that toggle. Enable the toggle
 to benchmark the torture profile.
 
-## Scope of the result
+## Scope of the experiment
 
-The spike demonstrates that the proposed blit architecture can keep 50 synthetic chart
-surfaces live while owning one WebGL2 context. It does not establish production xy performance
-or satisfy issue #407's acceptance criteria by itself. Integration still requires `ChartView`
-to accept a host-owned context and render target, invalidate renderer caches at chart switches,
-coalesce dirty clients, and preserve xy view state through a host-wide context rebuild.
+The spike tests the proposed blit architecture with synthetic chart surfaces and one shared
+WebGL2 context. A successful local run does not establish production xy performance or satisfy
+issue #407's acceptance criteria by itself. Integration still requires `ChartView` to accept a
+host-owned context and render target, invalidate renderer caches at chart switches, coalesce
+dirty clients, and preserve xy view state through a host-wide context rebuild.
 
 The experiment intentionally leaves the dossier's §18 shared-context option marked
 unimplemented. A later production phase must update the specification when the runtime behavior
@@ -179,5 +192,5 @@ actually ships.
 - Exact-ID checks isolate one requested vertex. Interactive dense hit testing retains
   last-covered-sample semantics rather than a nearest-point oracle.
 - Context recovery rebuilds the synthetic GPU resources; it does not exercise xy pan/zoom state.
-- Timings are medians of three local cold-browser-process runs per profile and measure
-  JavaScript submission cost, not completed GPU work or an xy speedup claim.
+- The capture utility reports medians of local cold-browser-process runs and measures JavaScript
+  submission cost, not completed GPU work or an xy speedup claim.

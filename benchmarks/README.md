@@ -272,22 +272,22 @@ Each cost a debugging cycle and is load-bearing for the numbers:
 ## Shared WebGL Host Architecture Spike
 
 [`shared_webgl_spike/`](shared_webgl_spike/) is the dependency-free browser A/B harness for
-[#407](https://github.com/reflex-dev/xy/issues/407). It compares 50 synthetic chart surfaces
-rendered through one shared WebGL2 host with 50 native one-context-per-chart surfaces, and
-exercises state isolation, crop/orientation canaries, picking, and context restoration.
+[#407](https://github.com/reflex-dev/xy/issues/407). It compares synthetic chart surfaces
+rendered through one shared WebGL2 host with native one-context-per-chart surfaces, and exercises
+state isolation, crop/orientation canaries, picking, and context restoration.
+
+Follow the [governed local-capture instructions](shared_webgl_spike/README.md) to run the
+harness. After assembling the local snake_case report, validate it by path:
 
 ```bash
-# Terminal 1 (blocks while serving the harness):
-python3 -m http.server 4173 --directory benchmarks/shared_webgl_spike
-
-# Terminal 2:
 make check-benchmark-report \
-  BENCHMARK_JSON=benchmarks/shared_webgl_spike/results/chromium-2026-08-02.json \
+  BENCHMARK_JSON=/path/to/shared-webgl-report.json \
   BENCHMARK_KIND=shared-webgl-spike
 ```
 
-This is architecture evidence, not the production `ChartView` implementation or a performance
-claim for xy. The directory includes its captured report and machine-readable result.
+Local runs provide architecture evidence, not the production `ChartView` implementation or a
+performance claim for xy. The repository contains the harness and capture runner; generated raw
+captures and assembled reports remain local or are shared as ephemeral CI/PR artifacts.
 
 ## CI Software GL
 

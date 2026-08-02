@@ -805,10 +805,12 @@ release is a deliberate context loss put through the same restore path.
   express at all.
 
 The dependency-free [`benchmarks/shared_webgl_spike/`](../benchmarks/shared_webgl_spike/)
-harness records feasibility evidence for mode (b) with a synthetic renderer: 50 DOM chart
-surfaces rendered through one detached WebGL2 context and synchronously copied into 2D canvases.
-It does not change this option's **unimplemented** status; production `ChartView` integration,
-view-state recovery, scheduling, and shared data caches remain future work (#407).
+harness explores mode (b) with a synthetic renderer by comparing DOM chart surfaces copied from
+one detached WebGL2 context with native per-chart contexts. Run it locally to collect
+environment-specific evidence; generated captures are not normative or tracked repository
+artifacts. The harness does not change this option's **unimplemented** status; production
+`ChartView` integration, view-state recovery, scheduling, and shared data caches remain future
+work (#407).
 
 ## 19. Nulls, NaN, and gaps
 

@@ -18,3 +18,6 @@ node_modules/
 python/xy/static/index.js
 python/xy/static/standalone.js
 **/assets/external/
+
+# Machine-specific shared-WebGL capture outputs are local artifacts.
+benchmarks/shared_webgl_spike/results/
