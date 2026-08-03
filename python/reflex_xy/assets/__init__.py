@@ -1,6 +1,6 @@
 """Frontend assets for the Reflex component.
 
-One file ships in this package:
+One wrapper file ships in the ``xy`` distribution:
 
 - ``XYChart.jsx`` — the React wrapper (multiplexes the `/_xy` namespace onto
   the app's existing websocket and drives ChartView).

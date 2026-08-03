@@ -36,6 +36,8 @@ DEFAULT_PKG_INFO = (
     "Requires-Dist: numpy>=1.24\n"
     "Provides-Extra: matplotlib\n"
     "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n"
+    "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n"
+    "Provides-Extra: reflex\n"
 )
 
 
@@ -127,6 +129,16 @@ def test_verify_sdist_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
     verify_sdist.verify_sdist(str(sdist))
 
 
+def test_verify_sdist_accepts_zero_padded_dependency_floors(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    pkg_info = DEFAULT_PKG_INFO.replace("anywidget>=0.9", "anywidget>=0.9.0").replace(
+        "numpy>=1.24", "numpy>=1.24.0"
+    )
+    _write_sdist(sdist, pkg_info=pkg_info)
+
+    verify_sdist.verify_sdist(str(sdist))
+
+
 def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.0.1.tar.gz"
     _write_sdist(sdist, pkg_info=None)
@@ -159,17 +171,89 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             r"numpy>=1\.24",
         ),
         (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=999"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=999"),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9",
+                "Requires-Dist: anywidget>=\u0660.\u0669",
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24",
+                "Requires-Dist: numpy>=\u0661.\u0662\u0664",
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget>=0.9.dev0"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24.dev0"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget[dev]>=0.9"
+            ),
+            r"anywidget>=0\.9",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: numpy>=1.24", "Requires-Dist: numpy[typing]>=1.24"
+            ),
+            r"numpy>=1\.24",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: numpy<2\n",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.24,<3"),
+            "with no conflicts",
+        ),
+        (
             DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.8\n",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("reflex>=0.9.6", "reflex>=0.8"),
+            r"reflex>=0\.9\.6",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: reflex<0.9.6; extra == 'reflex'\n",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n",
+            "exactly one requirement",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("; extra == 'reflex'", ""),
+            "only xy base dependencies",
         ),
         (
             DEFAULT_PKG_INFO
             + "Requires-Dist: plotly>=5; extra == 'bench'\nProvides-Extra: bench\n",
-            "only xy runtime dependencies",
+            "only xy base dependencies",
         ),
         (
             DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
-            "only the matplotlib published extra",
+            "Provides-Extra: matplotlib and reflex",
         ),
         (
             DEFAULT_PKG_INFO.replace(
@@ -179,7 +263,11 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
         ),
         (
             DEFAULT_PKG_INFO.replace("Provides-Extra: matplotlib\n", ""),
-            "only the matplotlib published extra",
+            "Provides-Extra: matplotlib and reflex",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
+            "Provides-Extra: matplotlib and reflex",
         ),
     ],
 )
@@ -231,6 +319,14 @@ def test_verify_sdist_requires_pyplot_compat_runtime_files(
         verify_sdist.verify_sdist(str(sdist))
 
 
+def test_verify_sdist_rejects_missing_reflex_integration(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/reflex_xy/assets/XYChart.jsx"})
+
+    with pytest.raises(AssertionError, match="reflex_xy"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -265,6 +361,22 @@ def test_verify_sdist_rejects_partial_type_marker(tmp_path: Path) -> None:
     _write_sdist(sdist, replacements={"python/xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_reflex_type_marker(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/reflex_xy/py.typed"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_partial_reflex_type_marker(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, replacements={"python/reflex_xy/py.typed": "partial\n"})
+
+    with pytest.raises(AssertionError, match="reflex_xy/py\\.typed"):
         verify_sdist.verify_sdist(str(sdist))
 
 

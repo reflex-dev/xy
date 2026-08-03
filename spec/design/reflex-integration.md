@@ -1,12 +1,13 @@
 # Reflex integration — design
 
-Status: **prototype landed** (`python/reflex-xy`, tests under
+Status: **implementation landed** (`python/reflex_xy`, tests under
 `tests/reflex_adapter/`). This document is the authoritative design; the
 prototype implements it end to end over Reflex 0.9.6. The deliverable is an
-external adapter package (`reflex-xy`) that makes a xy figure a
-first-class Reflex component with the same performance contract as the
-notebook path: screen-bounded binary wire (§29), kernel-side canonical data
-(§27), stale-while-revalidate interaction (§17).
+integration bundled in the `xy` distribution and installed with
+`xy[reflex]`. It makes a xy figure a first-class Reflex component with the
+same performance contract as the notebook path: screen-bounded binary wire
+(§29), kernel-side canonical data (§27), stale-while-revalidate interaction
+(§17).
 
 Two decisions define this revision (superseding the HTTP-routes draft — see
 §8 for the audit trail):
@@ -141,21 +142,49 @@ in `spec/design/wire-protocol.md`.
 
 ```
 client -> server (namespace /_xy)
-  sub     {fig, px?, mid}       subscribe; join figure room; reply `payload`
-  unsub   {fig, mid}            leave the room
-  msg     {fig, mid, m}         one xy.channel.handle_message dispatch
+  sub     {fig, px?, mid?}      subscribe; join figure room; reply `payload`
+  unsub   {fig}                 leave the room
+  msg     {fig, v?, mid?, m}    one xy.channel.handle_message dispatch
 
 server -> client
-  payload {fig, version, spec, buffers}   first paint / full refresh
-  msg     {fig, mid?, message, buffers}   reply (mid echoed) or push (no mid)
-  err     {fig, error}                    unknown/foreign token, rebuild failed
+  payload {fig, version, spec, buffers, mid?}   first paint / full refresh
+  msg     {fig, version?, mid?, message, buffers}   reply or push (no mid)
+  err     {fig, error, resync?}           failure; resync requests a new `sub`
 ```
 
-`mid` is a per-mount id: several charts on a page share the socket, replies
-are mount-addressed, pushes are room-wide. The kernel dispatch is byte-for-
-byte the notebook dispatch — `xy.channel.handle_message` (§3.1 of the
-old draft, now shipped), run off the event loop via a worker thread (the
-Rust kernels release the GIL) under a per-figure lock.
+`mid` is a validated optional per-mount id: several charts on a page share the
+socket, so direct interaction replies and direct subscription payloads echo it
+and other mounts ignore the addressed envelope. Pushes and full-payload
+broadcasts remain unaddressed and room-wide. This prevents M same-token mounts
+from each applying all M direct subscription responses after a resync. The
+kernel dispatch is byte-for-byte the notebook dispatch —
+`xy.channel.handle_message` (§3.1 of the old draft, now shipped), run off the
+event loop via a worker thread (the Rust kernels release the GIL) under a
+per-figure lock. Namespace payload builds and interaction dispatches take the
+generation's async lock and then its synchronous figure lock, the same order as
+wired append. Caller-thread view-state writes take only the synchronous lock;
+there is no reverse acquisition. Thus payload emitter updates such as
+`shipped_sel`, interaction/drill state, append mutation/version capture, and
+row-mask construction cannot overlap for one generation, while unrelated
+figures remain independent.
+
+Each successful `sub` starts a client version epoch. The wrapper resets its
+comparison state, ignores `msg` events until the authoritative `payload`
+arrives, and then compares versions within that epoch. This permits a
+reconnect to land on a fresh worker whose rebuilt cache starts at version 1.
+Interaction replies, append pushes, and view-state pushes carry `version`.
+View-state pushes stamp the figure generation they were built against without
+advancing it. Resetting an epoch also cancels pending hover/view throttles, and
+the still-mounted old view cannot emit new semantic callbacks while the
+replacement payload is in flight. Generation-stamped programmatic
+view/selection pushes that arrive before the payload mounts are buffered in
+wire order and replayed only after a matching-generation payload or append;
+newer generations remain queued while addressed and older-generation messages
+are discarded. A queued matching-generation selection replacement suppresses
+the payload swap's selection-mask restoration. A replacement that arrives
+after mount invalidates every older outstanding selection sequence, including
+user gestures and payload restores, so their later replies are discarded
+before callbacks or view dispatch rather than overwriting the newer selection.
 
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
@@ -172,7 +201,7 @@ totality contract). This section records only what is specific to this host.
 
 **`view_change` does not reach the kernel here.** The wrapper intercepts the
 outgoing message and invokes the Reflex `on_view_change` prop directly
-(`dispatchView` in `python/reflex-xy/reflex_xy/assets/XYChart.jsx`), because
+(`dispatchView` in `python/reflex_xy/assets/XYChart.jsx`), because
 the namespace registers no Python-side view callback (§5). Every other request
 type crosses the socket unchanged and is dispatched by the shared
 `handle_message`.
@@ -260,9 +289,12 @@ figure before. **Reflex prod-mode multi-worker works without a figure
 server, sticky routing, or chart data in Redis** — the state that was going
 to be in Redis anyway is the recovery record.
 
-Failure stays closed: unparseable tokens, unknown states/vars, or builders
-that raise all answer `err {fig, error}`; the client logs and shows an empty
-mount rather than crashing the page.
+Failure stays closed: unparseable tokens, unknown states/vars, and builders
+that raise answer `err {fig, error}`; the client logs and shows an empty mount
+rather than crashing the page. During rebuild, payload construction or room
+fan-out failures likewise answer `err` and remove only the generation that
+attempt inserted, so a later subscription retries; a concurrent normal
+replacement is never removed.
 
 ### 3.3 Access control
 
@@ -348,12 +380,43 @@ not stable across workers — documented as dev-only, not deployment-safe.
 
 ### 3.5 Lifecycle
 
-Rooms track subscriptions; disconnects clean rooms, never figures (a page
-reload must not destroy what its reconnect will re-request). The TTL sweep
-(30 min idle, lifespan task) bounds leaked figures; state-derived figures
-transparently rebuild after a sweep, so the TTL is a memory bound, not a
-correctness bound. Rapid re-publishes coalesce: an un-started broadcast
-absorbs newer publishes and always ships the latest payload.
+Rooms track delivery subscriptions; the registry mirrors active SID membership
+only for rebuildable state tokens so it can bound version tombstones.
+Disconnects and explicit unsubs remove that membership, and the last departure
+drops any evicted scalar tombstone; opaque tokens are never tracked. A page
+reload still never destroys a live figure that its reconnect will re-request.
+The TTL sweep (30 min idle, lifespan task) bounds leaked figures; state-derived
+figures transparently rebuild after a sweep, so the TTL bounds large
+figure/data memory, not correctness. While at least one rebuildable subscriber
+remains, both the sweep and an explicit release retain only the removed token's
+scalar version so a republish on the same worker stays monotonic; the figure
+and its data buffers are released. If an interaction is the first touch after
+eviction, the namespace
+rebuilds, sends every subscribed mount a replacement payload room-wide, and
+drops the old-generation interaction for the triggering client to retry. If a
+new `sub` is first, the namespace broadcasts the rebuild to existing room
+members before joining the requester, then sends that mount one `mid`-addressed
+payload built for its own `px` hint. The direct path re-reads the current entry
+after joining the room: a normal replacement that landed before the join is
+sent directly, while a replacement after the join reaches the mount through
+the room broadcast. Concurrent same-token misses share the complete rebuild
+attempt, including failure and room fan-out: one state builder publishes and
+broadcasts one current generation, while the remaining mounts wait for that
+same result. Every interaction that observed the miss is dropped until its
+authoritative payload arrives, even when another waiter inserted the entry or
+the rebuilt version happens to match. One failed attempt answers every current
+waiter with `err`; a later arrival may start a fresh retry. The rebuild's final
+insertion carries a bounded guard that exists only for the active attempt. A
+normal dependency-driven publish or release invalidates that guard while user
+builder code is awaiting: a populated newer entry wins, and a newer absence
+rejects the stale result so a later request rebuilds from current state. No
+process-lifetime per-token revision map is retained. Subscribe/unsubscribe
+handlers for one SID/token are serialized,
+and a handler rechecks live Socket.IO membership after every await-heavy phase
+so a slow rebuild cannot restore bookkeeping after disconnect. Active append
+generations are leased; the sweep skips them until the mutation and version
+bump finish. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
+publishes and always ships the latest payload.
 
 ## 4. Updates and streaming
 
@@ -382,8 +445,12 @@ absorbs newer publishes and always ships the latest payload.
   thread) → the same `append` message the kernel builds for the notebook
   widget (which delivers it as its spec/buffers trait update, wire-protocol
   §4), pushed room-wide as a `msg` event with split-layout buffers. The
-  client applies it with the existing follow policy (refit at home, slide
-  when pinned to the live edge, hold when inspecting history).
+  push carries the post-append figure version; the client applies it only when
+  it is the next version in the active payload epoch, using the existing
+  follow policy (refit at home, slide when pinned to the live edge, hold when
+  inspecting history). A forward version gap triggers a new `sub`; an
+  over-attachment-limit append emits `err {resync: true}` for the same full-
+  payload recovery instead of leaving the client permanently behind.
 - **Interaction** (pan/zoom/hover/select): `msg` round-trips into the
   kernel, exactly the anywidget flow — tier updates, density re-bins, exact
   f64 pick rows, selection masks as binary buffers.
@@ -585,10 +652,21 @@ def remember_view(self, event: dict):
 reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
 ```
 
-Every kernel message echoes the last payload version as `v`; the namespace
-silently rejects messages for an older figure version. This prevents an
-in-flight pick or selection from resolving in a replacement coordinate space,
-while clients that omit `v` remain compatible.
+Every kernel request echoes the last payload version as `v`; the namespace
+silently rejects requests for another figure version and drops an explicitly
+malformed `v`. Omitted `v` remains accepted for compatibility. Replies echo
+the operation version; room-wide append pushes carry the newly bumped version,
+and view-state pushes carry the current, non-bumped generation. This prevents
+an in-flight pick, selection, or mask from resolving in a replacement
+coordinate space. On subscribe/reconnect, the client waits for the new payload
+before accepting messages and treats it as a fresh comparison epoch, so a
+different worker may safely begin again at version 1. Once a room payload has
+mounted, a duplicate room broadcast at that same generation is ignored; this
+lets canonical rebuild recovery retry delivery without clearing a rows mask
+that was already replayed for the generation.
+While disconnected, the wrapper does not enqueue kernel messages: socket.io
+flushes its send buffer before its `connect` callback, which would otherwise
+send old-epoch requests ahead of the resetting `sub`.
 
 ## 6. Latency budget
 
@@ -605,21 +683,21 @@ demo app models.
 ## 7. What shipped where (prototype map)
 
 ```
-python/reflex-xy/
-  reflex_xy/registry.py      token -> FigureEntry(figure, version, lock); TTL;
+python/reflex_xy/
+  registry.py                token -> FigureEntry(figure, version, lock); TTL;
                              publish/push fan-out seams; append
-  reflex_xy/tokens.py        xyv1 token grammar; builder discovery on vars
-  reflex_xy/vars.py          @reflex_xy.figure (FigureVar: builder-tracked deps)
-  reflex_xy/state_bridge.py  token -> state_manager -> builder rebuild hook
-  reflex_xy/namespace.py     XYNamespace: sub/unsub/msg, payload/msg/err,
+  tokens.py                  xyv1 token grammar; builder discovery on vars
+  vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
+  state_bridge.py            token -> state_manager -> builder rebuild hook
+  namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
                              affinity, rebuild-on-miss, binary attachments
-  reflex_xy/app.py           setup(app), XYPlugin (post_compile), lifespan
-  reflex_xy/component.py     chart() -> rx.Component (local-JSX library);
+  app.py                     setup(app), XYPlugin (post_compile), lifespan
+  component.py               chart() -> rx.Component (local-JSX library);
                              dispatches token (live) vs Chart (static tier)
-  reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
+  payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
-  reflex_xy/assets/          XYChart.jsx; links xy's installed render client
-examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
+  assets/                    XYChart.jsx; links xy's installed render client
+examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
                              hover/click/select events, a slider-driven +
                              cross-filtered histogram, a streaming line, an
                              on_view_change-computed detail chart, both
@@ -633,8 +711,8 @@ examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
                              whose category toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
-                             units, component compile, and a real-websocket
+tests/reflex_adapter/        token/registry/var/bridge/payload-asset units,
+                             component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
                              publish-broadcast/append/unsub
@@ -643,23 +721,15 @@ tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
 `inline()` (content-addressed pinned tokens, §3.4) lives in the package
 root beside `register()`/`release()`.
 
-`xy` itself stays Reflex-free (CLAUDE.md rule); the adapter depends on
-`xy` + full `reflex` for now — the 0.9.6 `reflex-base` split covers
+The core `python/xy` package itself stays Reflex-free (CLAUDE.md rule).
+`xy[reflex]` adds full `reflex>=0.9.6` for now — the `reflex-base` split covers
 components/vars but not yet App/state-manager access; revisit when a smaller
 supported surface exists.
 
-**Versioning & releases.** The adapter is its own distributable and versions
-independently of the core: its distribution version is derived from
-`reflex-xy-vX.Y.Z` git tags (uv-dynamic-versioning with
-`pattern-prefix = "reflex-xy-"`), while the core keeps bare `vX.Y.Z` — the
-pattern anchoring makes each derivation blind to the other's tags. Releases
-publish via the dedicated `.github/workflows/release-reflex-xy.yml` workflow
-(pure wheel + sdist, `scripts/verify_reflex_xy_dist.py`, trusted publishing),
-gated on a dated entry in the adapter's own `python/reflex-xy/CHANGELOG.md`
-(`scripts/check_release_version.py --package reflex-xy`); the pipeline is
-deliberately separate from release.yml's cross-compile matrix because the
-adapter has no binary artifacts. Full checklist:
-`spec/process/production-readiness.md` § "reflex-xy releases".
+**Versioning & releases.** The integration ships in every `xy` wheel and sdist,
+so it shares the core's version and bare `vX.Y.Z` release tags. The published
+extra is dependency metadata only: it adds the supported Reflex floor without
+creating another distribution or release pipeline.
 
 ## 8. Superseded: the HTTP-routes draft
 

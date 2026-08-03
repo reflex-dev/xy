@@ -10,7 +10,7 @@ composed chart is displayed, how live data reaches it, and where Python event
 handlers run.
 
 - [Reflex](/docs/xy/integrations/reflex/) covers static and state-backed charts,
-  semantic events, and streaming through the `reflex-xy` adapter.
+  semantic events, and streaming through the bundled `xy[reflex]` integration.
 - [Notebooks](/docs/xy/integrations/notebooks/) covers Jupyter, JupyterLab,
   VS Code, Colab, and Marimo through one bundled `anywidget` implementation.
 - [Matplotlib (`xy.pyplot`)](/docs/xy/integrations/matplotlib/) covers the

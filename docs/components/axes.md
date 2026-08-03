@@ -218,9 +218,30 @@ the label strings.
 ## Style Axes
 
 Axis `style=` uses a validated, cross-renderer vocabulary for grid, axis, tick,
-and label paint and geometry. Browser DOM labels can additionally be targeted
-through the chart's `tick_label` and `axis_title` slots. Use the validated axis
-style for output that must agree across HTML, SVG, and native PNG.
+and label paint and geometry. In the browser, `axis_line`, `tick_mark`,
+`tick_label`, and `axis_title` target each visible Cartesian part, while
+`axis_band` targets the invisible axis-only pan/zoom gesture region (most
+usefully for cursor utilities). Each band exposes its full axis identifier
+through `data-xy-axis-band`, such as `x`, `y`, `x2`, or `y2`. The utilities
+below distinguish the two primary axes; add matching data variants for any
+named axes in the chart. Use the validated axis style for output that must agree
+across HTML, SVG, and native PNG.
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2], [2, 5, 3]),
+    class_names={
+        "axis_line": "bg-red-500",
+        "tick_mark": "bg-emerald-500",
+        "tick_label": "text-slate-600",
+        "axis_title": "font-semibold",
+        "axis_band": (
+            "data-[xy-axis-band=x]:cursor-ew-resize "
+            "data-[xy-axis-band=y]:cursor-ns-resize"
+        ),
+    },
+)
+~~~
 
 For the scale model, including datetime and category handling, see
 [Axes and scales](/docs/xy/core-concepts/axes-and-scales/). For styling, see

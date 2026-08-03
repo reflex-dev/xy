@@ -60,7 +60,7 @@ Beyond the mark set, four capability layers now ship on `main`:
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
-- **Reflex-first reactive API (`python/reflex-xy/`):** xy figures as
+- **Reflex-first reactive API (`python/reflex_xy/`):** xy figures as
   first-class Reflex components (PR #55). Chart data multiplexes onto the
   app's existing websocket as a second socket.io namespace (`/_xy`) with
   binary column attachments (§29 — no JSON numbers, no sidecar HTTP
@@ -388,21 +388,21 @@ interaction-latency comparison, not assumed.
 The first breadth milestone — **histogram, bar/column, area, heatmap** — and
 the first statistical block — **box, violin, ECDF, error bars/bands, hexbin,
 contour, steps/stairs/stems, and facets** — are done. The first alpha
-(`v0.0.1`) is launched with a live docs site and the reflex-xy adapter on
+(`v0.0.1`) is launched with a live docs site and the bundled Reflex integration on
 `main`; the next sequence is therefore stabilization and compatibility depth,
 not re-implementing shipped primitives.
 
 1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released on PyPI;
    its Pyodide wheel is runtime-verified but is not yet publicly distributed
-   as a durable release asset (#97). The docs site is live, and the reflex-xy
+   as a durable release asset (#97). The docs site is live, and the Reflex
    adapter is on `main` — so release/distribution correctness and the
    post-launch bug backlog are the current gate, not shipping. The interaction
    correctness issues (box-zoom view collapse, double-click blanking a dense
-   Reflex scatter, reflex-xy static chart crash, FacetChart CSS leak) come
+   Reflex scatter, static integration chart crash, FacetChart CSS leak) come
    before any new chart family. The heatmap hover kernel crash is fixed
    (PR #106): the pick handler takes a dedicated grid-trace branch that returns
    row/col plus the cell value instead of indexing the edge-only x/y arrays.
-2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
+2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex_xy/`; see
    the capability-layer summary near the top of this doc). Linked facet
    interactions shipped in PR #105: `xy.facet_chart(...)` takes
    `link=True|"both"|"x"|"y"` for runtime-linked panel axes and
@@ -431,7 +431,7 @@ Parallel, non-chart-type tracks:
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
   `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
-- **Reflex-first reactive API** — **shipped** (PR #55): the reflex-xy adapter
+- **Reflex-first reactive API** — **shipped** (PR #55): the bundled integration
   described in step 2 above, with websocket-multiplexed binary transport and
   computed-var figure binding.
 
@@ -460,7 +460,7 @@ New chart kinds land as composition marks plus a family container
 
 The rectangle/polygon/grid-texture foundations, statistical breadth block,
 full mark styling, native PNG rasterizer, core polar/pie/donut composition, and
-the **Reflex-first reactive API** (reflex-xy adapter) are in place, and
+the **Reflex-first reactive API** (bundled `xy[reflex]` integration) are in place, and
 `v0.0.1` is launched with a live docs site. The next product track is
 **post-launch stabilization** (the open interaction/adapter bug backlog),
 followed by statistical compatibility depth and pie/donut depth (nesting and

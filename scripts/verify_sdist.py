@@ -19,6 +19,11 @@ from email.parser import Parser
 from pathlib import PurePosixPath
 from typing import Optional
 
+try:
+    from artifact_metadata import dependency_metadata_errors
+except ModuleNotFoundError:  # imported by tests from the repository root
+    from scripts.artifact_metadata import dependency_metadata_errors
+
 REQUIRED_FILES = {
     "CHANGELOG.md",
     "CONTRIBUTING.md",
@@ -50,6 +55,20 @@ REQUIRED_FILES = {
     "js/src/60_entries.ts",
     "package.json",
     "package-lock.json",
+    "python/reflex_xy/__init__.py",
+    "python/reflex_xy/app.py",
+    "python/reflex_xy/assets/XYChart.jsx",
+    "python/reflex_xy/assets/__init__.py",
+    "python/reflex_xy/component.py",
+    "python/reflex_xy/events.py",
+    "python/reflex_xy/namespace.py",
+    "python/reflex_xy/payload_asset.py",
+    "python/reflex_xy/py.typed",
+    "python/reflex_xy/registry.py",
+    "python/reflex_xy/selections.py",
+    "python/reflex_xy/state_bridge.py",
+    "python/reflex_xy/tokens.py",
+    "python/reflex_xy/vars.py",
     "python/xy/__init__.py",
     "python/xy/_framing.py",
     "python/xy/_native.py",
@@ -200,35 +219,6 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     return root, files
 
 
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
-        )
-    )
-
-
-def _dependency_name(requirement: str) -> str:
-    requirement = requirement.split(";", 1)[0].strip()
-    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
-    return "" if match is None else match.group(1).replace("_", "-").lower()
-
-
-def _is_matplotlib_compat_extra(requirement: str) -> bool:
-    compact = re.sub(r"\s+", "", requirement.lower()).replace('"', "'")
-    if _dependency_name(requirement) != "matplotlib" or ";" not in compact:
-        return False
-    specifier, marker = compact.split(";", 1)
-    constraints = set(specifier.removeprefix("matplotlib").split(","))
-    return constraints == {">=3.11", "<3.12"} and marker in {
-        "extra=='matplotlib'",
-        "'matplotlib'==extra",
-    }
-
-
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -248,31 +238,7 @@ def _require_pkg_info(path: str, root: str) -> None:
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
-    requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
-            for requirement in requirements
-        ):
-            missing.append(f"Requires-Dist: {package}>={minimum}")
-    unexpected_requirements = [
-        requirement
-        for requirement in requirements
-        if (
-            (_dependency_name(requirement) not in {"anywidget", "numpy"} or ";" in requirement)
-            and not _is_matplotlib_compat_extra(requirement)
-        )
-    ]
-    if unexpected_requirements:
-        missing.append(
-            "only xy runtime dependencies and the matplotlib compatibility extra "
-            f"in Requires-Dist ({unexpected_requirements})"
-        )
-    if not any(_is_matplotlib_compat_extra(requirement) for requirement in requirements):
-        missing.append("Requires-Dist: matplotlib>=3.11,<3.12; extra == 'matplotlib'")
-    provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras != ["matplotlib"]:
-        missing.append(f"only the matplotlib published extra ({provided_extras})")
+    missing.extend(dependency_metadata_errors(metadata))
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
@@ -312,7 +278,7 @@ def verify_sdist(path: str) -> None:
         if PurePosixPath(name).parts[0] not in ALLOWED_TOP_LEVEL
         or (
             PurePosixPath(name).parts[0] == "python"
-            and PurePosixPath(name).parts[:2] != ("python", "xy")
+            and PurePosixPath(name).parts[:2] not in {("python", "reflex_xy"), ("python", "xy")}
         )
         or any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
         or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
@@ -323,6 +289,7 @@ def verify_sdist(path: str) -> None:
         )
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
+    _require_exact_file(path, root, "python/reflex_xy/py.typed", b"")
     _require_file_contains(
         path,
         root,

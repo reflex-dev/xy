@@ -1080,7 +1080,8 @@ try{{
     // canvas) so filled bars/areas sit under a crisp line, not covering it.
     let axisRuleN=0;
     for (const d of vMs.labels.children){{
-      if (d.style.height==="1px" || d.style.width==="1px") axisRuleN++;
+      const style=getComputedStyle(d);
+      if (style.height==="1px" || style.width==="1px") axisRuleN++;
     }}
     const axisontop=(axisRuleN>=2)?1:0;
     vMs.destroy();holderMs.remove();

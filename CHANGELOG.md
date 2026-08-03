@@ -8,7 +8,14 @@ in the README).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-31
+
 ### Added
+- Reflex integration is now bundled in the `xy` distribution and installed as
+  `xy[reflex]`. The `reflex_xy` import namespace and JSX wrapper ship in every
+  wheel and sdist, while the extra adds the supported `reflex>=0.9.6` floor;
+  plain `xy` still has no Reflex dependency. The separate `reflex-xy`
+  distribution, version line, and release workflow have been removed.
 - Completed the phase-6/7 polar depth surface: `xy.polar_chart` now admits
   heatmap, contour, and error-bar traces alongside line/scatter/area/bar; the
   heatmap uses a fragment-stage polar inverse in the browser and the matching
@@ -28,6 +35,11 @@ in the README).
   silently leave a stale row in the CodSpeed dashboard.
 
 ### Fixed
+- Source-distribution CI and release validation now exercise both installation
+  contracts independently: a forced Cargo build must load the native backend,
+  while a cache-isolated coreless build must still import `reflex_xy`, report
+  the installed version, and raise the documented error only when compute is
+  requested.
 - Polar customization now stays consistent across the browser, SVG, and native
   raster renderers: point-anchored annotations use the joint `(theta, r)`
   projection, explicit chart padding survives the polar layout pass, gradient

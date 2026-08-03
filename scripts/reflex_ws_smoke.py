@@ -1,6 +1,6 @@
 """End-to-end probe for the Reflex integration (reflex-integration.md §1/§2).
 
-Drives headless Chromium at a *running* reflex-xy showcase app (see
+Drives headless Chromium at a *running* XY Reflex showcase app (see
 examples/reflex: `reflex run`) and asserts the load-bearing claims of the
 design:
 
@@ -291,6 +291,7 @@ def main() -> None:
                 failures.append(f"{chart_id} looks blank ({frac:.2%} < {min_ink:.0%})")
 
         # 4) deep zoom drills density -> exact points (§16 over the socket) …
+        probe.scroll_to("cloud")
         rect = probe.rect("cloud")
         cx, cy = rect["x"] + rect["w"] * 0.55, rect["y"] + rect["h"] * 0.5
         probe.mouse("mouseMoved", cx, cy)
@@ -307,10 +308,23 @@ def main() -> None:
 
         # … and hovering a drilled point closes the semantic event loop:
         # GPU pick -> socket pick round-trip -> reflex event -> state delta.
-        for dx in range(-40, 200, 8):
-            probe.mouse("mouseMoved", cx + dx / 4, cy + dx / 16)
-            time.sleep(0.12)
         try:
+            point = probe.wait_for(
+                """(() => {
+                  const v = window.__xy_views.get('cloud');
+                  if (!v || v._interactionTransitionActive()) return null;
+                  const r = v.canvas.getBoundingClientRect();
+                  for (let y = 0; y < r.height; y += 2) {
+                    for (let x = 0; x < r.width; x += 2) {
+                      if (v._pickAt(x, y)) return {x: r.left + x, y: r.top + y};
+                    }
+                  }
+                  return null;
+                })()""",
+                timeout_s=15.0,
+                label="pickable drilled point",
+            )
+            probe.mouse("mouseMoved", point["x"], point["y"])
             found_row = probe.wait_for(
                 "(document.body.innerText.match(/x=-?[0-9.]+/) || [null])[0]",
                 timeout_s=15.0,
@@ -349,7 +363,7 @@ def main() -> None:
         for failure in failures:
             print(f"  - {failure}")
         raise SystemExit(1)
-    print("\nreflex-xy websocket smoke: all checks passed")
+    print("\nxy[reflex] websocket smoke: all checks passed")
 
 
 if __name__ == "__main__":

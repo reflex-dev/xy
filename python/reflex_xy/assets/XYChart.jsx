@@ -11,10 +11,13 @@
 // same lifecycle, same auth surface, same proxy config.
 //
 // Live data protocol (namespace.py):
-//   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, mid, m}
-//   in:   payload {fig, version, spec, buffers} — buffers are ArrayBuffers
-//         msg {fig, mid?, message, buffers}     — replies carry our mid
-//         err {fig, error}
+//   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, v?, mid, m}
+//   in:   payload {fig, version, spec, buffers, mid?} — direct replies carry mid
+//         msg {fig, version?, mid?, message, buffers} — replies carry our mid
+//         err {fig, error, resync?}
+// A subscribe/reconnect starts a version epoch: no msg is applied until its
+// authoritative payload arrives. Replies and room-wide pushes carry the
+// FigureEntry version whose data they were built against.
 //
 // `src` (static) — the payload was compiled ahead of time into a binary
 // XYBF asset (payload_asset.py). Fetch it, decode the frame, and run the
@@ -43,6 +46,7 @@ import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
 const HOVER_THROTTLE_MS = 120;
 const VIEW_THROTTLE_MS = 120;
+const DEFERRED_STATE_PUSH_TYPES = new Set(["state_patch", "view_nav", "selection_rows"]);
 const dbg = (...args) =>
   DEBUG &&
   console.log(
@@ -356,9 +360,10 @@ export function XYChart(props) {
     const key = outerRef.current?.id || `src:${src}`;
     let view = null;
     let cancelled = false;
+    const controller = new AbortController();
     const handleViewChange = (event) => cbRef.current.onViewChange?.(event.detail);
     el.addEventListener("xy:view_change", handleViewChange);
-    fetch(src)
+    fetch(src, { signal: controller.signal })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.arrayBuffer();
@@ -380,6 +385,7 @@ export function XYChart(props) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
       reclaimTooltipSlot();
       if (view) view.destroy();
       view = null;
@@ -408,14 +414,44 @@ export function XYChart(props) {
     let viewTimer = null;
     let pendingView = null;
     let selectionSeq = 0;
+    const pendingSelectionSeqs = new Set();
     const restoreSelectionSeqs = new Set();
+    const invalidatedSelectionSeqs = new Set();
     const viewCallbacks = [];
+    const pendingStatePushes = [];
+    let awaitingPayload = true;
+
+    const resetEpoch = () => {
+      // Timer callbacks capture row/domain data from the preceding figure
+      // generation. Cancel them as part of the same reset as wire-version and
+      // synthetic-reply bookkeeping so no old epoch can update Reflex state.
+      if (hoverTimer !== null) clearTimeout(hoverTimer);
+      if (viewTimer !== null) clearTimeout(viewTimer);
+      hoverTimer = null;
+      viewTimer = null;
+      pendingHover = null;
+      pendingView = null;
+      pendingClickInput = null;
+      payloadVersion = null;
+      awaitingPayload = true;
+      clickInputs.clear();
+      pendingSelectionSeqs.clear();
+      restoreSelectionSeqs.clear();
+      invalidatedSelectionSeqs.clear();
+      pendingStatePushes.length = 0;
+    };
 
     const subscribe = () => {
+      // A reconnect can land on a fresh worker whose rebuilt figure starts at
+      // version 1. Versions are monotonic only within this subscription epoch.
+      resetEpoch();
       socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
     };
 
     const emitMessage = (m) => {
+      // socket.io flushes its sendBuffer before firing `connect`; never queue
+      // an old-epoch request while the namespace is disconnected.
+      if (awaitingPayload || !socket.connected) return;
       const envelope = { fig: token, mid, m };
       if (payloadVersion !== null) envelope.v = payloadVersion;
       socket.emit("msg", envelope);
@@ -433,6 +469,7 @@ export function XYChart(props) {
           ? { ...request, include_rows: true }
           : request,
       );
+      pendingSelectionSeqs.add(restore.seq);
       restoreSelectionSeqs.add(restore.seq);
       emitMessage(restore);
     };
@@ -496,7 +533,16 @@ export function XYChart(props) {
     };
 
     const dispatchView = (m) => {
-      if (!cbRef.current.onViewChange || m.source === "linked" || m.source === "republish") return;
+      // The old ChartView can still receive gestures while a reconnect/full
+      // resync is waiting for its authoritative payload. Do not let that
+      // preceding epoch arm a new trailing timer after resetEpoch cleared it.
+      if (
+        awaitingPayload
+        || !socket.connected
+        || !cbRef.current.onViewChange
+        || m.source === "linked"
+        || m.source === "republish"
+      ) return;
       if (viewTimer === null) {
         emitView(m);
         openViewWindow();
@@ -514,8 +560,10 @@ export function XYChart(props) {
           dispatchView(m);
           return;
         }
+        if (awaitingPayload || !socket.connected) return;
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
           m = withSelectionSeq(m);
+          pendingSelectionSeqs.add(m.seq);
           lastSelect = m.type === "select_clear" ? null : m;
           if (cbRef.current.onSelectEnd) m = { ...m, include_rows: true };
         }
@@ -554,8 +602,117 @@ export function XYChart(props) {
       return spec.buffer_layout === "split" ? spans : spans[0];
     };
 
+    const discardPendingReply = (message) => {
+      if (typeof message?.seq !== "string") return;
+      if (message.seq.startsWith("click:")) clickInputs.delete(message.seq);
+      pendingSelectionSeqs.delete(message.seq);
+      restoreSelectionSeqs.delete(message.seq);
+      invalidatedSelectionSeqs.delete(message.seq);
+    };
+
+    const dispatchToView = (message, buffers) => {
+      for (const cb of [...viewCallbacks]) cb(message, buffers);
+    };
+
+    const statePushGeneration = (data, message) => (
+      data.mid == null &&
+      Number.isInteger(data.version) &&
+      DEFERRED_STATE_PUSH_TYPES.has(message.type)
+        ? data.version
+        : null
+    );
+
+    const selectionPushReplacesSelection = (message) =>
+      message.type === "selection_rows" ||
+      (
+        message.type === "state_patch" &&
+        Object.prototype.hasOwnProperty.call(message.state || {}, "selection")
+      );
+
+    const invalidateSelectionReplies = () => {
+      for (const seq of pendingSelectionSeqs) invalidatedSelectionSeqs.add(seq);
+      pendingSelectionSeqs.clear();
+      restoreSelectionSeqs.clear();
+    };
+
+    const invalidatePayloadReplies = () => {
+      // An addressed payload can replace px-dependent shipped rows without
+      // advancing the FigureEntry generation. Replies already in flight still
+      // carry that same version, so version gating alone cannot prove that
+      // their indices belong to the newly mounted payload.
+      pendingClickInput = null;
+      clickInputs.clear();
+      invalidateSelectionReplies();
+    };
+
+    const deferStatePush = (data, message) => {
+      // Programmatic view/selection pushes are not part of the authoritative
+      // figure payload. Preserve only generation-stamped room events; replies
+      // and appends remain unsafe to defer across payload mounts.
+      const generation = statePushGeneration(data, message);
+      if (generation !== null) {
+        pendingStatePushes.push({ generation, message, buffers: data.buffers || [] });
+        return true;
+      }
+      return false;
+    };
+
+    const replayPendingStatePushes = (payloadGeneration) => {
+      const queued = pendingStatePushes.splice(0);
+      for (const { generation, message, buffers } of queued) {
+        if (generation === payloadGeneration) dispatchToView(message, buffers);
+        else if (generation > payloadGeneration) {
+          pendingStatePushes.push({ generation, message, buffers });
+        }
+      }
+    };
+
+    const pendingPushReplacesSelection = (payloadGeneration) =>
+      pendingStatePushes.some(({ generation, message }) =>
+        generation === payloadGeneration && selectionPushReplacesSelection(message)
+      );
+
     const onPayload = (data) => {
       if (destroyed || !data || data.fig !== token) return;
+      // Direct subscription replies are mount-addressed; room-wide rebuild
+      // broadcasts intentionally omit mid and remain visible to every mount.
+      if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
+      const rowsSelectionMounted =
+        view?.root?.xy?.state?.()?.selection?.rows === true;
+      if (
+        Number.isInteger(data.version) &&
+        payloadVersion !== null &&
+        data.version === payloadVersion &&
+        !awaitingPayload &&
+        (data.mid == null || rowsSelectionMounted)
+      ) {
+        // Rebuild recovery can deliver a room payload and an addressed reply
+        // at the same generation. Generic duplicates have no mount-specific
+        // value; an addressed payload may refine px-dependent data, except
+        // when accepting it would rebuild GPU traces and erase an already
+        // replayed rows mask that cannot be reconstructed from durable state.
+        return;
+      }
+      if (
+        Number.isInteger(data.version)
+        && payloadVersion !== null
+        && data.version < payloadVersion
+      ) return;
+      const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
+      const sameGenerationAddressedReplacement =
+        data.mid != null &&
+        payloadVersion !== null &&
+        nextPayloadVersion === payloadVersion &&
+        !awaitingPayload;
+      if (sameGenerationAddressedReplacement) invalidatePayloadReplies();
+      if (payloadVersion !== null && nextPayloadVersion !== payloadVersion) {
+        // Requests stamped with the preceding version will be dropped by the
+        // server. Do not retain their synthetic click/selection bookkeeping.
+        clickInputs.clear();
+        pendingSelectionSeqs.clear();
+        restoreSelectionSeqs.clear();
+        invalidatedSelectionSeqs.clear();
+      }
       // The public durable-state document is the authoritative client mirror:
       // unlike `lastSelect`, it includes linked selections, x/y band mode, and
       // every named axis range. Fall back only for an older client bundle that
@@ -571,8 +728,13 @@ export function XYChart(props) {
       const selectionToRestore = durableState
         ? durableState.selection
         : selectionFromRequest(lastSelect);
-      const selectionMaskRequest = selectionRequest(selectionToRestore);
-      payloadVersion = Number.isInteger(data.version) ? data.version : null;
+      // A queued select/clear/rows push is newer than the pre-payload client
+      // selection. Do not send a restore request whose later async reply could
+      // overwrite that queued replacement after it is replayed below.
+      const selectionMaskRequest = pendingPushReplacesSelection(nextPayloadVersion)
+        ? null
+        : selectionRequest(selectionToRestore);
+      payloadVersion = nextPayloadVersion;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
       const nextBuffers = toSpans(data.spec, data.buffers);
       const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));
@@ -586,7 +748,9 @@ export function XYChart(props) {
         if (selectionMaskRequest) {
           hydrateSelectionForRepublish(selectionToRestore);
         }
+        awaitingPayload = false;
         restoreSelectionMask(selectionMaskRequest);
+        replayPendingStatePushes(nextPayloadVersion);
         return;
       }
       reclaimTooltipSlot();
@@ -608,10 +772,12 @@ export function XYChart(props) {
         // eventual authoritative reply, without replaying the user gesture.
         hydrateSelectionForRepublish(selectionToRestore);
       }
+      awaitingPayload = false;
       restoreSelectionMask(selectionMaskRequest);
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(outerRef.current?.id || mid, view);
+      replayPendingStatePushes(nextPayloadVersion);
     };
 
     const onMsg = (data) => {
@@ -620,10 +786,49 @@ export function XYChart(props) {
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
       if (!message) return;
+      if (awaitingPayload) {
+        if (!deferStatePush(data, message)) discardPendingReply(message);
+        return;
+      }
+      const wireVersion = Number.isInteger(data.version) ? data.version : null;
+      const deferredPushGeneration = statePushGeneration(data, message);
+      if (
+        deferredPushGeneration !== null &&
+        payloadVersion !== null &&
+        deferredPushGeneration > payloadVersion
+      ) {
+        // A post-mutation state write can overtake either the matching append
+        // or a replacement payload. Keep it until that generation mounts;
+        // unlike a reply, it remains authoritative room state.
+        if (selectionPushReplacesSelection(message)) invalidateSelectionReplies();
+        deferStatePush(data, message);
+        return;
+      }
+      if (wireVersion !== null && payloadVersion !== null) {
+        const isAppendPush = message.type === "append" && data.mid == null;
+        const expected = isAppendPush
+          ? payloadVersion + 1
+          : payloadVersion;
+        if (wireVersion !== expected) {
+          discardPendingReply(message);
+          // A forward gap means at least one append was not applied (for
+          // example, an oversized binary push). Re-prime from a full payload
+          // instead of rejecting every subsequent append forever.
+          if (isAppendPush && wireVersion > expected && socket.connected) subscribe();
+          return;
+        }
+      }
+      if (
+        data.mid == null &&
+        DEFERRED_STATE_PUSH_TYPES.has(message.type) &&
+        selectionPushReplacesSelection(message)
+      ) invalidateSelectionReplies();
       let clientMessage = message;
       if (typeof message.seq === "string" && message.seq.startsWith("click:")) {
+        const clickWasPending = clickInputs.has(message.seq);
         const clickInput = clickInputs.get(message.seq);
         clickInputs.delete(message.seq);
+        if (!clickWasPending) return;
         if (message.type === "pick_result" && message.row) {
           cbRef.current.onPointClick?.(
             pointEnvelope("point_click", token, message.row, clickInput || {}),
@@ -635,6 +840,9 @@ export function XYChart(props) {
         if (cbRef.current.onPointHover) dispatchHover(message.row);
       }
       if (message.type === "selection") {
+        const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);
+        const selectionWasPending = pendingSelectionSeqs.delete(message.seq);
+        if (selectionWasInvalidated || !selectionWasPending) return;
         const isRestore = restoreSelectionSeqs.delete(message.seq);
         // The mask reply still has to reach ChartView, but this restore was
         // initiated by a payload swap rather than a new user gesture. Tag the
@@ -665,17 +873,36 @@ export function XYChart(props) {
           });
         }
       }
-      for (const cb of [...viewCallbacks]) cb(clientMessage, data.buffers || []);
+      if (wireVersion !== null && message.type === "append" && data.mid == null) {
+        clickInputs.clear();
+        pendingSelectionSeqs.clear();
+        restoreSelectionSeqs.clear();
+        invalidatedSelectionSeqs.clear();
+        payloadVersion = wireVersion;
+        // The append establishes the generation whose state writes may have
+        // reached this mount first. Apply the data delta before replaying
+        // those writes so row-backed selections see the new trace lengths.
+        dispatchToView(clientMessage, data.buffers || []);
+        replayPendingStatePushes(wireVersion);
+        return;
+      }
+      dispatchToView(clientMessage, data.buffers || []);
     };
 
     const onErr = (data) => {
       if (destroyed || !data || data.fig !== token) return;
       console.warn(`xy: ${data.error} (fig ${data.fig})`);
+      if (data.resync === true && socket.connected) subscribe();
+    };
+
+    const onDisconnect = () => {
+      resetEpoch();
     };
 
     socket.on("payload", onPayload);
     socket.on("msg", onMsg);
     socket.on("err", onErr);
+    socket.on("disconnect", onDisconnect);
     // Resubscribe on every (re)connect: after the app plane reconnects the
     // shared manager, rooms are gone and — on another backend node — the
     // figure itself may need a state-driven rebuild. `sub` triggers both.
@@ -705,18 +932,11 @@ export function XYChart(props) {
     return () => {
       destroyed = true;
       if (tracksClickInput) el.removeEventListener("click", rememberClick, true);
-      if (hoverTimer !== null) clearTimeout(hoverTimer);
-      if (viewTimer !== null) clearTimeout(viewTimer);
-      hoverTimer = null;
-      viewTimer = null;
-      pendingHover = null;
-      pendingView = null;
-      pendingClickInput = null;
-      clickInputs.clear();
-      restoreSelectionSeqs.clear();
+      resetEpoch();
       socket.off("payload", onPayload);
       socket.off("msg", onMsg);
       socket.off("err", onErr);
+      socket.off("disconnect", onDisconnect);
       socket.off("connect", subscribe);
       const remaining = (subCounts.get(token) || 1) - 1;
       if (remaining <= 0) {
