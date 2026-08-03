@@ -1079,7 +1079,7 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
         "        run: |\n"
         "          CHROME=$(node -e \"console.log(require('playwright').chromium.executablePath())\")\n"
         "          .venv/bin/python benchmarks/bench_dashboard.py \\\n"
-        '            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json\n'
+        '            --chart-counts 10,20,50,60 --chromium "$CHROME" --json dashboard-smoke.json\n'
         "          .venv/bin/python scripts/verify_benchmark_report.py \\\n"
         "            dashboard-smoke.json --kind dashboard-browser\n\n"
     )
@@ -1089,6 +1089,47 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "dashboard reliability" in error for error in errors)
+
+
+def test_ci_workflow_rejects_dashboard_reliability_smoke_without_sixty_charts(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '--chart-counts 10,20,50,60 --chromium "$CHROME" --json dashboard-smoke.json',
+            '--chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "--chart-counts 10,20,50,60" in error for error in errors)
+
+
+def test_ci_workflow_rejects_methodology_dashboard_without_sixty_charts(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '--chart-counts 10,20,50,60 --chromium "$CHROME" \\\n'
+            "            --json dashboard.json | tee -a docs/benchmark_ci.md",
+            '--chart-counts 10,20,50 --chromium "$CHROME" \\\n'
+            "            --json dashboard.json | tee -a docs/benchmark_ci.md",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any(
+        "benchmark_methodology job" in error and "--chart-counts 10,20,50,60" in error
+        for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> None:

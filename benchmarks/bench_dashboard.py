@@ -6,7 +6,8 @@ fight for startup work. This harness renders a mixed dashboard in one page and
 records total chart-to-pixels time from inside headless Chromium.
 
 Usage:
-  PYTHONPATH=python .venv/bin/python benchmarks/bench_dashboard.py --chart-counts 20
+  PYTHONPATH=python .venv/bin/python benchmarks/bench_dashboard.py \
+    --chart-counts 10,20,50,60
 """
 
 from __future__ import annotations
@@ -137,7 +138,7 @@ def _probe_js() -> str:
     const slots = [];
     const contextEvents = [];
     const creationFailureIds = [];
-    const creationDurations = [];
+    const setupFirstDrawDurations = [];
     const glPrototype = WebGL2RenderingContext.prototype;
     const originalCreateShader = glPrototype.createShader;
     const originalShaderSource = glPrototype.shaderSource;
@@ -200,7 +201,7 @@ def _probe_js() -> str:
     const heapBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
     const t0 = performance.now();
     for (const payload of XY_CHARTS) {
-      const creationStart = performance.now();
+      const setupFirstDrawStart = performance.now();
       const cell = document.createElement("div");
       cell.className = "chart-cell";
       cell.dataset.chartId = payload.id;
@@ -225,12 +226,12 @@ def _probe_js() -> str:
         creationFailureIds.push(payload.id);
         slots.push({id: payload.id, cell, view: null, state: {lost: true}});
       } finally {
-        creationDurations.push(performance.now() - creationStart);
+        setupFirstDrawDurations.push(performance.now() - setupFirstDrawStart);
       }
     }
     // webglcontextlost dispatches as a task, so evictions triggered by the
-    // creation loop above only fire during this yield — keep phase "create"
-    // until they have drained.
+    // setup/first-draw loop above only fire during this yield — keep phase
+    // "create" until they have drained.
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (longTaskObserver) {
       recordLongTasks(longTaskObserver.takeRecords());
@@ -360,9 +361,9 @@ def _probe_js() -> str:
       fully_nonblank: fullyNonblank,
       render_ms: renderMs,
       navigation_ready_ms: navigationReadyMs,
-      chart_creation_p50_ms: xyPercentile(creationDurations, 50),
-      chart_creation_p95_ms: xyPercentile(creationDurations, 95),
-      chart_creation_max_ms: Math.max(0, ...creationDurations),
+      chart_setup_first_draw_p50_ms: xyPercentile(setupFirstDrawDurations, 50),
+      chart_setup_first_draw_p95_ms: xyPercentile(setupFirstDrawDurations, 95),
+      chart_setup_first_draw_max_ms: Math.max(0, ...setupFirstDrawDurations),
       startup_shader_compile_calls: startupShaderCompileCalls,
       startup_unique_shader_sources: startupUniqueShaderSources,
       startup_program_create_calls: startupProgramCreateCalls,
@@ -457,9 +458,9 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
                 "fully_nonblank",
                 "render_ms",
                 "navigation_ready_ms",
-                "chart_creation_p50_ms",
-                "chart_creation_p95_ms",
-                "chart_creation_max_ms",
+                "chart_setup_first_draw_p50_ms",
+                "chart_setup_first_draw_p95_ms",
+                "chart_setup_first_draw_max_ms",
                 "startup_shader_compile_calls",
                 "startup_unique_shader_sources",
                 "startup_program_create_calls",
@@ -573,19 +574,19 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "## Results",
         "",
-        "| scenario | charts | prep | navigation ready | render | create p95/max | load → first-pick shader compile(unique)/program links | startup long tasks/max | scroll pass | recovery p95 | redraw submit p95 | active | JS heap | payload | html | initial/scroll nonblank | loss(gov)/restore | health |",
+        "| scenario | charts | prep | navigation ready | render | setup/draw p95/max | load → first-pick shader compile(unique)/program links | startup long tasks/max | scroll pass | recovery p95 | redraw submit p95 | active | JS heap | payload | html | initial/scroll nonblank | loss(gov)/restore | health |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in report["rows"]:
         lines.append(
-            "| {scenario} | {count} | {prep} | {navigation} | {render} | {creation_p95}/{creation_max} | {startup_compiles}({startup_unique_shaders})/{startup_links} → {compiles}({unique_shaders})/{links} | {long_tasks}/{long_task_max} | {scroll} | {recovery} | {idle} | {active} | {heap} | {payload} | {html} | {nonblank}/{scroll_nonblank} | {lost}({governed})/{restored} | {health} |".format(
+            "| {scenario} | {count} | {prep} | {navigation} | {render} | {setup_draw_p95}/{setup_draw_max} | {startup_compiles}({startup_unique_shaders})/{startup_links} → {compiles}({unique_shaders})/{links} | {long_tasks}/{long_task_max} | {scroll} | {recovery} | {idle} | {active} | {heap} | {payload} | {html} | {nonblank}/{scroll_nonblank} | {lost}({governed})/{restored} | {health} |".format(
                 scenario=row["scenario"],
                 count=row["chart_count"],
                 prep=_fmt_ms(row.get("payload_prep_ms")),
                 navigation=_fmt_ms(row.get("navigation_ready_ms")),
                 render=_fmt_ms(row.get("render_ms")),
-                creation_p95=_fmt_ms(row.get("chart_creation_p95_ms")),
-                creation_max=_fmt_ms(row.get("chart_creation_max_ms")),
+                setup_draw_p95=_fmt_ms(row.get("chart_setup_first_draw_p95_ms")),
+                setup_draw_max=_fmt_ms(row.get("chart_setup_first_draw_max_ms")),
                 startup_compiles=row.get("startup_shader_compile_calls", "—"),
                 startup_unique_shaders=row.get("startup_unique_shader_sources", "—"),
                 startup_links=row.get("startup_program_link_calls", "—"),
@@ -614,8 +615,8 @@ def to_markdown(report: dict[str, Any]) -> str:
         "Notes:",
         "",
         "- `render` is measured inside the page from first chart decode through a context-event task yield and WebGL readback.",
-        "- `create p95/max` measures each chart's synchronous construction. Shader compile counts are paired with unique stage/source pairs before and after one pick per eligible chart; program links remain client-owned.",
-        "- `startup long tasks/max` records browser long-task entries during the creation loop when that Performance API is available; it is telemetry, not a timing gate.",
+        "- `setup/draw p95/max` measures each chart's synchronous construction plus its forced first draw. Shader compile counts are paired with unique stage/source pairs before and after one pick per eligible chart; program links remain client-owned.",
+        "- `startup long tasks/max` records browser long-task entries during the setup/first-draw loop when that Performance API is available; it is telemetry, not a timing gate.",
         "- `redraw submit p95` measures synchronous command submission for every currently live context; `active` states how many charts contributed.",
         "- Partial rows retain startup, heap, redraw, context-event, and scrolling metrics; they do not raise the loss-free ceiling.",
         "- Context event IDs and phases are retained in JSON so LRU eviction and restoration churn are directly observable.",
@@ -626,7 +627,7 @@ def to_markdown(report: dict[str, Any]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--chart-counts", default="10,20,50")
+    parser.add_argument("--chart-counts", default="10,20,50,60")
     parser.add_argument("--chromium", default=None)
     parser.add_argument("--out", default=None, help="write Markdown report here")
     parser.add_argument("--json", default=None, help="write JSON report here")

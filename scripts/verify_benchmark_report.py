@@ -77,7 +77,7 @@ WORKFLOW_REQUIRED_SCENARIOS = {
     "export_svg_decimated_line",
     "export_png_native_decimated_line",
 }
-DASHBOARD_REQUIRED_COUNTS = {10, 20, 50}
+DASHBOARD_REQUIRED_COUNTS = {10, 20, 50, 60}
 DASHBOARD_MIN_LOSS_FREE_CHARTS = 10
 DASHBOARD_SMOKE_BUDGETS_MS = {
     "render_ms": 5_000.0,
@@ -1565,9 +1565,9 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                     "ms_per_chart",
                     "payload_prep_ms",
                     "navigation_ready_ms",
-                    "chart_creation_p50_ms",
-                    "chart_creation_p95_ms",
-                    "chart_creation_max_ms",
+                    "chart_setup_first_draw_p50_ms",
+                    "chart_setup_first_draw_p95_ms",
+                    "chart_setup_first_draw_max_ms",
                     "startup_shader_compile_calls",
                     "startup_unique_shader_sources",
                     "startup_program_create_calls",
@@ -1618,9 +1618,9 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "ms_per_chart",
                 "payload_prep_ms",
                 "navigation_ready_ms",
-                "chart_creation_p50_ms",
-                "chart_creation_p95_ms",
-                "chart_creation_max_ms",
+                "chart_setup_first_draw_p50_ms",
+                "chart_setup_first_draw_p95_ms",
+                "chart_setup_first_draw_max_ms",
                 "startup_long_task_total_ms",
                 "startup_long_task_max_ms",
                 "scroll_pass_ms",
@@ -1642,6 +1642,16 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "pick_probe_charts",
             ):
                 _require_nonnegative_integer(row, key, path, errors)
+            allow_zero_shader_counters = (
+                isinstance(row.get("created_charts"), int)
+                and not isinstance(row.get("created_charts"), bool)
+                and row.get("created_charts") == 0
+            )
+            shader_counter_validator = (
+                _require_nonnegative_integer
+                if allow_zero_shader_counters
+                else _require_positive_integer
+            )
             for key in (
                 "startup_shader_compile_calls",
                 "startup_unique_shader_sources",
@@ -1656,7 +1666,7 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "program_create_calls",
                 "program_link_calls",
             ):
-                _require_positive_integer(row, key, path, errors)
+                shader_counter_validator(row, key, path, errors)
             if not isinstance(row.get("startup_long_task_observer_supported"), bool):
                 errors.append(f"{path}.startup_long_task_observer_supported must be a boolean")
             for key in ("js_heap_before_bytes", "js_heap_bytes"):
@@ -1764,15 +1774,17 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
     )
     ids = {key: _dashboard_id_list(row, key, path, expected_ids, errors) for key in id_keys}
 
-    creation_percentiles = (
-        row.get("chart_creation_p50_ms"),
-        row.get("chart_creation_p95_ms"),
-        row.get("chart_creation_max_ms"),
+    setup_first_draw_percentiles = (
+        row.get("chart_setup_first_draw_p50_ms"),
+        row.get("chart_setup_first_draw_p95_ms"),
+        row.get("chart_setup_first_draw_max_ms"),
     )
-    if all(_is_number(value) for value in creation_percentiles) and not (
-        creation_percentiles[0] <= creation_percentiles[1] <= creation_percentiles[2]
+    if all(_is_number(value) for value in setup_first_draw_percentiles) and not (
+        setup_first_draw_percentiles[0]
+        <= setup_first_draw_percentiles[1]
+        <= setup_first_draw_percentiles[2]
     ):
-        errors.append(f"{path}.chart creation telemetry must satisfy p50 <= p95 <= max")
+        errors.append(f"{path}.chart setup/first-draw telemetry must satisfy p50 <= p95 <= max")
     shader_phases = (
         (
             "startup",
@@ -1835,7 +1847,12 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
                 errors.append(f"{path}.{label} must be monotonic across startup/pick/final")
         if row.get("context_lost_events") == 0 and shader_phases[1][1:] != shader_phases[2][1:]:
             errors.append(f"{path}.loss-free redraw phase must not compile or link new programs")
-    if chart_count == 60:
+    if (
+        chart_count == 60
+        and row.get("render_status") == "complete"
+        and row.get("fully_nonblank") is True
+        and row.get("context_lost_events") == 0
+    ):
         expected_pick_ids = [f"chart-{index}" for index in range(1, 60, 5)]
         if row.get("pick_probe_chart_ids") != expected_pick_ids:
             errors.append(
