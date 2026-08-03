@@ -66,7 +66,7 @@ flowchart LR
   NB["Notebook widget<br/>.show()"]
   HTML["Standalone HTML<br/>to_html()"]
   PNG["PNG export<br/>to_png()"]
-  RX["Future reflex-xy<br/>adapter"]
+  RX["Bundled reflex_xy<br/>integration"]
 
   USER --> TREE --> FIG --> SPEC
   SPEC --> NB
@@ -95,16 +95,11 @@ sources of state and composition semantics.
 
 - **No framework dependency in `xy`.** The package may be easy to wrap
   in Reflex, Dash, Streamlit, or plain web apps, but it imports none of them.
-- **Adapters use the thinnest possible dependency.** A future Reflex adapter
-  should avoid depending on the full Reflex package unless that is the only
-  supported public integration point. Prefer no hard Reflex dependency, or a
-  core/component-only Reflex package if Reflex exposes one. Treat full Reflex as
-  an optional app dependency, not something chart users inherit by installing
-  XY.
-- **Full Reflex is not the default adapter dependency.** The target order is:
-  no hard Reflex dependency first; then a supported Reflex core/component
-  package if Reflex publishes one; then full `reflex` only as an explicit,
-  documented fallback such as a demo/app extra.
+- **Adapters use the thinnest possible dependency.** The bundled
+  `reflex_xy` namespace uses full Reflex because that is the supported public
+  integration point today, but keeps it behind the `xy[reflex]` extra. Plain
+  `xy` users never inherit the framework dependency. A supported
+  core/component-only package would be a future improvement.
 - **Declarative by default.** Component construction records intent. Rendering
   happens when the user calls `.show()`, `widget()`, `to_html(...)`,
   `to_png(...)`, or when an adapter mounts it.
@@ -503,7 +498,7 @@ Render target behavior:
   object. Event props compile only to interaction flags such as
   `{"hover": true, "select": true}`. Optionally dispatch DOM `CustomEvent`s for
   host pages.
-- Future Reflex adapter: map payloads to Reflex event handlers.
+- Reflex adapter: maps bounded semantic payloads to Reflex event handlers.
 
 ## 7. Render Targets
 
@@ -515,13 +510,13 @@ The component tree compiles once and can target multiple renderers.
 | Notebook/static HTML repr | `_repr_html_()` / `show(display="html")` | Self-contained fallback that reuses standalone export; auto-selected by `show()` on WASM kernels (JupyterLite/Pyodide), whose prebuilt frontends cannot load the anywidget extension |
 | Standalone HTML | `to_html()` / optional `html()` alias | Self-contained, no Python callbacks |
 | Static PNG | `to_png()` | Fast native default; optional Chromium standalone screenshot |
-| Future Reflex | external adapter package | Uses the smallest supported Reflex surface; core does not import Reflex |
+| Reflex | bundled `reflex_xy` namespace via `xy[reflex]` | Uses the smallest supported Reflex surface; core does not import Reflex |
 | Future server app | generic payload/message routes | Same wire protocol |
 
 This keeps the API framework-shaped without making XY a framework
 package.
 
-## 8. What The Future Reflex Adapter Looks Like
+## 8. The Bundled Reflex Adapter
 
 XY core:
 
@@ -532,7 +527,7 @@ chart = xy.chart(
 )
 ```
 
-Future app code using an adapter:
+Current app code using the bundled adapter:
 
 ```python
 import reflex as rx
@@ -553,32 +548,28 @@ def index():
     )
 ```
 
-The adapter consumes the same component tree or compiled figure. The user app
-may import full Reflex because it is a Reflex app. The adapter package itself
-should still use the minimum possible Reflex dependency surface:
+The integration consumes the same component tree or compiled figure. The user
+app may import full Reflex because it is a Reflex app. The bundled
+`reflex_xy` namespace uses the supported full-Reflex floor today; a smaller
+future framework surface remains preferable if Reflex exposes one:
 
-- Best: no hard Reflex dependency; expose registration/data-plane helpers and a
-  small component declaration that plugs into Reflex when Reflex is already
-  installed.
-- Good: depend only on a supported Reflex core/component package if Reflex
+- Current: keep `reflex` optional behind `xy[reflex]`.
+- Future: depend on a supported Reflex core/component package if Reflex
   provides one.
-- Last resort: depend on full `reflex`, and document why the public API requires
-  it.
 
-In every case, `xy` remains pure and Reflex-free.
+In every case, importing plain `xy` remains Reflex-free.
 
 Dependency rule:
 
 ```text
 pip install xy                 # never installs Reflex
-pip install reflex-xy          # should not install full Reflex by default
-pip install reflex-xy[reflex]  # only if full Reflex is truly required
+pip install "xy[reflex]"       # adds the supported full-Reflex floor
 ```
 
-The adapter can assume it is running inside a Reflex app when the user imports
-it from app code. That lets the adapter use duck typing, registration helpers,
-or a small component declaration without making every charting install inherit
-the full Reflex application stack.
+The integration can assume it is running inside a Reflex app when the user
+imports `reflex_xy` from app code. Keeping that namespace out of `xy.__init__`
+means ordinary charting installs do not eagerly import the Reflex application
+stack.
 
 ## 9. Concrete Code Examples
 
@@ -684,11 +675,11 @@ Tailwind controls layout and chrome. The histogram pixels still come from the
 compiled mark spec, which is what keeps large-data rendering fast and
 framework-independent.
 
-### 9.3 Future Reflex App With A Thin Adapter
+### 9.3 Reflex App With The Bundled Adapter
 
-The future adapter should consume XY objects; XY itself does not
-import Reflex. This example imports Reflex because it is user application code,
-not because the core charting package depends on Reflex.
+The adapter consumes XY objects; XY itself does not import Reflex. This example
+imports Reflex because it is user application code, not because the core
+charting package depends on Reflex.
 
 ```python
 import reflex as rx
@@ -720,9 +711,9 @@ def page():
     )
 ```
 
-The adapter owns the registry and event forwarding. It should avoid owning a
-full Reflex dependency unless absolutely necessary. Core XY owns the
-declarative chart object, binary payload, and renderer.
+The adapter owns the registry and event forwarding. Its full Reflex dependency
+is optional behind `xy[reflex]`; core XY owns the declarative chart object,
+binary payload, and renderer.
 
 ## 10. Compatibility Contract
 
@@ -749,9 +740,11 @@ Now part of the core alpha contract:
 - DOM `CustomEvent`s for standalone host integration (see Phase 4 for the
   dispatched set).
 
-Can add:
+Future dependency refinement:
 
-- A separate adapter package with optional/minimal Reflex integration.
+- Keep the adapter bundled as `reflex_xy` in the `xy` distribution and
+  available through `xy[reflex]`; if Reflex exposes a smaller supported
+  core/component package, use that package instead of the full framework.
 
 Should avoid:
 
@@ -795,16 +788,13 @@ Should avoid:
   All are emitted through one template as `xy:${name}`, bubbling and composed.
 - Keep Python callbacks notebook-only.
 
-### Phase 5: External Reflex Adapter
+### Phase 5: Bundled Reflex Adapter (Shipped)
 
-- Build an external adapter package.
-- Start with zero hard Reflex dependency if practical; otherwise use only a
-  supported Reflex core/component package.
-- Add a full-Reflex extra only if the adapter genuinely needs app-level Reflex
-  APIs; do not make full Reflex the default adapter install.
+- Ship the `reflex_xy` namespace in the `xy` distribution.
+- Keep full Reflex optional behind `xy[reflex]`.
 - Use registry tokens for large figures.
-- Use binary payload/message routes for data plane.
-- Map semantic events to Reflex handlers.
+- Use the shared websocket namespace for the binary data plane.
+- Map bounded semantic events to Reflex handlers.
 
 ## 12. Acceptance Criteria
 

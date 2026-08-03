@@ -48,7 +48,7 @@ and are skipped in the browser menu (`js/src/53_interaction.ts:1020-1038`, where
 configured name with no entry). With no `export` spec the menu falls back to
 `["png", "svg", "csv"]`; an explicit empty list hides the download items.
 
-There is no Reflex-side export API. `python/reflex-xy/` renders kernel-lessly in
+There is no Reflex-side export API. `python/reflex_xy/` renders without a kernel in
 the browser; export runs on the composed chart object in Python.
 
 ## 2. Formats and backends

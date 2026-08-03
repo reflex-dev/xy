@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+import threading
+from pathlib import Path
+
 import numpy as np
 import pytest
 import reflex as rx
+
 import reflex_xy
+import xy
 from reflex_xy.payload_asset import payload_asset
 from reflex_xy.tokens import parse_token
-
-import xy
 from xy.channel import decode_frame
 
 
@@ -55,6 +59,27 @@ def test_payload_asset_write_is_idempotent(app_cwd):
     stamp = path.stat().st_mtime_ns
     assert payload_asset(make_chart()) == url
     assert path.stat().st_mtime_ns == stamp  # existing digest never rewritten
+
+
+def test_payload_asset_concurrent_writers_use_distinct_temp_files(app_cwd, monkeypatch):
+    """Workers compiling the same chart must not rename one shared temp path."""
+    original_write_bytes = Path.write_bytes
+    both_written = threading.Barrier(2)
+
+    def synchronized_write(path: Path, data: bytes) -> int:
+        size = original_write_bytes(path, data)
+        if path.name.endswith(".tmp"):
+            both_written.wait(timeout=5)
+        return size
+
+    monkeypatch.setattr(Path, "write_bytes", synchronized_write)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        urls = list(executor.map(lambda _: payload_asset(make_chart()), range(2)))
+
+    assert urls[0] == urls[1]
+    xy_dir = app_cwd / "assets" / "xy"
+    assert len(list(xy_dir.glob("*.xyf"))) == 1
+    assert not list(xy_dir.glob(".*.tmp"))
 
 
 def test_payload_asset_skips_write_backend_only(app_cwd, monkeypatch):

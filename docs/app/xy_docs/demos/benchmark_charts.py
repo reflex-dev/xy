@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import reflex as rx
-import reflex_xy
 
+import reflex_xy
 import xy
 
 XY_COLOR = "#6E56CF"

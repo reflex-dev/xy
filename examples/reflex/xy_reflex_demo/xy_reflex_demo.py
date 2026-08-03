@@ -1,4 +1,4 @@
-"""reflex-xy showcase: ways to link chart data into a Reflex app.
+"""XY Reflex showcase: ways to link chart data into a Reflex app.
 
 One page of six sections; each has a "Code" accordion showing its own source
 via `inspect.getsource`.
@@ -44,10 +44,10 @@ from typing import Any
 
 import numpy as np
 import reflex as rx
-import reflex_xy
-from reflex_xy.tokens import BUILDER_ATTR
 
+import reflex_xy
 import xy
+from reflex_xy.tokens import BUILDER_ATTR
 
 POINTS = 1_000_000
 RNG_SEED = 11
@@ -719,4 +719,4 @@ def index() -> rx.Component:
 
 
 app = rx.App()
-app.add_page(index, title="reflex-xy showcase")
+app.add_page(index, title="XY Reflex showcase")

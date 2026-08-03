@@ -12,7 +12,6 @@ before installing anything.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import tarfile
@@ -20,46 +19,20 @@ from email.parser import Parser
 from pathlib import PurePosixPath
 from typing import Optional
 
+try:
+    from artifact_metadata import dependency_metadata_errors
+except ModuleNotFoundError:  # imported by tests from the repository root
+    from scripts.artifact_metadata import dependency_metadata_errors
+
 REQUIRED_FILES = {
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/release-reflex-xy.yml",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "Cargo.lock",
     "Cargo.toml",
     "LICENSE",
-    "Makefile",
     "PKG-INFO",
+    "README.md",
     "SECURITY.md",
-    "benchmarks/__init__.py",
-    "benchmarks/_browser.py",
-    "benchmarks/_xy_browser.py",
-    "benchmarks/baseline.json",
-    "benchmarks/bench.py",
-    "benchmarks/bench_2d_charts.py",
-    "benchmarks/bench_pyplot_vs_matplotlib.py",
-    "benchmarks/bench_dashboard.py",
-    "benchmarks/bench_install.py",
-    "benchmarks/bench_interaction.py",
-    "benchmarks/bench_line.py",
-    "benchmarks/bench_native.py",
-    "benchmarks/bench_scatter_native.py",
-    "benchmarks/bench_vs.py",
-    "benchmarks/bench_workflows.py",
-    "benchmarks/categories.py",
-    "benchmarks/environment.py",
-    "spec/design-dossier.md",
-    "spec/api/api-examples.md",
-    "spec/api/chart-roadmap.md",
-    "spec/benchmarks/results.md",
-    "spec/design/renderer-architecture.md",
-    "spec/matplotlib/compat.md",
-    "spec/process/contributing.md",
-    "spec/process/production-readiness.md",
-    "spec/assets/benchmark-snapshot.svg",
-    "spec/assets/launch-benchmark-comparison.svg",
     "hatch_build.py",
     "pyproject.toml",
     "js/build.mjs",
@@ -70,11 +43,32 @@ REQUIRED_FILES = {
     "js/src/30_ticks.ts",
     "js/src/40_gl.ts",
     "js/src/45_lod.ts",
+    "js/src/46_worker.ts",
     "js/src/50_chartview.ts",
+    "js/src/51_annotations.ts",
+    "js/src/52_tooltip.ts",
+    "js/src/53_interaction.ts",
+    "js/src/54_kernel.ts",
     "js/src/55_marks.ts",
+    "js/src/56_animation.ts",
+    "js/src/57_viewstate.ts",
     "js/src/60_entries.ts",
     "package.json",
     "package-lock.json",
+    "python/reflex_xy/__init__.py",
+    "python/reflex_xy/app.py",
+    "python/reflex_xy/assets/XYChart.jsx",
+    "python/reflex_xy/assets/__init__.py",
+    "python/reflex_xy/component.py",
+    "python/reflex_xy/events.py",
+    "python/reflex_xy/namespace.py",
+    "python/reflex_xy/payload_asset.py",
+    "python/reflex_xy/py.typed",
+    "python/reflex_xy/registry.py",
+    "python/reflex_xy/selections.py",
+    "python/reflex_xy/state_bridge.py",
+    "python/reflex_xy/tokens.py",
+    "python/reflex_xy/vars.py",
     "python/xy/__init__.py",
     "python/xy/_framing.py",
     "python/xy/_native.py",
@@ -95,41 +89,15 @@ REQUIRED_FILES = {
     "python/xy/static/index.js",
     "python/xy/static/standalone.js",
     "python/xy/widget.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/app.py",
-    "examples/fastapi/charts.py",
-    "examples/fastapi/live_drilldown.py",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/__init__.py",
-    "examples/reflex/xy_reflex_demo/xy_reflex_demo.py",
-    "scripts/check_public_api.py",
-    "scripts/gen_capability_matrix.py",
-    "scripts/check_python_floor.py",
-    "scripts/check_regressions.py",
-    "scripts/bench_dashboard.py",
-    "scripts/bench_interaction.py",
-    "scripts/bench_pyplot_vs_matplotlib.py",
-    "scripts/verify_ci_workflow.py",
-    "scripts/verify_benchmark_report.py",
-    "scripts/verify_local.py",
-    "scripts/verify_reflex_xy_dist.py",
-    "scripts/verify_sdist.py",
-    "scripts/verify_wheel.py",
+    "src/css.rs",
+    "src/font.rs",
     "src/kernels.rs",
     "src/lib.rs",
-    "tests/test_public_api.py",
-    "tests/test_benchmark_environment.py",
-    "tests/test_bench_pyplot_vs_matplotlib.py",
-    "tests/test_check_regressions.py",
-    "tests/test_example_apps.py",
-    "tests/test_type_surface.py",
-    "tests/test_verify_benchmark_report.py",
-    "tests/test_verify_ci_workflow.py",
-    "tests/test_verify_local.py",
-    "tests/test_verify_reflex_xy_dist.py",
-    "tests/test_verify_sdist.py",
-    "tests/test_verify_wheel.py",
+    "src/raster.rs",
+    "src/simd.rs",
+    "src/svg.rs",
+    "src/tiles.rs",
+    "src/transition.rs",
 }
 
 FORBIDDEN_PARTS = {
@@ -149,6 +117,26 @@ FORBIDDEN_PARTS = {
     "wheelhouse",
 }
 FORBIDDEN_SUFFIXES = {".dll", ".dylib", ".pyd", ".pyc", ".pyo", ".so", ".whl"}
+ALLOWED_TOP_LEVEL = {
+    # Hatchling force-includes the active VCS exclusion file so builds from the
+    # unpacked sdist preserve the source-selection rules.
+    ".gitignore",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "LICENSE",
+    "PKG-INFO",
+    "README.md",
+    "SECURITY.md",
+    "hatch_build.py",
+    "js",
+    "package-lock.json",
+    "package.json",
+    "pyproject.toml",
+    "python",
+    "src",
+}
 ROOT_RE = re.compile(r"^xy-\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
 
 
@@ -162,18 +150,25 @@ def _member_path(name: str) -> PurePosixPath:
 def _normalized_files(path: str) -> tuple[str, set[str]]:
     roots: set[str] = set()
     files: set[str] = set()
+    directories: set[str] = set()
     with tarfile.open(path, "r:gz") as tf:
         for member in tf.getmembers():
             member_path = _member_path(member.name)
             root = member_path.parts[0]
             roots.add(root)
+            relative_parts = member_path.parts[1:]
             if member.isfile():
-                rel = "/".join(member_path.parts[1:])
+                if not relative_parts:
+                    raise AssertionError(
+                        f"sdist top-level entry must be a directory: {member.name!r}"
+                    )
+                rel = "/".join(relative_parts)
                 if rel in files:
                     raise AssertionError(f"sdist contains duplicate file member: {rel}")
                 files.add(rel)
             elif member.isdir():
-                continue
+                if relative_parts:
+                    directories.add("/".join(relative_parts))
             else:
                 raise AssertionError(f"sdist contains non-regular member: {member.name}")
     if len(roots) != 1:
@@ -183,24 +178,17 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     root = next(iter(roots))
     if not ROOT_RE.match(root):
         raise AssertionError(f"sdist top-level directory has unexpected name: {root!r}")
-    return root, files
 
-
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
+    collisions = sorted(files & directories)
+    for name in files | directories:
+        parts = PurePosixPath(name).parts
+        if any("/".join(parts[:index]) in files for index in range(1, len(parts))):
+            collisions.append(name)
+    if collisions:
+        raise AssertionError(
+            f"sdist contains file/directory path collisions: {sorted(set(collisions))}"
         )
-    )
-
-
-def _dependency_name(requirement: str) -> str:
-    requirement = requirement.split(";", 1)[0].strip()
-    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
-    return "" if match is None else match.group(1).replace("_", "-").lower()
+    return root, files
 
 
 def _require_pkg_info(path: str, root: str) -> None:
@@ -222,23 +210,7 @@ def _require_pkg_info(path: str, root: str) -> None:
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
-    requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
-            for requirement in requirements
-        ):
-            missing.append(f"Requires-Dist: {package}>={minimum}")
-    unexpected_requirements = [
-        requirement
-        for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
-    ]
-    if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
-    provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+    missing.extend(dependency_metadata_errors(metadata))
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
@@ -266,59 +238,30 @@ def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> N
         raise AssertionError(f"{member} must be an empty full-package PEP 561 marker")
 
 
-def _require_baseline_json(path: str, root: str) -> None:
-    with tarfile.open(path, "r:gz") as tf:
-        data = tf.extractfile(f"{root}/benchmarks/baseline.json")
-        if data is None:
-            raise AssertionError("benchmarks/baseline.json is missing")
-        text = data.read().decode("utf-8")
-    try:
-        baseline = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise AssertionError(f"benchmarks/baseline.json is not valid JSON: {exc}") from exc
-    metrics = baseline.get("metrics") if isinstance(baseline, dict) else None
-    if not isinstance(metrics, dict) or not metrics:
-        raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
-
-
-# Every grouped subdirectory of spec/ must survive packaging. Pinning
-# individual files alone would let a whole group be dropped as long as the
-# pinned member stayed, so require each group to be non-empty in its own right.
-SPEC_SUBDIRS = ("api", "benchmarks", "design", "matplotlib", "process")
-
-
-def _require_spec_layout(files: set[str]) -> None:
-    empty = [
-        name
-        for name in SPEC_SUBDIRS
-        if not any(f.startswith(f"spec/{name}/") and f.endswith(".md") for f in files)
-    ]
-    if empty:
-        raise AssertionError(f"sdist has no markdown under spec/ subdirectories: {empty}")
-
-    svgs = sorted(f for f in files if f.startswith("spec/assets/") and f.endswith(".svg"))
-    if len(svgs) < 2:
-        raise AssertionError(f"sdist is missing spec/assets SVG evidence snapshots: {svgs}")
-
-
 def verify_sdist(path: str) -> None:
     root, files = _normalized_files(path)
     missing = sorted(REQUIRED_FILES - files)
     if missing:
         raise AssertionError(f"sdist missing required files: {missing}")
-    _require_spec_layout(files)
 
     forbidden = sorted(
         name
         for name in files
-        if any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
+        if PurePosixPath(name).parts[0] not in ALLOWED_TOP_LEVEL
+        or (
+            PurePosixPath(name).parts[0] == "python"
+            and PurePosixPath(name).parts[:2] not in {("python", "reflex_xy"), ("python", "xy")}
+        )
+        or any(part in FORBIDDEN_PARTS for part in PurePosixPath(name).parts)
         or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES)
     )
     if forbidden:
-        raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
+        raise AssertionError(
+            f"sdist contains repository-only/generated/native artifacts: {forbidden}"
+        )
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
-    _require_baseline_json(path, root)
+    _require_exact_file(path, root, "python/reflex_xy/py.typed", b"")
     _require_file_contains(
         path,
         root,
@@ -343,95 +286,6 @@ def verify_sdist(path: str) -> None:
             "export function render(",
             "export function renderStandalone(",
             "export default { render, decodeFrame };",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/api/api-examples.md",
-        {
-            "Chart Family Quick Reference",
-            "Small Business Chart",
-            "Revenue vs pipeline",
-            "xy.heatmap(",
-            "xy.heatmap_chart",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/benchmarks/results.md",
-        {
-            "benchmark-report",
-            "regression-benchmark-report",
-            "spec/benchmarks/metrics.md",
-            "scatter.json",
-            "kernel.json",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/process/production-readiness.md",
-        {
-            "Release-Blocking Gates",
-            "make check-artifacts",
-            "make check-examples",
-            "example apps' source",
-            "package-only",
-            "sdist-only",
-            "scripts/verify_benchmark_report.py",
-            "scripts/verify_wheel.py",
-            "import xy",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        "spec/process/contributing.md",
-        {
-            "Pull Request Checklist",
-            "make check-full",
-            "make check-sdist",
-            "make check-examples",
-            "make check-benchmark-report",
-            "Competitive Evidence",
-            "outperform every competing charting library",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/ci.yml",
-        {"scripts/verify_ci_workflow.py", "actions/upload-artifact@", "continue-on-error: true"},
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/codspeed.yml",
-        {"CodSpeedHQ/action@", "pytest-codspeed", 'k.BACKEND == "native"'},
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/release.yml",
-        {
-            "pypa/gh-action-pypi-publish@",
-            "scripts/verify_wheel.py",
-            "scripts/verify_sdist.py",
-            "id-token: write",
-        },
-    )
-    _require_file_contains(
-        path,
-        root,
-        ".github/workflows/release-reflex-xy.yml",
-        {
-            'tags: ["reflex-xy-v*"]',
-            "pypa/gh-action-pypi-publish@",
-            "scripts/verify_reflex_xy_dist.py",
-            "scripts/check_release_version.py --package reflex-xy",
-            "id-token: write",
         },
     )
 

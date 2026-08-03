@@ -5,9 +5,8 @@ from __future__ import annotations
 import pathlib
 
 import reflex_xy
-from reflex_xy.assets import _client_source, _link_client
-
 import xy
+from reflex_xy.assets import _client_source, _link_client
 
 ADAPTER_ASSETS = pathlib.Path(reflex_xy.__file__).parent / "assets"
 
@@ -22,7 +21,9 @@ def test_client_source_is_the_installed_bundle():
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
     text = source.read_text(encoding="utf-8")
-    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+    # The installed bundle is minified; its stable public markers are export
+    # aliases rather than source-level function/class declarations.
+    for marker in ("as renderStandalone", "as decodeFrame", "as ChartView"):
         assert marker in text
 
 
@@ -61,6 +62,168 @@ def test_wrapper_speaks_the_namespace_protocol():
         assert f"socket.on({needle}" in jsx
     # binary columns go straight into typed arrays — never through JSON numbers
     assert "new Uint8Array(b)" in jsx
+    assert "data.version < payloadVersion" in jsx
+    assert 'message.type === "append"' in jsx
+    # Each subscription is a fresh comparison epoch (a reconnect may land on
+    # a worker whose rebuilt cache starts at version 1). Kernel traffic is
+    # gated until its authoritative payload arrives.
+    reset_epoch = jsx.split("const resetEpoch = () => {", 1)[1].split("};", 1)[0]
+    for needle in (
+        "clearTimeout(hoverTimer)",
+        "clearTimeout(viewTimer)",
+        "hoverTimer = null",
+        "viewTimer = null",
+        "pendingHover = null",
+        "pendingView = null",
+        "pendingClickInput = null",
+        "payloadVersion = null",
+        "awaitingPayload = true",
+        "clickInputs.clear()",
+        "pendingSelectionSeqs.clear()",
+        "restoreSelectionSeqs.clear()",
+        "invalidatedSelectionSeqs.clear()",
+        "pendingStatePushes.length = 0",
+    ):
+        assert needle in reset_epoch
+    subscribe = jsx.split("const subscribe = () => {", 1)[1].split("};", 1)[0]
+    assert "resetEpoch()" in subscribe
+    assert jsx.count("resetEpoch();") == 3  # subscribe, disconnect, cleanup
+    assert "awaitingPayload || !socket.connected" in jsx
+    assert "awaitingPayload = false" in jsx
+    assert 'socket.on("disconnect", onDisconnect)' in jsx
+    assert "wireVersion > expected && socket.connected" in jsx
+    assert "data.resync === true && socket.connected" in jsx
+    # Rejected replies and accepted generation advances both reclaim pending
+    # synthetic click/selection bookkeeping.
+    assert "discardPendingReply(message)" in jsx
+    assert jsx.count("clickInputs.clear()") >= 3
+    assert jsx.count("pendingSelectionSeqs.clear()") >= 3
+    assert jsx.count("restoreSelectionSeqs.clear()") >= 3
+    assert jsx.count("invalidatedSelectionSeqs.clear()") >= 3
+    # Subscription payloads echo a mount id; unaddressed room broadcasts are
+    # still accepted, while another mount's direct response is ignored.
+    assert "data.mid !== undefined && data.mid !== null && data.mid !== mid" in jsx
+    # Programmatic state pushes are not represented by the full payload, so
+    # they wait in wire order for either payload-mount path. The exact
+    # allow-list plus unaddressed/generation-stamped guards keep replies and
+    # append deltas out of that queue, and replay only onto the payload whose
+    # FigureEntry generation produced the push.
+    assert (
+        'const DEFERRED_STATE_PUSH_TYPES = new Set(["state_patch", "view_nav", "selection_rows"]);'
+    ) in jsx
+    assert "data.mid == null" in jsx
+    assert "Number.isInteger(data.version)" in jsx
+    assert "DEFERRED_STATE_PUSH_TYPES.has(message.type)" in jsx
+    assert "pendingStatePushes.push({ generation, message, buffers: data.buffers || [] })" in jsx
+    assert "if (!deferStatePush(data, message)) discardPendingReply(message)" in jsx
+    assert "const queued = pendingStatePushes.splice(0)" in jsx
+    assert "for (const { generation, message, buffers } of queued)" in jsx
+    assert "if (generation === payloadGeneration) dispatchToView(message, buffers)" in jsx
+    # Draining one mounted generation drops older writes, replays exact
+    # matches, and retains later generations in their original wire order.
+    replay_pushes = jsx.split("const replayPendingStatePushes = (payloadGeneration) => {", 1)[
+        1
+    ].split("};", 1)[0]
+    assert (
+        replay_pushes.index("if (generation === payloadGeneration)")
+        < replay_pushes.index("else if (generation > payloadGeneration)")
+        < replay_pushes.index("pendingStatePushes.push({ generation, message, buffers })")
+    )
+    assert jsx.count("replayPendingStatePushes(nextPayloadVersion);") == 2
+    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
+        "const onMsg = (data) => {", 1
+    )[0]
+    # Rebuild recovery may deliver both a room payload and a same-generation
+    # addressed reply. Generic duplicates are ignored; addressed px-specific
+    # replies remain eligible unless a rows selection is mounted, because that
+    # mask cannot be reconstructed after updatePayload rebuilds GPU traces.
+    equal_room_guard = "data.version === payloadVersion &&"
+    assert equal_room_guard in on_payload
+    assert "rowsSelectionMounted" in on_payload
+    assert "(data.mid == null || rowsSelectionMounted)" in on_payload
+    assert "!awaitingPayload" in on_payload
+    assert on_payload.index(equal_room_guard) < on_payload.index("data.version < payloadVersion")
+    in_place_mount, fresh_mount = on_payload.split("reclaimTooltipSlot();", 1)
+    assert (
+        in_place_mount.index("view?.updatePayload?.")
+        < in_place_mount.index("awaitingPayload = false;")
+        < in_place_mount.index("restoreSelectionMask(selectionMaskRequest);")
+        < in_place_mount.index("replayPendingStatePushes(nextPayloadVersion);")
+        < in_place_mount.rindex("return;")
+    )
+    assert (
+        fresh_mount.index("view = new ChartView(")
+        < fresh_mount.index("awaitingPayload = false;")
+        < fresh_mount.index("restoreSelectionMask(selectionMaskRequest);")
+        < fresh_mount.index("replayPendingStatePushes(nextPayloadVersion);")
+    )
+    # A queued selection replacement must suppress the old selection-mask
+    # restore request; its async reply would otherwise arrive after replay and
+    # overwrite the newer select/clear/rows push.
+    selection_guard = jsx.split("const selectionPushReplacesSelection = (message) =>", 1)[1].split(
+        ";", 1
+    )[0]
+    assert 'message.type === "selection_rows"' in selection_guard
+    assert 'message.type === "state_patch"' in selection_guard
+    assert 'hasOwnProperty.call(message.state || {}, "selection")' in selection_guard
+    pending_guard = jsx.split("const pendingPushReplacesSelection = (payloadGeneration) =>", 1)[
+        1
+    ].split(";", 1)[0]
+    assert "generation === payloadGeneration" in pending_guard
+    assert "selectionPushReplacesSelection(message)" in pending_guard
+    assert "const selectionMaskRequest = pendingPushReplacesSelection(nextPayloadVersion)" in jsx
+    assert "? null\n        : selectionRequest(selectionToRestore)" in jsx
+    # Once a payload has mounted, a room-wide selection replacement invalidates
+    # every older in-flight selection request (user gestures and payload
+    # restores). Any eventual addressed reply is consumed before either the
+    # Reflex callback or ChartView sees it.
+    on_msg = jsx.split("const onMsg = (data) => {", 1)[1].split("const onErr = (data) => {", 1)[0]
+    # A state write may overtake the append/full payload that establishes its
+    # generation. Queue that write before the ordinary version mismatch path.
+    assert (
+        on_msg.index("deferredPushGeneration > payloadVersion")
+        < on_msg.index("deferStatePush(data, message);")
+        < on_msg.index("if (wireVersion !== null && payloadVersion !== null)")
+    )
+    assert (
+        on_msg.index("if (wireVersion !== null && payloadVersion !== null)")
+        < on_msg.rindex("invalidateSelectionReplies();")
+        < on_msg.index("let clientMessage = message;")
+    )
+    assert (
+        on_msg.index(
+            "const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);"
+        )
+        < on_msg.index("const selectionWasPending = pendingSelectionSeqs.delete(message.seq);")
+        < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
+        < on_msg.index("const isRestore = restoreSelectionSeqs.delete(message.seq);")
+        < on_msg.index("cbRef.current.onSelectEnd({")
+        < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
+    )
+    invalidate_replies = jsx.split("const invalidateSelectionReplies = () => {", 1)[1].split(
+        "};", 1
+    )[0]
+    assert "for (const seq of pendingSelectionSeqs)" in invalidate_replies
+    assert "invalidatedSelectionSeqs.add(seq)" in invalidate_replies
+    assert "pendingSelectionSeqs.clear()" in invalidate_replies
+    assert "restoreSelectionSeqs.clear()" in invalidate_replies
+    assert jsx.count("pendingSelectionSeqs.add(") == 2  # user gesture + restore
+    # If a state write overtakes its append, apply the data delta first and
+    # then replay state for exactly the generation that append established.
+    append_advance = on_msg.split(
+        'if (wireVersion !== null && message.type === "append" && data.mid == null) {', 1
+    )[1]
+    assert (
+        append_advance.index("payloadVersion = wireVersion;")
+        < append_advance.index("dispatchToView(clientMessage, data.buffers || []);")
+        < append_advance.index("replayPendingStatePushes(wireVersion);")
+        < append_advance.index("return;")
+    )
+    # The old view remains mounted while a replacement payload is in flight;
+    # it must not arm new semantic view callbacks in that reset epoch.
+    dispatch_view = jsx.split("const dispatchView = (m) => {", 1)[1].split("};", 1)[0]
+    assert "awaitingPayload" in dispatch_view
+    assert "!socket.connected" in dispatch_view
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render
@@ -70,7 +233,64 @@ def test_wrapper_speaks_the_namespace_protocol():
         "renderStandalone(\n"
         "          el, withHoverFlag(fitSpecToElement(frame.message)), frame.buffers[0])"
     ) in jsx
-    assert "fetch(src)" in jsx
+    assert "const controller = new AbortController()" in jsx
+    assert "fetch(src, { signal: controller.signal })" in jsx
+    assert "controller.abort()" in jsx
+
+
+def test_same_generation_addressed_payload_invalidates_in_flight_replies():
+    """A px-specific payload can change shipped indices without a version bump."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
+        "const onMsg = (data) => {", 1
+    )[0]
+    on_msg = jsx.split("const onMsg = (data) => {", 1)[1].split("const onErr = (data) => {", 1)[0]
+    invalidate = jsx.split("const invalidatePayloadReplies = () => {", 1)[1].split("};", 1)[0]
+
+    for needle in (
+        "pendingClickInput = null",
+        "clickInputs.clear()",
+        "invalidateSelectionReplies()",
+    ):
+        assert needle in invalidate
+
+    # The duplicate/rows-mask guard runs first. Any same-generation addressed
+    # payload that remains eligible invalidates old-payload replies before it
+    # snapshots durable state or replaces buffers.
+    assert (
+        on_payload.index("data.version === payloadVersion")
+        < on_payload.index("const sameGenerationAddressedReplacement =")
+        < on_payload.index("if (sameGenerationAddressedReplacement) invalidatePayloadReplies();")
+        < on_payload.index("const durableState =")
+        < on_payload.index("view?.updatePayload?.")
+    )
+    replacement = on_payload.split("const sameGenerationAddressedReplacement =", 1)[1].split(
+        ";", 1
+    )[0]
+    for needle in (
+        "data.mid != null",
+        "nextPayloadVersion === payloadVersion",
+        "!awaitingPayload",
+    ):
+        assert needle in replacement
+
+    # Clearing bookkeeping is authoritative: a late same-version reply with
+    # an unknown sequence is consumed before any Reflex callback or view
+    # dispatch, rather than falling through with empty click metadata.
+    assert (
+        on_msg.index("const clickWasPending = clickInputs.has(message.seq);")
+        < on_msg.index("if (!clickWasPending) return;")
+        < on_msg.index("cbRef.current.onPointClick?.(")
+    )
+    assert (
+        on_msg.index(
+            "const selectionWasInvalidated = invalidatedSelectionSeqs.delete(message.seq);"
+        )
+        < on_msg.index("const selectionWasPending = pendingSelectionSeqs.delete(message.seq);")
+        < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
+        < on_msg.index("cbRef.current.onSelectEnd({")
+        < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
+    )
 
 
 def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():

@@ -15,7 +15,7 @@ Implementation: `python/xy/components.py` (`interaction_config`, `Chart`,
 `_interaction_spec`), `python/xy/channel.py` (kernel-side dispatch),
 `js/src/53_interaction.ts` (gestures, modebar, view state machine),
 `js/src/50_chartview.ts` (flag resolution, link channel),
-`python/reflex-xy/reflex_xy/` (Reflex event props).
+`python/reflex_xy/` (Reflex event props).
 
 ## 1. How a switch resolves
 
@@ -220,7 +220,7 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
   `on_brush` always fires before `on_select` for the same gesture; that
   ordering is an invariant and is tested.
 
-Reflex props (`python/reflex-xy/reflex_xy/component.py`) are the live-mode
+Reflex props (`python/reflex_xy/component.py`) are the live-mode
 mirror: `on_point_hover(row)`, `on_point_click(row)`,
 `on_select_end({total, x0, x1, y0, y1, polygon, cleared})`, and
 `on_view_change(msg)`. `on_view_change` is resolved in the browser and never

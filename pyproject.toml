@@ -14,6 +14,14 @@ dependencies = [
     "anywidget>=0.9",
 ]
 
+[project.optional-dependencies]
+# The adapter source ships in every xy wheel so the framework integration and
+# render client can never drift. The extra only selects the supported Reflex
+# floor; importing plain `xy` remains framework-free.
+reflex = [
+    "reflex>=0.9.6",
+]
+
 [project.urls]
 Repository = "https://github.com/reflex-dev/xy"
 Issues = "https://github.com/reflex-dev/xy/issues"
@@ -37,6 +45,10 @@ dev = [
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
     "starlette>=0.36",
+    # tests/reflex_adapter exercises the real socket data plane when the
+    # `reflex` extra is installed in the main CI job.
+    "aiohttp>=3.9",
+    "uvicorn>=0.23",
     # Parses .binder/environment.yml in tests/test_binder_config.py so the
     # Binder contract is asserted on structure, not string transcription.
     "pyyaml>=6",
@@ -82,7 +94,7 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/xy"]
+packages = ["python/xy", "python/reflex_xy"]
 dev-mode-dirs = ["python"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
@@ -96,18 +108,11 @@ path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    ".github/workflows/ci.yml",
-    ".github/workflows/codspeed.yml",
-    ".github/workflows/release.yml",
-    # The adapter's release workflow rides along (repo infra, like release.yml)
-    # even though the adapter *package* stays out of this sdist: the shipped
-    # test suite validates all four workflows via scripts/verify_ci_workflow.py.
-    ".github/workflows/release-reflex-xy.yml",
-    # The xy package only — python/reflex-xy is its own distributable
-    # (own pyproject, depends on reflex) and must not ride in this sdist;
-    # scripts/verify_sdist.py enforces both the no-reflex-dependency rule
-    # and the ban on its reflex.lock frontend pins.
+    # Both packages published by the xy distribution. The bundled adapter is
+    # selected by the `reflex` extra; the retired python/reflex-xy project and
+    # its independent lock/release material must not ride in this sdist.
     "python/xy",
+    "python/reflex_xy",
     "src",
     # The whole js/ dir (TS sources + build.mjs + tsconfig) plus the npm
     # manifests, so the sdist can rebuild the client with `npm ci &&
@@ -115,22 +120,9 @@ include = [
     "js",
     "package.json",
     "package-lock.json",
-    "benchmarks",
-    "docs",
-    "spec",
-    "examples/fastapi/*.py",
-    "examples/fastapi/pyproject.toml",
-    "examples/fastapi/README.md",
-    "examples/reflex/pyproject.toml",
-    "examples/reflex/README.md",
-    "examples/reflex/rxconfig.py",
-    "examples/reflex/xy_reflex_demo/*.py",
-    "scripts",
-    "tests",
     "Cargo.toml",
     "Cargo.lock",
     "hatch_build.py",
-    "Makefile",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -138,7 +130,15 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
-    "/docs/app/**",
+    # Repository-only development, CI, documentation, and evidence material.
+    "/.github/**",
+    "/benchmarks/**",
+    "/docs/**",
+    "/examples/**",
+    "/Makefile",
+    "/scripts/**",
+    "/spec/**",
+    "/tests/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -149,11 +149,8 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
-    # Adapter tests ship with the reflex-xy package's repo checkout, not
-    # with the xy sdist (whose package they can't exercise anyway).
-    "/tests/reflex_adapter/**",
     # Belt and braces for the include narrowing above: hatchling auto-admits
-    # readme-named files, which would smuggle adapter docs back in.
+    # readme-named files, which could smuggle the retired adapter project back in.
     "/python/reflex-xy/**",
 ]
 
@@ -210,7 +207,7 @@ exclude = ["examples/pdsh/*.ipynb"]
 "tests/reflex_adapter/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["xy"]
+known-first-party = ["reflex_xy", "xy"]
 
 [tool.ty.environment]
 python = ".venv"
