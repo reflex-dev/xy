@@ -1330,8 +1330,11 @@ _GOVERNED_FALLBACK_PROBE = r"""
       const grid = document.getElementById("chart");
       grid.replaceChildren();
       grid.style.cssText = "display:grid;grid-template-columns:repeat(4,62px);gap:2px";
+      // Deadlines are virtual-time (the page runs under a raised
+      // --virtual-time-budget): generous bounds cost nothing when the cascade
+      // settles early, and a genuine hang still reports which label stalled.
       const waitUntil = async (predicate, label) => {
-        const deadline = performance.now() + 5000;
+        const deadline = performance.now() + 20000;
         while (!predicate()) {
           if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
           await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1490,6 +1493,11 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
         tmp_path / "shared_glhost_governed_fallback.html",
         "data-xy-governed-fallback-probe",
         label="governed-fallback budget probe",
+        # The probe's 20 s waitUntil deadlines are virtual-time; the budget
+        # must exceed their worst-case sum or a genuine stall dumps the page
+        # without the diagnostic timeout label. Idle budget is skipped
+        # instantly, so the happy path pays nothing for the headroom.
+        extra_args=("--virtual-time-budget=60000",),
     )
 
     def assert_governed_equilibrium(state: dict) -> None:
@@ -1572,8 +1580,11 @@ _FRAME_GATE_PROBE = r"""
       };
       const defaultFrame = makeFrame(innerDefault);
       const optInFrame = makeFrame(innerOptIn);
+      // Virtual-time deadline under a raised --virtual-time-budget: generous
+      // because two full chart documents boot inside child frames; an early
+      // finish skips the remainder instantly.
       const waitUntil = async (predicate, label) => {
-        const deadline = performance.now() + 6000;
+        const deadline = performance.now() + 20000;
         while (!predicate()) {
           if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
           await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1687,6 +1698,10 @@ def test_child_frames_default_to_governed_path_and_opt_into_shared_host(
         tmp_path / "shared_glhost_frame_gate.html",
         "data-xy-frame-gate-probe",
         label="child-frame shared-host gate probe",
+        # Virtual-time headroom over the probe's 20 s waitUntil deadlines (two
+        # embedded chart documents boot in child frames); idle budget is
+        # skipped instantly.
+        extra_args=("--virtual-time-budget=60000",),
     )
 
     assert result["parentHostMode"] is True, result
