@@ -799,19 +799,23 @@ its own DOM subtree. The host renders one chart into its detached target and
 synchronously blits the completed pixels into that chart's Canvas2D surface. Scrolling,
 clipping, z-index, and DOM interleaving therefore remain per-chart behavior.
 
-The `GLHost` owns the WebGL context and immutable fullscreen quad. Each `ChartView`
-retains its own shader programs, scene state, and render and pick resources, including
-target dimensions and lazily created pick attachments. Programs stay client-owned
-because uniforms are mutable WebGL state; they can move into a host cache only after
-every pass is independently state-complete. Before rendering a client, the host binds
-that client's target and establishes the viewport, scissor, and WebGL state required by
-the chart; client switches cannot rely on state left by the previous chart.
+The `GLHost` owns the WebGL context, immutable fullscreen quad, and a generation-scoped
+cache of compiled shaders keyed by shader stage plus exact source. Each `ChartView`
+retains its own linked programs, scene state, and render and pick resources, including
+target dimensions and lazily created pick attachments. Reusing immutable compiled
+shaders avoids repeating the driver compilation work for every chart; the cache is
+discarded whenever the host context is lost or replaced. Linked programs stay
+client-owned because uniforms are mutable WebGL state; they can move into a host cache
+only after every pass is independently state-complete. Before rendering a client, the
+host binds that client's target and establishes the viewport, scissor, and WebGL state
+required by the chart; client switches cannot rely on state left by the previous chart.
 
 A loss of the shared context is host-wide. The `GLHost` restores or replaces its
-detached context and fullscreen quad, then directs every client to rebuild its programs
-and per-chart render and pick resources from CPU-backed scene state. Each client
-preserves its settled pan/zoom and re-requests that same view after reconstruction,
-matching the existing context-loss contract rather than resetting charts to home.
+detached context, fullscreen quad, and empty shader cache, then directs every client to
+rebuild its programs and per-chart render and pick resources from CPU-backed scene
+state. Each client preserves its settled pan/zoom and re-requests that same view after
+reconstruction, matching the existing context-loss contract rather than resetting
+charts to home.
 
 The governed per-chart path remains the compatibility fallback. It is used when shared
 hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document

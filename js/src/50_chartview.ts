@@ -3795,7 +3795,14 @@ export class ChartView {
       // Uniforms are mutable program state. Keep programs client-owned until
       // every mark pass is independently state-complete; sharing them would
       // let one chart's transition/style uniforms leak into another chart.
-      p = makeProgram(this.gl, vs, fs);
+      const host = this._glHost;
+      // The resolver is an additive host capability. A singleton installed by
+      // an older duplicate bundle does not expose it, so mixed-version pages
+      // safely retain the native per-program shader lifecycle.
+      const resolveShader = host && typeof host.getOrCreateShader === "function"
+        ? host.getOrCreateShader.bind(host)
+        : undefined;
+      p = makeProgram(this.gl, vs, fs, resolveShader);
       this._progCache.set(key, p);
     }
     return p;

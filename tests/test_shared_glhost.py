@@ -7,6 +7,8 @@ visible Canvas2D presentation surface backed by one detached WebGL2 host.
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -295,6 +297,191 @@ _FIFTY_VIEW_PROBE = r"""
 """
 
 
+def _sixty_view_shader_cache_probe() -> str:
+    figures = [
+        xy.chart(xy.line(x=[0, 1, 2], y=[0, 1, 0]), width=62, height=82).figure(),
+        xy.chart(xy.scatter(x=[0, 1, 2], y=[0, 1, 0]), width=62, height=82).figure(),
+        xy.chart(xy.hist([0, 1, 1, 2], bins=3), width=62, height=82).figure(),
+        xy.chart(
+            xy.bar(
+                ["a", "b"],
+                [[1, 2], [2, 1]],
+                mode="grouped",
+                series=["A", "B"],
+            ),
+            width=62,
+            height=82,
+        ).figure(),
+        xy.chart(xy.heatmap([[0, 1], [2, 3]], colormap="turbo"), width=62, height=82).figure(),
+    ]
+    payloads = []
+    for figure in figures:
+        spec, blob = figure.build_payload()
+        payloads.append(
+            {
+                "spec": spec,
+                "buffer": base64.b64encode(blob).decode("ascii"),
+            }
+        )
+
+    probe = r"""
+  (() => {
+    const payloads = __XY_MIXED_PAYLOADS__;
+    const glPrototype = WebGL2RenderingContext.prototype;
+    const originalCreateShader = glPrototype.createShader;
+    const originalShaderSource = glPrototype.shaderSource;
+    const originalCompileShader = glPrototype.compileShader;
+    const originalDeleteShader = glPrototype.deleteShader;
+    const originalCreateProgram = glPrototype.createProgram;
+    const originalLinkProgram = glPrototype.linkProgram;
+    const shaderTypes = new WeakMap();
+    const shaderSources = new WeakMap();
+    const compiledSources = new Set();
+    let compileShaderCalls = 0;
+    let deleteShaderCalls = 0;
+    let createProgramCalls = 0;
+    let linkProgramCalls = 0;
+
+    glPrototype.createShader = function (type) {
+      const shader = originalCreateShader.call(this, type);
+      if (shader) shaderTypes.set(shader, type);
+      return shader;
+    };
+    glPrototype.shaderSource = function (shader, source) {
+      shaderSources.set(shader, String(source));
+      return originalShaderSource.call(this, shader, source);
+    };
+    glPrototype.compileShader = function (shader) {
+      compileShaderCalls += 1;
+      compiledSources.add(
+        `${shaderTypes.get(shader)}\u0000${shaderSources.get(shader)}`,
+      );
+      return originalCompileShader.call(this, shader);
+    };
+    glPrototype.deleteShader = function (shader) {
+      deleteShaderCalls += 1;
+      return originalDeleteShader.call(this, shader);
+    };
+    glPrototype.createProgram = function () {
+      createProgramCalls += 1;
+      return originalCreateProgram.call(this);
+    };
+    glPrototype.linkProgram = function (program) {
+      linkProgramCalls += 1;
+      return originalLinkProgram.call(this, program);
+    };
+
+    try {
+      const grid = document.getElementById("chart");
+      grid.replaceChildren();
+      grid.style.cssText = [
+        "display:grid",
+        "grid-template-columns:repeat(10,62px)",
+        "gap:2px",
+      ].join(";");
+      const views = [];
+      for (let index = 0; index < 60; index++) {
+        const payload = payloads[index % payloads.length];
+        const bytes = Uint8Array.from(
+          atob(payload.buffer),
+          (character) => character.charCodeAt(0),
+        );
+        const holder = document.createElement("div");
+        holder.style.cssText = "width:62px;height:82px;overflow:hidden";
+        grid.appendChild(holder);
+        const view = xy.renderStandalone(holder, payload.spec, bytes.buffer);
+        view._drawNow();
+        view._raf = null;
+        views.push(view);
+      }
+
+      const load = {
+        compileShaderCalls,
+        uniqueShaderSources: compiledSources.size,
+        createProgramCalls,
+        linkProgramCalls,
+      };
+      const pickProbeViews = views.filter((view) => view._pickable);
+      for (const view of pickProbeViews) {
+        view._pickDirty = true;
+        view._pickAt(view.plot.w / 2, view.plot.h / 2);
+      }
+      const postPick = {
+        compileShaderCalls,
+        uniqueShaderSources: compiledSources.size,
+        createProgramCalls,
+        linkProgramCalls,
+      };
+      for (const view of views) {
+        view._drawNow();
+        view._raf = null;
+      }
+      const afterRedraw = {
+        compileShaderCalls,
+        uniqueShaderSources: compiledSources.size,
+        createProgramCalls,
+        linkProgramCalls,
+      };
+      const programs = views.flatMap(
+        (view) => Array.from(view._progCache.values()),
+      );
+      const hostCount = new Set(views.map((view) => view._glHost)).size;
+      const contextCount = new Set(views.map((view) => view.gl)).size;
+      const host = views[0]._glHost;
+      const failedCompileStart = compileShaderCalls;
+      const failedDeleteStart = deleteShaderCalls;
+      let failedCompileErrors = 0;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          host.getOrCreateShader(
+            host.gl.FRAGMENT_SHADER,
+            "#version 300 es\nthis is deliberately invalid",
+          );
+        } catch (_error) {
+          failedCompileErrors += 1;
+        }
+      }
+      const failedShaderCompileCalls = compileShaderCalls - failedCompileStart;
+      const failedShaderDeletes = deleteShaderCalls - failedDeleteStart;
+      const disposalDeleteStart = deleteShaderCalls;
+      for (const view of views) view.destroy();
+      const cachedShaderDisposalDeletes = deleteShaderCalls - disposalDeleteStart;
+      document.body.setAttribute("data-xy-shader-cache-probe", JSON.stringify({
+        chartCount: views.length,
+        hostCount,
+        contextCount,
+        load,
+        pickProbeCount: pickProbeViews.length,
+        postPick,
+        afterRedraw,
+        clientProgramCount: programs.length,
+        distinctClientProgramCount: new Set(programs).size,
+        failedCompileErrors,
+        failedShaderCompileCalls,
+        failedShaderDeletes,
+        cachedShaderDisposalDeletes,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-shader-cache-probe-error",
+        String((error && error.stack) || error),
+      );
+    } finally {
+      glPrototype.createShader = originalCreateShader;
+      glPrototype.shaderSource = originalShaderSource;
+      glPrototype.compileShader = originalCompileShader;
+      glPrototype.deleteShader = originalDeleteShader;
+      glPrototype.createProgram = originalCreateProgram;
+      glPrototype.linkProgram = originalLinkProgram;
+    }
+  })();
+"""
+    return probe.replace(
+        "__XY_MIXED_PAYLOADS__",
+        json.dumps(payloads, separators=(",", ":")),
+    )
+
+
 _CONTEXT_LOSS_PROBE = r"""
   (async () => {
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
@@ -307,6 +494,45 @@ _CONTEXT_LOSS_PROBE = r"""
         if (context) webgl2Contexts.add(context);
       }
       return context;
+    };
+    const glPrototype = WebGL2RenderingContext.prototype;
+    const originalCreateShader = glPrototype.createShader;
+    const originalShaderSource = glPrototype.shaderSource;
+    const originalCompileShader = glPrototype.compileShader;
+    const shaderTypes = new WeakMap();
+    const shaderSources = new WeakMap();
+    const shaderContextIds = new WeakMap();
+    const compiledShaderKeys = [];
+    let nextShaderContextId = 1;
+    glPrototype.createShader = function (type) {
+      const shader = originalCreateShader.call(this, type);
+      if (shader) shaderTypes.set(shader, type);
+      return shader;
+    };
+    glPrototype.shaderSource = function (shader, source) {
+      shaderSources.set(shader, String(source));
+      return originalShaderSource.call(this, shader, source);
+    };
+    glPrototype.compileShader = function (shader) {
+      let contextId = shaderContextIds.get(this);
+      if (contextId === undefined) {
+        contextId = nextShaderContextId++;
+        shaderContextIds.set(this, contextId);
+      }
+      const registry = globalThis[
+        Symbol.for("reflex-dev.xy.shared-webgl-host.v1")
+      ];
+      const currentHost = registry instanceof WeakMap
+        ? registry.get(document)
+        : null;
+      const generation = currentHost && currentHost.gl === this
+        ? currentHost.generation
+        : 0;
+      compiledShaderKeys.push(
+        `${contextId}\u0000${generation}\u0000${shaderTypes.get(shader)}` +
+        `\u0000${shaderSources.get(shader)}`,
+      );
+      return originalCompileShader.call(this, shader);
     };
 
     try {
@@ -351,6 +577,7 @@ _CONTEXT_LOSS_PROBE = r"""
       if (!host || !views.every((view) => view._glHost === host)) {
         throw new Error("context-loss probe did not acquire one shared host");
       }
+      const initialShaderCompiles = [...compiledShaderKeys];
       const extension = host.gl.getExtension("WEBGL_lose_context");
       if (!extension) throw new Error("WEBGL_lose_context extension unavailable");
 
@@ -388,6 +615,9 @@ _CONTEXT_LOSS_PROBE = r"""
       const phaseOneRestoreDeltas = phaseOneRestoreCounts.map(
         (count, index) => count - restoreCounts[index],
       );
+      const phaseOneShaderCompiles = compiledShaderKeys.slice(
+        initialShaderCompiles.length,
+      );
 
       // A real eviction may never restore the original canvas. Leave a second
       // forced loss unrestored: GLHost's watchdog must replace the detached
@@ -419,6 +649,9 @@ _CONTEXT_LOSS_PROBE = r"""
         view._drawNow();
         view._raf = null;
       }
+      const phaseTwoShaderCompiles = compiledShaderKeys.slice(
+        initialShaderCompiles.length + phaseOneShaderCompiles.length,
+      );
       const afterRange = {
         x: [...zoomed._axisRange("x")],
         y: [...zoomed._axisRange("y")],
@@ -521,6 +754,14 @@ _CONTEXT_LOSS_PROBE = r"""
         beforeRange,
         afterRange,
         nonzeroAfterRestore,
+        shaderCompiles: {
+          initialCalls: initialShaderCompiles.length,
+          initialUniqueGenerationSources: new Set(initialShaderCompiles).size,
+          phaseOneCalls: phaseOneShaderCompiles.length,
+          phaseOneUniqueGenerationSources: new Set(phaseOneShaderCompiles).size,
+          phaseTwoCalls: phaseTwoShaderCompiles.length,
+          phaseTwoUniqueGenerationSources: new Set(phaseTwoShaderCompiles).size,
+        },
         retryProbe,
         snapshotCount: document.querySelectorAll(
           "canvas[data-xy-ctx-snapshot]",
@@ -531,6 +772,10 @@ _CONTEXT_LOSS_PROBE = r"""
         "data-xy-shared-loss-probe-error",
         String((error && error.stack) || error),
       );
+    } finally {
+      glPrototype.createShader = originalCreateShader;
+      glPrototype.shaderSource = originalShaderSource;
+      glPrototype.compileShader = originalCompileShader;
     }
   })();
 """
@@ -592,6 +837,49 @@ def test_fifty_chartviews_share_one_real_webgl_context(tmp_path: Path) -> None:
     assert result["hostContextStillLive"] is True, result
 
 
+def test_sixty_chartviews_compile_each_shader_source_once(tmp_path: Path) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_sixty_view_shader_cache_probe()),
+        tmp_path / "shared_glhost_shader_cache_60.html",
+        "data-xy-shader-cache-probe",
+        label="60-view shared shader-cache probe",
+    )
+
+    assert result["chartCount"] == 60, result
+    assert result["hostCount"] == 1, result
+    assert result["contextCount"] == 1, result
+    # Farhan's exact mixed dashboard shape: twelve repetitions of line,
+    # scatter, histogram, grouped bar, and heatmap. Load compiles nine unique
+    # stage/source pairs; the first pick in each scatter adds two more.
+    assert result["load"] == {
+        "compileShaderCalls": 9,
+        "uniqueShaderSources": 9,
+        "createProgramCalls": 60,
+        "linkProgramCalls": 60,
+    }, result
+    assert result["pickProbeCount"] == 12, result
+    assert result["postPick"] == {
+        "compileShaderCalls": 11,
+        "uniqueShaderSources": 11,
+        "createProgramCalls": 72,
+        "linkProgramCalls": 72,
+    }, result
+    assert result["afterRedraw"] == result["postPick"], result
+    assert result["clientProgramCount"] == 72, result
+    assert result["distinctClientProgramCount"] == 72, result
+    # Failed shaders are deleted and retried rather than published; final-host
+    # disposal then deletes every healthy cached shader exactly once.
+    assert result["failedCompileErrors"] == 2, result
+    assert result["failedShaderCompileCalls"] == 2, result
+    assert result["failedShaderDeletes"] == 2, result
+    assert result["cachedShaderDisposalDeletes"] == 11, result
+
+
 def test_shared_host_loss_restores_every_client_and_zoom(tmp_path: Path) -> None:
     chromium = find_chromium()
     if chromium is None:
@@ -628,6 +916,13 @@ def test_shared_host_loss_restores_every_client_and_zoom(tmp_path: Path) -> None
     assert result["replacementUsed"] is True, result
     assert result["hostLive"] is True, result
     assert all(result["nonzeroAfterRestore"]), result
+    # Context loss invalidates cached shader objects. Each healthy generation
+    # must refill the cache exactly once per source before client-owned
+    # programs relink against that generation's objects.
+    for phase in ("initial", "phaseOne", "phaseTwo"):
+        calls = result["shaderCompiles"][f"{phase}Calls"]
+        unique = result["shaderCompiles"][f"{phase}UniqueGenerationSources"]
+        assert calls == unique and calls >= 2, result
     assert result["retryProbe"] == {
         "retryDelays": [50, 100, 200, 400, 800, 1000, 1000],
         "oneTimerPerAttempt": True,

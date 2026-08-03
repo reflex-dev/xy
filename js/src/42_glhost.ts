@@ -86,8 +86,9 @@ function pixelExtent(value: number): number {
 }
 
 /** One detached canvas/context shared by every participating view in a
- * document. Client GPU objects and mutable program uniforms remain
- * client-owned; only the immutable fullscreen grid quad is pooled here. */
+ * document. Client GPU objects, linked programs, and mutable uniforms remain
+ * client-owned; the immutable fullscreen grid quad and compiled shaders are
+ * pooled here for the lifetime of one context generation. */
 export class GLHost {
   canvas: HTMLCanvasElement;
   gl: WebGL2RenderingContext;
@@ -104,6 +105,7 @@ export class GLHost {
   private _capacityWidth = 1;
   private _capacityHeight = 1;
   private _activeClient: GLHostClient | null = null;
+  private readonly _shaderCache = new Map<number, Map<string, WebGLShader>>();
   private _disposed = false;
   private _recoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private _recoveryDelay = RECOVERY_INITIAL_DELAY_MS;
@@ -124,6 +126,9 @@ export class GLHost {
       return;
     }
     try {
+      // A restored context has a fresh object namespace even when the canvas
+      // and WebGLRenderingContext identity did not change.
+      this._dropShaderHandles();
       this._createSharedQuad();
       this.lost = false;
       this.ready = true;
@@ -163,6 +168,51 @@ export class GLHost {
   _register(client: GLHostClient): void {
     if (this._disposed) throw new Error("xy: shared WebGL host is disposed");
     this._clients.add(client);
+  }
+
+  /** Resolve one immutable compiled shader for this host context. Programs
+   * remain client-owned because their uniforms are mutable. This method is an
+   * additive capability: ChartView checks for it at runtime so a v1 host from
+   * an older duplicate bundle safely retains per-program compilation. */
+  getOrCreateShader(type: number, source: string): WebGLShader {
+    if (this._disposed || !this.ready || this.lost) {
+      throw new Error("xy: shared WebGL host is unavailable for shader compilation");
+    }
+    const gl = this.gl;
+    if (gl.isContextLost()) {
+      this._markLost();
+      throw new Error("xy: shared WebGL host context lost during shader compilation");
+    }
+
+    let shaders = this._shaderCache.get(type);
+    const cached = shaders?.get(source);
+    if (cached) return cached;
+
+    const shader = gl.createShader(type);
+    if (!shader) throw new Error("xy: could not allocate shared WebGL shader");
+    try {
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      const ok = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+      const info = gl.getShaderInfoLog(shader);
+      if (gl.isContextLost()) {
+        this._markLost();
+        throw new Error("xy: shared WebGL host context lost during shader compilation");
+      }
+      if (!ok) throw new Error("shader compile: " + info + "\n" + source);
+    } catch (error) {
+      // Publish only a successfully compiled shader. A later retry therefore
+      // cannot observe a partial/failed cache entry.
+      if (!gl.isContextLost()) gl.deleteShader(shader);
+      throw error;
+    }
+
+    if (!shaders) {
+      shaders = new Map<string, WebGLShader>();
+      this._shaderCache.set(type, shaders);
+    }
+    shaders.set(source, shader);
+    return shader;
   }
 
   /** Run one color pass in the bottom-left of the grow-only host buffer and
@@ -442,6 +492,9 @@ export class GLHost {
       this.generation += 1;
       this._activeClient = null;
       this._dropSharedHandles();
+      // Context-loss invalidates handles; clearing references is correct, but
+      // issuing deleteShader against the lost namespace is not.
+      this._dropShaderHandles();
       this._notify("_onGlHostContextLost");
     }
     this._scheduleRecovery();
@@ -486,6 +539,7 @@ export class GLHost {
     const oldCanvas = this.canvas;
     const oldGl = this.gl;
     this._detachSurfaceListeners(oldCanvas);
+    this._dropShaderHandles();
     this.canvas = surface.canvas;
     this.gl = surface.gl;
     this._maxViewport = surface.maxViewport;
@@ -513,6 +567,17 @@ export class GLHost {
     this.sharedQuadVao = null;
   }
 
+  private _dropShaderHandles(): void {
+    this._shaderCache.clear();
+  }
+
+  private _deleteCachedShaders(): void {
+    for (const shaders of this._shaderCache.values()) {
+      for (const shader of shaders.values()) this.gl.deleteShader(shader);
+    }
+    this._dropShaderHandles();
+  }
+
   private _notify(method: keyof GLHostClient): void {
     // Snapshot the set: a lifecycle callback may destroy and release its view.
     for (const client of [...this._clients]) {
@@ -535,9 +600,12 @@ export class GLHost {
     this._clearRecoveryTimer();
     this._detachSurfaceListeners(this.canvas);
     if (!this.gl.isContextLost()) {
+      this._deleteCachedShaders();
       if (this.sharedQuadVao) this.gl.deleteVertexArray(this.sharedQuadVao);
       if (this.sharedQuad) this.gl.deleteBuffer(this.sharedQuad);
       try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_error) {}
+    } else {
+      this._dropShaderHandles();
     }
     this._dropSharedHandles();
     this._onDispose();
