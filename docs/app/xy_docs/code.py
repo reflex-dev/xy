@@ -15,6 +15,21 @@ _LANGUAGE_ALIASES = {
     "text": "plain",
 }
 
+CODE_COPY_STYLE = """
+.code-block button[data-xy-code-copy="true"]::after {
+    content: none !important;
+}
+
+.code-block button[data-xy-code-copy="true"] {
+    gap: 0 !important;
+    padding: 0 !important;
+}
+
+.code-block button[data-xy-code-copy="true"] > svg {
+    flex-shrink: 0;
+}
+"""
+
 
 def code_copy_feedback_script() -> str:
     """Install accessible, settle-aware clipboard feedback for code blocks."""

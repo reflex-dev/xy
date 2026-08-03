@@ -11,7 +11,7 @@ from reflex_site_shared.templates.docs import docs_layout
 from reflex_site_shared.utils.docpage import right_sidebar_item_highlight
 
 from xy_docs.breadcrumb import xy_docs_breadcrumb
-from xy_docs.code import code_copy_feedback_script
+from xy_docs.code import CODE_COPY_STYLE, code_copy_feedback_script
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
 from xy_docs.constants import LLMS_TXT_PATH, PUBLIC_DOCS_URL, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
@@ -55,6 +55,7 @@ app = rx.App(
     ),
     head_components=[
         *get_pixel_website_trackers(),
+        rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),
         rx.el.meta(name="theme-color", content="#6E56CF"),
     ],

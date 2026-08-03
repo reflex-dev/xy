@@ -52,6 +52,11 @@ readouts, focusable direct-point navigation with Arrow/Home/End keys, named
 toolbar controls with toggle state, visible focus styling, reduced-motion
 behavior, and forced-colors affordances.
 
+The public documentation keeps code-copy controls visually icon-only while
+providing stable accessible names and polite copied/failed announcements. Its
+production-DOM check rejects both unnamed controls and shared-theme generated
+text that would replace the copy/check icon feedback.
+
 CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
 checks those semantics and interactions in every engine, compares WebGL output
 with a coarse per-channel perceptual signature, and compares DOM chrome through

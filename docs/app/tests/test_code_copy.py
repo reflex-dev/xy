@@ -118,3 +118,35 @@ def test_production_copy_buttons_have_accessible_names() -> None:
     assert not unnamed_controls, "Unnamed visible code-copy controls:\n" + "\n".join(
         unnamed_controls
     )
+
+
+def test_production_copy_button_stays_icon_only() -> None:
+    """Reject shared code-block styles that inject a visible Copy label."""
+    base_url = os.environ.get(_PRODUCTION_DOCS_URL_ENV)
+    if base_url is None:
+        pytest.skip(f"{_PRODUCTION_DOCS_URL_ENV} is only set for the production-DOM check")
+
+    from playwright.sync_api import expect, sync_playwright
+
+    route_url = urljoin(
+        f"{base_url.rstrip('/')}/",
+        "overview/first-chart/",
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        navigation = page.goto(route_url, wait_until="domcontentloaded")
+        assert navigation is not None and navigation.ok, (
+            f"Browser could not load production docs route: {route_url}"
+        )
+
+        button = page.locator('button[data-xy-code-copy="true"]:visible').first
+        expect(button).to_be_visible()
+        assert button.evaluate("element => getComputedStyle(element, '::after').content") in {
+            "none",
+            "normal",
+            '""',
+        }
+        expect(button.locator('[data-xy-code-copy-icon="copy"]')).to_be_visible()
+
+        browser.close()
