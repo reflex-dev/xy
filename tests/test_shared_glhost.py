@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 import xy
-from conftest import RENDER_CALLS, run_browser_probe
+from conftest import RENDER_CALLS, probe_document, run_browser_probe
 from xy.export import find_chromium
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -995,3 +996,687 @@ def test_shared_glhost_source_contract() -> None:
     assert "host.release(this);" in destroy
     assert "loseExt.loseContext();" in destroy
     assert destroy.index("if (this._glHost)") < destroy.index("loseExt.loseContext();")
+
+
+def test_shared_glhost_texture_unit_reset_contract() -> None:
+    """`_resetPass` unbinds exactly ``XY_TEXTURE_UNITS`` texture units.
+
+    The host constant is a reviewed state contract: a renderer change that
+    starts activating a third unit must bump it in the same commit, or one
+    chart's binding leaks into the next client's pass. Computed
+    ``TEXTURE0 + n`` forms would evade this grep — use literals in client
+    modules (the host's own reset loop is the one sanctioned computed use).
+    """
+    host = (ROOT / "js/src/42_glhost.ts").read_text(encoding="utf-8")
+    assert "const XY_TEXTURE_UNITS = 2;" in host, "shared-host texture-unit constant missing"
+    used: set[int] = set()
+    for path in sorted((ROOT / "js/src").glob("*.ts")):
+        if path.name == "42_glhost.ts":
+            continue
+        for match in re.finditer(
+            r"activeTexture\(\s*[A-Za-z_$][\w$]*\.TEXTURE(\d+)\s*\)",
+            path.read_text(encoding="utf-8"),
+        ):
+            used.add(int(match.group(1)))
+    assert used == {0, 1}, (
+        f"renderer modules activate texture units {sorted(used)} but the shared "
+        "GLHost resets XY_TEXTURE_UNITS = 2 between clients; change both together"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mixed-size presentation: the grow-only host buffer vs per-chart copies
+# ---------------------------------------------------------------------------
+
+_MIXED_SIZE_PROBE = r"""
+  (() => {
+    const payloads = __XY_MIXED_SIZE_PAYLOADS__;
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const grid = document.getElementById("chart");
+      grid.replaceChildren();
+      grid.style.cssText = "position:relative";
+      // Zoom every view into an off-center window around the middle data
+      // point: the one visible marker parks in the top-right quadrant, so a
+      // presentation flip or offset error moves the lit centroid even when a
+      // hash comparison has no baseline to disagree with. The window zooms in
+      // — programmatic zoom-out is span-clamped and would silently reshape
+      // this geometry (the ranges are asserted to catch that).
+      const skew = { x: [0.28, 0.55], y: [0.28, 0.55] };
+      const views = [];
+      const build = (payload) => {
+        const bytes = Uint8Array.from(
+          atob(payload.buffer),
+          (character) => character.charCodeAt(0),
+        );
+        const holder = document.createElement("div");
+        holder.style.cssText =
+          "position:absolute;top:0;left:0;overflow:hidden;" +
+          `width:${payload.css[0]}px;height:${payload.css[1]}px`;
+        grid.appendChild(holder);
+        const view = xy.renderStandalone(holder, payload.spec, bytes.buffer);
+        view._setView(
+          { ranges: skew },
+          { animate: false, request: false, source: "programmatic" },
+        );
+        view._drawNow();
+        view._raf = null;
+        views.push(view);
+        return view;
+      };
+      const surface = (view) => {
+        const context = view._present2d;
+        if (!context || context.canvas !== view.canvas) {
+          throw new Error("ChartView has no Canvas2D presentation surface");
+        }
+        const w = context.canvas.width;
+        const h = context.canvas.height;
+        const pixels = context.getImageData(0, 0, w, h).data;
+        let hash = 0x811c9dc5;
+        let lit = 0;
+        let sumX = 0;
+        let sumY = 0;
+        for (let offset = 0; offset < pixels.length; offset++) {
+          hash = Math.imul(hash ^ pixels[offset], 0x01000193) >>> 0;
+          if (offset % 4 === 3 && pixels[offset]) {
+            const pixel = (offset - 3) / 4;
+            lit += 1;
+            sumX += pixel % w;
+            sumY += Math.floor(pixel / w);
+          }
+        }
+        return {
+          hash,
+          lit,
+          centroidX: lit ? sumX / lit / w : -1,
+          centroidY: lit ? sumY / lit / h : -1,
+        };
+      };
+      const redraw = (view) => {
+        view._drawNow();
+        view._raf = null;
+      };
+      const pickMiddle = (view) => {
+        const [x0, x1] = view._axisRange("x");
+        const [y0, y1] = view._axisRange("y");
+        // Direct `_drawNow` driving bypasses the draw() bookkeeping that
+        // invalidates the pick snapshot on view changes.
+        view._pickDirty = true;
+        const hit = view._pickAt(
+          ((0.5 - x0) / (x1 - x0)) * view.plot.w,
+          ((y1 - 0.5) / (y1 - y0)) * view.plot.h,
+        );
+        return hit ? [hit.trace, hit.index] : null;
+      };
+
+      // Smallest chart first: the host buffer starts exactly chart-sized, so
+      // this baseline records the sourceY == 0 presentation every later
+      // assertion must reproduce byte-for-byte.
+      const small = build(payloads[0]);
+      const host = small._glHost;
+      if (!host) throw new Error("mixed-size probe did not acquire a shared host");
+      const baselineSmall = surface(small);
+      const capacityBaseline = [host.canvas.width, host.canvas.height];
+
+      // A wider chart grows capacity in X. The small chart's presented pixels
+      // must not change merely because the shared buffer rendered someone
+      // else's frame after its copy completed.
+      const wide = build(payloads[1]);
+      const baselineWide = surface(wide);
+      const smallAfterWideDrew = surface(small);
+
+      // The tallest chart grows capacity in Y: every earlier chart now
+      // presents from the bottom-left corner of a buffer taller than itself.
+      const tall = build(payloads[2]);
+      const baselineTall = surface(tall);
+      const capacityGrown = [host.canvas.width, host.canvas.height];
+
+      const forwardRedraw = views.map((view) => {
+        redraw(view);
+        return surface(view);
+      });
+      const reverseRedraw = [...views].reverse().map((view) => {
+        redraw(view);
+        return surface(view);
+      });
+      reverseRedraw.reverse();
+
+      document.body.setAttribute("data-xy-mixed-size-probe", JSON.stringify({
+        devicePixelRatio: window.devicePixelRatio,
+        viewDprs: views.map((view) => view.dpr),
+        viewRanges: views.map((view) => [
+          view._axisRange("x"),
+          view._axisRange("y"),
+        ]),
+        hostShared: views.every((view) => view._glHost === host),
+        canvasDims: views.map((view) => [
+          view.canvas.width,
+          view.canvas.height,
+          parseFloat(view.canvas.style.width),
+          parseFloat(view.canvas.style.height),
+        ]),
+        capacityBaseline,
+        capacityGrown,
+        smallPresentationOffset: [
+          host.canvas.width - views[0].canvas.width,
+          host.canvas.height - views[0].canvas.height,
+        ],
+        baselines: [baselineSmall, baselineWide, baselineTall],
+        smallAfterWideDrew,
+        forwardRedraw,
+        reverseRedraw,
+        picks: views.map(pickMiddle),
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-mixed-size-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def _mixed_size_probe() -> str:
+    payloads = []
+    for width, height in ((62, 82), (200, 120), (90, 240)):
+        figure = xy.scatter_chart(
+            xy.scatter([0.0, 0.5, 1.0], [0.0, 0.5, 1.0], size=10),
+            width=width,
+            height=height,
+            padding=(4, 4, 4, 4),
+        ).figure()
+        spec, blob = figure.build_payload()
+        payloads.append(
+            {
+                "spec": spec,
+                "buffer": base64.b64encode(blob).decode("ascii"),
+                "css": [width, height],
+            }
+        )
+    return _MIXED_SIZE_PROBE.replace(
+        "__XY_MIXED_SIZE_PAYLOADS__",
+        json.dumps(payloads, separators=(",", ":")),
+    )
+
+
+def _assert_mixed_size_presentation(result: dict, expected_dpr: float) -> None:
+    assert result["devicePixelRatio"] == expected_dpr, result
+    assert result["viewDprs"] == [expected_dpr] * 3, result
+    # The zoomed-in window survives view normalization verbatim; a clamp change
+    # here would silently reshape the geometry every assertion below assumes.
+    for ranges in result["viewRanges"]:
+        assert ranges[0] == pytest.approx([0.28, 0.55]), result
+        assert ranges[1] == pytest.approx([0.28, 0.55]), result
+    assert result["hostShared"] is True, result
+    dims = result["canvasDims"]
+    # The plot canvas floors fractional CSS sizes into device pixels; the
+    # invariant under a forced device scale factor is the ratio, not the
+    # rounding mode.
+    for device_w, device_h, css_w, css_h in dims:
+        assert abs(device_w - css_w * expected_dpr) <= 1, result
+        assert abs(device_h - css_h * expected_dpr) <= 1, result
+    # Grow-only capacity: exactly the first client's size at baseline, exactly
+    # the elementwise maximum after every chart drew once.
+    assert result["capacityBaseline"] == [dims[0][0], dims[0][1]], result
+    assert result["capacityGrown"] == [
+        max(dim[0] for dim in dims),
+        max(dim[1] for dim in dims),
+    ], result
+    # The anti-vacuity guard: after growth the small chart's copy really does
+    # start above the buffer bottom in image coordinates and left of its right
+    # edge — the offsets a sourceX/sourceY regression would corrupt.
+    offset_x, offset_y = result["smallPresentationOffset"]
+    assert offset_x > 0 and offset_y > 0, result
+    baselines = result["baselines"]
+    assert result["smallAfterWideDrew"]["hash"] == baselines[0]["hash"], result
+    for index in range(3):
+        assert result["forwardRedraw"][index]["hash"] == baselines[index]["hash"], result
+        assert result["reverseRedraw"][index]["hash"] == baselines[index]["hash"], result
+    for frame in (*baselines, *result["forwardRedraw"], *result["reverseRedraw"]):
+        assert frame["lit"] > 0, result
+        assert frame["centroidX"] > 0.55, result
+        assert frame["centroidY"] < 0.45, result
+    assert result["picks"] == [[0, 1]] * 3, result
+
+
+def test_mixed_size_charts_present_identically_after_capacity_growth(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_mixed_size_probe()),
+        tmp_path / "shared_glhost_mixed_size.html",
+        "data-xy-mixed-size-probe",
+        label="mixed-size shared-host presentation probe",
+    )
+    _assert_mixed_size_presentation(result, expected_dpr=1)
+
+
+def test_mixed_size_presentation_at_device_pixel_ratio_two(tmp_path: Path) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_mixed_size_probe()),
+        tmp_path / "shared_glhost_mixed_size_dpr2.html",
+        "data-xy-mixed-size-probe",
+        label="device-pixel-ratio-2 shared-host presentation probe",
+        extra_args=("--force-device-scale-factor=2",),
+    )
+    _assert_mixed_size_presentation(result, expected_dpr=2)
+
+
+# ---------------------------------------------------------------------------
+# Governed fallback: XY_SHARED_WEBGL = false keeps the native path working
+# ---------------------------------------------------------------------------
+
+_GOVERNED_FALLBACK_PROBE = r"""
+  (async () => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    let webgl2Acquisitions = 0;
+    const webgl2Contexts = new Set();
+    HTMLCanvasElement.prototype.getContext = function (kind, ...args) {
+      const context = originalGetContext.call(this, kind, ...args);
+      if (kind === "webgl2") {
+        webgl2Acquisitions += 1;
+        if (context) webgl2Contexts.add(context);
+      }
+      return context;
+    };
+    const sharedOverride = window.XY_SHARED_WEBGL;
+    const budgetOverride = window.XY_CONTEXT_BUDGET;
+    try {
+      window.XY_SHARED_WEBGL = false;
+      window.XY_CONTEXT_BUDGET = 2;
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const grid = document.getElementById("chart");
+      grid.replaceChildren();
+      grid.style.cssText = "display:grid;grid-template-columns:repeat(4,62px);gap:2px";
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 5000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+      const views = [];
+      const build = () => {
+        const holder = document.createElement("div");
+        holder.style.cssText = "width:62px;height:82px;overflow:hidden";
+        grid.appendChild(holder);
+        const view = xy.renderStandalone(holder, spec, buf);
+        view._drawNow();
+        view._raf = null;
+        views.push(view);
+        return view;
+      };
+      build();
+      build();
+      // Zoom the least-recently-visible view before budget pressure releases
+      // it: a governed release must bring back exactly this view (#156).
+      const zoomed = views[0];
+      zoomed._setView(
+        { ranges: { x: [0.2, 0.8], y: [0.2, 0.8] } },
+        { animate: false, request: false, source: "programmatic" },
+      );
+      zoomed._drawNow();
+      zoomed._raf = null;
+      const beforeRange = {
+        x: [...zoomed._axisRange("x")],
+        y: [...zoomed._axisRange("y")],
+      };
+      // Two more views exceed the budget of 2. The governor — not the browser
+      // — chooses victims: it releases the least-recently-visible views behind
+      // snapshot stand-ins, the released-but-visible views revive through the
+      // request path, and that rotation settles at exactly budget-many live
+      // contexts with every view having cycled through one governed release.
+      build();
+      build();
+      const lossSum = () =>
+        views.reduce((total, view) => total + view._contextLossCount, 0);
+      const liveViews = () => views.filter((view) => !view._glLost);
+      // The rotation cascade's length is timing-dependent (each visible
+      // released view revives through the request path, releasing another),
+      // so settle on the invariant state: budget-many live views, every view
+      // cycled at least once, and loss telemetry quiet across polls.
+      const settleOn = async (label, extra) => {
+        let stableSum = -1;
+        let stablePolls = 0;
+        await waitUntil(() => {
+          const sum = lossSum();
+          stablePolls = sum === stableSum ? stablePolls + 1 : 0;
+          stableSum = sum;
+          return (
+            stablePolls >= 3 &&
+            liveViews().length === 2 &&
+            views.every((view) => view._contextLossCount >= 1) &&
+            views.every((view) => !view._ctxLostPending) &&
+            extra()
+          );
+        }, label);
+      };
+      await settleOn("governed budget equilibrium", () => true);
+      const afterCreation = {
+        webgl2Acquisitions,
+        uniqueWebgl2Contexts: webgl2Contexts.size,
+        stamps: views.map((view) => view.canvas.dataset.xyCtx),
+        lost: views.map((view) => view._glLost),
+        lossCounts: views.map((view) => view._contextLossCount),
+        restoreCounts: views.map((view) => view._contextRestoreCount),
+        governorRegistered: views.map((view) => view._governorRegistered === true),
+        hostless: views.map((view) => view._glHost === null),
+        glHostMarkers: views.map((view) => view.canvas.dataset.xyGlHost ?? null),
+        nativeCanvas: views.map(
+          (view) => !!view.gl && view.gl.canvas === view.canvas,
+        ),
+        snapshots: document.querySelectorAll("canvas[data-xy-ctx-snapshot]").length,
+      };
+      const registry = globalThis[
+        Symbol.for("reflex-dev.xy.shared-webgl-host.v1")
+      ];
+      const registryHostExists =
+        registry instanceof WeakMap && registry.get(document) !== undefined;
+      const litCount = (view) => {
+        view._drawNow();
+        view._raf = null;
+        const gl = view.gl;
+        const w = view.canvas.width;
+        const h = view.canvas.height;
+        const px = new Uint8Array(w * h * 4);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        let lit = 0;
+        for (let index = 0; index < px.length; index++) if (px[index]) lit += 1;
+        return lit;
+      };
+      const liveLit = liveViews().map((view) => litCount(view));
+
+      // Requesting a released view (the pointer-entry path) must rotate a live
+      // view out instead of exceeding the budget.
+      const equilibriumSum = lossSum();
+      const revived = views.find((view) => view._glLost);
+      const revivedIndex = views.indexOf(revived);
+      revived._recoverContext();
+      await settleOn(
+        "budget rotation after revival",
+        () => !revived._glLost && lossSum() > equilibriumSum,
+      );
+      const afterRevival = {
+        revivedIndex,
+        revivedStamp: revived.canvas.dataset.xyCtx,
+        stamps: views.map((view) => view.canvas.dataset.xyCtx),
+        lossCounts: views.map((view) => view._contextLossCount),
+        restoreCounts: views.map((view) => view._contextRestoreCount),
+        lost: views.map((view) => view._glLost),
+        liveCount: liveViews().length,
+        snapshots: document.querySelectorAll("canvas[data-xy-ctx-snapshot]").length,
+        revivedLit: litCount(revived),
+        afterRange: {
+          x: [...zoomed._axisRange("x")],
+          y: [...zoomed._axisRange("y")],
+        },
+        zoomedRestoreCount: zoomed._contextRestoreCount,
+      };
+      document.body.setAttribute("data-xy-governed-fallback-probe", JSON.stringify({
+        afterCreation,
+        registryHostExists,
+        liveLit,
+        beforeRange,
+        afterRevival,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-governed-fallback-probe-error",
+        String((error && error.stack) || error),
+      );
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+      if (sharedOverride === undefined) delete window.XY_SHARED_WEBGL;
+      else window.XY_SHARED_WEBGL = sharedOverride;
+      if (budgetOverride === undefined) delete window.XY_CONTEXT_BUDGET;
+      else window.XY_CONTEXT_BUDGET = budgetOverride;
+    }
+  })();
+"""
+
+
+def test_disabled_shared_host_keeps_governed_native_contexts_working(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_GOVERNED_FALLBACK_PROBE),
+        tmp_path / "shared_glhost_governed_fallback.html",
+        "data-xy-governed-fallback-probe",
+        label="governed-fallback budget probe",
+    )
+
+    def assert_governed_equilibrium(state: dict) -> None:
+        # Budget 2 with four visible charts settles by rotation: the governor
+        # releases least-recently-visible views, visible released views revive
+        # through the request path, and each revival releases another view.
+        # The cascade's exact path is timing-dependent; its invariants are
+        # not: exactly budget-many live contexts, every view has cycled
+        # through at least one governed release, every completed loss was
+        # restored, one snapshot stand-in per released view, and no stamp
+        # ever reads "lost" — the browser-eviction marker (§28 keeps the
+        # governed/evicted difference legible).
+        assert sorted(state["stamps"]) == ["live", "live", "released", "released"], result
+        assert state["lost"] == [stamp == "released" for stamp in state["stamps"]], result
+        assert all(count >= 1 for count in state["lossCounts"]), result
+        for losses, restores, lost in zip(
+            state["lossCounts"], state["restoreCounts"], state["lost"], strict=True
+        ):
+            assert restores == losses - (1 if lost else 0), result
+        assert state["snapshots"] == 2, result
+
+    creation = result["afterCreation"]
+    # Opting out really is per-chart native WebGL: one context per canvas, no
+    # shared host anywhere, and every view registered with the governor.
+    assert creation["webgl2Acquisitions"] >= 4, result
+    assert creation["uniqueWebgl2Contexts"] == 4, result
+    assert creation["hostless"] == [True] * 4, result
+    assert creation["governorRegistered"] == [True] * 4, result
+    assert creation["glHostMarkers"] == [None] * 4, result
+    assert creation["nativeCanvas"] == [True] * 4, result
+    assert result["registryHostExists"] is False, result
+    assert_governed_equilibrium(creation)
+    assert len(result["liveLit"]) == 2, result
+    assert all(lit > 0 for lit in result["liveLit"]), result
+
+    revival = result["afterRevival"]
+    # Requesting a released view rotates a live one out at budget and renders
+    # a real frame; the zoomed view keeps its settled ranges through its own
+    # governed release/restore round trip (#156).
+    assert_governed_equilibrium(revival)
+    assert revival["stamps"][revival["revivedIndex"]] == "live", result
+    assert revival["revivedStamp"] == "live", result
+    assert revival["liveCount"] == 2, result
+    assert sum(revival["lossCounts"]) > sum(creation["lossCounts"]), result
+    assert revival["revivedLit"] > 0, result
+    assert revival["zoomedRestoreCount"] >= 1, result
+    assert result["beforeRange"]["x"] == pytest.approx([0.2, 0.8]), result
+    assert revival["afterRange"]["x"] == pytest.approx(result["beforeRange"]["x"]), result
+    assert revival["afterRange"]["y"] == pytest.approx(result["beforeRange"]["y"]), result
+
+
+# ---------------------------------------------------------------------------
+# Child-frame gate: governed by default, XY_SHARED_WEBGL = true opts in
+# ---------------------------------------------------------------------------
+
+_FRAME_GATE_PROBE = r"""
+  (async () => {
+    const innerDefault = __XY_INNER_DEFAULT__;
+    const innerOptIn = __XY_INNER_OPT_IN__;
+    const HOST_KEY = Symbol.for("reflex-dev.xy.shared-webgl-host.v1");
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const grid = document.getElementById("chart");
+      grid.replaceChildren();
+      const holder = document.createElement("div");
+      holder.style.cssText = "width:62px;height:82px;overflow:hidden";
+      grid.appendChild(holder);
+      const parentView = xy.renderStandalone(holder, spec, buf);
+      parentView._drawNow();
+      parentView._raf = null;
+
+      // srcdoc frames are same-origin with this page, so the probe can reach
+      // each frame's captured view and per-realm host registry directly.
+      const makeFrame = (html) => {
+        const frame = document.createElement("iframe");
+        frame.style.cssText = "width:300px;height:160px;border:0;display:block";
+        document.body.appendChild(frame);
+        frame.srcdoc = html;
+        return frame;
+      };
+      const defaultFrame = makeFrame(innerDefault);
+      const optInFrame = makeFrame(innerOptIn);
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 6000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+      const frameView = (frame) => {
+        try {
+          return (frame.contentWindow && frame.contentWindow.__fcProbeView) || null;
+        } catch (_error) {
+          return null;
+        }
+      };
+      await waitUntil(() => frameView(defaultFrame), "default child-frame chart");
+      await waitUntil(() => frameView(optInFrame), "opted-in child-frame chart");
+
+      const nonblank = (view) => {
+        view._drawNow();
+        view._raf = null;
+        const w = view.canvas.width;
+        const h = view.canvas.height;
+        if (view._present2d) {
+          return view._present2d.getImageData(0, 0, w, h).data.some(
+            (channel) => channel !== 0,
+          );
+        }
+        const gl = view.gl;
+        const px = new Uint8Array(w * h * 4);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        return px.some((channel) => channel !== 0);
+      };
+      const registryHost = (frame) => {
+        const registry = frame.contentWindow[HOST_KEY];
+        return registry instanceof frame.contentWindow.WeakMap
+          ? registry.get(frame.contentDocument) ?? null
+          : null;
+      };
+
+      const defaultView = frameView(defaultFrame);
+      const optInView = frameView(optInFrame);
+      const parentHost = parentView._glHost;
+      const optInHost = registryHost(optInFrame);
+      document.body.setAttribute("data-xy-frame-gate-probe", JSON.stringify({
+        parentHostMode:
+          !!parentHost && parentView.canvas.dataset.xyGlHost === "shared",
+        defaultFrame: {
+          topLevel:
+            defaultFrame.contentWindow.top === defaultFrame.contentWindow,
+          hostNull: defaultView._glHost === null,
+          governorRegistered: defaultView._governorRegistered === true,
+          nativeCanvas:
+            !!defaultView.gl && defaultView.gl.canvas === defaultView.canvas,
+          presents2d: !!defaultView._present2d,
+          glHostMarker: defaultView.canvas.dataset.xyGlHost ?? null,
+          registryHostExists: registryHost(defaultFrame) !== null,
+          nonblank: nonblank(defaultView),
+        },
+        optInFrame: {
+          hostAcquired: optInView._glHost !== null,
+          sameHostInRegistry:
+            optInHost !== null && optInView._glHost === optInHost,
+          distinctFromParentHost: optInHost !== parentHost,
+          glHostMarker: optInView.canvas.dataset.xyGlHost ?? null,
+          presents2d:
+            !!optInView._present2d &&
+            optInView._present2d.canvas === optInView.canvas,
+          nonblank: nonblank(optInView),
+        },
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-frame-gate-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def _frame_gate_probe() -> str:
+    chart = xy.scatter_chart(
+        xy.scatter([0.0, 0.5, 1.0], [0.0, 0.5, 1.0], size=10),
+        width=62,
+        height=82,
+        padding=(4, 4, 4, 4),
+    )
+    inner = probe_document(chart, "")
+    opted_in = inner.replace("<head>", "<head><script>window.XY_SHARED_WEBGL = true;</script>", 1)
+    assert opted_in != inner, "to_html head shape changed; update the frame-gate probe"
+
+    def embed(document: str) -> str:
+        # The inner documents ride inside the outer page's <script> block as
+        # string literals; escaping `<` keeps their own script tags from
+        # terminating it.
+        return json.dumps(document).replace("<", "\\u003c")
+
+    return _FRAME_GATE_PROBE.replace("__XY_INNER_DEFAULT__", embed(inner)).replace(
+        "__XY_INNER_OPT_IN__", embed(opted_in)
+    )
+
+
+def test_child_frames_default_to_governed_path_and_opt_into_shared_host(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_frame_gate_probe()),
+        tmp_path / "shared_glhost_frame_gate.html",
+        "data-xy-frame-gate-probe",
+        label="child-frame shared-host gate probe",
+    )
+
+    assert result["parentHostMode"] is True, result
+    frame = result["defaultFrame"]
+    # A child frame keeps the proven governed native path by default: no host
+    # in its realm registry, its visible canvas holds the WebGL context, and
+    # it renders.
+    assert frame["topLevel"] is False, result
+    assert frame["hostNull"] is True, result
+    assert frame["governorRegistered"] is True, result
+    assert frame["nativeCanvas"] is True, result
+    assert frame["presents2d"] is False, result
+    assert frame["glHostMarker"] is None, result
+    assert frame["registryHostExists"] is False, result
+    assert frame["nonblank"] is True, result
+    opted_in = result["optInFrame"]
+    # XY_SHARED_WEBGL = true opts the frame into its own document-scoped host
+    # — a distinct host from the parent document's, presenting through Canvas2D.
+    assert opted_in["hostAcquired"] is True, result
+    assert opted_in["sameHostInRegistry"] is True, result
+    assert opted_in["distinctFromParentHost"] is True, result
+    assert opted_in["glHostMarker"] == "shared", result
+    assert opted_in["presents2d"] is True, result
+    assert opted_in["nonblank"] is True, result

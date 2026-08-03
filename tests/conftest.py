@@ -77,7 +77,9 @@ class _BrowserUnavailable(RuntimeError):
     """The browser binary could not be executed at all — environmental."""
 
 
-def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
+def _dump_dom(
+    chromium: str, page: Path, extra_args: tuple[str, ...] = ()
+) -> tuple[str | None, str | None]:
     """One headless render pass.
 
     Returns ``(dom, failure)``; exactly one is set. A ``failure`` string means
@@ -99,6 +101,7 @@ def _dump_dom(chromium: str, page: Path) -> tuple[str | None, str | None]:
                 "--hide-scrollbars",
                 "--window-size=640,480",
                 "--virtual-time-budget=8000",
+                *extra_args,
                 "--dump-dom",
                 page.as_uri(),
             ],
@@ -123,6 +126,7 @@ def run_browser_probe(
     result_attribute: str,
     *,
     label: str,
+    extra_args: tuple[str, ...] = (),
 ) -> dict:
     """Render `document` headless and scrape one JSON probe result, with retries.
 
@@ -144,7 +148,7 @@ def run_browser_probe(
     last: str | None = None
     for _ in range(3):
         try:
-            dom, failure = _dump_dom(chromium, page)
+            dom, failure = _dump_dom(chromium, page, extra_args)
         except _BrowserUnavailable as exc:
             if os.environ.get("XY_REQUIRE_BROWSER"):
                 pytest.fail(
