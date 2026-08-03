@@ -150,8 +150,9 @@ that representation. Accepted gallery results may not fall back to Agg or
 another Matplotlib renderer. Three-dimensional axes are outside the integration
 and fail explicitly.
 
-`plt.set_mode("native" | "compat" | "auto")` and `XY_PYPLOT_MODE` configure
-the process. `auto` selects `compat` when supported Matplotlib 3.11 is
+`plt.set_mode("native")`, `plt.set_mode("compat")`, and `plt.set_mode("auto")`
+are the valid calls. `XY_PYPLOT_MODE` provides the corresponding process-wide
+configuration. `auto` selects `compat` when supported Matplotlib 3.11 is
 installed and `native` otherwise. Use explicit `native` to pin the lightweight
 implementation. Explicit `compat` fails with an installation hint when the
 supported extra is unavailable. Switching modes requires all figures to be

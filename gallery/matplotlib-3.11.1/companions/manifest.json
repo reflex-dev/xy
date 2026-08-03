@@ -14,7 +14,7 @@
   "records": [
     {
       "companion_path": "xy_native/font_indexing.py",
-      "companion_sha256": "0bf14bb2cf4840f3c1a53d4abbecbad5faafba130e16a3814e85ddb61449a8f7",
+      "companion_sha256": "106916c4862cae996a19a93092043bc1b5befc5453878e349373819c29e9796c",
       "disposition": "headless_xy_native_companion",
       "upstream_path": "misc/font_indexing.py",
       "upstream_sha256": "db0d48faec6711f9d6fb6e266efb47a242de0d5176f4460e28b5833a5083bbf8"
@@ -35,7 +35,7 @@
     },
     {
       "companion_path": "xy_native/canvasagg.py",
-      "companion_sha256": "1df98728d60d54e9adb3990dae71400bcae35fdacece31f1fd16df8d54938055",
+      "companion_sha256": "e64e511851acdd4144a6dc9584881c1fba0a0b099a2e19e126f22cd1ccd12087",
       "disposition": "headless_xy_native_companion",
       "upstream_path": "user_interfaces/canvasagg.py",
       "upstream_sha256": "0770bf0383005e449ea16950307d7bf955fd019f83ef7e15a3633e30c7aef2cb"

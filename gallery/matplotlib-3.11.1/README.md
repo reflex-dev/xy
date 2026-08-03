@@ -19,11 +19,12 @@ font, backend, or GUI embedding APIs and are retained as `non_pyplot` coverage
 rather than misreported as `xy.pyplot` failures.
 
 `baseline.json` is the current monotonic acceptance record. It stores the
-exact xy implementation commit, current harness and manifest hashes, and the
-SHA-256 of the standard and extended reports promoted into it. A passing
-execution, figure structure, canvas dimension, semantic result, behavior
-probe, or tolerant visual result may not regress. Temporary waivers may only
-be removed; adding a new waiver fails the base-branch comparison.
+exact xy implementation commit, current harness version, current manifest and
+extended-environment hashes, and the SHA-256 of the standard and extended
+reports promoted into it. A passing execution, figure structure, canvas
+dimension, semantic result, behavior probe, or tolerant visual result may not
+regress. Temporary waivers may only be removed; adding a new waiver fails the
+base-branch comparison.
 
 The supplied 3.11.1 gallery's `event_handling/resample.py` passes `step=` to
 `FillBetweenPolyCollection.set_data`, while the 3.11.0 oracle omits that

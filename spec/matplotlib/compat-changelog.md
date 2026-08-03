@@ -28,6 +28,10 @@ which covers user-visible releases across the whole package.
   standard-profile and 12 extended-environment cases. The other 22
   backend/font/server/GUI sources are classified and hash-locked but never
   counted as pyplot successes or failures.
+- Native font and canvas companions mirror raster behavior at their output
+  boundaries: controls and zero-width characters have no glyph or advance,
+  unsupported whitespace advances as a space, and BMP export does not depend
+  on the requested filename suffix.
 - Gallery import substitution now edits only the exact `matplotlib` token
   spans rather than round-tripping the full source through
   `tokenize.untokenize`. Transformed hashes are therefore reproducible across

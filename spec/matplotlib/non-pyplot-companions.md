@@ -21,12 +21,15 @@ The companions are intentionally API-level translations rather than import
 rewrites:
 
 - font diagnostics describe XY's generated DejaVu Sans coverage atlas because
-  native XY does not link FreeType at runtime;
+  native XY does not link FreeType at runtime. They mirror the rasterizer's
+  character normalization: controls and zero-width characters are dropped,
+  unsupported whitespace advances as an ordinary space, and other unsupported
+  codepoints use U+FFFD;
 - unit values are explicitly converted to ordinary numeric arrays before
   entering the dependency-free chart API; and
 - the direct-canvas example calls `Chart.to_png(engine=xy.Engine.default)`,
   which is the native Rust raster path, then decodes the returned PNG into an
-  RGBA image.
+  RGBA image and writes BMP explicitly, independent of the output suffix.
 
 This evidence does not claim that XY provides Matplotlib GUI embedding,
 FreeType object introspection, or an independent units registry. Those

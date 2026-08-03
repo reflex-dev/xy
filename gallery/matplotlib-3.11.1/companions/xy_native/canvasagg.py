@@ -57,7 +57,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args.bmp.parent.mkdir(parents=True, exist_ok=True)
     png, rgba = render_native()
     args.png.write_bytes(png)
-    rgba.save(args.bmp)
+    rgba.save(args.bmp, format="BMP")
     print(f"{args.png} {args.bmp} {rgba.width}x{rgba.height} RGBA")
 
 

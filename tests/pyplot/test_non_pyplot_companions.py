@@ -100,6 +100,28 @@ def test_native_font_companions_report_the_embedded_atlas(capsys) -> None:
         "atlas_row": 33,
         "advance_px": 11.0,
     }
+    space_row = indexing.atlas_row(" ")
+    assert indexing.glyph_record("\u00a0") == {
+        "codepoint": 0x00A0,
+        "atlas_row": space_row,
+        "advance_px": 5.0,
+    }
+    assert indexing.glyph_record("\u202f") == {
+        "codepoint": 0x202F,
+        "atlas_row": space_row,
+        "advance_px": 5.0,
+    }
+    for character in ("\n", "\u200b", "\ufeff"):
+        assert indexing.glyph_record(character) == {
+            "codepoint": ord(character),
+            "atlas_row": None,
+            "advance_px": 0.0,
+        }
+    assert indexing.glyph_record("東") == {
+        "codepoint": ord("東"),
+        "atlas_row": indexing.atlas_row("\ufffd"),
+        "advance_px": 16.0,
+    }
     atlas = properties.atlas_properties()
     assert atlas["family"] == "DejaVu Sans"
     assert atlas["runtime_font_engine"] == "embedded coverage atlas"
@@ -133,7 +155,7 @@ def test_basic_units_companion_converts_before_native_charting(tmp_path: Path) -
 def test_canvas_companion_exports_native_png_and_decoded_rgba(tmp_path: Path) -> None:
     canvas = _load_companion("canvasagg")
     png = tmp_path / "canvas.png"
-    bmp = tmp_path / "canvas.bmp"
+    bmp = tmp_path / "canvas-output"
 
     canvas.main(["--png", str(png), "--bmp", str(bmp)])
 
@@ -142,6 +164,7 @@ def test_canvas_companion_exports_native_png_and_decoded_rgba(tmp_path: Path) ->
         assert image.size == (500, 400)
         assert image.mode in {"RGB", "RGBA"}
     with Image.open(bmp) as image:
+        assert image.format == "BMP"
         assert image.size == (500, 400)
         assert image.mode in {"RGB", "RGBA"}
     _encoded, rgba = canvas.render_native()
