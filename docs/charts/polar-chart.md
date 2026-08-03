@@ -263,7 +263,8 @@ Cartesian charts:
   range. An explicit `reset_axes` also grants reset on its own — controls and
   double-click alike, whatever the zoom switch says — which is what a chart whose
   view moves through linked axes or state-driven updates rather than a gesture
-  should use.
+  should use. Its modebar trigger shows a view-controls icon rather than a zoom
+  percentage, because with zoom off nothing can move that number.
 - Drag does nothing on a disc, and says so: theta pan, box zoom, and
   rectangular/lasso selection have no polar geometry, so `default_drag_action`
   accepts only `"auto"` and `"none"` here and raises on the rest rather than

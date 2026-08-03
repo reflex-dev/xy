@@ -1315,17 +1315,37 @@ Object.assign(ChartView.prototype, {
       this._zoomMenuButton = zoomTrigger;
       zoomTrigger.dataset.xyModebarMenuTrigger = "";
       zoomTrigger.replaceChildren();
-      const zoomPercent = document.createElement("span");
-      zoomPercent.dataset.xyModebarZoomPercent = "";
-      zoomPercent.textContent = "100%";
-      this._applySlot(zoomPercent, "modebar_zoom_value");
-      zoomTrigger.appendChild(zoomPercent);
+      // The percentage is a zoom READOUT, so it only earns its place when zoom
+      // can move it. The menu can outlive zoom — reset (an authored
+      // `reset_axes`) and view history both live in it — and a trigger reading
+      // a permanent "100%" then advertises a control the chart does not have.
+      // Keep the icon instead, which is what `mk` drew before this swap.
+      if (canZoom) {
+        const zoomPercent = document.createElement("span");
+        zoomPercent.dataset.xyModebarZoomPercent = "";
+        zoomPercent.textContent = "100%";
+        this._applySlot(zoomPercent, "modebar_zoom_value");
+        zoomTrigger.appendChild(zoomPercent);
+        this._zoomMenuLabel = zoomPercent;
+      } else {
+        // Rebuilt exactly as `mk` drew it above (same slot, no data attribute —
+        // that one marks *menu item* icons), because `replaceChildren` wiped it.
+        const zoomIcon = document.createElement("span");
+        zoomIcon.innerHTML = this._icon("zoommenu");
+        this._applySlot(zoomIcon, "modebar_icon");
+        zoomTrigger.appendChild(zoomIcon);
+      }
       zoomIndicator = document.createElement("span");
       zoomIndicator.dataset.xyModebarMenuIndicator = "";
       zoomIndicator.innerHTML = this._icon("chevrondown");
       this._applySlot(zoomIndicator, "modebar_indicator");
       zoomTrigger.appendChild(zoomIndicator);
-      this._zoomMenuLabel = zoomPercent;
+      // Name the menu for what it actually offers: "Zoom controls" on a chart
+      // that cannot zoom is wrong for a screen reader too, not just visually.
+      if (!canZoom) {
+        zoomTrigger.title = "View controls";
+        zoomTrigger.setAttribute("aria-label", "View controls");
+      }
       zoomTrigger.setAttribute("aria-haspopup", "menu");
       zoomTrigger.setAttribute("aria-expanded", "false");
     }
@@ -1380,7 +1400,7 @@ Object.assign(ChartView.prototype, {
       zoomMenu = document.createElement("div");
       zoomMenu.dataset.xyModebarMenu = "";
       zoomMenu.setAttribute("role", "menu");
-      zoomMenu.setAttribute("aria-label", "Zoom controls");
+      zoomMenu.setAttribute("aria-label", canZoom ? "Zoom controls" : "View controls");
       zoomMenu.style.cssText =
         "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
       this._applySlot(zoomMenu, "modebar_menu");

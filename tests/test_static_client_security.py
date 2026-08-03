@@ -146,6 +146,9 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         assert inner_html_lines == [
             'dragPeek.innerHTML = this._icon("drag");',
             "icon.innerHTML = this._icon(name);",
+            # The zoom-menu trigger's icon fallback, used when zoom is disabled
+            # and the percentage readout would be inert.
+            'zoomIcon.innerHTML = this._icon("zoommenu");',
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
             'selectModeIcon.innerHTML = this._icon("select");',
             'selectIndicator.innerHTML = this._icon("chevrondown");',

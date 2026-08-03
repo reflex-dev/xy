@@ -550,6 +550,93 @@ setTimeout(() => {
     assert result["zoomMenu"] is False
 
 
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        # Zoom off but reset authored: the menu is needed, the readout is not.
+        (
+            "polar",
+            lambda: xy.polar_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 1.5], animation=False),
+                xy.interaction_config(reset_axes=("y",)),
+                width=420,
+                height=420,
+            ),
+        ),
+        # Same wart off the polar path: pan/select keep the menu alive while the
+        # percentage can never move.
+        (
+            "cartesian",
+            lambda: xy.line_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 1.5], animation=False),
+                xy.interaction_config(zoom=False),
+                width=420,
+                height=300,
+            ),
+        ),
+    ],
+)
+def test_a_zoom_disabled_modebar_shows_no_zoom_percentage(label, build, tmp_path: Path) -> None:
+    """The "100%" trigger is a zoom READOUT and must not outlive zoom.
+
+    The menu legitimately survives `zoom=False` — reset (via an authored
+    `reset_axes`) and view history both live in it — but its trigger rendered a
+    permanent "100%" that advertises a control the chart does not have and that
+    no gesture can move. It falls back to the menu icon, and the accessible name
+    drops from "Zoom controls" to "View controls".
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const v = window.__fcProbeView;
+    v._drawNow();
+    const trigger = v.root.querySelector('[data-xy-modebar-menu-trigger]');
+    document.body.setAttribute("data-xy-nopct", JSON.stringify({
+      zoomFlag: v._interactionFlag("zoom", true),
+      trigger: !!trigger,
+      percent: trigger ? !!trigger.querySelector('[data-xy-modebar-zoom-percent]') : null,
+      icon: trigger ? !!trigger.querySelector('[data-xy-slot="modebar_icon"] svg') : null,
+      triggerLabel: trigger ? trigger.getAttribute("aria-label") : null,
+      menuLabel: (v.root.querySelector('[data-xy-modebar-menu]') || {
+        getAttribute: () => null,
+      }).getAttribute("aria-label"),
+      resetItem: !!v.root.querySelector('[data-xy-modebar-menu-item="reset"]'),
+      zoomIn: !!v.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      labelRef: !!v._zoomMenuLabel,
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-nopct-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(build(), probe),
+        tmp_path / f"no_percent_{label}.html",
+        "data-xy-nopct",
+        label=f"{label} zoom-off modebar",
+    )
+    assert result["zoomFlag"] is False
+    # The menu is still there and still useful...
+    assert result["trigger"] is True
+    assert result["resetItem"] is True
+    # ...but carries no zoom readout and offers no zoom action.
+    assert result["percent"] is False, "zoom percentage rendered on a chart that cannot zoom"
+    assert result["icon"] is True, "trigger lost its icon fallback"
+    assert result["zoomIn"] is False
+    assert result["triggerLabel"] == "View controls"
+    assert result["menuLabel"] == "View controls"
+    # No label element means `_updateZoomMenuLabel` has nothing to overwrite the
+    # accessible name with on the next view change.
+    assert result["labelRef"] is False
+
+
 def test_wind_rose_keeps_radial_zoom_without_restoring_box_zoom(tmp_path: Path) -> None:
     """The wind-rose exception grants RADIAL zoom, not the rectangle gestures.
 
