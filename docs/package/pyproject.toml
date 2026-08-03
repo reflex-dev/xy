@@ -1,0 +1,27 @@
+[project]
+name = "reflex-xy-docs-bundle"
+dynamic = ["version"]
+description = "XY charting-library documentation bundled as a Python package."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+pattern-prefix = "reflex-xy-docs-bundle-"
+fallback-version = "0.0.0dev0"
+
+[tool.hatch.build]
+include = ["reflex_xy_docs_bundle", "scripts/hatch_build.py"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["reflex_xy_docs_bundle"]
+
+[tool.hatch.build.hooks.custom]
+path = "scripts/hatch_build.py"
