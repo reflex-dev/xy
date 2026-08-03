@@ -1029,7 +1029,7 @@ def test_shared_glhost_texture_unit_reset_contract() -> None:
 # ---------------------------------------------------------------------------
 
 _MIXED_SIZE_PROBE = r"""
-  (() => {
+  (async () => {
     const payloads = __XY_MIXED_SIZE_PAYLOADS__;
     try {
       document.body.style.cssText = "margin:0;overflow:hidden";
@@ -1044,7 +1044,33 @@ _MIXED_SIZE_PROBE = r"""
       // this geometry (the ranges are asserted to catch that).
       const skew = { x: [0.28, 0.55], y: [0.28, 0.55] };
       const views = [];
-      const build = (payload) => {
+      const dimsOf = (view) => [
+        view.canvas.width,
+        view.canvas.height,
+        parseFloat(view.canvas.style.width),
+        parseFloat(view.canvas.style.height),
+      ];
+      // Async ResizeObserver delivery can re-measure a chart after creation
+      // (headless font metrics and viewport pressure vary by environment). A
+      // baseline hashed before that settles would legitimately differ from
+      // every redraw, so wait for stable canvas dimensions first — and the
+      // report re-checks them so a late relayout fails loudly, not as a hash
+      // mystery.
+      const settleDims = async (view, label) => {
+        const deadline = performance.now() + 5000;
+        let last = "";
+        let stable = 0;
+        while (stable < 3) {
+          if (performance.now() >= deadline) {
+            throw new Error(`timed out settling dimensions of ${label}`);
+          }
+          const dims = JSON.stringify(dimsOf(view));
+          stable = dims === last ? stable + 1 : 0;
+          last = dims;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+      const build = async (payload, label) => {
         const bytes = Uint8Array.from(
           atob(payload.buffer),
           (character) => character.charCodeAt(0),
@@ -1055,6 +1081,7 @@ _MIXED_SIZE_PROBE = r"""
           `width:${payload.css[0]}px;height:${payload.css[1]}px`;
         grid.appendChild(holder);
         const view = xy.renderStandalone(holder, payload.spec, bytes.buffer);
+        await settleDims(view, label);
         view._setView(
           { ranges: skew },
           { animate: false, request: false, source: "programmatic" },
@@ -1112,7 +1139,7 @@ _MIXED_SIZE_PROBE = r"""
       // Smallest chart first: the host buffer starts exactly chart-sized, so
       // this baseline records the sourceY == 0 presentation every later
       // assertion must reproduce byte-for-byte.
-      const small = build(payloads[0]);
+      const small = await build(payloads[0], "small chart");
       const host = small._glHost;
       if (!host) throw new Error("mixed-size probe did not acquire a shared host");
       const baselineSmall = surface(small);
@@ -1121,15 +1148,16 @@ _MIXED_SIZE_PROBE = r"""
       // A wider chart grows capacity in X. The small chart's presented pixels
       // must not change merely because the shared buffer rendered someone
       // else's frame after its copy completed.
-      const wide = build(payloads[1]);
+      const wide = await build(payloads[1], "wide chart");
       const baselineWide = surface(wide);
       const smallAfterWideDrew = surface(small);
 
       // The tallest chart grows capacity in Y: every earlier chart now
       // presents from the bottom-left corner of a buffer taller than itself.
-      const tall = build(payloads[2]);
+      const tall = await build(payloads[2], "tall chart");
       const baselineTall = surface(tall);
       const capacityGrown = [host.canvas.width, host.canvas.height];
+      const dimsAtBaseline = views.map(dimsOf);
 
       const forwardRedraw = views.map((view) => {
         redraw(view);
@@ -1149,12 +1177,8 @@ _MIXED_SIZE_PROBE = r"""
           view._axisRange("y"),
         ]),
         hostShared: views.every((view) => view._glHost === host),
-        canvasDims: views.map((view) => [
-          view.canvas.width,
-          view.canvas.height,
-          parseFloat(view.canvas.style.width),
-          parseFloat(view.canvas.style.height),
-        ]),
+        canvasDims: views.map(dimsOf),
+        dimsAtBaseline,
         capacityBaseline,
         capacityGrown,
         smallPresentationOffset: [
@@ -1179,7 +1203,10 @@ _MIXED_SIZE_PROBE = r"""
 
 def _mixed_size_probe() -> str:
     payloads = []
-    for width, height in ((62, 82), (200, 120), (90, 240)):
+    # Every chart fits a 320x240 CSS viewport — the window under
+    # --force-device-scale-factor=2 — with margin, so no environment's layout
+    # pass can shrink a chart away from its requested size mid-probe.
+    for width, height in ((62, 82), (150, 90), (70, 170)):
         figure = xy.scatter_chart(
             xy.scatter([0.0, 0.5, 1.0], [0.0, 0.5, 1.0], size=10),
             width=width,
@@ -1210,6 +1237,10 @@ def _assert_mixed_size_presentation(result: dict, expected_dpr: float) -> None:
         assert ranges[1] == pytest.approx([0.28, 0.55]), result
     assert result["hostShared"] is True, result
     dims = result["canvasDims"]
+    # No relayout may slip in between the hashed baselines and the redraw
+    # comparisons — a late resize would make every hash mismatch below a
+    # red herring.
+    assert dims == result["dimsAtBaseline"], result
     # The plot canvas floors fractional CSS sizes into device pixels; the
     # invariant under a forced device scale factor is the ratio, not the
     # rounding mode.
