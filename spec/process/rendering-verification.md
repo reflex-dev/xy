@@ -37,7 +37,7 @@ blankness checks.
 | `scripts/step_tier_smoke.py`, `scripts/interaction_stress_smoke.py`, `scripts/pick_boundary_smoke.py` | targeted probes for past bug classes | the next bug class — each probe was written after its bug shipped |
 | `scripts/visual_regression_smoke.py` | statistical screenshot properties (non-blank, colored, region stats) across chart families — self-described "not a pixel-perfect golden suite yet" | any regression that keeps pixel statistics plausible: wrong colors in the right amounts, shifted geometry, missing subsets |
 | `scripts/browser_conformance.mjs` (`make check-conformance`) | one focused chart in Chromium/Firefox/WebKit: semantics, interactions, coarse per-channel perceptual signature, DOM layout boxes | per-family coverage; interaction *states*; anything finer than the coarse signature |
-| `benchmarks/bench_dashboard.py` nonblank gate | 10/20/50-chart pages stay nonblank | everything except blankness |
+| `benchmarks/bench_dashboard.py` dashboard-scale gate | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, and applies the shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | blankness above the hard-gated smoke row; shader inventory on partial or loss-affected rows |
 
 Two structural gaps, two workstreams:
 
@@ -177,8 +177,9 @@ platform and font stack. Within the canvas:
 The repository stays binary-free: no golden PNGs in git, and no Git LFS
 (the repo does not use LFS today, and introducing it would tax every clone
 and CI checkout with quota and fetch friction for what is, by
-construction, *regenerable* data). Committed PNGs would also ship in the
-sdist, which packages `tests/`. Instead:
+construction, *regenerable* data). The published sdist deliberately excludes
+the test corpus, and committed PNGs would still bloat every repository checkout.
+Instead:
 
 - **The committed baseline is a text manifest**, not images:
   `tests/visual/manifest.json` holds, per corpus entry, the per-tile
@@ -197,8 +198,8 @@ sdist, which packages `tests/`. Instead:
   stored in history. `make regen-visual` writes the PNGs to a git-ignored
   `tests/visual/out/` for local eyeballing.
 - The manifest check fails if a PNG appears anywhere under
-  `tests/visual/`; `verify_sdist.py`'s no-generated-junk rule extends to
-  the git-ignored output directory.
+  `tests/visual/`; `verify_sdist.py` rejects repository-only `tests/` content
+  altogether, including the git-ignored output directory.
 
 ## 5. Fail-first calibration
 

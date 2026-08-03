@@ -6,8 +6,8 @@ import pathlib
 
 import pytest
 import reflex as rx
-import reflex_xy
 
+import reflex_xy
 import xy
 from xy.channel import decode_frame
 

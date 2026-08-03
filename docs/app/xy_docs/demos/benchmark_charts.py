@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import reflex as rx
-import reflex_xy
 
+import reflex_xy
 import xy
 from xy._benchmark_theme import (
     benchmark_chart_class,
@@ -180,7 +180,7 @@ def interactive_ux_demo() -> rx.Component:
     return rx.el.section(
         rx.el.div(
             rx.el.div(
-                rx.el.h3(
+                rx.el.h2(
                     "Live interactive render time",
                     class_name="text-xl font-semibold tracking-[-0.02em] text-secondary-12",
                 ),

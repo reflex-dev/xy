@@ -137,8 +137,11 @@ jobs:
 
       - name: Install package + dev deps
         run: |
-          uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv sync --locked --extra reflex --group dev
+
+      - name: Verify bundled Reflex integration import
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
 
       - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
         run: |
@@ -230,7 +233,7 @@ jobs:
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_dashboard.py \
-            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json
+            --chart-counts 10,20,50,60 --chromium "$CHROME" --json dashboard-smoke.json
           .venv/bin/python scripts/verify_benchmark_report.py \
             dashboard-smoke.json --kind dashboard-browser
 
@@ -517,11 +520,11 @@ jobs:
           .venv/bin/python benchmarks/bench_interaction.py \
             --sizes 1e4,2.5e5 --reps 24 --chromium "$CHROME" --retries 2 \
             --json interaction.json | tee -a docs/benchmark_ci.md
-      - name: Many-chart dashboard startup (methodology dashboard_20)
+      - name: Many-chart dashboard startup (methodology dashboard_scale)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_dashboard.py \
-            --chart-counts 10,20,50 --chromium "$CHROME" \
+            --chart-counts 10,20,50,60 --chromium "$CHROME" \
             --json dashboard.json | tee -a docs/benchmark_ci.md
       - name: Verify benchmark JSON artifacts
         run: |
@@ -618,6 +621,7 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
@@ -637,27 +641,50 @@ jobs:
           sdist=$(ls dist/*.tar.gz)
           python scripts/verify_sdist.py "$sdist"
 
-      - name: Verify sdist without Rust errors clearly on import
+      - name: Build and load native core from sdist
+        shell: bash
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv smoke-native
+          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          ./smoke-native/bin/python - <<'PY'
+          import importlib.metadata as metadata
+
+          import reflex_xy
+          import xy
+          import xy.kernels as kernels
+
+          version = metadata.version("xy")
+          assert xy.__version__ == version
+          assert reflex_xy.__version__ == version
+          assert kernels.BACKEND == "native", kernels.BACKEND
+          print("sdist built and loaded the native Rust core")
+          PY
+
+      - name: Verify coreless sdist imports reflex_xy
         shell: bash
         env:
           XY_SKIP_CARGO: "1"
         run: |
-          uv venv smoke
-          uv pip install -p smoke dist/*.tar.gz numpy anywidget
-          ./smoke/bin/python - <<'PY'
-          # No native core and no fallback: importing the compute layer must
-          # raise a clear, actionable error (§33: no-wheel behavior is defined
-          # as a loud failure, not a silent degrade).
+          uv venv smoke-no-rust
+          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          ./smoke-no-rust/bin/python - <<'PY'
+          import importlib.metadata as metadata
+
+          import reflex_xy
           import xy
 
-          assert xy.__version__
+          version = metadata.version("xy")
+          assert xy.__version__ == version
+          assert reflex_xy.__version__ == version
           try:
               import xy.kernels  # noqa: F401
           except ImportError as err:
               msg = str(err)
               assert "native Rust core" in msg, msg
               assert "rustup.rs" in msg, msg
-              print("sdist without Rust errors clearly on import")
+              print("coreless sdist imports reflex_xy and errors clearly on compute")
           else:
               raise SystemExit("expected ImportError without the native core")
           PY

@@ -308,7 +308,7 @@ These commands match the non-blocking GitHub Actions measurement lane:
 .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
   --browser-reps 12 --chromium "$CHROME" --require-browser \
   --json transport.json
-.venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50 \
+.venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 \
   --chromium "$CHROME" --json dashboard.json
 .venv/bin/python benchmarks/bench_workflows.py --profile standard --reps 5 \
   --chromium "$CHROME" --json workflows.json
@@ -429,8 +429,12 @@ JSON artifacts, retain failed/over-budget rows, and label the table
 - Interactive TTFR is build + HTML serialization + chart-ready time.
 - Interaction browser rows are standalone client input-to-pixel-readback;
   backend LOD and selection-handler work is in CodSpeed and workflow rows.
-- Dashboard rows attempt 10/20/50 charts, retain timings for partial dashboards,
-  record per-chart context loss/restoration plus initial/scrolled nonblank IDs,
-  and publish the largest stable loss-free count.
+- Dashboard rows attempt 10/20/50/60 charts, retain timings for partial
+  dashboards, record per-chart setup/first-draw latency, context
+  loss/restoration, and initial/scrolled nonblank IDs, and publish the largest
+  stable loss-free count. When complete and loss-free, the 60-chart CI row is
+  the production shader-cache oracle: 9 unique shader compiles/60 links on
+  load, 11/72 after 12 scatter picks, and no additional compile or link work
+  during steady redraw.
 - Density rows must include a count-conservation oracle and explicit aggregate
   dimensions. A density result is not an exact-marker result.

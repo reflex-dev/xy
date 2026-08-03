@@ -1,6 +1,6 @@
 """A full-payload update re-homes to the new data, so a grown range expands.
 
-Section 4 of the reflex-xy showcase links two charts: zooming the overview's x
+Section 4 of the XY Reflex showcase links two charts: zooming the overview's x
 range recomputes a *detail* histogram of only the points in view, and pushes it
 as a full ``payload`` (reflex-integration.md §4, "state-driven rebuild"). The
 client applies that in place via ``ChartView.updatePayload``.

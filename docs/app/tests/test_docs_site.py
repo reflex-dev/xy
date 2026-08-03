@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
-import reflex_xy
 from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
@@ -87,6 +86,7 @@ from xy_docs.sidebar import (
 )
 from xy_docs.xy_docs import _CHART_STYLE, _DOCS_ROUTES, app
 
+import reflex_xy
 import xy
 from xy.components import _MARK_APPLIERS, _POLAR_INERT_AXIS_KEYWORDS
 
@@ -648,7 +648,15 @@ def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
         "colorbar(show=False)",
     ):
         assert option in content
-    for slot in ("colorbar", "colorbar_bar", "colorbar_tick", "colorbar_title"):
+    for slot in (
+        "colorbar",
+        "colorbar_bar",
+        "colorbar_extension",
+        "colorbar_line",
+        "colorbar_tick",
+        "colorbar_minor_tick",
+        "colorbar_title",
+    ):
         assert f"`{slot}`" in content
     assert "The last compatible continuous mark wins" in content
     assert "does not currently mount custom chrome" in content
