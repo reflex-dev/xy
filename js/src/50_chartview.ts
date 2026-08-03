@@ -571,6 +571,8 @@ export class ChartView {
     this._present2d = null;
     this._sharedGlAttempted = false;
     this._governorRegistered = false;
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
@@ -1764,6 +1766,9 @@ export class ChartView {
   // updates written into now-dead buffers are gone until it answers).
   _onGlHostContextLost() {
     if (this._destroyed) return;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
     // Keep the visible canvas as the per-chart event surface. Existing hosts
     // and telemetry listen here, while the real loss belongs to the detached
     // shared canvas and is fanned out by GLHost.
@@ -1916,15 +1921,20 @@ export class ChartView {
           String(err && err.message || err).startsWith("WebGL error ");
         if (transient) {
           this._contextRecoveryError = null;
-          if (this._glHost && this.gl && !this.gl.isContextLost()) {
-            try { this._destroyGlResources(); } catch (_cleanupError) {}
-            setTimeout(() => this._onGlHostContextRestored(), 50);
+          if (this._glHost) {
+            if (this.gl && !this.gl.isContextLost()) {
+              try { this._destroyGlResources(); } catch (_cleanupError) {}
+            }
+            this._scheduleGlHostClientRecovery();
           } else {
             this._scheduleContextRecovery();
           }
           return;
         }
         this._contextRecoveryError = err;
+        clearTimeout(this._glHostRecoveryTimer);
+        this._glHostRecoveryTimer = null;
+        this._glHostRecoveryDelay = 0;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
         this.gl = null;
@@ -1938,6 +1948,9 @@ export class ChartView {
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
       this._ctxRecoveryDelay = 0;
+      clearTimeout(this._glHostRecoveryTimer);
+      this._glHostRecoveryTimer = null;
+      this._glHostRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
       if (this._governorRegistered) {
@@ -2059,7 +2072,13 @@ export class ChartView {
   // fresh one and rebuilt from the retained spec + payload.
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
-    if (this._glHost) return; // the host restores its one context for every client
+    if (this._glHost) {
+      // Host-wide recovery fans out its own restored event. This path handles
+      // a client-only rebuild that was deferred while its view or document
+      // was hidden after a transient allocation failure.
+      this._scheduleGlHostClientRecovery();
+      return;
+    }
     // Governed release, but its webglcontextlost event has not dispatched yet
     // (scrolled back into view in the same task it was released). Chromium
     // drops a restoreContext() issued before the loss event, stranding the
@@ -2118,6 +2137,46 @@ export class ChartView {
     this._ctxRecoveryTimer = setTimeout(() => {
       this._ctxRecoveryTimer = null;
       if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
+  // A host can be healthy while one client fails transiently during its own
+  // shader/buffer rebuild. Retry that client without letting a hidden or
+  // off-screen chart spin at frame rate under persistent GPU pressure.
+  _scheduleGlHostClientRecovery() {
+    if (
+      this._glHostRecoveryTimer ||
+      this._destroyed ||
+      !this._glHost ||
+      !this._glLost ||
+      !this._ctxVisible
+    ) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._glHostRecoveryDelay || 50;
+    this._glHostRecoveryDelay = Math.min(1000, delay * 2);
+    const host = this._glHost;
+    this._glHostRecoveryTimer = setTimeout(() => {
+      this._glHostRecoveryTimer = null;
+      if (
+        this._destroyed ||
+        this._glHost !== host ||
+        !this._glLost ||
+        !this._ctxVisible ||
+        !host.ready ||
+        host.lost ||
+        !host.gl ||
+        host.gl.isContextLost() ||
+        (
+          typeof document !== "undefined" &&
+          document.visibilityState &&
+          document.visibilityState !== "visible"
+        )
+      ) return;
+      this._onGlHostContextRestored();
     }, delay);
   }
 
@@ -7502,6 +7561,7 @@ export class ChartView {
     gl.enable(gl.BLEND);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this._pickDirty = false;
+    return true;
   }
 
   _renderPick() {
@@ -7515,7 +7575,7 @@ export class ChartView {
         this.canvas.width,
         this.canvas.height,
         () => this._renderPickPass(),
-      );
+      ) === true;
     }
     return this._renderPickPass();
   }
@@ -7529,7 +7589,7 @@ export class ChartView {
     ) return null;
     if (this._pickDirty) {
       try {
-        this._renderPick();
+        if (!this._renderPick()) return null;
       } catch (err) {
         // Native eviction can race pointer movement before the asynchronous
         // webglcontextlost event updates `_glLost`. Suppress only that lost-
@@ -8007,6 +8067,8 @@ export class ChartView {
     this._ctxIo = null;
     clearTimeout(this._ctxRecoveryTimer);
     this._ctxRecoveryTimer = null;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();

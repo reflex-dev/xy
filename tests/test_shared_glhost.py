@@ -211,6 +211,28 @@ _FIFTY_VIEW_PROBE = r"""
       ).length;
 
       const sharedHost = views[1]._glHost;
+      const skippedPickView = views[2];
+      const hostPick = sharedHost.pick;
+      let skippedPick;
+      try {
+        sharedHost.pick = () => null;
+        skippedPickView._pickDirty = true;
+        const hit = skippedPickView._pickAt(
+          skippedPickView.plot.w / 2,
+          skippedPickView.plot.h / 2,
+        );
+        skippedPick = hit ? [hit.trace, hit.index] : null;
+      } finally {
+        sharedHost.pick = hostPick;
+      }
+      skippedPickView._pickDirty = true;
+      const resumedPickHit = skippedPickView._pickAt(
+        skippedPickView.plot.w / 2,
+        skippedPickView.plot.h / 2,
+      );
+      const resumedPick = resumedPickHit
+        ? [resumedPickHit.trace, resumedPickHit.index]
+        : null;
       const victimProgram = views[0].pointProg;
       const survivorProgram = views[1].pointProg;
       views[0].destroy();
@@ -236,6 +258,8 @@ _FIFTY_VIEW_PROBE = r"""
         a1,
         b,
         a2,
+        skippedPick,
+        resumedPick,
         streamCounts: views.map((view) => view.gpuTraces[0]?.n ?? null),
         streamBuffersRetained: streamBuffers.every(
           (buffer, index) => buffer === xBuffersBeforeAppend[index],
@@ -341,7 +365,7 @@ _CONTEXT_LOSS_PROBE = r"""
       extension.loseContext();
       await waitUntil(
         () => views.every(
-          (view, index) => view._contextLossCount === lossCounts[index] + 1,
+          (view, index) => view._contextLossCount >= lossCounts[index] + 1,
         ),
         "shared context loss fan-out",
       );
@@ -349,10 +373,20 @@ _CONTEXT_LOSS_PROBE = r"""
       await waitUntil(
         () => views.every(
           (view, index) =>
-            view._contextRestoreCount === restoreCounts[index] + 1 &&
+            view._contextRestoreCount >= restoreCounts[index] + 1 &&
             view.canvas.dataset.xyCtx === "live",
         ),
         "shared context restoration fan-out",
+      );
+      const webgl2AcquisitionsAfterFirstRestore = webgl2Acquisitions;
+      const uniqueWebgl2ContextsAfterFirstRestore = webgl2Contexts.size;
+      const phaseOneLossCounts = views.map((view) => view._contextLossCount);
+      const phaseOneRestoreCounts = views.map((view) => view._contextRestoreCount);
+      const phaseOneLossDeltas = phaseOneLossCounts.map(
+        (count, index) => count - lossCounts[index],
+      );
+      const phaseOneRestoreDeltas = phaseOneRestoreCounts.map(
+        (count, index) => count - restoreCounts[index],
       );
 
       // A real eviction may never restore the original canvas. Leave a second
@@ -365,7 +399,7 @@ _CONTEXT_LOSS_PROBE = r"""
       replacementExtension.loseContext();
       await waitUntil(
         () => views.every(
-          (view, index) => view._contextLossCount === lossCounts[index] + 2,
+          (view, index) => view._contextLossCount >= phaseOneLossCounts[index] + 1,
         ),
         "replacement context loss fan-out",
       );
@@ -375,7 +409,7 @@ _CONTEXT_LOSS_PROBE = r"""
           host.gl !== replacedGl &&
           views.every(
             (view, index) =>
-              view._contextRestoreCount === restoreCounts[index] + 2 &&
+              view._contextRestoreCount >= phaseOneRestoreCounts[index] + 1 &&
               view.canvas.dataset.xyCtx === "live",
           ),
         "shared context replacement fan-out",
@@ -400,11 +434,80 @@ _CONTEXT_LOSS_PROBE = r"""
         return pixels.some((channel) => channel !== 0);
       });
 
+      // Exercise client-only retry scheduling without waiting in real time.
+      // A replaced host leaves `view.gl` pointing at the old lost context until
+      // `_initGl` runs, so eligibility must come from the healthy host context.
+      const retryView = views[1];
+      const originalSetTimeout = window.setTimeout;
+      const originalClientGl = retryView.gl;
+      const originalClientRestored = retryView._onGlHostContextRestored;
+      const queuedRetries = [];
+      let nextRetryId = 1;
+      let retryAttempts = 0;
+      let retryProbe;
+      try {
+        window.setTimeout = (callback, delay = 0) => {
+          queuedRetries.push({ callback, delay });
+          return nextRetryId++;
+        };
+        retryView.gl = { isContextLost: () => true };
+        retryView._glLost = true;
+        retryView._ctxVisible = true;
+        retryView._glHostRecoveryTimer = null;
+        retryView._glHostRecoveryDelay = 0;
+        retryView._onGlHostContextRestored = () => { retryAttempts += 1; };
+
+        const retryDelays = [];
+        let oneTimerPerAttempt = true;
+        for (let attempt = 0; attempt < 7; attempt++) {
+          retryView._scheduleGlHostClientRecovery();
+          retryView._scheduleGlHostClientRecovery();
+          oneTimerPerAttempt &&= queuedRetries.length === 1;
+          const task = queuedRetries.shift();
+          retryDelays.push(task.delay);
+          task.callback();
+        }
+
+        retryView._ctxVisible = false;
+        retryView._scheduleGlHostClientRecovery();
+        const offscreenDeferred = queuedRetries.length === 0;
+        retryView._ctxVisible = true;
+        retryView._recoverContext();
+        const visibilityWakeQueued = queuedRetries.length === 1;
+        queuedRetries.shift().callback();
+
+        retryProbe = {
+          retryDelays,
+          oneTimerPerAttempt,
+          offscreenDeferred,
+          visibilityWakeQueued,
+          staleClientRetried: retryAttempts === 8,
+        };
+      } finally {
+        window.setTimeout = originalSetTimeout;
+        retryView.gl = originalClientGl;
+        retryView._onGlHostContextRestored = originalClientRestored;
+        retryView._glLost = false;
+        retryView._ctxVisible = true;
+        retryView._glHostRecoveryTimer = null;
+        retryView._glHostRecoveryDelay = 0;
+      }
+
       document.body.setAttribute("data-xy-shared-loss-probe", JSON.stringify({
         webgl2Acquisitions,
         uniqueWebgl2Contexts: webgl2Contexts.size,
+        webgl2AcquisitionsAfterFirstRestore,
+        uniqueWebgl2ContextsAfterFirstRestore,
         lostEvents,
         restoredEvents,
+        phaseOneLossDeltas,
+        phaseOneRestoreDeltas,
+        phaseTwoLossDeltas: views.map(
+          (view, index) => view._contextLossCount - phaseOneLossCounts[index],
+        ),
+        phaseTwoRestoreDeltas: views.map(
+          (view, index) => view._contextRestoreCount - phaseOneRestoreCounts[index],
+        ),
         lossDeltas: views.map(
           (view, index) => view._contextLossCount - lossCounts[index],
         ),
@@ -418,6 +521,7 @@ _CONTEXT_LOSS_PROBE = r"""
         beforeRange,
         afterRange,
         nonzeroAfterRestore,
+        retryProbe,
         snapshotCount: document.querySelectorAll(
           "canvas[data-xy-ctx-snapshot]",
         ).length,
@@ -464,6 +568,8 @@ def test_fifty_chartviews_share_one_real_webgl_context(tmp_path: Path) -> None:
     assert result["a1"]["hit"] == [0, 1], result
     assert result["b"]["hit"] == [0, 1], result
     assert result["a2"]["hit"] == [0, 1], result
+    assert result["skippedPick"] is None, result
+    assert result["resumedPick"] == [0, 1], result
 
     # Every client receives the stream while its buffer/program ownership stays
     # isolated from every other client sharing the context.
@@ -499,17 +605,36 @@ def test_shared_host_loss_restores_every_client_and_zoom(tmp_path: Path) -> None
         label="shared WebGL host context-loss probe",
     )
 
-    assert result["webgl2Acquisitions"] == 2, result
-    assert result["uniqueWebgl2Contexts"] == 2, result
-    assert result["lostEvents"] == [2, 2, 2, 2], result
-    assert result["restoredEvents"] == [2, 2, 2, 2], result
-    assert result["lossDeltas"] == [2, 2, 2, 2], result
-    assert result["restoreDeltas"] == [2, 2, 2, 2], result
+    # The 250 ms watchdog may legitimately win a slow first restore under
+    # software GL. The second, deliberately unrestored loss must still acquire
+    # a newer surface/context than whichever path completed the first phase.
+    assert result["webgl2AcquisitionsAfterFirstRestore"] >= 1, result
+    assert result["uniqueWebgl2ContextsAfterFirstRestore"] >= 1, result
+    assert result["webgl2Acquisitions"] > result["webgl2AcquisitionsAfterFirstRestore"], result
+    assert result["uniqueWebgl2Contexts"] > result["uniqueWebgl2ContextsAfterFirstRestore"], result
+    for phase in ("phaseOne", "phaseTwo"):
+        losses = result[f"{phase}LossDeltas"]
+        restores = result[f"{phase}RestoreDeltas"]
+        assert len(set(losses)) == 1 and losses[0] >= 1, result
+        assert restores == losses, result
+    assert result["lossDeltas"] == result["restoreDeltas"], result
+    assert result["lostEvents"] == result["lossDeltas"], result
+    assert all(
+        events >= restores
+        for events, restores in zip(result["restoredEvents"], result["restoreDeltas"], strict=True)
+    ), result
     assert result["liveCount"] == 4, result
     assert result["sameHostAfterRestore"] is True, result
     assert result["replacementUsed"] is True, result
     assert result["hostLive"] is True, result
     assert all(result["nonzeroAfterRestore"]), result
+    assert result["retryProbe"] == {
+        "retryDelays": [50, 100, 200, 400, 800, 1000, 1000],
+        "oneTimerPerAttempt": True,
+        "offscreenDeferred": True,
+        "visibilityWakeQueued": True,
+        "staleClientRetried": True,
+    }, result
     assert result["snapshotCount"] == 0, result
     assert result["afterRange"]["x"] == pytest.approx(result["beforeRange"]["x"])
     assert result["afterRange"]["y"] == pytest.approx(result["beforeRange"]["y"])
@@ -565,6 +690,10 @@ def test_shared_glhost_source_contract() -> None:
         "this._present2d = present;",
         "this._glHost.render(",
         "this._glHost.pick(",
+        "this._scheduleGlHostClientRecovery();",
+        "this._glHostRecoveryDelay = Math.min(1000, delay * 2);",
+        'document.visibilityState !== "visible"',
+        "if (!this._renderPick()) return null;",
     ):
         assert marker in chartview, f"ChartView shared-host integration marker missing: {marker}"
     destroy = chartview.split("  destroy() {", 1)[1]

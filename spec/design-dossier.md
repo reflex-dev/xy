@@ -814,9 +814,11 @@ preserves its settled pan/zoom and re-requests that same view after reconstructi
 matching the existing context-loss contract rather than resetting charts to home.
 
 The governed per-chart path remains the compatibility fallback. It is used when shared
-hosting is explicitly disabled, when a document cannot create or use the shared host,
-and by default inside child frames; those contexts continue to participate in the
-existing governor and same-origin frame budget described above.
+hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document
+cannot create or use the shared host, and by default inside child frames. Setting
+`window.XY_SHARED_WEBGL = true` opts a child frame into shared hosting. Fallback
+contexts continue to participate in the existing governor and same-origin frame budget
+described above.
 
 ## 19. Nulls, NaN, and gaps
 
