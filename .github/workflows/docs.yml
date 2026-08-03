@@ -108,6 +108,7 @@ jobs:
         run: uv run --no-sync playwright install --with-deps chromium
       - name: Run production docs and check the public route
         working-directory: docs/app
+        shell: bash
         env:
           DOCS_PYTHON_VERSION: ${{ matrix.python-version }}
           REFLEX_TELEMETRY_ENABLED: "false"
