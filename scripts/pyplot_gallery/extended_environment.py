@@ -1,4 +1,4 @@
-"""Reproducible environment contract for the 13 extended gallery examples."""
+"""Reproducible environment contract for the 12 extended gallery examples."""
 
 from __future__ import annotations
 
@@ -123,17 +123,6 @@ EXAMPLE_REQUIREMENTS: dict[str, dict[str, Any]] = {
         },
         "expected_outputs": [{"kind": "figure", "count": 1, "process": "child"}],
     },
-    "mplot3d/pathpatch3d.py": {
-        "requirements": ["tex", "tex_fonts"],
-        "backends": {
-            "matplotlib": "Agg",
-            "xy": "module://xy.backends.backend_xy",
-        },
-        "argv": [],
-        "timeout_seconds": 180,
-        "driver": {},
-        "expected_outputs": [{"kind": "figure", "count": 1}],
-    },
     "text_labels_and_annotations/demo_text_path.py": {
         "requirements": ["tex", "tex_fonts"],
         "backends": {
@@ -245,7 +234,7 @@ def generated_spec() -> dict[str, Any]:
         "schema_version": 1,
         "matplotlib_version": "3.11.0",
         "profile": "extended",
-        "example_count": 13,
+        "example_count": 12,
         "platform": {
             "github_runner": "ubuntu-24.04",
             "python": "/usr/bin/python3",
@@ -310,8 +299,8 @@ def validate_spec(
     }
     examples = spec.get("examples", [])
     actual_paths = {str(example.get("path")) for example in examples if isinstance(example, dict)}
-    if len(examples) != 13 or spec.get("example_count") != 13:
-        errors.append("extended environment must describe exactly 13 examples")
+    if len(examples) != 12 or spec.get("example_count") != 12:
+        errors.append("extended environment must describe exactly 12 examples")
     if actual_paths != expected_paths:
         errors.append(
             "extended environment paths differ from the manifest: "
@@ -448,7 +437,7 @@ def validate_complete_report(
     *,
     spec: dict[str, Any],
 ) -> list[str]:
-    """Require complete 13/13 execution and acceptance, ignoring no waiver."""
+    """Require complete 12/12 execution and acceptance, ignoring no waiver."""
 
     errors: list[str] = []
     expected = _example_map(spec)
@@ -460,8 +449,8 @@ def validate_complete_report(
     }
     if report.get("summary", {}).get("profile") != "extended":
         errors.append("report profile is not extended")
-    if report.get("summary", {}).get("selected_examples") != 13:
-        errors.append("extended report did not select exactly 13 examples")
+    if report.get("summary", {}).get("selected_examples") != 12:
+        errors.append("extended report did not select exactly 12 examples")
     if set(actual) != set(expected):
         errors.append(
             "extended report paths differ from the environment contract: "
@@ -546,7 +535,7 @@ def _main() -> int:
     )
     preflight.add_argument("--spec", type=Path, default=SPEC_PATH)
     report = subparsers.add_parser(
-        "verify-report", help="require complete 13/13 extended gallery acceptance"
+        "verify-report", help="require complete 12/12 extended gallery acceptance"
     )
     report.add_argument("report", type=Path)
     report.add_argument("--spec", type=Path, default=SPEC_PATH)
@@ -564,11 +553,11 @@ def _main() -> int:
         print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)
         return 1
     if args.command == "verify-report":
-        print("Extended gallery verified: 13/13 examples complete with no waivers")
+        print("Extended gallery verified: 12/12 examples complete with no waivers")
     elif args.command == "preflight":
         print("Extended gallery environment verified")
     else:
-        print("Extended gallery metadata verified: 13 examples")
+        print("Extended gallery metadata verified: 12 examples")
     return 0
 
 

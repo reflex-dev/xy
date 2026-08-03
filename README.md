@@ -44,8 +44,8 @@ uv add xy
 ```
 
 The base install includes the dependency-free native 2-D `xy.pyplot`
-implementation. For Matplotlib 3.11 Figure, Axes, Artist, layout, toolkit,
-widget, animation, and 3-D semantics rendered by XY, install the optional
+implementation. For broader Matplotlib 3.11 Figure, Axes, Artist, layout,
+toolkit, widget, and animation semantics rendered by XY, install the optional
 compatibility extra:
 
 ```bash
@@ -138,16 +138,17 @@ figure:
 import xy.pyplot as plt
 
 plt.set_mode("compat")
-fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+fig, axes = plt.subplots(1, 2, constrained_layout=True)
 ```
 
 Compat mode returns genuine Matplotlib Figure, Axes, and Artist objects.
-Matplotlib supplies units, transforms, layout, `mplot3d`, toolkits, widgets,
-and animation semantics; the public
+Matplotlib supplies units, transforms, layout, toolkits, widgets, and
+animation semantics; the public
 `module://xy.backends.backend_xy` backend converts the resulting draw traversal
 to one XY display list. Browser, SVG, HTML, and native raster output consume
 that representation. Accepted gallery results may not fall back to Agg or
-another Matplotlib renderer.
+another Matplotlib renderer. Three-dimensional axes are outside the integration
+and fail explicitly.
 
 `plt.set_mode("native" | "compat" | "auto")` and `XY_PYPLOT_MODE` configure
 the process. `auto` selects `compat` when supported Matplotlib 3.11 is
@@ -156,13 +157,14 @@ implementation. Explicit `compat` fails with an installation hint when the
 supported extra is unavailable. Switching modes requires all figures to be
 closed.
 
-The permanent contract represents all 507 sources in the exact supplied
-Matplotlib stable-gallery snapshot (3.11.1 documentation sources evaluated
-against the pinned 3.11.0 oracle): 485 are pyplot import-swap cases (472
-standard-profile and 13 extended-environment cases), while 22
+The permanent contract records the exact 507-source Matplotlib stable-gallery
+archive and excludes its 48 three-dimensional examples from XY's runnable
+corpus. Of the 459 checked-in sources (3.11.1 documentation sources evaluated
+against the pinned 3.11.0 oracle), 437 are pyplot import-swap cases (425
+standard-profile and 12 extended-environment cases), while 22
 backend/font/server/GUI sources are classified separately and never counted
 as pyplot successes or failures. The current compatibility report passes
-472/472 standard and 13/13 extended cases with no execution, visual,
+425/425 standard and 12/12 extended cases with no execution, visual,
 behavioral, or fallback waivers. Compatibility requires the charts to agree
 in structure, labels, limits, layout, major geometry, and tolerant visual
 appearance—not exact pixels.
@@ -347,10 +349,8 @@ For the full design, see the [design dossier](https://github.com/reflex-dev/xy/b
 ## Roadmap
 
 The declarative API and dependency-free native pyplot path prioritize broad 2-D
-coverage before geographic, native 3-D, and volume visualization. Compat mode
-can use Matplotlib's 3-D projection semantics through the XY display-list
-backend, but that does not add native XY 3-D marks. Queued next, no dates
-implied:
+coverage before geographic, 3-D, and volume visualization. Queued next, no
+dates implied:
 
 - **Categorical distributions:** strip, swarm, beeswarm, boxen, rug
 - **Regression diagnostics:** trendline, residual, QQ, PP
@@ -363,7 +363,7 @@ implied:
 - **Treemap, sunburst, and icicle**
 - **Gauge / indicator:** build on the shipped polar axes and composable radial marks
 - **Slope, bump, and dumbbell**
-- **Native 3-D and volume:** scatter, surfaces, meshes, isosurfaces, and
+- **3-D and volume:** scatter, surfaces, meshes, isosurfaces, and
   volumetric views
 
 The full ranked backlog is in the [chart roadmap](https://github.com/reflex-dev/xy/blob/main/spec/api/chart-roadmap.md).

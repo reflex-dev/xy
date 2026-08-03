@@ -11,7 +11,7 @@ explicitly says otherwise.
 | Mode | Responsibility |
 |---|---|
 | `native` | Dependency-free XY-owned Figure/Axes/Artist-shaped objects and high-performance 2-D rendering. Select it explicitly to pin the lightweight implementation. |
-| `compat` | Genuine Matplotlib 3.11 Figure/Axes/Artist, units, transforms, layout, toolkits, widgets, animation, and `mplot3d` semantics rendered through `module://xy.backends.backend_xy`. Install with `pip install "xy[matplotlib]"`. |
+| `compat` | Genuine Matplotlib 3.11 Figure/Axes/Artist, units, transforms, layout, toolkits, widgets, and animation semantics rendered through `module://xy.backends.backend_xy`. Install with `pip install "xy[matplotlib]"`. |
 | `auto` | The configured default. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
 
 Compat mode does not reproduce Matplotlib's semantic systems inside the native
@@ -21,23 +21,24 @@ raster output. Gallery acceptance requires `fallback_used=false`: Agg and
 other Matplotlib renderers may be development oracles but may not fill an
 unsupported command.
 
-The permanent Matplotlib 3.11.0 dataset contains 507 sources:
+The permanent Matplotlib 3.11.0 dataset selects 459 non-3-D sources from the
+507-source upstream archive:
 
 | Classification | Count |
 |---|---:|
-| Standard pyplot profile | 472 |
-| Extended pyplot profile | 13 |
+| Standard pyplot profile | 425 |
+| Extended pyplot profile | 12 |
 | Non-pyplot backend/font/server/GUI sources | 22 |
 
-The first two rows are the 485 pyplot-eligible import-swap denominator. The 22
+The first two rows are the 437 pyplot-eligible import-swap denominator. The 22
 other sources remain represented and classified, but cannot be pyplot passes
 or failures.
 
 Completion requires both pyplot profiles to pass execution, figure/capture,
 dimension, structure, semantic, tolerant visual, interaction/animation, and
 no-fallback gates without waivers. Exact pixels are explicitly not required.
-The completed report passes 472/472 standard and 13/13 extended examples:
-485/485 pyplot-eligible cases with no execution, structural, semantic, visual,
+The completed report passes 425/425 standard and 12/12 extended examples:
+437/437 pyplot-eligible cases with no execution, structural, semantic, visual,
 behavioral, or fallback waivers. The checked-in 189 execution / 172
 figure-capture / 168 exact-dimension / 127 visual bootstrap baseline and its
 former waivers remain historical ratchet evidence, not the current result.
@@ -92,7 +93,7 @@ The native audit was closed on 2026-07-13. In the option-depth and
 interoperability sections, a
 checked item means each listed material behavior is now either implemented or
 rejected through the documented, actionable `NotImplementedError` boundary;
-it does not prove the later 485-example compat contract.
+it does not prove the later 437-example compat contract.
 
 The evidence below remains useful for native-mode regressions. The permanent
 gallery contract supersedes it as the full compat release gate:
@@ -540,10 +541,9 @@ semantic systems that would be unbounded to reimplement.
 - Native mode supports its documented 2-D and polar surface; native 3-D,
   ternary, geographic, and general custom projections remain outside that
   implementation.
-- Compat mode places `mplot3d`, projection registration, units, and depth
-  ordering in Matplotlib's frontend. All 47 gallery 3-D examples and toolkit
-  cases remain acceptance work until their reports pass; architecture presence
-  is not final completion.
+- Compat mode uses Matplotlib's projection registration and units but rejects
+  three-dimensional axes before drawing. The 48 upstream 3-D examples are not
+  part of the executable compatibility corpus.
 - TeX, fonts, GUI/toolkit libraries, and related system packages belong to the
   declared extended environment rather than a silent waiver.
 
@@ -662,7 +662,7 @@ streamplot
 ## Historical native post-review status (rewritten 2026-07-13)
 
 The earlier pasted native record was corrupted and internally stale; this
-section is authoritative for that audit only. The 507-source gallery contract
+section is authoritative for that audit only. The 459-source gallery contract
 is authoritative for current compat remediation.
 
 ### Evidence layer — built, with known limits

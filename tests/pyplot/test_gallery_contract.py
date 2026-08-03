@@ -75,12 +75,12 @@ def test_normalized_script_ast_matches_equivalent_notebook_code() -> None:
 def test_vendored_gallery_contract_is_complete_and_immutable() -> None:
     assert verify_contract() == []
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    assert manifest["source_count"] == manifest["notebook_count"] == 507
-    assert manifest["pyplot_eligible_count"] == 485
+    assert manifest["source_count"] == manifest["notebook_count"] == 459
+    assert manifest["pyplot_eligible_count"] == 437
     assert manifest["profile_counts"] == {
-        "extended": 13,
+        "extended": 12,
         "non_pyplot": 22,
-        "standard": 472,
+        "standard": 425,
     }
     assert all(example["notebook_ast_matches"] for example in manifest["examples"])
 
@@ -531,7 +531,7 @@ def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
 
     # This regression is about the promotion write/provenance boundary.  The
     # ordinary fixture tests above exercise detailed report acceptance; use
-    # compact accepted cases here so the real 507-source contract can be
+    # compact accepted cases here so the real 459-source contract can be
     # promoted and then passed through the complete verifier.
     monkeypatch.setattr(gallery_contract, "_case_provenance_errors", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -709,7 +709,7 @@ def test_report_acceptance_rejects_inconsistent_capture_and_pair_details(
     assert any("figure_pairs" in error for error in _accepted_report_case(no_pairs))
 
     semantic_difference = copy.deepcopy(case)
-    semantic_difference["comparison"]["figure_pairs"][0]["semantic_differences"] = ["zlim"]
+    semantic_difference["comparison"]["figure_pairs"][0]["semantic_differences"] = ["xlim"]
     assert any(
         "semantic differences" in error for error in _accepted_report_case(semantic_difference)
     )

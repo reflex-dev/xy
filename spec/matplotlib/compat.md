@@ -58,19 +58,20 @@ recorded in the snapshot is informational: CI no longer compares the snapshot
 against an upstream Matplotlib checkout.
 
 **The compat completion claim is gallery-defined.** The permanent contract
-represents the 507 sources in the supplied Matplotlib 3.11.1 documentation
-gallery while using Matplotlib 3.11.0 as the pinned reference oracle:
+records the 507-source Matplotlib 3.11.1 documentation archive, excludes its
+48 three-dimensional examples, and uses Matplotlib 3.11.0 as the pinned
+reference oracle:
 
 | Classification | Count | Contract role |
 |---|---:|---|
-| Standard pyplot profile | 472 | Pyplot-eligible examples reproducible in the standard headless environment |
-| Extended pyplot profile | 13 | Pyplot-eligible examples with declared TeX, GUI/toolkit, scripted-input, argument, PDF, or multiprocessing requirements |
+| Standard pyplot profile | 425 | Pyplot-eligible examples reproducible in the standard headless environment |
+| Extended pyplot profile | 12 | Pyplot-eligible examples with declared TeX, GUI/toolkit, scripted-input, argument, PDF, or multiprocessing requirements |
 | Non-pyplot | 22 | Backend, font, server, or GUI embedding sources with no pyplot import to replace |
 
-The first two rows form the 485 pyplot-eligible denominator. The 22 non-pyplot
+The first two rows form the 437 pyplot-eligible denominator. The 22 non-pyplot
 sources remain represented and classified but never count as pyplot successes
-or failures. The completed compatibility report passes 472/472 standard and
-13/13 extended examples: 485/485 pyplot-eligible cases across the execution,
+or failures. The completed compatibility report passes 425/425 standard and
+12/12 extended examples: 437/437 pyplot-eligible cases across the execution,
 structural, semantic, tolerant visual, behavior, and no-fallback gates, with
 no waivers. The checked-in baseline records the exact implementation commit,
 harness/manifest hashes, and promoted standard/extended report hashes.
@@ -160,8 +161,8 @@ its supported non-Cartesian projection with the boundary above. Bounded
 shim-owned `Axes` Artist views, children, containers, removal, affine data
 transforms, coordinate spaces, and linked secondary axes are supported.
 
-Those systems are not excluded from compat mode. Matplotlib performs units,
-transforms, layout, `mplot3d` projection/depth ordering, `axes_grid1`,
+Three-dimensional axes are excluded from both modes. For the remaining compat
+surface, Matplotlib performs units, transforms, layout, `axes_grid1`,
 `axisartist`, widget, callback, and animation semantics; XY renders the
 resulting paths, collections, images, text outlines, clips, and meshes. The
 live canvas maps browser input to Matplotlib event objects and supports timers,
@@ -169,7 +170,7 @@ live canvas maps browser input to Matplotlib event objects and supports timers,
 live Python callback process, although it may contain precomputed animation
 frames.
 
-The advanced families remain subject to the same 485-case gallery gate.
+The advanced families remain subject to the same 437-case gallery gate.
 Architecture support must not be reported as final corpus completion.
 
 Unknown keyword arguments on supported calls raise `TypeError` naming the

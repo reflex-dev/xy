@@ -16,18 +16,18 @@ which covers user-visible releases across the whole package.
   figures are created; switching with an open native or Matplotlib figure is
   rejected. Import and selection remain lazy.
 - Compat mode returns genuine Matplotlib Figure, Axes, Artist, layout, units,
-  toolkit, widget, animation, and `mplot3d` objects/semantics. The public
+  toolkit, widget, and animation objects/semantics. The public
   `module://xy.backends.backend_xy` backend emits one device-space XY display
   list consumed by browser, HTML, SVG, and native raster output.
 - Renderer acceptance is fallback-free. Agg or another Matplotlib renderer may
   be a development oracle, but a gallery result with `fallback_used=true`
   fails. Pixel identity is not required; structure, semantics, major geometry,
   layout, and tolerant full-canvas visual appearance are.
-- The immutable Matplotlib 3.11.0 contract represents 507 sources. Of these,
-  485 bind pyplot and are split into 472 standard-profile and 13
-  extended-environment cases. The other 22 backend/font/server/GUI sources are
-  classified and hash-locked but never counted as pyplot successes or
-  failures.
+- The immutable Matplotlib 3.11.0 contract selects 459 non-3-D sources from the
+  507-source upstream archive. Of these, 437 bind pyplot and are split into 425
+  standard-profile and 12 extended-environment cases. The other 22
+  backend/font/server/GUI sources are classified and hash-locked but never
+  counted as pyplot successes or failures.
 - Gallery import substitution now edits only the exact `matplotlib` token
   spans rather than round-tripping the full source through
   `tokenize.untokenize`. Transformed hashes are therefore reproducible across
@@ -37,13 +37,13 @@ which covers user-visible releases across the whole package.
 - The extended profile declares TeX/fonts, GTK/Xvfb and SVG-loader
   dependencies, deterministic input/argument/PDF/multiprocessing drivers, and
   separate reference/XY backend requirements.
-- The completed report passes 472/472 standard and 13/13 extended examples:
-  485/485 pyplot-eligible cases with no execution, structural, semantic,
+- The completed report passes 425/425 standard and 12/12 extended examples:
+  437/437 pyplot-eligible cases with no execution, structural, semantic,
   tolerant visual, behavioral, or fallback waivers.
 - Interactive, coordinate-reporting, navigation, and animation entries have
   hard behavior gates for Matplotlib event delivery, axes callbacks, real
-  widget/selector gestures, draggable artists, status messages, pan/3-D view
-  changes, timers, and deterministic driven frames. Exact interactive SVG
+  widget/selector gestures, draggable artists, status messages, pan changes,
+  timers, and deterministic driven frames. Exact interactive SVG
   exports also run click, hover, and hyperlink canaries in Chromium.
   A live browser canvas routes events through a Python comm; standalone HTML
   cannot retain arbitrary Python callbacks after the process exits.

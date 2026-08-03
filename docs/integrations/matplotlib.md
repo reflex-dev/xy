@@ -48,7 +48,7 @@ Matplotlib semantics:
 import xy.pyplot as plt
 
 plt.set_mode("compat")
-fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+fig, axes = plt.subplots(1, 2, constrained_layout=True)
 ~~~
 
 The process-level equivalent is
@@ -61,8 +61,8 @@ Changing modes while either frontend has an open figure raises an error; call
 ## How Compat Rendering Works
 
 In compat mode, Matplotlib owns user-facing semantics: Figure, Axes, Artists,
-units, transforms, layout engines, `mplot3d`, `axes_grid1`, `axisartist`,
-widgets, callback registries, and animation setup. The public
+units, transforms, layout engines, `axes_grid1`, `axisartist`, widgets,
+callback registries, and animation setup. The public
 `module://xy.backends.backend_xy` backend converts Matplotlib's draw traversal
 into an ordered, device-space XY display list containing paths, clipping,
 collections, images, outlined text, hatches, meshes, and Gouraud triangles.
@@ -72,24 +72,25 @@ representation. Every result records whether a fallback was used. A gallery
 case with `fallback_used=True` fails: Agg, Cairo, or another Matplotlib
 renderer may be a developer oracle, but may not supply accepted output.
 
+Three-dimensional axes are outside the integration and fail explicitly.
 Native mode remains a different implementation. It translates supported 2-D
 calls onto XY's declarative chart API, retaining XY's screen-bounded data paths
 and lightweight object model.
 
 ## Gallery Compatibility Contract
 
-The permanent gallery contract represents all 507 sources in the exact
-supplied stable-gallery snapshot. The source archive is from the Matplotlib
-3.11.1 documentation build; the reference runtime is the separately pinned
-Matplotlib 3.11.0 wheel:
+The permanent gallery contract records the exact 507-source stable-gallery
+archive and excludes its 48 three-dimensional examples from XY's runnable
+corpus. The source archive is from the Matplotlib 3.11.1 documentation build;
+the reference runtime is the separately pinned Matplotlib 3.11.0 wheel:
 
 | Classification | Count | Meaning |
 | --- | ---: | --- |
-| Standard pyplot profile | 472 | Matplotlib completes in the standard headless environment |
-| Extended pyplot profile | 13 | Requires declared TeX, GUI/toolkit, input, argument, PDF, or multiprocessing support |
+| Standard pyplot profile | 425 | Matplotlib completes in the standard headless environment |
+| Extended pyplot profile | 12 | Requires declared TeX, GUI/toolkit, input, argument, PDF, or multiprocessing support |
 | Non-pyplot | 22 | Direct backend, font, server, or GUI embedding source with no pyplot binding to replace |
 
-The first two rows are the 485 pyplot-eligible import-swap cases. The 22 other
+The first two rows are the 437 pyplot-eligible import-swap cases. The 22 other
 sources remain hash-locked and explicitly classified, but are never reported
 as pyplot successes or failures.
 
@@ -101,8 +102,8 @@ chart, not pixel identity; antialiasing and glyph rasterization may differ.
 Interactive examples require delivered canvas events, actual widget and
 selector callbacks, axes-limit callbacks, draggable-artist movement, and
 timers. Coordinate-reporting cases must populate XY's visible live status
-line, while navigation cases must change 2-D limits or the 3-D view through
-the browser transport. Exact interactive SVG exports have Chromium click,
+line, while navigation cases must change 2-D limits through the browser
+transport. Exact interactive SVG exports have Chromium click,
 hover, and hyperlink canaries. Animations require deterministic
 initial/middle/final evidence rather than screenshots alone.
 
@@ -113,8 +114,8 @@ Compat mode accepts this exact source call so its zoom callback runs unchanged;
 the reference harness records the same scoped, manifest-allowlisted
 normalization. No other gallery adapter is accepted.
 
-The completed report passes all 472 standard-profile and all 13
-extended-profile cases: 485/485 pyplot-eligible examples with no visual,
+The completed report passes all 425 standard-profile and all 12
+extended-profile cases: 437/437 pyplot-eligible examples with no visual,
 behavioral, execution, or fallback waivers. The checked-in baseline records
 the implementation commit, harness/contract hashes, and the exact promoted
 standard and extended report hashes.
@@ -204,7 +205,7 @@ the shared coordinate system. Focused guides cover
 [radial bars and donuts](/docs/xy/charts/radial-bar-chart/), and
 [wind roses](/docs/xy/charts/wind-rose/).
 
-## Interactions, Animation, Toolkits, and 3-D
+## Interactions, Animation, and Toolkits
 
 In compat mode, browser pointer, keyboard, scroll, resize, and close input is
 translated back into Matplotlib event objects on a live Python canvas.
@@ -219,11 +220,9 @@ on Matplotlib's event-loop thread. Arbitrary Python callbacks require that
 connected Python process; `print_html()` output may contain precomputed frames,
 but is static and is not a live Python canvas after the process exits.
 
-Matplotlib's frontend also performs `mplot3d` projection and depth ordering,
-toolkit axes location, custom projections, units, and layout. XY renders the
-resulting 2-D display operations. These advanced families remain part of the
-485-case remediation gate, so their presence in the architecture is not a
-claim that every gallery example already passes.
+Matplotlib's frontend also performs toolkit axes location, custom projections,
+units, and layout. XY renders the resulting 2-D display operations. These
+advanced families remain part of the 437-case remediation gate.
 
 Native mode does not attempt to recreate those systems. Outside its documented
 2-D and polar surface, unsupported material options fail with an actionable

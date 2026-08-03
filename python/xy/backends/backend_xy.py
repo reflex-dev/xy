@@ -997,6 +997,12 @@ class FigureCanvasXY(FigureCanvasBase):
         width, height = (float(value) for value in self.figure.bbox.size)
         return width, height, float(self.figure.dpi)
 
+    def _reject_unsupported_axes(self) -> None:
+        if any(getattr(axes, "name", None) == "3d" for axes in self.figure.axes):
+            raise NotImplementedError(
+                "xy's Matplotlib backend does not support three-dimensional axes"
+            )
+
     @staticmethod
     def _renderer_key(renderer: RendererXY) -> tuple[float, float, float]:
         return float(renderer.width), float(renderer.height), float(renderer.dpi)
@@ -1169,6 +1175,7 @@ class FigureCanvasXY(FigureCanvasBase):
             self._blit_published_during_draw = True
 
     def draw(self, *args: Any, **kwargs: Any) -> None:
+        self._reject_unsupported_axes()
         manager = getattr(self, "manager", None)
         if isinstance(manager, FigureManagerXY):
             manager._activate_deferred_toolbar()

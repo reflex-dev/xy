@@ -33,6 +33,11 @@ COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 GALLERY_DOCUMENTATION_VERSION = "3.11.1"
 COMPATIBILITY_ORACLE_VERSION = "3.11.0"
 GALLERY_SNAPSHOT_DOWNLOADED_ON = "2026-07-30"
+ARCHIVE_SOURCE_COUNT = 507
+EXCLUDED_3D_SOURCE_COUNT = 48
+CONTRACT_SOURCE_COUNT = ARCHIVE_SOURCE_COUNT - EXCLUDED_3D_SOURCE_COUNT
+PYPLOT_ELIGIBLE_COUNT = 437
+EXPECTED_PROFILE_COUNTS = {"extended": 12, "non_pyplot": 22, "standard": 425}
 
 EXPECTED_ARCHIVES = {
     "python": {
@@ -143,7 +148,6 @@ EXAMPLE_BEHAVIOR_OVERRIDES = {
         "navigation",
     ),
     "misc/hyperlinks_sgskip.py": ("interactive",),
-    "mplot3d/offset.py": ("interactive", "navigation", "3d"),
     "showcase/pan_zoom_overlap.py": ("interactive", "navigation"),
     "subplots_axes_and_figures/shared_axis_demo.py": ("interactive", "navigation"),
     "text_labels_and_annotations/angle_annotation.py": ("interactive", "navigation"),
@@ -152,6 +156,12 @@ EXAMPLE_BEHAVIOR_OVERRIDES = {
     "user_interfaces/svg_tooltip_sgskip.py": ("interactive",),
     "widgets/mouse_cursor.py": ("interactive", "cursor"),
 }
+
+
+def _is_excluded_3d_example(path: str) -> bool:
+    """Return whether an upstream archive member is outside XY's 2-D contract."""
+
+    return path.startswith("mplot3d/") or path == "animation/random_walk.py"
 
 
 def _sha256(data: bytes) -> str:
@@ -315,8 +325,6 @@ def _classify_source(tree: ast.AST, path: str | None = None) -> tuple[str, list[
         if "interactive" not in behavior:
             behavior.append("interactive")
         behavior.append("coordinates")
-    if any(name.startswith("mpl_toolkits.mplot3d") for name in imports):
-        behavior.append("3d")
     if any(
         name.startswith(("mpl_toolkits.axes_grid1", "mpl_toolkits.axisartist")) for name in imports
     ):
@@ -534,9 +542,12 @@ def build_contract(
     ):
         python_members = _safe_members(python_zip, ".py")
         notebook_members = _safe_members(notebook_zip, ".ipynb")
-        if len(python_members) != 507 or len(notebook_members) != 507:
+        if (
+            len(python_members) != ARCHIVE_SOURCE_COUNT
+            or len(notebook_members) != ARCHIVE_SOURCE_COUNT
+        ):
             raise ValueError(
-                f"expected 507 sources and notebooks, got "
+                f"expected {ARCHIVE_SOURCE_COUNT} sources and notebooks, got "
                 f"{len(python_members)} and {len(notebook_members)}"
             )
 
@@ -547,18 +558,33 @@ def build_contract(
             raise ValueError("Python and notebook archive paths do not map one-to-one")
         if set(python_members) != set(audit_by_path):
             raise ValueError("audit paths do not exactly match the Python archive")
+        included_members = {
+            path: member
+            for path, member in python_members.items()
+            if not _is_excluded_3d_example(path)
+        }
+        if len(included_members) != CONTRACT_SOURCE_COUNT:
+            raise ValueError(
+                f"expected {CONTRACT_SOURCE_COUNT} non-3-D sources, got {len(included_members)}"
+            )
         existing = {
             path.relative_to(examples_root).as_posix() for path in examples_root.rglob("*.py")
         }
-        unexpected = existing - set(python_members)
+        excluded_existing = existing - set(included_members)
+        for path in excluded_existing:
+            if _is_excluded_3d_example(path):
+                examples_root.joinpath(*PurePosixPath(path).parts).unlink()
+        unexpected = excluded_existing - {
+            path for path in excluded_existing if _is_excluded_3d_example(path)
+        }
         if unexpected:
             raise ValueError(
                 "destination contains sources outside the archive: "
                 + ", ".join(sorted(unexpected)[:10])
             )
 
-        for path in sorted(python_members):
-            source_bytes = python_zip.read(python_members[path])
+        for path in sorted(included_members):
+            source_bytes = python_zip.read(included_members[path])
             source = source_bytes.decode("utf-8")
             notebook_path = str(PurePosixPath(path).with_suffix(".ipynb"))
             notebook_bytes = notebook_zip.read(notebook_members[notebook_path])
@@ -638,7 +664,7 @@ def build_contract(
         "archives": {
             kind: {
                 **EXPECTED_ARCHIVES[kind],
-                "member_count": 507,
+                "member_count": ARCHIVE_SOURCE_COUNT,
             }
             for kind in ("python", "jupyter")
         },
@@ -1187,8 +1213,11 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
 
     errors.extend(validate_spec(extended_spec, manifest_path=manifest_path))
     entries = manifest.get("examples", [])
-    if len(entries) != 507 or manifest.get("source_count") != 507:
-        errors.append("manifest must contain exactly 507 source entries")
+    if (
+        len(entries) != CONTRACT_SOURCE_COUNT
+        or manifest.get("source_count") != CONTRACT_SOURCE_COUNT
+    ):
+        errors.append(f"manifest must contain exactly {CONTRACT_SOURCE_COUNT} source entries")
 
     paths = [entry.get("path") for entry in entries]
     if len(set(paths)) != len(paths):
@@ -1286,8 +1315,13 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         if not eligible and waiver_ids:
             errors.append(f"{relative}: non-pyplot source must not carry pyplot waivers")
 
-    if eligible_count != 485 or manifest.get("pyplot_eligible_count") != 485:
-        errors.append("contract must classify exactly 485 pyplot-eligible examples")
+    if (
+        eligible_count != PYPLOT_ELIGIBLE_COUNT
+        or manifest.get("pyplot_eligible_count") != PYPLOT_ELIGIBLE_COUNT
+    ):
+        errors.append(
+            f"contract must classify exactly {PYPLOT_ELIGIBLE_COUNT} pyplot-eligible examples"
+        )
     if manifest.get("gallery_adapters") != ALLOWED_GALLERY_ADAPTERS:
         errors.append("gallery adapter allowlist differs from the reviewed contract")
     if manifest.get("gallery_documentation_version") != GALLERY_DOCUMENTATION_VERSION:
@@ -1296,9 +1330,11 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         errors.append("gallery snapshot download date is incorrect")
     if manifest.get("matplotlib_version") != COMPATIBILITY_ORACLE_VERSION:
         errors.append("compatibility oracle version is incorrect")
-    expected_profiles = {"extended": 13, "non_pyplot": 22, "standard": 472}
-    if dict(counts) != expected_profiles or manifest.get("profile_counts") != expected_profiles:
-        errors.append(f"profile counts differ from {expected_profiles}: {dict(counts)}")
+    if (
+        dict(counts) != EXPECTED_PROFILE_COUNTS
+        or manifest.get("profile_counts") != EXPECTED_PROFILE_COUNTS
+    ):
+        errors.append(f"profile counts differ from {EXPECTED_PROFILE_COUNTS}: {dict(counts)}")
     if set(baseline.get("examples", {})) != set(paths):
         errors.append("baseline paths do not exactly match the manifest")
 
@@ -1308,7 +1344,9 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
             baseline_examples=baseline["examples"],
         )
         if expected_summary["acceptance_complete"] is not True:
-            errors.append("promoted baseline must accept all 485 pyplot examples")
+            errors.append(
+                f"promoted baseline must accept all {PYPLOT_ELIGIBLE_COUNT} pyplot examples"
+            )
         if expected_summary["temporary_waiver_count"] != 0:
             errors.append("promoted baseline must contain zero temporary waivers")
         if baseline.get("schema_version") == 3:
@@ -1346,10 +1384,10 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
                     errors.append("promoted baseline acceptance report provenance is invalid")
     else:
         expected_summary = {
-            "source_count": 507,
-            "pyplot_eligible_count": 485,
-            "standard_profile_count": 472,
-            "extended_profile_count": 13,
+            "source_count": CONTRACT_SOURCE_COUNT,
+            "pyplot_eligible_count": PYPLOT_ELIGIBLE_COUNT,
+            "standard_profile_count": EXPECTED_PROFILE_COUNTS["standard"],
+            "extended_profile_count": EXPECTED_PROFILE_COUNTS["extended"],
             "xy_execution_passed": 189,
             "capture_parity_passed": 172,
             "dimension_parity_passed": 168,
@@ -1368,7 +1406,7 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         if (
             manifest_archive.get("sha256") != expected["sha256"]
             or manifest_archive.get("url") != expected["url"]
-            or manifest_archive.get("member_count") != 507
+            or manifest_archive.get("member_count") != ARCHIVE_SOURCE_COUNT
         ):
             errors.append(f"{kind} archive manifest metadata mismatch")
     if provenance.get("gallery_documentation_version") != GALLERY_DOCUMENTATION_VERSION:
@@ -1444,7 +1482,10 @@ def _main() -> int:
     if errors:
         print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)
         return 1
-    print("Matplotlib gallery contract verified: 507 sources, 485 pyplot eligible")
+    print(
+        "Matplotlib gallery contract verified: "
+        f"{CONTRACT_SOURCE_COUNT} sources, {PYPLOT_ELIGIBLE_COUNT} pyplot eligible"
+    )
     return 0
 
 

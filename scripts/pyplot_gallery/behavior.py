@@ -134,7 +134,6 @@ def figure_state_sha256(figure: object) -> str:
         "get_visible",
         "get_text",
         "get_data",
-        "get_data_3d",
         "get_offsets",
         "get_array",
         "get_segments",
@@ -147,7 +146,6 @@ def figure_state_sha256(figure: object) -> str:
         "get_position",
         "get_xlim",
         "get_ylim",
-        "get_zlim",
     )
     for artist in artists:
         record: dict[str, object] = {
@@ -544,7 +542,6 @@ def drive_axes_callbacks(figure: object) -> list[dict[str, Any]]:
         for signal, getter_name, setter_name in (
             ("xlim_changed", "get_xlim", "set_xlim"),
             ("ylim_changed", "get_ylim", "set_ylim"),
-            ("zlim_changed", "get_zlim", "set_zlim"),
         ):
             source_callbacks = _callback_count(registry, signal)
             if registry is None or source_callbacks == 0:
@@ -621,7 +618,7 @@ def _axes_drag_points(axes: object) -> tuple[tuple[float, float], tuple[float, f
 
 
 def drive_navigation(figure: object, *, engine: str) -> dict[str, Any]:
-    """Exercise real 2-D pan or 3-D rotation through the live XY transport."""
+    """Exercise real 2-D pan through the live XY transport."""
 
     axes_list = [
         axes
@@ -653,29 +650,18 @@ def drive_navigation(figure: object, *, engine: str) -> dict[str, Any]:
     if callable(draw):
         draw()
     start, end = _axes_drag_points(axes)
-    is_3d = hasattr(axes, "get_zlim") and hasattr(axes, "azim")
-    before = {
-        "limits": _axes_limits(figure),
-        "view": _stable_value(
-            (
-                getattr(axes, "elev", None),
-                getattr(axes, "azim", None),
-                getattr(axes, "roll", None),
-            )
-        ),
-    }
+    before = {"limits": _axes_limits(figure)}
     record["before"] = before
     backend_bases = sys.modules.get("matplotlib.backend_bases")
     left = getattr(getattr(backend_bases, "MouseButton", None), "LEFT", 1)
 
     try:
-        if is_3d or engine == "xy":
+        if engine == "xy":
             toolbar = getattr(getattr(canvas, "manager", None), "toolbar", None)
-            if engine == "xy" and not is_3d:
-                pan = getattr(toolbar, "pan", None)
-                if not callable(pan):
-                    raise RuntimeError("XY navigation requires NavigationToolbar2.pan")
-                pan()
+            pan = getattr(toolbar, "pan", None)
+            if not callable(pan):
+                raise RuntimeError("XY navigation requires NavigationToolbar2.pan")
+            pan()
             for event_name, xy, raw_buttons, widget_buttons in (
                 ("button_press_event", start, None, 0),
                 ("motion_notify_event", end, {left}, 1),
@@ -699,8 +685,7 @@ def drive_navigation(figure: object, *, engine: str) -> dict[str, Any]:
                         f"{event_name} failed: {event['failure']['exception_type']}: "
                         f"{event['failure']['message']}"
                     )
-            if engine == "xy" and not is_3d:
-                pan()
+            pan()
         else:
             start_pan = getattr(axes, "start_pan", None)
             drag_pan = getattr(axes, "drag_pan", None)
@@ -714,21 +699,12 @@ def drive_navigation(figure: object, *, engine: str) -> dict[str, Any]:
             if callable(draw_idle):
                 draw_idle()
 
-        after = {
-            "limits": _axes_limits(figure),
-            "view": _stable_value(
-                (
-                    getattr(axes, "elev", None),
-                    getattr(axes, "azim", None),
-                    getattr(axes, "roll", None),
-                )
-            ),
-        }
+        after = {"limits": _axes_limits(figure)}
         record["after"] = after
         record["state_changed"] = before != after
         record["toolbar_message"] = str(getattr(toolbar, "message", "")) if engine == "xy" else ""
         if before == after:
-            raise RuntimeError("navigation gesture did not change limits or 3-D view")
+            raise RuntimeError("navigation gesture did not change axes limits")
     except BaseException as exc:
         record["failure"] = _exception_record("navigation", exc)
     return record

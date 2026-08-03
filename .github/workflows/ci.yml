@@ -92,23 +92,12 @@ jobs:
           uv venv .venv
           uv pip install -p .venv/bin/python -e . --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.1"
-      - name: Exercise modes, protocols, 2-D, and 3-D through the XY renderer
+      - name: Exercise modes and protocols through the XY renderer
         env:
           MPLBACKEND: Agg
         run: |
           .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.1'"
           .venv/bin/pytest -q tests/pyplot/test_modes.py tests/pyplot/test_public_protocols.py
-          .venv/bin/python - <<'PY'
-          import xy.pyplot as plt
-
-          plt.set_mode("compat")
-          figure = plt.figure()
-          axes = figure.add_subplot(projection="3d")
-          axes.plot([0, 1], [0, 1], [0, 1])
-          figure.canvas.draw()
-          assert figure.canvas.fallback_used is False
-          plt.close("all")
-          PY
 
   # The compat canvas renders PNG through XY's native display-list rasterizer
   # and reports any forbidden fallback. The completed zero-waiver baseline
@@ -166,14 +155,14 @@ jobs:
             gallery-artifacts-${{ matrix.shard }}/runs/**/stdout.txt
             gallery-artifacts-${{ matrix.shard }}/runs/**/stderr.txt
 
-  # The 13 extended examples are a separate, strict completion gate. They
+  # The 12 extended examples are a separate, strict completion gate. They
   # exercise TeX/font lookup, real GTK managers under Xvfb, optional
   # colorspacious hooks, deterministic input, and multiprocessing. The final
-  # report verifier rejects every temporary waiver and requires 13/13 from
+  # report verifier rejects every temporary waiver and requires 12/12 from
   # both engines, so the historical environmental failures cannot pass as an
   # empty ratchet.
   pyplot_gallery_extended:
-    name: Pyplot gallery extended environment (13/13)
+    name: Pyplot gallery extended environment (12/12)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -225,7 +214,7 @@ jobs:
           .venv/bin/python -m scripts.pyplot_gallery.extended_environment check
           xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
             .venv/bin/python -m scripts.pyplot_gallery.extended_environment preflight
-      - name: Run all 13 extended differential examples
+      - name: Run all 12 extended differential examples
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
             .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
@@ -234,7 +223,7 @@ jobs:
               --shard 0/1 \
               --workers 2 \
               --timeout 180
-      - name: Require 13/13 extended acceptance with no waivers
+      - name: Require 12/12 extended acceptance with no waivers
         run: |
           .venv/bin/python -m scripts.pyplot_gallery.extended_environment \
             verify-report gallery-extended-artifacts/report.json

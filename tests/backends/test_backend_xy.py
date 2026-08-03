@@ -80,6 +80,15 @@ def test_renderer_records_device_space_primitives_without_fallback() -> None:
     assert all("glyph_path" not in command and "font" not in command for command in text_commands)
 
 
+def test_canvas_rejects_three_dimensional_axes() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    figure.add_subplot(projection="3d")
+
+    with pytest.raises(NotImplementedError, match="does not support three-dimensional axes"):
+        canvas.draw()
+
+
 def test_figure_agg_filter_executes_and_changes_xy_output_without_fallback() -> None:
     figure = Figure(figsize=(2, 2), dpi=50, facecolor="white")
     canvas = FigureCanvasXY(figure)

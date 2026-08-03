@@ -1,5 +1,5 @@
 {
-  "example_count": 13,
+  "example_count": 12,
   "examples": [
     {
       "argv": [],
@@ -106,26 +106,6 @@
         "multiprocessing"
       ],
       "timeout_seconds": 120
-    },
-    {
-      "argv": [],
-      "backends": {
-        "matplotlib": "Agg",
-        "xy": "module://xy.backends.backend_xy"
-      },
-      "driver": {},
-      "expected_outputs": [
-        {
-          "count": 1,
-          "kind": "figure"
-        }
-      ],
-      "path": "mplot3d/pathpatch3d.py",
-      "requirements": [
-        "tex",
-        "tex_fonts"
-      ],
-      "timeout_seconds": 180
     },
     {
       "argv": [],

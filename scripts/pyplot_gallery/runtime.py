@@ -161,20 +161,6 @@ def _axis_record(ax: object) -> dict[str, Any]:
         ),
         "artist_families": _artist_families(ax),
     }
-    if callable(getattr(ax, "get_zlim", None)):
-        zlim = _float_pair(_safe_call(ax, "get_zlim", []))
-        zscale = _safe_call(ax, "get_zscale", getattr(ax, "_zscale", "linear"))
-        record.update(
-            {
-                "zscale": str(zscale),
-                "zlim": zlim,
-                "z_inverted": bool(
-                    _safe_call(ax, "zaxis_inverted", len(zlim) == 2 and zlim[0] > zlim[1])
-                ),
-                "z_autoscale": bool(_safe_call(ax, "get_autoscalez_on", True)),
-                "zlabel": str(_safe_call(ax, "get_zlabel", "")),
-            }
-        )
     return record
 
 

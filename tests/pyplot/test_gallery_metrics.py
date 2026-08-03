@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -13,7 +12,6 @@ from scripts.pyplot_gallery.metrics import (
     evaluate_dimensions,
     evaluate_visual,
 )
-from scripts.pyplot_gallery.runtime import _axis_record
 
 
 def _save_chart(path: Path, *, shift: int = 0, legend: bool = True, colorbar: bool = True) -> None:
@@ -168,91 +166,6 @@ def _semantic_axis() -> dict[str, object]:
         "is_colorbar": True,
         "artist_families": {"line": 1},
     }
-
-
-def _semantic_axis_3d(*, autoscale: bool = False) -> dict[str, object]:
-    axis = _semantic_axis()
-    axis.update(
-        {
-            "projection": "3d",
-            "zscale": "linear",
-            "zlim": [-2.0, 8.0],
-            "z_inverted": False,
-            "z_autoscale": autoscale,
-            "zlabel": "z",
-        }
-    )
-    return axis
-
-
-def test_runtime_axis_record_captures_z_semantics_only_for_3d_axes() -> None:
-    axis_3d = SimpleNamespace(
-        name="3d",
-        get_zscale=lambda: "log",
-        get_zlim=lambda: (9.0, -1.0),
-        zaxis_inverted=lambda: True,
-        get_autoscalez_on=lambda: False,
-        get_zlabel=lambda: "height",
-    )
-
-    record = _axis_record(axis_3d)
-
-    assert record["zscale"] == "log"
-    assert record["zlim"] == [9.0, -1.0]
-    assert record["z_inverted"] is True
-    assert record["z_autoscale"] is False
-    assert record["zlabel"] == "height"
-    assert not any(key.startswith("z") for key in _axis_record(SimpleNamespace()))
-
-
-def test_matching_3d_semantics_and_autoscale_tolerance_pass() -> None:
-    reference_axis = _semantic_axis_3d(autoscale=True)
-    candidate_axis = _semantic_axis_3d(autoscale=True)
-    candidate_axis["zlim"] = [-1.5, 8.5]
-
-    assert (
-        compare_semantics(
-            {"axes": [reference_axis], "figure_text": []},
-            {"axes": [candidate_axis], "figure_text": []},
-        )
-        == []
-    )
-
-
-def test_3d_semantics_reject_z_direction_label_scale_and_explicit_limit_regressions() -> None:
-    reference_axis = _semantic_axis_3d()
-    candidate_axis = _semantic_axis_3d()
-    candidate_axis.update(
-        {
-            "zscale": "log",
-            "zlim": [-2.0, 8.000001],
-            "z_inverted": True,
-            "zlabel": "depth",
-        }
-    )
-
-    differences = compare_semantics(
-        {"axes": [reference_axis], "figure_text": []},
-        {"axes": [candidate_axis], "figure_text": []},
-    )
-
-    assert "axes[0] zscale differs" in differences
-    assert "axes[0] z_inverted differs" in differences
-    assert "axes[0] zlabel differs" in differences
-    assert "axes[0] z limits differ" in differences
-
-
-def test_3d_semantics_reject_z_autoscale_limit_outside_five_percent_span() -> None:
-    reference_axis = _semantic_axis_3d(autoscale=True)
-    candidate_axis = _semantic_axis_3d(autoscale=True)
-    candidate_axis["zlim"] = [-1.49, 8.0]
-
-    differences = compare_semantics(
-        {"axes": [reference_axis], "figure_text": []},
-        {"axes": [candidate_axis], "figure_text": []},
-    )
-
-    assert "axes[0] z limits differ" in differences
 
 
 def test_semantics_reject_reversed_axis_missing_legend_and_shifted_axes() -> None:

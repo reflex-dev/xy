@@ -10,11 +10,13 @@ rasterization, or pixels.
 
 ## Corpus and provenance
 
-The contract vendors all 507 Python sources under
+The source archives contain 507 Python examples. The contract excludes their
+48 three-dimensional examples and vendors the remaining 459 under
 `gallery/matplotlib-3.11.1/examples/`. `manifest.json` records the SHA-256 and
-byte count of every source. It also records every matching notebook SHA-256 and
-a normalized AST digest proving that all 507 notebook code-cell programs equal
-their Python source after removal of the source module docstring.
+byte count of every included source. It also records every matching notebook
+SHA-256 and a normalized AST digest proving that all 459 included notebook
+code-cell programs equal their Python source after removal of the source module
+docstring.
 
 The generator changes no source bytes. A test execution creates a temporary
 file and uses a token-aware rewrite for only these two direct import forms:
@@ -33,12 +35,12 @@ non-target character and the transformed SHA-256 are stable across supported
 CPython 3.11 and 3.12 patch releases, including sources whose f-string token
 boundaries changed between interpreters.
 
-Exactly 485 examples are eligible for this import swap:
+Exactly 437 examples are eligible for this import swap:
 
 | Classification | Count | Meaning |
 |---|---:|---|
-| `standard` | 472 | Matplotlib completed in the standard headless profile |
-| `extended` | 13 | Needs TeX, GUI/toolkit packages, input, arguments, or multiprocessing support |
+| `standard` | 425 | Matplotlib completed in the standard headless profile |
+| `extended` | 12 | Needs TeX, GUI/toolkit packages, input, arguments, or multiprocessing support |
 | `non_pyplot` | 22 | Direct backend, font, or GUI embedding example with no pyplot import |
 
 The 22 non-pyplot sources remain in the manifest. They are never counted as
@@ -52,7 +54,7 @@ path. Promotion rejects every unlisted adapter or use by the XY engine.
 
 ### Extended environment
 
-The 13 extended cases are described individually by
+The 12 extended cases are described individually by
 `gallery/matplotlib-3.11.1/extended-environment.json`. The generated metadata
 is part of the hash/manifest contract and records:
 
@@ -67,7 +69,7 @@ is part of the hash/manifest contract and records:
   and expected figure/PDF output for each source.
 
 The extended job is deliberately unsharded and its post-run verifier requires
-the exact 13 paths, successful reference and xy execution, no capture errors,
+the exact 12 paths, successful reference and xy execution, no capture errors,
 no renderer fallback, all structural/visual/semantic/behavior gates, and no
 temporary waivers. A provisioned environment with failing examples is
 reported as incomplete rather than accepted by the historical ratchet.
@@ -135,15 +137,15 @@ receive a real click. Rectangle, ellipse, span, lasso, and polygon selectors
 receive complete press/move/release or multi-vertex gestures, and acceptance
 requires delivery of the selector's actual `onselect` callback. Selectors
 disconnected after a blocking `show()` are reconnected for the deterministic
-probe. Registered `xlim_changed`, `ylim_changed`, and `zlim_changed` callbacks
+probe. Registered `xlim_changed` and `ylim_changed` callbacks
 are exercised by a bounded limit change and must mutate visible state.
 Draggable annotations and legends are picked and moved through the live event
 path.
 
 `coordinates` entries evaluate their real Axes formatter; XY must also expose
 the resulting status text through its live toolbar state. `navigation`
-entries receive a real 2-D pan or 3-D rotation and must change limits or view
-angles. The cursor example hovers every Axes, traverses XY's widget transport,
+entries receive a real 2-D pan and must change axes limits. The cursor example
+hovers every Axes, traverses XY's widget transport,
 and must request multiple distinct Matplotlib cursors. Browser canaries
 separately load the exact histogram, tooltip, and
 hyperlink SVG gallery exports and verify click, hover, and link behavior in
@@ -244,6 +246,6 @@ runs the standard profile in eight differential shards. Failed shards upload
 only their report, JUnit file, logs, and failure comparison images.
 
 The separate extended job installs and probes its declared dependencies under
-Xvfb, runs all 13 examples in one profile, validates the actual report as
-13/13, and uploads the same failure-only evidence. The dependency preflight
+Xvfb, runs all 12 examples in one profile, validates the actual report as
+12/12, and uploads the same failure-only evidence. The dependency preflight
 and compatibility result are separate checks.

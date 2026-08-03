@@ -310,9 +310,6 @@ def compare_semantics(reference: dict[str, Any], candidate: dict[str, Any]) -> l
         ):
             if expected.get(field) != actual.get(field):
                 differences.append(f"{prefix} {field} differs")
-        for field in ("zscale", "z_inverted", "zlabel"):
-            if field in expected and expected.get(field) != actual.get(field):
-                differences.append(f"{prefix} {field} differs")
         if not _limits_match(
             expected.get("xlim", []),
             actual.get("xlim", []),
@@ -325,12 +322,6 @@ def compare_semantics(reference: dict[str, Any], candidate: dict[str, Any]) -> l
             autoscale=bool(expected.get("y_autoscale")),
         ):
             differences.append(f"{prefix} y limits differ")
-        if "zlim" in expected and not _limits_match(
-            expected.get("zlim", []),
-            actual.get("zlim", []),
-            autoscale=bool(expected.get("z_autoscale")),
-        ):
-            differences.append(f"{prefix} z limits differ")
     return differences
 
 

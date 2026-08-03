@@ -104,7 +104,7 @@ def _complete_report() -> dict[str, object]:
     return {
         "summary": {
             "profile": "extended",
-            "selected_examples": 13,
+            "selected_examples": 12,
         },
         "examples": cases,
     }
@@ -126,7 +126,7 @@ def test_checked_in_extended_environment_is_the_exact_generated_contract() -> No
     spec = load_spec()
     assert validate_spec(spec) == []
     assert spec == generated_spec()
-    assert len(spec["examples"]) == len(EXAMPLE_REQUIREMENTS) == 13
+    assert len(spec["examples"]) == len(EXAMPLE_REQUIREMENTS) == 12
 
 
 def test_extended_environment_dependencies_are_explicit_and_pinned() -> None:
@@ -203,7 +203,7 @@ def test_every_extended_example_has_clean_argv_backends_driver_and_output() -> N
     }
 
 
-def test_extended_completion_gate_accepts_only_full_13_case_report() -> None:
+def test_extended_completion_gate_accepts_only_full_12_case_report() -> None:
     spec = generated_spec()
     report = _complete_report()
     assert validate_complete_report(report, spec=spec) == []

@@ -1,18 +1,19 @@
 # Matplotlib 3.11.1 source / 3.11.0 oracle gallery contract
 
-This directory vendors the 507 Python examples from the exact Matplotlib
-`stable` gallery archives supplied on 2026-07-30. The documentation build is
-Matplotlib 3.11.1; the separately pinned compatibility oracle is the released
-Matplotlib 3.11.0 wheel. Files below `examples/` are byte-for-byte copies: do
-not format, lint, or edit them.
+This directory vendors the 459 non-3-D Python examples selected from the exact
+Matplotlib `stable` gallery archives supplied on 2026-07-30. The documentation
+build is Matplotlib 3.11.1; the separately pinned compatibility oracle is the
+released Matplotlib 3.11.0 wheel. Files below `examples/` are byte-for-byte
+copies: do not format, lint, or edit them.
 
-The supplied Python and Jupyter archives each contain the same 507 examples.
+The supplied Python and Jupyter archives each contain the same 507 examples;
+the 48 three-dimensional examples are excluded from XY's runnable contract.
 The notebooks are not duplicated here. `manifest.json` records both archive
-hashes, every source and notebook hash, and a normalized AST proof that each
-notebook's code cells equal its matching Python source after the gallery
-module docstring is removed.
+hashes, every included source and notebook hash, and a normalized AST proof
+that each notebook's code cells equal its matching Python source after the
+gallery module docstring is removed.
 
-Of the 507 sources, 485 directly import `matplotlib.pyplot` and are valid
+Of the 459 included sources, 437 directly import `matplotlib.pyplot` and are valid
 drop-in replacement tests. The remaining 22 directly exercise Matplotlib
 font, backend, or GUI embedding APIs and are retained as `non_pyplot` coverage
 rather than misreported as `xy.pyplot` failures.
@@ -30,7 +31,7 @@ keyword. The manifest explicitly permits one reference-only adapter ID for
 that exact source. Every other adapter, path, or engine is rejected during
 promotion.
 
-`extended-environment.json` is the executable setup contract for the 13
+`extended-environment.json` is the executable setup contract for the 12
 extended examples. It pins the Ubuntu runner, system and Python dependencies,
 required TeX/font files, per-engine backend, clean argument vector,
 deterministic input or multiprocessing driver, timeout, and expected output
@@ -73,7 +74,7 @@ python -m scripts.pyplot_gallery.extended_environment \
   verify-report /path/to/report.json
 ```
 
-That final check requires all 13 examples from both engines, their expected
+That final check requires all 12 examples from both engines, their expected
 captures or PDF output, behavior evidence, every structural/visual/semantic
 gate, `fallback_used=false`, and zero temporary waivers. Installing the
 dependencies alone never counts as compatibility.

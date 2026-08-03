@@ -1,8 +1,8 @@
 # Non-pyplot gallery companions
 
-The Matplotlib 3.11 gallery has 507 sources, of which 485 directly bind
-`matplotlib.pyplot` and can be evaluated by changing only that binding to
-`xy.pyplot`. The remaining 22 are a separate contract:
+XY's Matplotlib 3.11 gallery contract has 459 non-3-D sources, of which 437
+directly bind `matplotlib.pyplot` and can be evaluated by changing only that
+binding to `xy.pyplot`. The remaining 22 are a separate contract:
 
 - they remain represented as `profile: "non_pyplot"` and
   `pyplot_eligible: false` in the immutable upstream manifest;
@@ -15,7 +15,7 @@ The companion registry at
 `gallery/matplotlib-3.11.1/companions/manifest.json` maps all 22 upstream
 sources to their disposition. It hash-locks both the upstream source and each
 maintained companion. Tests require the registry to agree with the canonical
-507-source manifest and require every companion to avoid `xy.pyplot`.
+459-source manifest and require every companion to avoid `xy.pyplot`.
 
 The companions are intentionally API-level translations rather than import
 rewrites:

@@ -870,16 +870,16 @@ def test_extended_gallery_job_requires_system_python_gi_bridge(tmp_path: Path) -
     )
 
 
-def test_extended_gallery_job_must_run_all_13_unsharded(tmp_path: Path) -> None:
+def test_extended_gallery_job_must_run_all_12_unsharded(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("              --shard 0/1 \\\n", "              --shard 0/13 \\\n", 1),
+        workflow.replace("              --shard 0/1 \\\n", "              --shard 0/12 \\\n", 1),
         encoding="utf-8",
     )
     errors = verify_ci_workflow.validate_ci_workflow(path)
     assert any(
-        "Run all 13 extended differential examples" in error and "--shard 0/1" in error
+        "Run all 12 extended differential examples" in error and "--shard 0/1" in error
         for error in errors
     )
 
@@ -899,7 +899,7 @@ def test_extended_gallery_job_cannot_skip_strict_report_verification(
     )
     errors = verify_ci_workflow.validate_ci_workflow(path)
     assert any(
-        "Require 13/13 extended acceptance with no waivers" in error and "verify-report" in error
+        "Require 12/12 extended acceptance with no waivers" in error and "verify-report" in error
         for error in errors
     )
 
@@ -909,9 +909,9 @@ def test_extended_gallery_job_cannot_be_non_blocking(tmp_path: Path) -> None:
     path = tmp_path / "ci.yml"
     path.write_text(
         workflow.replace(
-            "  pyplot_gallery_extended:\n    name: Pyplot gallery extended environment (13/13)\n",
+            "  pyplot_gallery_extended:\n    name: Pyplot gallery extended environment (12/12)\n",
             "  pyplot_gallery_extended:\n"
-            "    name: Pyplot gallery extended environment (13/13)\n"
+            "    name: Pyplot gallery extended environment (12/12)\n"
             "    continue-on-error: true\n",
             1,
         ),
