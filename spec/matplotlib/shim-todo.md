@@ -21,8 +21,9 @@ raster output. Gallery acceptance requires `fallback_used=false`: Agg and
 other Matplotlib renderers may be development oracles but may not fill an
 unsupported command.
 
-The permanent Matplotlib 3.11.0 dataset selects 459 non-3-D sources from the
-507-source upstream archive:
+The permanent source corpus selects 459 non-3-D programs from the 507-source
+Matplotlib 3.11.1 documentation archive and evaluates them against the
+separately pinned Matplotlib 3.11.0 oracle:
 
 | Classification | Count |
 |---|---:|

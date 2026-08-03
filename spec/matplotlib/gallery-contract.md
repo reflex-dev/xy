@@ -18,6 +18,12 @@ SHA-256 and a normalized AST digest proving that all 459 included notebook
 code-cell programs equal their Python source after removal of the source module
 docstring.
 
+Both generation and verification enforce the exclusion boundary. Rebuilding
+an existing destination removes only excluded members that are present in the
+upstream archive and rejects every local Python source outside that archive;
+verification independently rejects an excluded path in the committed
+manifest.
+
 The generator changes no source bytes. A test execution creates a temporary
 file and uses a token-aware rewrite for only these two direct import forms:
 
@@ -244,6 +250,13 @@ formatting issues link to #354 and #409–#411 in the manifest.
 CI validates bytes, hashes, AST proofs, counts, and the waiver ratchet, then
 runs the standard profile in eight differential shards. Failed shards upload
 only their report, JUnit file, logs, and failure comparison images.
+
+Promotion accepts disjoint reports for the same profile so those eight CI
+shards remain independently hashable evidence. Every promoted report record
+binds its report SHA-256, implementation commit, harness and interpreter,
+input-manifest hash, emitted-manifest hash, and extended-environment hash.
+Contract verification requires those records to agree with the promoted
+baseline provenance.
 
 The separate extended job installs and probes its declared dependencies under
 Xvfb, runs all 12 examples in one profile, validates the actual report as

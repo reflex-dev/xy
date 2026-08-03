@@ -10,6 +10,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
 from scripts.pyplot_gallery import HARNESS_VERSION, extended_environment
 from scripts.pyplot_gallery import contract as gallery_contract
 from scripts.pyplot_gallery.contract import (
@@ -83,6 +84,72 @@ def test_vendored_gallery_contract_is_complete_and_immutable() -> None:
         "standard": 425,
     }
     assert all(example["notebook_ast_matches"] for example in manifest["examples"])
+
+
+def test_contract_verifier_rejects_excluded_three_dimensional_paths(tmp_path: Path) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["examples"][0]["path"] = "mplot3d/reintroduced.py"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert any(
+        "manifest contains sources excluded from XY's 2-D contract" in error
+        for error in verify_contract(root)
+    )
+
+
+def test_contract_cleanup_only_deletes_excluded_archive_members(tmp_path: Path) -> None:
+    archive_paths = {"plot.py", "mplot3d/archive_example.py"}
+    included_paths = {"plot.py"}
+
+    unsafe = tmp_path / "unsafe"
+    (unsafe / "mplot3d").mkdir(parents=True)
+    (unsafe / "plot.py").write_text("plot\n", encoding="utf-8")
+    archive_example = unsafe / "mplot3d" / "archive_example.py"
+    archive_example.write_text("archive\n", encoding="utf-8")
+    private_example = unsafe / "mplot3d" / "private.py"
+    private_example.write_text("private\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sources outside the archive"):
+        gallery_contract._clean_destination_sources(
+            unsafe,
+            archive_paths=archive_paths,
+            included_paths=included_paths,
+        )
+    assert archive_example.is_file()
+    assert private_example.is_file()
+
+    safe = tmp_path / "safe"
+    (safe / "mplot3d").mkdir(parents=True)
+    (safe / "plot.py").write_text("plot\n", encoding="utf-8")
+    excluded = safe / "mplot3d" / "archive_example.py"
+    excluded.write_text("archive\n", encoding="utf-8")
+
+    gallery_contract._clean_destination_sources(
+        safe,
+        archive_paths=archive_paths,
+        included_paths=included_paths,
+    )
+    assert (safe / "plot.py").is_file()
+    assert not excluded.exists()
+
+
+def test_schema_one_summary_is_derived_from_the_filtered_audit(tmp_path: Path) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    baseline_path = root / "baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["schema_version"] = 1
+    baseline["summary"] = gallery_contract._legacy_summary(
+        manifest=manifest,
+        baseline_examples=baseline["examples"],
+    )
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    assert verify_contract(root) == []
 
 
 def test_pyplot_pause_loop_is_classified_as_animation() -> None:
@@ -505,9 +572,39 @@ def test_complete_report_promotion_removes_waivers_and_records_tolerant_dimensio
             "sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
             "harness_version": HARNESS_VERSION,
             "python_interpreter": PYTHON_INTERPRETER,
+            "implementation_commit": AUDIT_COMMIT,
+            "report_manifest_sha256": json.loads(report_path.read_text(encoding="utf-8"))[
+                "manifest_sha256"
+            ],
+            "extended_spec_sha256": hashlib.sha256(
+                (root / "extended-environment.json").read_bytes()
+            ).hexdigest(),
+            "promoted_manifest_sha256": baseline["manifest_sha256"],
         }
     ]
     assert manifest["examples"][0]["temporary_waivers"] == []
+
+
+def test_report_promotion_accepts_disjoint_shards_for_one_profile(tmp_path: Path) -> None:
+    root, report_path = _promotion_fixture(tmp_path)
+    empty_shard = tmp_path / "empty-shard-report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["summary"]["selected_examples"] = 0
+    report["examples"] = []
+    empty_shard.write_text(json.dumps(report), encoding="utf-8")
+
+    _manifest, baseline = promote_reports(
+        [report_path, empty_shard],
+        audit_commit=AUDIT_COMMIT,
+        root=root,
+        verify_repository=False,
+    )
+
+    assert len(baseline["acceptance_reports"]) == 2
+    assert {record["profile"] for record in baseline["acceptance_reports"]} == {"standard"}
+    assert {record["sha256"] for record in baseline["acceptance_reports"]} == {
+        hashlib.sha256(path.read_bytes()).hexdigest() for path in (report_path, empty_shard)
+    }
 
 
 def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
@@ -595,6 +692,12 @@ def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
     emitted_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     assert emitted_manifest_sha256 != report_manifest_sha256
     assert baseline["manifest_sha256"] == emitted_manifest_sha256
+    assert {record["report_manifest_sha256"] for record in baseline["acceptance_reports"]} == {
+        report_manifest_sha256
+    }
+    assert {record["promoted_manifest_sha256"] for record in baseline["acceptance_reports"]} == {
+        emitted_manifest_sha256
+    }
     assert all(
         record["python_interpreter"] == PYTHON_INTERPRETER
         for record in baseline["acceptance_reports"]

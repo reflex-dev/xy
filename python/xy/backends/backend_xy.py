@@ -1198,6 +1198,7 @@ class FigureCanvasXY(FigureCanvasBase):
                 for _attempt in range(8):
                     self._begin_full_draw(renderer)
                     self.figure.draw(renderer)
+                    self._reject_unsupported_axes()
                     if (
                         self.renderer is renderer
                         and self._renderer_key(renderer) == self._current_renderer_key()

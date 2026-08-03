@@ -91,6 +91,10 @@ when it is true. The developer oracle may compare the display list or its SVG
 against a Matplotlib reference, but it may not replace an unsupported command
 with Agg output and still count the case as passing.
 
+Three-dimensional axes are rejected both before and immediately after every
+Matplotlib Figure traversal. The second check covers `draw_event` callbacks
+that mutate the final Figure before its display list can be published.
+
 Renderer-conformance fixtures cover the same shaped clip, hatch geometry, and
 Gouraud vertex data through JSON, standalone HTML/SVG, and native PNG/RGBA.
 Every accepted path keeps `fallback_used=false`; these features do not invoke

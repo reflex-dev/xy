@@ -89,6 +89,23 @@ def test_canvas_rejects_three_dimensional_axes() -> None:
         canvas.draw()
 
 
+def test_canvas_rejects_three_dimensional_axes_added_by_draw_callback() -> None:
+    figure = Figure(figsize=(2, 2), dpi=72)
+    canvas = FigureCanvasXY(figure)
+    figure.subplots().plot([0, 1], [0, 1])
+
+    def add_three_dimensional_axes(_event: object) -> None:
+        figure.add_subplot(projection="3d")
+
+    canvas.mpl_connect("draw_event", add_three_dimensional_axes)
+
+    with pytest.raises(NotImplementedError, match="does not support three-dimensional axes"):
+        canvas.draw()
+
+    assert any(axes.name == "3d" for axes in figure.axes)
+    assert canvas._draw_generation == 0
+
+
 def test_figure_agg_filter_executes_and_changes_xy_output_without_fallback() -> None:
     figure = Figure(figsize=(2, 2), dpi=50, facecolor="white")
     canvas = FigureCanvasXY(figure)

@@ -404,6 +404,26 @@ def _load_audit(path: Path) -> dict[str, dict[str, Any]]:
     return {str(example["relative_source"]): example for example in examples}
 
 
+def _clean_destination_sources(
+    examples_root: Path,
+    *,
+    archive_paths: set[str],
+    included_paths: set[str],
+) -> None:
+    """Remove only excluded archive members from an existing destination."""
+
+    existing = {path.relative_to(examples_root).as_posix() for path in examples_root.rglob("*.py")}
+    unexpected = existing - archive_paths
+    if unexpected:
+        raise ValueError(
+            "destination contains sources outside the archive: "
+            + ", ".join(sorted(unexpected)[:10])
+        )
+    excluded_archive_paths = archive_paths - included_paths
+    for path in sorted(existing & excluded_archive_paths):
+        examples_root.joinpath(*PurePosixPath(path).parts).unlink()
+
+
 def _baseline_entry(
     path: str,
     eligible: bool,
@@ -514,6 +534,31 @@ def _baseline_entry(
     }
 
 
+def _legacy_summary(
+    *,
+    manifest: dict[str, Any],
+    baseline_examples: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    """Summarize a schema-1 audit after applying the contract path filter."""
+
+    eligible = [
+        baseline_examples[entry["path"]]
+        for entry in manifest["examples"]
+        if entry["pyplot_eligible"]
+    ]
+    return {
+        "source_count": int(manifest["source_count"]),
+        "pyplot_eligible_count": len(eligible),
+        "standard_profile_count": int(manifest["profile_counts"]["standard"]),
+        "extended_profile_count": int(manifest["profile_counts"]["extended"]),
+        "xy_execution_passed": sum(entry["xy"]["status"] == "passed" for entry in eligible),
+        "capture_parity_passed": sum(bool(entry["capture_parity"]) for entry in eligible),
+        "dimension_parity_passed": sum(bool(entry["dimension_parity"]) for entry in eligible),
+        "visual_gate_passed": sum(entry["visual_gate_passed"] is True for entry in eligible),
+        "temporary_waiver_count": sum(len(entry["temporary_waivers"]) for entry in eligible),
+    }
+
+
 def build_contract(
     *,
     python_archive: Path,
@@ -567,21 +612,11 @@ def build_contract(
             raise ValueError(
                 f"expected {CONTRACT_SOURCE_COUNT} non-3-D sources, got {len(included_members)}"
             )
-        existing = {
-            path.relative_to(examples_root).as_posix() for path in examples_root.rglob("*.py")
-        }
-        excluded_existing = existing - set(included_members)
-        for path in excluded_existing:
-            if _is_excluded_3d_example(path):
-                examples_root.joinpath(*PurePosixPath(path).parts).unlink()
-        unexpected = excluded_existing - {
-            path for path in excluded_existing if _is_excluded_3d_example(path)
-        }
-        if unexpected:
-            raise ValueError(
-                "destination contains sources outside the archive: "
-                + ", ".join(sorted(unexpected)[:10])
-            )
+        _clean_destination_sources(
+            examples_root,
+            archive_paths=set(python_members),
+            included_paths=set(included_members),
+        )
 
         for path in sorted(included_members):
             source_bytes = python_zip.read(included_members[path])
@@ -672,35 +707,14 @@ def build_contract(
         "examples": entries,
     }
 
-    eligible_entries = [
-        (entry, baseline_entries[entry["path"]]) for entry in entries if entry["pyplot_eligible"]
-    ]
     baseline = {
         "schema_version": 1,
         "audit_commit": "d505ef5789d8b18e23fd838300b039932dc399ce",
         "matplotlib_version": "3.11.0",
-        "summary": {
-            "source_count": len(entries),
-            "pyplot_eligible_count": len(eligible_entries),
-            "standard_profile_count": profile_counts["standard"],
-            "extended_profile_count": profile_counts["extended"],
-            "xy_execution_passed": sum(
-                baseline_entry["xy"]["status"] == "passed" for _, baseline_entry in eligible_entries
-            ),
-            "capture_parity_passed": sum(
-                baseline_entry["capture_parity"] for _, baseline_entry in eligible_entries
-            ),
-            "dimension_parity_passed": sum(
-                baseline_entry["dimension_parity"] for _, baseline_entry in eligible_entries
-            ),
-            "visual_gate_passed": sum(
-                baseline_entry["visual_gate_passed"] is True
-                for _, baseline_entry in eligible_entries
-            ),
-            "temporary_waiver_count": sum(
-                len(baseline_entry["temporary_waivers"]) for _, baseline_entry in eligible_entries
-            ),
-        },
+        "summary": _legacy_summary(
+            manifest=manifest,
+            baseline_examples=baseline_entries,
+        ),
         "examples": baseline_entries,
     }
 
@@ -1000,8 +1014,6 @@ def promote_reports(
             python_interpreter = {}
         if profile not in {"standard", "extended"}:
             errors.append(f"{report_path}: environment profile is missing or invalid")
-        elif profile in report_profiles:
-            errors.append(f"{report_path}: duplicate {profile} promotion report")
         else:
             report_profiles.add(profile)
         for field, expected in (
@@ -1030,6 +1042,9 @@ def promote_reports(
                 "sha256": _sha256(report_bytes),
                 "harness_version": report.get("harness_version"),
                 "python_interpreter": python_interpreter,
+                "implementation_commit": report.get("implementation_commit"),
+                "report_manifest_sha256": report.get("manifest_sha256"),
+                "extended_spec_sha256": report.get("extended_spec_sha256"),
             }
         )
         for case in report.get("examples", []):
@@ -1130,6 +1145,8 @@ def promote_reports(
 
     manifest_bytes = _json_bytes(manifest)
     promoted_manifest_sha256 = _sha256(manifest_bytes)
+    for record in report_records:
+        record["promoted_manifest_sha256"] = promoted_manifest_sha256
 
     baseline["schema_version"] = 3
     baseline["audit_commit"] = audit_commit
@@ -1138,7 +1155,7 @@ def promote_reports(
     baseline["extended_spec_sha256"] = extended_spec_sha256
     baseline["acceptance_reports"] = sorted(
         report_records,
-        key=lambda record: str(record["profile"]),
+        key=lambda record: (str(record["profile"]), str(record["sha256"])),
     )
     baseline["summary"] = _promoted_summary(
         manifest=manifest,
@@ -1213,6 +1230,8 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
 
     errors.extend(validate_spec(extended_spec, manifest_path=manifest_path))
     entries = manifest.get("examples", [])
+    raw_baseline_examples = baseline.get("examples")
+    baseline_examples = raw_baseline_examples if isinstance(raw_baseline_examples, dict) else {}
     if (
         len(entries) != CONTRACT_SOURCE_COUNT
         or manifest.get("source_count") != CONTRACT_SOURCE_COUNT
@@ -1222,6 +1241,14 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
     paths = [entry.get("path") for entry in entries]
     if len(set(paths)) != len(paths):
         errors.append("manifest contains duplicate source paths")
+    excluded_paths = sorted(
+        path for path in paths if isinstance(path, str) and _is_excluded_3d_example(path)
+    )
+    if excluded_paths:
+        errors.append(
+            "manifest contains sources excluded from XY's 2-D contract: "
+            + ", ".join(excluded_paths[:10])
+        )
     actual_paths = {
         path.relative_to(root / "examples").as_posix() for path in (root / "examples").rglob("*.py")
     }
@@ -1272,7 +1299,7 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         for waiver in entry.get("temporary_waivers", []):
             if waiver.get("temporary") is not True:
                 errors.append(f"{relative}: non-temporary waiver is forbidden")
-        baseline_entry = baseline.get("examples", {}).get(relative)
+        baseline_entry = baseline_examples.get(relative)
         if not isinstance(baseline_entry, dict):
             continue
         if baseline_entry.get("temporary_waivers") != entry.get("temporary_waivers"):
@@ -1335,14 +1362,21 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         or manifest.get("profile_counts") != EXPECTED_PROFILE_COUNTS
     ):
         errors.append(f"profile counts differ from {EXPECTED_PROFILE_COUNTS}: {dict(counts)}")
-    if set(baseline.get("examples", {})) != set(paths):
+    baseline_paths_match = set(baseline_examples) == set(paths)
+    if not baseline_paths_match:
         errors.append("baseline paths do not exactly match the manifest")
 
     if baseline.get("schema_version") in {2, 3}:
-        expected_summary = _promoted_summary(
-            manifest=manifest,
-            baseline_examples=baseline["examples"],
+        expected_summary = (
+            _promoted_summary(
+                manifest=manifest,
+                baseline_examples=baseline_examples,
+            )
+            if baseline_paths_match
+            else {}
         )
+        if not expected_summary:
+            return errors
         if expected_summary["acceptance_complete"] is not True:
             errors.append(
                 f"promoted baseline must accept all {PYPLOT_ELIGIBLE_COUNT} pyplot examples"
@@ -1365,7 +1399,7 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
             records_valid = isinstance(acceptance_reports, list) and all(
                 isinstance(record, dict) for record in acceptance_reports
             )
-            if not records_valid or len(acceptance_reports) != len(expected_acceptance_profiles):
+            if not records_valid or not acceptance_reports:
                 errors.append("promoted baseline acceptance report provenance is invalid")
             else:
                 assert isinstance(acceptance_reports, list)
@@ -1375,6 +1409,11 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
                     record.get("harness_version") != HARNESS_VERSION
                     or not isinstance(record.get("sha256"), str)
                     or len(record["sha256"]) != 64
+                    or record.get("implementation_commit") != baseline.get("audit_commit")
+                    or not isinstance(record.get("report_manifest_sha256"), str)
+                    or len(record["report_manifest_sha256"]) != 64
+                    or record.get("promoted_manifest_sha256") != baseline.get("manifest_sha256")
+                    or record.get("extended_spec_sha256") != baseline.get("extended_spec_sha256")
                     or (
                         "python_interpreter" in record
                         and not valid_python_interpreter(record["python_interpreter"])
@@ -1383,17 +1422,14 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
                 ):
                     errors.append("promoted baseline acceptance report provenance is invalid")
     else:
-        expected_summary = {
-            "source_count": CONTRACT_SOURCE_COUNT,
-            "pyplot_eligible_count": PYPLOT_ELIGIBLE_COUNT,
-            "standard_profile_count": EXPECTED_PROFILE_COUNTS["standard"],
-            "extended_profile_count": EXPECTED_PROFILE_COUNTS["extended"],
-            "xy_execution_passed": 189,
-            "capture_parity_passed": 172,
-            "dimension_parity_passed": 168,
-            "visual_gate_passed": 127,
-            "temporary_waiver_count": 375,
-        }
+        expected_summary = (
+            _legacy_summary(
+                manifest=manifest,
+                baseline_examples=baseline_examples,
+            )
+            if baseline_paths_match
+            else {}
+        )
     for key, expected in expected_summary.items():
         if baseline.get("summary", {}).get(key) != expected:
             errors.append(f"baseline summary {key} must be {expected}")
