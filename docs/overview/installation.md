@@ -96,21 +96,23 @@ Rust tooling beyond the commands above.
   uv add pyarrow
   ~~~
 
-- The separate `reflex-xy` adapter supports state-backed application charts
-  and is published on PyPI. It remains experimental. With uv:
+- The bundled Reflex integration supports state-backed application charts and
+  remains experimental. Install the extra to select a compatible Reflex
+  version. With uv:
 
   ~~~bash
-  uv add reflex-xy
+  uv add "xy[reflex]"
   ~~~
 
   Or with pip:
 
   ~~~bash
-  python -m pip install reflex-xy
+  python -m pip install "xy[reflex]"
   ~~~
 
-  The adapter installs compatible `xy` and Reflex dependencies. Pin resolved
-  versions for production deployments. Continue with the
+  The `xy` wheel already carries the `reflex_xy` integration; the extra adds
+  only the supported Reflex dependency floor. Pin resolved versions for
+  production deployments. Continue with the
   [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
   limitations and setup.
 

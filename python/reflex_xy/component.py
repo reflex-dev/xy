@@ -103,6 +103,14 @@ def _build_component_cls() -> Any:
     return XYChart
 
 
+def _component() -> Any:
+    """Return the lazily constructed Reflex component class."""
+    global _component_cls
+    if _component_cls is None:
+        _component_cls = _build_component_cls()
+    return _component_cls
+
+
 def _is_chart_like(source: Any) -> bool:
     """A public `xy.Chart` (has .figure()) or an internal Figure."""
     return callable(getattr(source, "figure", None)) or callable(
@@ -212,10 +220,11 @@ def _facet_grid(
         )
         if class_manifest:
             panel_props["tailwind_class_tokens"] = _tailwind_scan_literal(class_manifest)
+        component_cls = _component()
         panel = (
-            _component_cls.create(tooltip, **panel_props)
+            component_cls.create(tooltip, **panel_props)
             if tooltip
-            else _component_cls.create(**panel_props)
+            else component_cls.create(**panel_props)
         )
         panels.append(panel)
 
@@ -281,9 +290,7 @@ def chart(
     Static Chart/Figure sources are discovered automatically; an explicit
     inventory is merged with their discovered classes.
     """
-    global _component_cls
-    if _component_cls is None:
-        _component_cls = _build_component_cls()
+    component_cls = _component()
     tailwind_manifest = _tailwind_class_tokens(tailwind_classes)
     if isinstance(source, (str, rx.Var)):
         props.setdefault("width", "100%")
@@ -322,5 +329,5 @@ def chart(
         )
         raise TypeError(msg)
     if tooltip is not None:
-        return _component_cls.create(tooltip, **props)
-    return _component_cls.create(**props)
+        return component_cls.create(tooltip, **props)
+    return component_cls.create(**props)

@@ -65,15 +65,15 @@ control.
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
   `tests/pyplot/corpus/` + `spec/matplotlib/compat.md`.
-- `python/reflex-xy/` — the Reflex adapter, a separate distributable
-  package (`reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
+- `python/reflex_xy/` — the bundled Reflex integration (import namespace
+  `reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
   data rides the app's own websocket as a second socket.io namespace;
   figures live in a per-process registry rebuilt from Reflex state on miss.
-  Depends on `xy` + `reflex`; `xy` itself must never import
-  reflex. The render client is linked out of the installed `xy`
-  package at app compile (no second copy to drift), and the adapter stays
-  out of the root `xy` sdist (`scripts/verify_sdist.py` enforces it).
-  Tests: `tests/reflex_adapter/` (skip unless reflex installed).
+  The source ships in every `xy` artifact; the `xy[reflex]` extra selects the
+  supported Reflex floor while plain `xy` keeps no Reflex runtime dependency.
+  The core `python/xy` package must never import Reflex. The render client is
+  linked out of that package at app compile (no second copy to drift).
+  Tests: `tests/reflex_adapter/` (skip unless Reflex is installed).
 - `js/src/*.ts` — the render client as TypeScript ES modules (one module per
   former concat part; `60_entries.ts` is the entry and the only public export
   surface). `node js/build.mjs` typechecks (`js/tsconfig.json`), lints the
@@ -98,10 +98,9 @@ node js/build.mjs                     # typecheck + regenerate minified static/ 
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 python3 scripts/append_stream_smoke.py   # streaming-append tail uploads + coalesced refines
-uv venv && uv pip install -e . --group dev
-uv pip install -e "python/reflex-xy[dev]"  # enables tests/reflex_adapter (installs reflex)
+uv sync --extra reflex --group dev
 uv run pytest                         # native core required (no fallback)
-python3 scripts/reflex_ws_smoke.py    # browser E2E vs a running reflex-xy demo app
+python3 scripts/reflex_ws_smoke.py    # browser E2E vs the running Reflex demo app
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps

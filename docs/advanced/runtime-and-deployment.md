@@ -25,9 +25,10 @@ interaction math.
 - Reuse the app's existing websocket and XY's binary data plane instead of
   deploying a separate chart service.
 
-`reflex-xy` is experimental and is **not a published package**. Install it from
-the matching XY Git tag, and do not put `pip install reflex-xy` in production
-automation. See [Deployment Recipes](/docs/xy/guides/deployment-recipes/).
+The integration is experimental and ships inside the published `xy`
+distribution. Install `xy[reflex]` so the environment also selects a supported
+Reflex version, then import it as `reflex_xy`. See
+[Deployment Recipes](/docs/xy/guides/deployment-recipes/).
 
 ## Choose a data tier
 

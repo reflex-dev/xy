@@ -43,8 +43,7 @@ help:
 		'  make rust-check       run cargo test and clippy'
 
 setup:
-	uv venv
-	uv pip install -e . --group dev
+	uv sync --extra reflex --group dev
 	cargo build --release
 
 setup-browser:

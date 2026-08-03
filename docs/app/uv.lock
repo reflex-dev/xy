@@ -1411,23 +1411,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reflex-xy"
-source = { editable = "../../python/reflex-xy" }
-dependencies = [
-    { name = "reflex" },
-    { name = "xy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9" },
-    { name = "reflex", specifier = ">=0.9.6" },
-    { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "xy", specifier = ">=0.0.4" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "rich"
 version = "14.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1804,15 +1787,23 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
+[package.optional-dependencies]
+reflex = [
+    { name = "reflex" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "reflex", marker = "extra == 'reflex'", specifier = ">=0.9.6" },
 ]
+provides-extras = ["reflex"]
 
 [package.metadata.requires-dev]
 codspeed = [{ name = "pytest-codspeed", specifier = ">=5,<6" }]
 dev = [
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "pillow", specifier = ">=10" },
     { name = "pyarrow", specifier = ">=15" },
@@ -1821,6 +1812,7 @@ dev = [
     { name = "ruff", specifier = "==0.15.8" },
     { name = "starlette", specifier = ">=0.36" },
     { name = "ty" },
+    { name = "uvicorn", specifier = ">=0.23" },
 ]
 
 [[package]]
@@ -1835,8 +1827,7 @@ dependencies = [
     { name = "reflex-components-internal" },
     { name = "reflex-docgen" },
     { name = "reflex-site-shared" },
-    { name = "reflex-xy" },
-    { name = "xy" },
+    { name = "xy", extra = ["reflex"] },
 ]
 
 [package.dev-dependencies]
@@ -1856,8 +1847,7 @@ requires-dist = [
     { name = "reflex-components-internal", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-components-internal&rev=main" },
     { name = "reflex-docgen", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-docgen&rev=main" },
     { name = "reflex-site-shared", git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-site-shared&rev=main" },
-    { name = "reflex-xy", editable = "../../python/reflex-xy" },
-    { name = "xy", editable = "../../" },
+    { name = "xy", extras = ["reflex"], editable = "../../" },
 ]
 
 [package.metadata.requires-dev]

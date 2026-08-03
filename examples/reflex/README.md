@@ -1,9 +1,9 @@
-# reflex-xy showcase
+# XY Reflex showcase
 
-A [Reflex](https://reflex.dev) app built on the
-[`reflex-xy`](../../python/reflex-xy) adapter. One page walks through the ways
-to link chart data into a Reflex app, and each section carries a **Code**
-accordion showing its source via `inspect.getsource`.
+A [Reflex](https://reflex.dev) app built with the `xy[reflex]` integration.
+One page walks through the ways to link chart data into a Reflex app, and each
+section carries a **Code** accordion showing its source via
+`inspect.getsource`.
 
 Chart data rides the app's own websocket as a second socket.io namespace of
 binary columns; Reflex state holds only a token string per chart.
@@ -39,8 +39,8 @@ cd examples/reflex
 uv run reflex run
 ```
 
-`uv run` resolves this directory's [`pyproject.toml`](pyproject.toml) (xy,
-reflex-xy) into a local environment. Open the URL Reflex prints (usually
+`uv run` resolves this directory's [`pyproject.toml`](pyproject.toml)
+(`xy[reflex]`) into a local environment. Open the URL Reflex prints (usually
 <http://localhost:3000>). Zoom into the cloud to drill density into exact
 points; box-select to cross-filter the histogram; press **go live** to stream.
 

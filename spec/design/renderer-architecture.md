@@ -81,7 +81,7 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   buffer list — this skips the join copy, the largest allocation of a
   direct-tier build. Split is what both shipping hosts use
   (`build_payload_split` in `python/xy/widget.py` and
-  `python/reflex-xy/reflex_xy/namespace.py`); packed remains for standalone
+  `python/reflex_xy/namespace.py`); packed remains for standalone
   export and for streaming `append`, which always re-ships packed
   (`python/xy/interaction.py`). `payloadBuffers` (`60_entries.ts`) and
   `_columnView` (`50_chartview.ts`) treat any spec/transport disagreement as a

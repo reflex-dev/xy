@@ -1351,6 +1351,12 @@ changes presentation text without changing source-field lookup, formatting keys,
 title placeholders, or event payloads; without an explicit `fields=` list it
 renames the matching default x/y/color/size rows. User-provided chrome text is
 assigned through `textContent` / text nodes, never parsed as HTML.
+The canonical 48-slot tuple also reaches Cartesian axis spines/ticks/gesture
+bands, colorbar extensions/contour lines/minor ticks, the whole annotation
+canvas, and every visible modebar subpart (including its draggable grip and
+popover contents). Visual defaults live in the zero-specificity base layer so
+normal author and Tailwind utility layers win; required geometry and live
+interaction state remain client-owned inline declarations.
 
 **(b) Marks — themed via a CSS-custom-property bridge.** The render client reads
 `--chart-*` custom properties off its container and maps them to GPU state, so the
