@@ -794,10 +794,10 @@ try{{
     // must be CONTINUOUS across window-boundary crossings, dying-drill
     // revives, and kernel replies landing mid-transition. Runs on a virtual
     // clock so the fades advance deterministically per synthetic frame.
-    const realNowT=performance.now.bind(performance);
+    const clockBaseT=performance.now();
     let clockOfsT=0;
     const chartNowT=v._now.bind(v);
-    v._now=()=>realNowT()+clockOfsT;
+    v._now=()=>clockBaseT+clockOfsT;
     gd._lodPendingView=null; gd._lodPendingSeq=null; gd._lodPendingAt=null;
     const gridT=new Float32Array(64).fill(2);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:500000,
