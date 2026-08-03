@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from xy.components import CHART_DOM_SLOTS
@@ -793,16 +794,29 @@ def test_widget_bundle_is_valid_esm_and_standalone_is_a_window_global() -> None:
     as a classic <script> by `Figure.to_html()`: it must be export-free and
     define a top-level `var xy` namespace (window.xy) with the same surface."""
     index_text = _read(_STATIC / "index.js")
-    for alias in (
-        "as render",
-        "as renderStandalone",
-        "as decodeFrame",
-        "as ChartView",
-        "as MARK_KINDS",
-        "as markOf",
-        "as default",
-    ):
-        assert alias in index_text, f"index.js no longer exports {alias.split()[-1]!r}"
+    # Parsed out of the `export{...}` clause rather than matched as substrings.
+    # `"as render" in text` is also satisfied by `as renderStandalone`, so the
+    # anywidget entry point — the one export `widget.py` actually needs — was
+    # the only name in this list that could be dropped without failing here.
+    exported: set[str] = set()
+    for clause in re.findall(r"\bexport\s*\{([^}]*)\}", index_text):
+        for entry in clause.split(","):
+            entry = entry.strip()
+            if entry:
+                exported.add(entry.rsplit(" as ", 1)[-1].strip())
+    missing = sorted(
+        {
+            "render",
+            "renderStandalone",
+            "decodeFrame",
+            "ChartView",
+            "MARK_KINDS",
+            "markOf",
+            "default",
+        }
+        - exported
+    )
+    assert not missing, f"index.js no longer exports {missing}"
 
     standalone_text = _read(_STATIC / "standalone.js")
     assert "export {" not in standalone_text and "export{" not in standalone_text, (
