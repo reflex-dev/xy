@@ -5,8 +5,7 @@ hardware-GPU rows into one table.
 
 ## Setup
 
-Use Python 3.12, the repository Rust toolchain, Node 22, and the Playwright version pinned by
-`package-lock.json` (currently 1.61.1):
+Use Python 3.12, the repository Rust toolchain, Node 22, and Playwright 1.48:
 
 ```bash
 cargo build --release
@@ -268,21 +267,6 @@ Each cost a debugging cycle and is load-bearing for the numbers:
 - **Plotly**: `px.scatter` does not wheel-zoom without
   `config={"scrollZoom": True}`; at ≤1k rows it emits SVG (no canvas), so the
   probe counts `.scatterlayer .point` nodes instead.
-
-## Shared WebGL Host Architecture Spike
-
-[`shared_webgl_spike/`](shared_webgl_spike/) is the dependency-free browser A/B harness for
-[#407](https://github.com/reflex-dev/xy/issues/407). It compares synthetic chart surfaces
-rendered through one shared WebGL2 host with native one-context-per-chart surfaces, and exercises
-state isolation, crop/orientation canaries, picking, and context restoration.
-
-Follow the [governed local-capture instructions](shared_webgl_spike/README.md) to run the
-harness. The capture runner self-checks each attempt and its aggregate, then writes raw attempts
-and `summary-input.json`; it does not produce a generic benchmark-validation report.
-
-Local runs provide architecture evidence, not the production `ChartView` implementation or a
-performance claim for xy. The repository contains the harness and capture runner; generated raw
-captures and summaries remain local or are shared as ephemeral CI/PR artifacts.
 
 ## CI Software GL
 
