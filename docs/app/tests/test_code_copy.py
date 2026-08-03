@@ -7,7 +7,9 @@ from urllib.parse import urljoin
 import pytest
 from xy_docs.code import code_block, code_copy_feedback_script
 
-_COPY_BUTTON_SELECTOR = 'button[data-xy-code-copy="true"], button:has(svg.lucide-copy)'
+_COPY_BUTTON_SELECTOR = (
+    'button[data-xy-code-copy="true"]:visible, button:has(svg.lucide-copy):visible'
+)
 _PRODUCTION_DOCS_URL_ENV = "XY_DOCS_BASE_URL"
 
 
@@ -102,7 +104,7 @@ def test_production_copy_buttons_have_accessible_names() -> None:
                 f"Browser could not load production docs route: {route_url}"
             )
 
-            copy_buttons = page.locator(f"{_COPY_BUTTON_SELECTOR}:visible")
+            copy_buttons = page.locator(_COPY_BUTTON_SELECTOR)
             for index in range(copy_buttons.count()):
                 button = copy_buttons.nth(index)
                 audited_controls += 1

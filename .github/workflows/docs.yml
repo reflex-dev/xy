@@ -162,6 +162,7 @@ jobs:
             XY_DOCS_BASE_URL=http://127.0.0.1:3000/docs/xy/ \
               uv run --no-sync pytest \
                 tests/test_code_copy.py::test_production_copy_buttons_have_accessible_names \
+                tests/test_code_copy.py::test_production_copy_button_stays_icon_only \
                 -v
           fi
 
