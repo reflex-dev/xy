@@ -2393,6 +2393,7 @@ export class ChartView {
     // The chrome canvas below keeps the plot background and grid.
     this.overlay = document.createElement("canvas");
     this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    this._applySlot(this.overlay, "annotation_layer");
     root.appendChild(this.overlay);
 
     this.labels = document.createElement("div");
@@ -3373,8 +3374,6 @@ export class ChartView {
       : `position:absolute;inset:0 auto 0 0;width:${barThickness}px;`;
     bar.style.setProperty("--xy-colorbar-gradient", gradient);
     if (lineOnly) {
-      bar.style.border = "1px solid currentColor";
-      bar.style.boxSizing = "border-box";
       bar.dataset.xyColorbarLineOnly = "true";
     }
     this._applySlot(bar, "colorbar_bar");
@@ -3399,6 +3398,7 @@ export class ChartView {
             : `0,9 ${barThickness},9 ${barThickness / 2},0`));
         polygon.setAttribute("fill", "white");
         polygon.setAttribute("stroke", "currentColor");
+        this._applySlot(polygon, "colorbar_extension");
         svg.appendChild(polygon);
         bar.appendChild(svg);
       };
@@ -3422,9 +3422,14 @@ export class ChartView {
       const color = safeCssPaint(this.root, line.color || "currentColor");
       const width = Math.max(0.5, Number(line.width) || 1);
       const lineStyle = line.dash === "dashed" ? "dashed" : "solid";
+      marker.dataset.xyColorbarOrientation = horizontal ? "horizontal" : "vertical";
       marker.style.cssText = horizontal
-        ? `position:absolute;left:${100 * fraction}%;inset-block:0;border-left:${width}px ${lineStyle} ${color};`
-        : `position:absolute;top:${100 * (1 - fraction)}%;inset-inline:0;border-top:${width}px ${lineStyle} ${color};`;
+        ? `position:absolute;left:${100 * fraction}%;inset-block:0;`
+        : `position:absolute;top:${100 * (1 - fraction)}%;inset-inline:0;`;
+      marker.style.setProperty("--xy-colorbar-line-width", `${width}px`);
+      marker.style.setProperty("--xy-colorbar-line-style", lineStyle);
+      marker.style.setProperty("--xy-colorbar-line-color", color);
+      this._applySlot(marker, "colorbar_line");
       bar.appendChild(marker);
     }
     const shrink = Math.max(0.01, Math.min(1, Number(cb.shrink) || 1));
@@ -3485,9 +3490,11 @@ export class ChartView {
           const fraction = fractionFor(value);
           const tick = document.createElement("i");
           tick.dataset.xyColorbarMinor = "true";
+          tick.dataset.xyColorbarOrientation = horizontal ? "horizontal" : "vertical";
           tick.style.cssText = horizontal
-            ? `position:absolute;left:${100 * fraction}%;top:${barThickness}px;height:3px;border-left:1px solid currentColor;`
-            : `position:absolute;left:${barThickness}px;top:${100 * (1 - fraction)}%;width:3px;border-top:1px solid currentColor;`;
+            ? `position:absolute;left:${100 * fraction}%;top:${barThickness}px;`
+            : `position:absolute;left:${barThickness}px;top:${100 * (1 - fraction)}%;`;
+          this._applySlot(tick, "colorbar_minor_tick");
           box.appendChild(tick);
         }
       }
@@ -6780,12 +6787,33 @@ export class ChartView {
       return { inward: 0, outward: length, width };
     };
     if (updateLabels) {
-      const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
+      const rule = (
+        styleAxis,
+        left,
+        top,
+        w,
+        h,
+        colorKey = "axis_color",
+        slot = "axis_line",
+        tickKind = "",
+        side = "",
+      ) => {
         const d = document.createElement("div");
         d.style.cssText =
-          `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
-          `background:${this._axisStylePaint(styleAxis, colorKey, this.theme.axis)};` +
+          `position:absolute;left:${left}px;top:${top}px;` +
           "pointer-events:none;";
+        d.style.setProperty("--xy-axis-rule-width", `${w}px`);
+        d.style.setProperty("--xy-axis-rule-height", `${h}px`);
+        d.style.setProperty(
+          "--xy-axis-rule-paint",
+          this._axisStylePaint(styleAxis, colorKey, this.theme.axis),
+        );
+        d.dataset.xyAxis = styleAxis && styleAxis.id !== undefined
+          ? String(styleAxis.id)
+          : "";
+        d.dataset.xyAxisSide = side || this._axisDefaultSide(styleAxis);
+        if (tickKind) d.dataset.xyTickKind = tickKind;
+        this._applySlot(d, slot);
         this.labels.appendChild(d);
       };
       // Under polar the frame is one ring drawn on the chrome canvas below;
@@ -6799,25 +6827,53 @@ export class ChartView {
       const explicitFrameSides = !polarGeom && Array.isArray(s.frame_sides);
       if (!hideY || explicitFrameSides) {
         const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
-        if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
-        if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
+        if (frameSides.includes("left")) {
+          rule(yAxis, p.x, p.y, yWidth, p.h, "axis_color", "axis_line", "", "left");
+        }
+        if (frameSides.includes("right")) {
+          rule(
+            yAxis,
+            p.x + p.w - yWidth,
+            p.y,
+            yWidth,
+            p.h,
+            "axis_color",
+            "axis_line",
+            "",
+            "right",
+          );
+        }
       }
       if (!hideX || explicitFrameSides) {
         const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
-        if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
-        if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
+        if (frameSides.includes("top")) {
+          rule(xAxis, p.x, p.y, p.w, xHeight, "axis_color", "axis_line", "", "top");
+        }
+        if (frameSides.includes("bottom")) {
+          rule(
+            xAxis,
+            p.x,
+            p.y + p.h - xHeight,
+            p.w,
+            xHeight,
+            "axis_color",
+            "axis_line",
+            "",
+            "bottom",
+          );
+        }
       }
       for (const axis of extraXAxes) {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const h = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const y = axis.side === "top" ? p.y : p.y + p.h - h;
-        rule(axis, p.x, y, p.w, h);
+        rule(axis, p.x, y, p.w, h, "axis_color", "axis_line", "", axis.side);
       }
       for (const axis of extraYAxes) {
         if (this._axisTickLabelStrategy(axis) === "none") continue;
         const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const x = axis.side === "left" ? p.x : p.x + p.w - w;
-        rule(axis, x, p.y, w, p.h);
+        rule(axis, x, p.y, w, p.h, "axis_color", "axis_line", "", axis.side);
       }
 
       // Edge-anchored tick marks have no polar geometry; the spec records
@@ -6834,6 +6890,7 @@ export class ChartView {
           rule(
             xmAxis, x - minorTick.width / 2, top, minorTick.width,
             minorTick.inward + minorTick.outward, "tick_color",
+            "tick_mark", "minor", minorSide,
           );
         }
         const tick = tickParts(xAxis);
@@ -6850,6 +6907,9 @@ export class ChartView {
               tick.width,
               tick.inward + tick.outward,
               "tick_color",
+              "tick_mark",
+              "major",
+              side,
             );
           }
         }
@@ -6866,6 +6926,7 @@ export class ChartView {
           rule(
             ymAxis, left, y - minorTick.width / 2,
             minorTick.inward + minorTick.outward, minorTick.width, "tick_color",
+            "tick_mark", "minor", minorSide,
           );
         }
         const tick = tickParts(yAxis);
@@ -6882,6 +6943,9 @@ export class ChartView {
               tick.inward + tick.outward,
               tick.width,
               "tick_color",
+              "tick_mark",
+              "major",
+              side,
             );
           }
         }
@@ -6906,6 +6970,9 @@ export class ChartView {
               tick.width,
               tick.inward + tick.outward,
               "tick_color",
+              "tick_mark",
+              "major",
+              side,
             );
           }
         }
@@ -6930,6 +6997,9 @@ export class ChartView {
               tick.inward + tick.outward,
               tick.width,
               "tick_color",
+              "tick_mark",
+              "major",
+              side,
             );
           }
         }

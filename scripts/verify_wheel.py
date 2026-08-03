@@ -21,11 +21,30 @@ from email.parser import Parser
 from pathlib import Path
 from typing import Optional
 
+try:
+    from artifact_metadata import dependency_metadata_errors
+except ModuleNotFoundError:  # imported by tests from the repository root
+    from scripts.artifact_metadata import dependency_metadata_errors
+
 # Mirrors verify_sdist's root-directory shape: a release version (`0.0.2`) plus
 # whatever PEP 440 suffix a between-tags build appends (`0.0.3.dev4+g63c0697`).
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[A-Za-z0-9_.+!]*)?$")
 
 REQUIRED_FILES = {
+    "reflex_xy/__init__.py",
+    "reflex_xy/app.py",
+    "reflex_xy/assets/XYChart.jsx",
+    "reflex_xy/assets/__init__.py",
+    "reflex_xy/component.py",
+    "reflex_xy/events.py",
+    "reflex_xy/namespace.py",
+    "reflex_xy/payload_asset.py",
+    "reflex_xy/py.typed",
+    "reflex_xy/registry.py",
+    "reflex_xy/selections.py",
+    "reflex_xy/state_bridge.py",
+    "reflex_xy/tokens.py",
+    "reflex_xy/vars.py",
     "xy/__init__.py",
     "xy/_native.py",
     "xy/_framing.py",
@@ -90,7 +109,9 @@ def _require_only_shippable_roots(names: set[str]) -> None:
         name
         for name in names
         if name.rstrip("/")
-        and not (name.startswith("xy/") or name.split("/", 1)[0].endswith(".dist-info"))
+        and not (
+            name.startswith(("reflex_xy/", "xy/")) or name.split("/", 1)[0].endswith(".dist-info")
+        )
     )
     if unexpected:
         raise AssertionError(
@@ -138,23 +159,6 @@ def _require_filename_tag(path: Path, tags: list[str]) -> None:
         )
 
 
-def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
-    return bool(
-        re.match(
-            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
-            rf"{re.escape(minimum)}(?:\b|[,;\s])",
-            requirement,
-            flags=re.IGNORECASE,
-        )
-    )
-
-
-def _dependency_name(requirement: str) -> str:
-    requirement = requirement.split(";", 1)[0].strip()
-    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
-    return "" if match is None else match.group(1).replace("_", "-").lower()
-
-
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
@@ -165,23 +169,7 @@ def _require_metadata(names: set[str], data: bytes, expected_version: str) -> No
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")
-    requirements = metadata.get_all("Requires-Dist") or []
-    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
-        if not any(
-            _dependency_satisfies_floor(requirement, package, minimum)
-            for requirement in requirements
-        ):
-            missing.append(f"Requires-Dist: {package}>={minimum}")
-    unexpected_requirements = [
-        requirement
-        for requirement in requirements
-        if _dependency_name(requirement) not in {"anywidget", "numpy"}
-    ]
-    if unexpected_requirements:
-        missing.append(f"only xy runtime dependencies in Requires-Dist ({unexpected_requirements})")
-    provided_extras = metadata.get_all("Provides-Extra") or []
-    if provided_extras:
-        missing.append(f"no published extras ({provided_extras})")
+    missing.extend(dependency_metadata_errors(metadata))
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")
@@ -221,9 +209,9 @@ def _require_text_markers(name: str, data: bytes, needles: set[str]) -> None:
         raise AssertionError(f"{name} missing expected markers: {missing}")
 
 
-def _require_py_typed_marker(data: bytes) -> None:
+def _require_py_typed_marker(data: bytes, name: str = "xy/py.typed") -> None:
     if data != b"":
-        raise AssertionError("xy/py.typed must be an empty full-package PEP 561 marker")
+        raise AssertionError(f"{name} must be an empty full-package PEP 561 marker")
 
 
 def _record_hash(data: bytes) -> str:
@@ -310,6 +298,16 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             {"__version__", "__all__", "_EXPORTS", "__getattr__"},
         )
         _require_text_markers(
+            "reflex_xy/__init__.py",
+            zf.read("reflex_xy/__init__.py"),
+            {"XYPlugin", "chart", "figure", "__version__", '_distribution_version("xy")'},
+        )
+        _require_text_markers(
+            "reflex_xy/assets/XYChart.jsx",
+            zf.read("reflex_xy/assets/XYChart.jsx"),
+            {"XYChart", "xy_client.js"},
+        )
+        _require_text_markers(
             "xy/_figure.py",
             zf.read("xy/_figure.py"),
             {
@@ -348,6 +346,7 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             {"BACKEND", "_native", "ImportError"},
         )
         _require_py_typed_marker(zf.read("xy/py.typed"))
+        _require_py_typed_marker(zf.read("reflex_xy/py.typed"), "reflex_xy/py.typed")
         _require_static_bundle(
             "xy/static/index.js",
             zf.read("xy/static/index.js"),

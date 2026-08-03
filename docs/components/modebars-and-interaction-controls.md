@@ -39,7 +39,7 @@ Pan button, and `default_drag_action` accepts only `"auto"` or `"none"` on a pol
 chart — the other values name drag tools a disc does not have, so they raise
 instead of resolving to nothing.
 
-### The default toolbar
+## The default toolbar
 
 Every interactive chart gets the modebar for free — hover over the top-right
 corner of this chart to see the pan, zoom, reset, and export controls:
@@ -81,6 +81,41 @@ chart = xy.scatter_chart(
 the `modebar` and `modebar_button` chart slots. Use `show=False` to remove the
 toolbar. The last modebar component supplies the effective configuration.
 
+Every visible subpart is independently targetable through chart
+`class_names`, `styles`, or a matching `data-xy-slot` CSS selector:
+
+| Slot | Part |
+| --- | --- |
+| `modebar_drag_handle` | Draggable grip beside the toolbar |
+| `modebar_control_group` | Main group of top-level controls |
+| `modebar_separator` | Top-level toolbar separator |
+| `modebar_icon` | Icon wrapper in a top-level button |
+| `modebar_zoom_value` | Current zoom percentage |
+| `modebar_indicator` | Zoom-limit or open-menu indicator |
+| `modebar_selection_icon` | Active selection-mode icon |
+| `modebar_menu` | Zoom, selection, or export popover |
+| `modebar_menu_separator` | Separator inside a popover |
+| `modebar_menu_icon` | Popover command icon |
+| `modebar_menu_label` | Popover command text |
+| `modebar_history_controls` | Back/forward view-history group |
+
+For example, Tailwind can now style the grip and menu contents without a
+private descendant selector:
+
+~~~python
+chart = xy.scatter_chart(
+    xy.scatter([0, 1, 2, 3], [1, 3, 2, 5]),
+    class_names={
+        "modebar_drag_handle": "rounded-full bg-pink-500",
+        "modebar_control_group": "gap-1",
+        "modebar_menu": "rounded-xl border-blue-300 bg-blue-50 shadow-xl",
+        "modebar_menu_icon": "text-pink-600",
+        "modebar_menu_label": "font-semibold text-blue-950",
+        "modebar_history_controls": "rounded-md bg-white/80",
+    },
+)
+~~~
+
 The toolbar's default surface follows your page's light or dark mode
 automatically: a `.dark` class on the chart root or any ancestor (as Reflex,
 Radix, and Tailwind set on the root `<html>`) switches it to a dark palette,
@@ -92,7 +127,7 @@ decimated or density-tier chart that is not necessarily every canonical source
 row; export the source table from Python when a complete data extract is
 required.
 
-### Styling or removing the toolbar
+## Styling or removing the toolbar
 
 The left chart restyles the toolbar surface and every button, while the right
 chart removes the toolbar entirely with `modebar(show=False)`:
@@ -316,9 +351,11 @@ axis, and reset does not clear an active selection.
 Add `xy.modebar(show=False)` to remove the toolbar entirely. To restyle it,
 `class_name` and `style` target the toolbar while `button_class_name` and
 `button_style` target every control (the `modebar` and `modebar_button` chart
-slots expose the same surfaces), and `zoom_buttons=` in
-`xy.interaction_config()` controls whether the Zoom In and Zoom Out commands
-appear.
+slots expose the same surfaces). The granular `modebar_*` slots independently
+target its drag handle, control group, separators, icons, zoom value,
+indicators, selection icon, menus, menu icons/labels, and history controls.
+`zoom_buttons=` in `xy.interaction_config()` controls whether the Zoom In and
+Zoom Out commands appear.
 
 ### Can users export a chart as PNG, SVG, or CSV from the toolbar?
 

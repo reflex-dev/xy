@@ -6,8 +6,8 @@ import asyncio
 from collections.abc import Sequence
 
 import reflex as rx
-import reflex_xy
 
+import reflex_xy
 import xy
 
 BERRY_PALETTE = ("#8e51ff", "#2b7fff", "#00b8db")

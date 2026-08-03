@@ -1168,6 +1168,7 @@ Object.assign(ChartView.prototype, {
     dragPeek.dataset.xyModebarDragHandle = "";
     dragPeek.setAttribute("aria-hidden", "true");
     dragPeek.innerHTML = this._icon("drag");
+    this._applySlot(dragPeek, "modebar_drag_handle");
     bar.appendChild(dragPeek);
     const updateDragPeekSide = () => {
       if (!bar.isConnected) return;
@@ -1241,12 +1242,15 @@ Object.assign(ChartView.prototype, {
       b.setAttribute("aria-label", title);
       b.dataset.xyModebarAction = name;
       if (toggles) b.setAttribute("aria-pressed", "false");
-      b.innerHTML = this._icon(name);
       // Box/size/color are stylesheet defaults (--chart-axis); only layout +
       // interactivity stay inline so a user class can restyle the button.
       b.style.cssText =
         "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
       this._applySlot(b, "modebar_button");
+      const icon = document.createElement("span");
+      icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_icon");
+      b.appendChild(icon);
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
       parent.appendChild(b);
@@ -1297,6 +1301,7 @@ Object.assign(ChartView.prototype, {
       const separator = document.createElement("span");
       separator.dataset.xyModebarSeparator = "";
       separator.setAttribute("aria-hidden", "true");
+      this._applySlot(separator, "modebar_separator");
       bar.appendChild(separator);
     };
     let zoomTrigger = null;
@@ -1313,10 +1318,12 @@ Object.assign(ChartView.prototype, {
       const zoomPercent = document.createElement("span");
       zoomPercent.dataset.xyModebarZoomPercent = "";
       zoomPercent.textContent = "100%";
+      this._applySlot(zoomPercent, "modebar_zoom_value");
       zoomTrigger.appendChild(zoomPercent);
       zoomIndicator = document.createElement("span");
       zoomIndicator.dataset.xyModebarMenuIndicator = "";
       zoomIndicator.innerHTML = this._icon("chevrondown");
+      this._applySlot(zoomIndicator, "modebar_indicator");
       zoomTrigger.appendChild(zoomIndicator);
       this._zoomMenuLabel = zoomPercent;
       zoomTrigger.setAttribute("aria-haspopup", "menu");
@@ -1326,6 +1333,7 @@ Object.assign(ChartView.prototype, {
 
     const toolGroup = document.createElement("div");
     toolGroup.dataset.xyModebarToolGroup = "";
+    this._applySlot(toolGroup, "modebar_control_group");
     if (hasToolGroup) bar.appendChild(toolGroup);
     let selectTrigger = null;
     let selectIndicator = null;
@@ -1342,10 +1350,12 @@ Object.assign(ChartView.prototype, {
       selectModeIcon = document.createElement("span");
       selectModeIcon.dataset.xyModebarSelectIcon = "";
       selectModeIcon.innerHTML = this._icon("select");
+      this._applySlot(selectModeIcon, "modebar_selection_icon");
       selectTrigger.appendChild(selectModeIcon);
       selectIndicator = document.createElement("span");
       selectIndicator.dataset.xyModebarMenuIndicator = "";
       selectIndicator.innerHTML = this._icon("chevrondown");
+      this._applySlot(selectIndicator, "modebar_indicator");
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
       this._selectMenuIcon = selectModeIcon;
@@ -1373,6 +1383,7 @@ Object.assign(ChartView.prototype, {
       zoomMenu.setAttribute("aria-label", "Zoom controls");
       zoomMenu.style.cssText =
         "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+      this._applySlot(zoomMenu, "modebar_menu");
       bar.appendChild(zoomMenu);
     }
     const zoomMenuItems = [];
@@ -1391,9 +1402,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1411,6 +1424,7 @@ Object.assign(ChartView.prototype, {
       const menuSeparator = document.createElement("span");
       menuSeparator.dataset.xyModebarMenuSeparator = "";
       menuSeparator.setAttribute("role", "separator");
+      this._applySlot(menuSeparator, "modebar_menu_separator");
       zoomMenu.appendChild(menuSeparator);
     };
 
@@ -1420,6 +1434,7 @@ Object.assign(ChartView.prototype, {
         viewHistory.dataset.xyModebarViewHistory = "";
         viewHistory.setAttribute("role", "group");
         viewHistory.setAttribute("aria-label", "View history");
+        this._applySlot(viewHistory, "modebar_history_controls");
         zoomMenu.appendChild(viewHistory);
         this._historyBackBtn = mkZoomItem("historyback", "Back",
           () => this._historyBack(), null, {
@@ -1467,6 +1482,7 @@ Object.assign(ChartView.prototype, {
     selectMenu.setAttribute("aria-label", "Selection controls");
     selectMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    this._applySlot(selectMenu, "modebar_menu");
     bar.appendChild(selectMenu);
     const selectMenuItems = [];
     const mkSelectItem = (name, label, mode) => {
@@ -1481,9 +1497,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1509,6 +1527,7 @@ Object.assign(ChartView.prototype, {
     exportMenu.setAttribute("aria-label", "Export options");
     exportMenu.style.cssText =
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    this._applySlot(exportMenu, "modebar_menu");
     bar.appendChild(exportMenu);
     const exportMenuItems = [];
     const mkExportItem = (name, label, onClick, separator = false) => {
@@ -1524,9 +1543,11 @@ Object.assign(ChartView.prototype, {
       const icon = document.createElement("span");
       icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
+      this._applySlot(icon, "modebar_menu_icon");
       button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
+      this._applySlot(text, "modebar_menu_label");
       button.appendChild(text);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
@@ -1555,7 +1576,11 @@ Object.assign(ChartView.prototype, {
         zoomTrigger.setAttribute("aria-expanded", String(show));
         if (!show) {
           zoomMenu.style.display = "none";
-          zoomIndicator.style.transform = "none";
+          // The open/closed flip is transient controller state, so it rides a
+          // custom property instead of an inline `transform`. An inline value
+          // would outrank every author declaration, silently making the public
+          // `modebar_indicator` slot unstylable via class_names or styles=.
+          zoomIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
           if (restoreFocus) zoomTrigger.focus();
           return;
         }
@@ -1573,7 +1598,10 @@ Object.assign(ChartView.prototype, {
           + zoomMenu.offsetHeight <= rootRect.bottom
           ? below
           : above;
-        zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+        zoomIndicator.style.setProperty(
+          "--xy-modebar-indicator-flip",
+          preferredTop === above ? "rotate(180deg)" : "none",
+        );
         const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
         const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
         zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
@@ -1592,7 +1620,7 @@ Object.assign(ChartView.prototype, {
       selectTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
         selectMenu.style.display = "none";
-        selectIndicator.style.transform = "none";
+        selectIndicator.style.setProperty("--xy-modebar-indicator-flip", "none");
         if (restoreFocus) selectTrigger.focus();
         return;
       }
@@ -1610,7 +1638,10 @@ Object.assign(ChartView.prototype, {
         + selectMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
-      selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+      selectIndicator.style.setProperty(
+        "--xy-modebar-indicator-flip",
+        preferredTop === above ? "rotate(180deg)" : "none",
+      );
       const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
       const menuLeft = triggerRect.left - barRect.left - bar.clientLeft;

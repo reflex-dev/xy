@@ -44,6 +44,8 @@ async def rebuild_figure(app: Any, parsed: ParsedToken) -> Optional["Figure"]:
     """Re-run a figure var's builder against the session's stored state."""
     import reflex as rx
 
+    from xy._figure import Figure
+
     try:
         state_cls = _resolve_state_cls(parsed.state_full_name)
     except (KeyError, ValueError):
@@ -62,7 +64,8 @@ async def rebuild_figure(app: Any, parsed: ParsedToken) -> Optional["Figure"]:
         chart = builder(substate)
     if chart is None:
         return None
-    return _figure_of(chart)
+    figure = _figure_of(chart)
+    return figure if isinstance(figure, Figure) else None
 
 
 def make_rebuild_hook(app: Any) -> Any:

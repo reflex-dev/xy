@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+
 import reflex_xy
 from reflex_xy.registry import registry
-
 from xy._figure import Figure
 
 

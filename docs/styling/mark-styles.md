@@ -274,10 +274,11 @@ xy.y_axis(
 )
 ~~~
 
-The `tick_label` and `axis_title` DOM slots provide chart-wide CSS or Tailwind
-hooks for tick text and axis titles. Use per-axis `style` as above when x and y
-must differ. Grid lines, axis lines, and tick marks are canvas-painted, so style
-them through the axis component rather than a CSS selector.
+The `axis_line`, `tick_mark`, `tick_label`, and `axis_title` DOM slots provide
+chart-wide CSS or Tailwind hooks for Cartesian axis chrome. Use per-axis
+`style` as above when x and y must differ or when browser, SVG, and native PNG
+must match. Grid lines remain canvas-painted and use the axis component rather
+than a CSS selector.
 
 ## Validation
 

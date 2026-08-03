@@ -1,1 +1,1 @@
-"""reflex-xy adapter tests (skipped unless reflex + reflex_xy are installed)."""
+"""Bundled Reflex integration tests (skipped unless Reflex is installed)."""

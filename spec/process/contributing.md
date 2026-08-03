@@ -72,9 +72,8 @@ make check-sdist
 make check-wheel
 ```
 
-When you edit `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
-`.github/workflows/release-reflex-xy.yml` (the adapter's own pure-Python
-release pipeline), or release/benchmark artifact wiring, run:
+When you edit `.github/workflows/ci.yml`, `.github/workflows/release.yml`, or
+release/benchmark artifact wiring, run:
 
 ```bash
 make check-ci

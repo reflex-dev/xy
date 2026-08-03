@@ -33,6 +33,8 @@ delete the directory any time.
 from __future__ import annotations
 
 import hashlib
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -77,8 +79,11 @@ def payload_asset(chart_or_figure: Any) -> str:
             # Content-addressed, so concurrent writers (multiple workers
             # importing the app module) produce identical bytes; the rename
             # keeps a racing reader from ever seeing a partial file.
-            tmp = asset_dir / f".{name}.tmp"
-            tmp.write_bytes(frame)
-            tmp.replace(dest)
+            tmp = asset_dir / f".{name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            try:
+                tmp.write_bytes(frame)
+                tmp.replace(dest)
+            finally:
+                tmp.unlink(missing_ok=True)
 
     return AssetPathStr(f"/{ASSET_SUBDIR}/{name}")

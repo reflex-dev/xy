@@ -683,6 +683,7 @@ raises before it reaches the client.
 | `chrome` | Canvas-painted plot chrome |
 | `canvas` | WebGL2 plot canvas |
 | `labels` | Axis/annotation label layer |
+| `annotation_layer` | Whole canvas-painted annotation bitmap |
 | `legend` | Legend container |
 | `legend_title` | Legend title |
 | `legend_item` | One legend row |
@@ -692,13 +693,28 @@ raises before it reaches the client.
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
 | `colorbar_title` | Colorbar label (rotated beside a vertical bar) |
+| `colorbar_extension` | One under/over-range extension |
+| `colorbar_line` | One contour boundary on a line-only colorbar |
+| `colorbar_minor_tick` | One unlabeled minor colorbar tick |
 | `tooltip` | Hover tooltip container |
 | `tooltip_title` | Formatted tooltip title |
 | `tooltip_row` | One tooltip field row |
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
+| `modebar_drag_handle` | Draggable grip that reveals and moves the modebar |
+| `modebar_control_group` | Main top-level control group |
+| `modebar_separator` | Top-level toolbar separator |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
+| `modebar_icon` | Icon wrapper inside a top-level modebar button |
+| `modebar_zoom_value` | Current zoom percentage |
+| `modebar_indicator` | Zoom-limit or menu-open indicator |
+| `modebar_selection_icon` | Active selection-mode icon |
+| `modebar_menu` | Zoom, selection, or export popover |
+| `modebar_menu_separator` | Separator inside a modebar popover |
+| `modebar_menu_icon` | Icon inside a popover command |
+| `modebar_menu_label` | Text inside a popover command |
+| `modebar_history_controls` | Back/forward view-history group |
 | `selection` | Active box/range rectangle plus lasso path and editable handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
@@ -707,6 +723,9 @@ raises before it reaches the client.
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
+| `axis_band` | Invisible axis-only pan/zoom gesture band |
+| `axis_line` | One Cartesian axis baseline |
+| `tick_mark` | One Cartesian major or minor tick mark |
 
 ### Tailwind capability taxonomy
 
@@ -716,16 +735,16 @@ The slot contract has five surface classes:
 | --- | --- | --- |
 | Visually overridable DOM | Root/title; legend, colorbar, tooltip, badge, and label slots; the visual face of selection, crosshair, and modebar slots | Background, color, border, font, padding, shadow, and cursor defaults are layered and yield to normal utilities. `styles[slot]` is explicit inline author intent and wins over a normal utility. |
 | Structural-owned DOM | Layer geometry; legend/colorbar/modebar anchoring; tooltip, selection, crosshair, and popover placement | Position, dimensions, display, z-index, pointer events, and transforms required for layout/interaction are written inline. Utilities are not guaranteed to beat them and should not do so accidentally. |
-| Whole bitmap | `canvas` (WebGL marks) and `chrome` (canvas-painted plot chrome) | CSS affects the canvas element as one bitmap. It cannot select individual marks, grid lines, axes, or canvas annotation shapes; those use the typed renderer vocabulary and `--chart-*` paint tokens. |
+| Whole bitmap | `canvas` (WebGL marks), `chrome` (canvas-painted plot chrome), and `annotation_layer` (canvas-painted annotation geometry) | CSS affects each canvas element as one bitmap. It cannot select individual marks, grid lines, or annotation shapes; those use the typed renderer vocabulary and `--chart-*` paint tokens. |
 | Repeated or ephemeral DOM | Legend rows/swatches/labels, colorbar ticks, tooltip rows/fields, modebar buttons, badge items, tick labels, annotation labels, selection/crosshair overlays | `class_names[slot]` and `styles[slot]` apply to every node created for that slot. Node count, presence, and identity may change after a payload, hover, interaction, or responsive relayout. |
 | State-owned / conditional inline | Legend hover/toggle, tooltip/selection/crosshair visibility and geometry, modebar active/open/fit state | The controller writes the live property or exposes a state class/attribute. Replacing an inline state property requires `!important` and transfers responsibility for that behavior to the author. |
 
-The modebar exposes two public levels: `modebar` for the toolbar and
-`modebar_button` for both top-level controls and menu-item buttons. Its tool
-groups, menu wrappers, separators, indicators, and drag handle expose
-`data-xy-modebar-*` implementation attributes rather than additional slots.
-Theme them through `--chart-modebar-*` or explicit descendant selectors, while
-leaving toolbar/menu placement, fit visibility, opacity, and pointer events to
+The modebar exposes a public slot for every visible layer: its draggable grip,
+control group, separators, buttons and icons, zoom value, state indicators,
+active selection icon, popovers, popover separators/icons/labels, and history
+group. `modebar_button` covers both top-level controls and menu-item buttons;
+the more specific inner slots let a utility style their contents independently.
+Leave toolbar/menu placement, fit visibility, opacity, and pointer events to
 the interaction controller.
 
 Conditional inline state is also deliberate. Legend hover/toggle writes row

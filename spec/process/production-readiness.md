@@ -21,11 +21,10 @@ screen-bounded performance core, but the stable commitments today are narrower:
   wheels, the Rust core. The JS bundles are a generated artifact (not committed to
   git): the build hook builds them into the wheel/sdist, so **end users do not need
   Rust, Node, npm, or a CDN.**
-- Source distributions include the release support surface: docs, tests,
-  benchmark harnesses/baselines, scripts, Rust/JS source, and the example apps'
-  source (FastAPI and Reflex). Charts are generated live by the apps, so no
-  static chart HTML is committed or packaged. The prebuilt render client is built
-  into the sdist by the hook, so installing from an sdist needs no Node.
+- Source distributions contain only install and build inputs: the `xy` package,
+  bundled `reflex_xy` integration, Rust/JS sources, and the prebuilt render
+  client. Repository-only docs, tests, benchmarks, scripts, and examples are
+  excluded. Installing from an sdist therefore needs no Node.
 - Building from a raw source checkout (`pip install` from a clone, or the dev
   workflow) requires a Rust toolchain for the native core and Node/npm for the
   render client — the same two toolchains CI uses. The two differ in strictness:
@@ -85,10 +84,9 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching the archive's own `xy-<version>` root, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
-| Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
-| reflex-xy dist | The adapter's single pure `py3-none-any` wheel + sdist carry the `reflex_xy` package with its `XYChart.jsx` asset, no compiled library, **no render-client copy** (the client links out of the installed xy wheel), coherent name/version/floor/dependency metadata, and — on a tag build — a version exactly equal to the `reflex-xy-vX.Y.Z` tag | `python scripts/verify_reflex_xy_dist.py python/reflex-xy/dist/* [--tag reflex-xy-vX.Y.Z]` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -336,16 +334,10 @@ normalized by the version derivation and could never match their own built
 artifacts. A pre-release needs its own dated changelog entry, exactly like a
 final release.
 
-Two release lines share the repo, in disjoint tag namespaces. Everything above
-and below in this checklist is the **xy core** (`vX.Y.Z` tags,
-`release.yml`, the full wheel matrix). The **reflex-xy adapter** releases
-independently from `reflex-xy-vX.Y.Z` tags via
-`.github/workflows/release-reflex-xy.yml` — see "reflex-xy releases" at the end
-of this section. The namespaces are disjoint by construction:
-uv-dynamic-versioning's default pattern anchors on `^v`, so it can never match
-a `reflex-xy-*` tag, and the adapter's `pattern-prefix = "reflex-xy-"` config
-can never match a bare `v*` tag (`make check-ci` also refuses a workflow that
-triggers across namespaces).
+The repository has one release line: the `xy` distribution, including its
+bundled `reflex_xy` integration, ships from `vX.Y.Z` tags through
+`release.yml`. The `xy[reflex]` extra is dependency metadata in those same
+artifacts, not another package or release.
 
 Before tagging a release:
 
@@ -383,54 +375,33 @@ Before tagging a release:
   toolchain drift cannot silently ship a build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
-- Confirm the sdist verifier passed and the source archive contains the expected
-  `PKG-INFO` package name, Python floor, runtime dependencies, docs, tests,
-  scripts, benchmark harnesses/baselines, the example apps' source, and no
-  native binaries or generated caches.
-- Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
-  install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
+- Confirm the sdist verifier passed and the build-input-only source archive
+  contains `xy`, bundled `reflex_xy`, the JSX/render-client bundles, complete
+  JS/Rust build sources, and the expected `PKG-INFO` package name, Python floor,
+  runtime dependencies, and Reflex extra. It must exclude repository-only
+  docs, tests, scripts, benchmarks, examples, native binaries, and generated
+  caches.
+- Confirm each platform wheel passes `scripts/verify_wheel.py --expect-native`
+  and its install smoke loads `xy.kernels.BACKEND == "native"`. Confirm the
+  fallback `py3-none-any` wheel passes `--expect-pure` and fails compute with
+  the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
-  `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
-  file exactly once with matching `sha256` and size fields. Wheels must stay
-  package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
-  are sdist-only.
+  `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
+  `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel
+  must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
+  archive file exactly once with matching `sha256` and size fields. Wheels
+  and the sdist remain distribution/build-input-only: docs, tests, benchmarks,
+  scripts, and the `examples/` apps are repository-only.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm `spec/api/api-examples.md` runs against the tagged API.
-### reflex-xy releases
+### Bundled Reflex integration
 
-The adapter is a pure-Python distribution — no native core, no JS build, no
-platform matrix — so it deliberately does **not** ride release.yml: one small
-workflow (`release-reflex-xy.yml`, two jobs) is easier to keep correct than a
-second build shape wedged into the cross-compile matrix. Cutting an adapter
-release is `git tag reflex-xy-vX.Y.Z && git push --tags` after dating the
-version's entry in `python/reflex-xy/CHANGELOG.md` (the adapter has its own
-changelog; the gate is `scripts/check_release_version.py --package reflex-xy`).
-Pre-releases follow the core's rule: a canonical suffix on the tag
-(`reflex-xy-v0.0.1a1`, likewise `bN`/`rcN`) and a dated entry for that exact
-pre-release version.
-
-The workflow builds `python/reflex-xy` with `uv build`, verifies the pair with
-`scripts/verify_reflex_xy_dist.py --tag <tag>` (pure wheel, JSX asset present,
-no render-client copy, version exactly equal to the tag), smokes a real
-install + `import reflex_xy`, and publishes both artifacts to PyPI via trusted
-publishing (environment `pypi`, OIDC, `skip-existing` for retryability). A
-manual `workflow_dispatch` defaults to `dry_run=true` and never publishes.
-
-Before the first adapter release (and after any change to its pipeline):
-
-- Configure the PyPI trusted publisher for the `reflex-xy` project:
-  repository `reflex-dev/xy`, workflow `release-reflex-xy.yml`,
-  environment `pypi` — it is a separate PyPI project from `xy` and does not
-  inherit the core's publisher.
-- Run the workflow manually (`dry_run=true`) and confirm both artifacts build
-  and verify; the dev version it builds is unpublishable by design.
-- Run `make check-ci` — it validates this workflow's gates (unshallow
-  checkouts, dist verification, changelog gate, trusted publishing, dry-run
-  default, and tag-namespace separation) alongside the other workflows.
-- Adapter releases pin nothing about the core: `reflex-xy` depends on `xy`
-  (and `reflex>=0.9.6`) as ordinary PyPI ranges, and its wheel must never
-  carry a copy of the render client — the client links out of the installed
-  xy package at app compile so it can never drift from the kernel.
+Every `xy` release carries the `reflex_xy` Python package and JSX wrapper. The
+wrapper links to the render client in the same installed distribution, so
+client, kernel, and framework bridge share one version. Plain `xy` must not
+install Reflex; `xy[reflex]` must install the declared supported floor.
+Release smoke tests install Reflex, import `reflex_xy`, and assert that its
+reported version matches the `xy` distribution version.
 
 ## Hardening Backlog
 
@@ -451,7 +422,7 @@ Keep pushing these in low-conflict increments:
   path (today it only stops short of a real publish, it doesn't yet push to a
   test index), plus tying it to version-bump/tag validation and refreshed
   benchmark reports.
-- Keep the two example apps focused: `examples/reflex` on the reflex-xy
+- Keep the two example apps focused: `examples/reflex` on the bundled Reflex
   integration surfaces (figure vars, events, state-driven and streaming
   updates, `on_view_change`), and `examples/fastapi` on the framework-neutral
   gallery plus the live 100M drilldown. The one deliberate overlap is that

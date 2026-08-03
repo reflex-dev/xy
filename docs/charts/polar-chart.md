@@ -1,6 +1,6 @@
 ---
 title: Polar Charts in Python
-description: Create polar lines, fields, sectors, and uncertainty charts in Python with xy. Configure partial sectors, categorical angles, holes, log radii, and pyplot polar projections.
+description: Create polar charts and polar plots in Python with xy. Configure sectors, categorical angles, holes, log radii, and pyplot polar projections.
 components:
   - xy.polar_chart
   - xy.theta_axis
@@ -9,10 +9,15 @@ components:
 
 # Polar Charts in Python
 
-A **polar chart** places each observation by an angle (theta, or θ) and a
+A **polar chart** (also called a polar plot or polar graph) places each
+observation by an angle (theta, or θ) and a
 distance from the center (radius, or r). It is a natural fit for cyclic
 measurements, directional observations, antenna patterns, radar comparisons,
 and wind distributions.
+
+Jump to [a polar line chart](#create-a-polar-line-chart),
+[the angular axis](#configure-the-angular-axis), or
+[supported marks and limits](#supported-marks-and-current-limits).
 
 XY uses the same composition model as its Cartesian charts. Put `line`,
 `scatter`, `area`, `bar`, `column`, `heatmap`, `contour`, or `errorbar` marks

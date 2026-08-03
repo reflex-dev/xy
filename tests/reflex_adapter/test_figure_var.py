@@ -7,10 +7,10 @@ import asyncio
 import numpy as np
 import pytest
 import reflex as rx
-import reflex_xy
-from reflex_xy.tokens import builder_of, parse_token
 
+import reflex_xy
 import xy
+from reflex_xy.tokens import builder_of, parse_token
 
 from .conftest import make_router_data
 
