@@ -1,18 +1,66 @@
 # `xy.pyplot` compatibility audit and TODO
 
-This document tracks the work required to make `xy.pyplot` a reliable
-Matplotlib-flavoured compatibility layer. It deliberately separates the
-shim's supported target from full Matplotlib parity: the former is achievable;
-the latter would require recreating systems that conflict with xy's small,
-fast, browser-oriented design.
+This document began as the audit of xy's dependency-free 2-D pyplot shim. That
+native implementation remains supported and performance-oriented, but it is no
+longer the architecture for full Matplotlib compatibility. Statements and
+appendices from the 2026-07-13 audit describe `native` mode unless a section
+explicitly says otherwise.
 
-## Reference point and audit method
+## Current dual-mode architecture and completion bar
+
+| Mode | Responsibility |
+|---|---|
+| `native` | Dependency-free XY-owned Figure/Axes/Artist-shaped objects and high-performance 2-D rendering. Select it explicitly to pin the lightweight implementation. |
+| `compat` | Genuine Matplotlib 3.11 Figure/Axes/Artist, units, transforms, layout, toolkits, widgets, and animation semantics rendered through `module://xy.backends.backend_xy`. Install with `pip install "xy[matplotlib]"`. |
+| `auto` | The configured default. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
+
+Compat mode does not reproduce Matplotlib's semantic systems inside the native
+shim. Matplotlib performs its normal Artist traversal; `RendererXY` emits one
+ordered, device-space display list consumed by browser, HTML, SVG, and native
+raster output. Gallery acceptance requires `fallback_used=false`: Agg and
+other Matplotlib renderers may be development oracles but may not fill an
+unsupported command.
+
+The permanent source corpus selects 459 non-3-D programs from the 507-source
+Matplotlib 3.11.1 documentation archive and evaluates them against the
+separately pinned Matplotlib 3.11.0 oracle:
+
+| Classification | Count |
+|---|---:|
+| Standard pyplot profile | 425 |
+| Extended pyplot profile | 12 |
+| Non-pyplot backend/font/server/GUI sources | 22 |
+
+The first two rows are the 437 pyplot-eligible import-swap denominator. The 22
+other sources remain represented and classified, but cannot be pyplot passes
+or failures.
+
+Completion requires both pyplot profiles to pass execution, figure/capture,
+dimension, structure, semantic, tolerant visual, interaction/animation, and
+no-fallback gates without waivers. Exact pixels are explicitly not required.
+The completed report passes 425/425 standard and 12/12 extended examples:
+437/437 pyplot-eligible cases with no execution, structural, semantic, visual,
+behavioral, or fallback waivers. The checked-in 189 execution / 172
+figure-capture / 168 exact-dimension / 127 visual bootstrap baseline and its
+former waivers remain historical ratchet evidence, not the current result.
+
+The active contracts are:
+
+- [`modes.md`](modes.md) for mode resolution and switching;
+- [`backend-xy.md`](backend-xy.md) for the renderer/display-list boundary;
+- [`gallery-contract.md`](gallery-contract.md) for provenance, environment,
+  behavioral evidence, and acceptance thresholds;
+- [`live-canvas.md`](live-canvas.md) for browser-to-Matplotlib events; and
+- [`non-pyplot-companions.md`](non-pyplot-companions.md) for the 22 classified
+  sources.
+
+## Historical native reference point and audit method
 
 - Audit date: 2026-07-13.
 - Upstream checkout: `ignore/matplotlib`.
 - Upstream revision: `bde111fb4e`, described by Git as
   `v3.11.0-348-gbde111fb4e` (2026-07-10).
-- Shim: `python/xy/pyplot/`.
+- Native shim: `python/xy/pyplot/`.
 - Contract test: `tests/pyplot/test_axes_charts.py::`
   `test_official_matplotlib_311_2d_plotting_surface_is_complete`.
 - Executable examples: `tests/pyplot/corpus/`.
@@ -23,7 +71,7 @@ upstream `matplotlib/pyplot.py`, and public declarations on upstream `Axes`,
 not semantic compatibility scores: renderer lifecycle methods, properties,
 and APIs deliberately outside xy's design are included in the upstream sets.
 
-## Audit baseline (before completion work)
+## Historical native audit baseline (before 2026-07-13 work)
 
 | Surface | Present in `xy.pyplot` | Notes |
 |---|---:|---|
@@ -32,22 +80,24 @@ and APIs deliberately outside xy's design are included in the upstream sets.
 | Public upstream `Axes`/`_AxesBase` declarations | 89 / 193 (46%) | 104 names absent; see appendix B |
 | Public upstream `Figure`/`FigureBase` declarations | 13 / 73 (18%) | 60 names absent; see appendix C |
 | Compatibility corpus | 53 scripts | No expected failures |
-| Current shim suite | 157 passed, 7 skipped | Skips require real Matplotlib |
+| 2026-07-13 shim suite | 157 passed, 7 skipped | Skips required real Matplotlib |
 
-The existing 100% statement is intentionally narrow. It means every method in
+The 66/66 statement is intentionally narrow and historical. It means every method in
 the selected Matplotlib 3.11 2-D **Plotting** inventory exists. It does not mean
 that every keyword, returned Artist, transform, layout rule, backend feature,
-or rendered pixel matches Matplotlib.
+or rendered pixel matches Matplotlib, and it must not be used as the headline
+for compat mode.
 
-## Completion record
+## Historical native completion record
 
-Completed on 2026-07-13. In the option-depth and interoperability sections, a
+The native audit was closed on 2026-07-13. In the option-depth and
+interoperability sections, a
 checked item means each listed material behavior is now either implemented or
 rejected through the documented, actionable `NotImplementedError` boundary;
-it does not promote the explicit exclusions below into supported scope.
+it does not prove the later 437-example compat contract.
 
-Executable evidence is maintained in the files below. Stated precisely, so the
-evidence is not oversold:
+The evidence below remains useful for native-mode regressions. The permanent
+gallery contract supersedes it as the full compat release gate:
 
 - `tests/pyplot/test_reference_corpus.py` runs all 54 corpus scripts through
   both engines in isolated subprocesses. Each engine must emit a nonblank PNG;
@@ -83,9 +133,10 @@ than skipping. Ruff check/format, `ty check` (two pre-existing diagnostics in
 freshness, pre-commit hooks, `git diff --check`, and `node js/build.mjs`
 idempotency all passed.
 
-## Definition of done for the supported shim
+## Historical definition of done for native 2-D mode
 
-The shim can be called complete for ordinary 2-D scripts when:
+The native shim can be called complete for its documented ordinary 2-D
+surface when:
 
 - [x] Every documented supported call has geometry and return-value tests, not
       only an `hasattr` check.
@@ -237,8 +288,9 @@ The shim can be called complete for ordinary 2-D scripts when:
 
 ## P2 — common pyplot/Axes/Figure workflow compatibility
 
-These should be implemented before backend-management or GUI APIs because they
-appear frequently in ordinary scripts and notebooks.
+This was the native audit's 2026-07-13 prioritization: common workflow helpers
+were implemented before the later compat backend project because they appear
+frequently in ordinary scripts and notebooks.
 
 ### Stateful pyplot and figure management
 
@@ -430,8 +482,9 @@ method accepts the call.
 
 ## P6 — typing, documentation and maintenance
 
-- [x] Add a useful typed public surface for `xy.pyplot`, `Axes`, `Figure`,
-      common Artists, containers and return tuples; reduce broad `Any` usage.
+- [x] Add a useful typed public surface for native Artists and containers plus
+      dependency-free common Figure/Axes protocols, concrete native aliases,
+      structural compat aliases, and honest mode-routed return unions.
 - [x] Add API documentation generated from the supported compatibility matrix.
 - [x] Fix the stale `spec/api/chart-roadmap.md` rows that still call pie, vector
       fields and irregular-grid families planned even though the shim exposes
@@ -440,66 +493,83 @@ method accepts the call.
       visual approximation, accepted no-op, optional interop, and unsupported.
 - [x] Add a compatibility changelog tied to upstream Matplotlib releases.
 - [x] Re-run the source inventory whenever the pinned Matplotlib revision moves.
-- [x] Keep all shim code inside `python/xy/pyplot/` and preserve the one-way
-      dependency boundary enforced by `tests/pyplot/test_boundaries.py`.
+- [x] Keep the native shim inside `python/xy/pyplot/`; keep the public compat
+      backend/display-list boundary inside `python/xy/backends/`; and preserve
+      lightweight imports so neither `xy` nor a plain `xy.pyplot` import loads
+      Matplotlib.
 
-## Explicitly out of scope
+## Native-mode exclusions and compat-mode ownership
 
-These exclusions are intentional unless a future project explicitly promotes
-one of them. Missing names belonging primarily to these systems should not be
-treated as ordinary shim bugs.
+The original exclusions below still apply to native mode. They are not global
+product exclusions: compat mode deliberately uses real Matplotlib for the
+semantic systems that would be unbounded to reimplement.
 
-### Renderer and backend replacement
+### Renderer and backend
 
-- Matplotlib renderer internals, draw traversal, stale propagation, graphics
-  contexts, backend canvases, renderer-specific filters and exact pixel parity.
-- Backend selection and manager APIs: `switch_backend`, `new_figure_manager`,
-  `get_current_fig_manager`, REPL display-hook installation and backend toolbars.
-- Reproducing Agg, PDF, PS, SVG, PGF, Cairo, Qt, Tk, GTK, wx, macOS or WebAgg.
+- Exact pixel parity and reproducing Agg, Cairo, Qt, Tk, GTK, wx, macOS,
+  WebAgg, PDF, PS, SVG, or PGF backends are not goals.
+- Compat mode does provide the public
+  `module://xy.backends.backend_xy` canvas, manager, timers, callback registry,
+  display-list background blit, and display-list renderer. Its HTML, SVG, and native raster
+  consumers must handle accepted output directly.
+- Agg or another Matplotlib renderer may be used as a development oracle only.
+  Any gallery result marked `fallback_used` fails.
+- Native GUI embedding remains a classified non-pyplot integration concern,
+  not an import-swap pyplot pass.
 
-### GUI event loops and blocking interaction
+### Events and blocking interaction
 
-- `ion`, `ioff`, `isinteractive`, `pause`, `ginput`, `waitforbuttonpress`, GUI
-  main loops and Matplotlib callback registry compatibility.
-- Native-window pan/zoom tool state, toolbar modes and backend keymaps.
-- Matplotlib-style picking/event objects beyond xy's own browser interaction
-  and selection APIs.
+- Native mode keeps XY's own browser interaction model rather than recreating
+  Matplotlib GUI event loops.
+- Compat mode maps live browser pointer, keyboard, scroll, resize, and close
+  input to standard Matplotlib event objects. `mpl_connect`, picking, widgets,
+  timers, `draw`, `draw_idle`, and display-list background `blit` are in scope.
+- Deterministic input drivers cover gallery calls such as `ginput`,
+  `waitforbuttonpress`, and manual contour labeling. A standalone HTML file has
+  no live Python callbacks after its process exits.
 
-### Full Artist and transform graph
+### Artist, transform, layout, and toolkit systems
 
-- Arbitrary third-party Artist subclasses and arbitrary draw overrides.
-- Complete transform composition, blended transforms, path effects, clipping
-  graphs and layout bbox negotiation.
-- Full introspection parity for every Artist property.
-- Blitting and renderer-driven animation lifecycle.
+- Native mode retains its bounded Artist-shaped objects, transforms, and layout
+  implementation.
+- Compat mode uses Matplotlib's real Artist graph, transform stack, clipping,
+  layout engines, units, `axes_grid1`, and `axisartist`; XY renders their
+  device-space operations. Third-party draw overrides are supported only to
+  the extent that they resolve through the renderer protocol and gallery gate.
 
 ### Projection and domain systems
 
-- 3-D plotting and `mplot3d`.
-- Ternary, geographic and custom projection registration. Polar axes are
-  supported through `projection="polar"`; the remaining polar feature gaps are
-  tracked in `spec/design/polar-axes.md` §9.
-- Cartopy/Basemap integration.
-- Full TeX/MathText/PGF layout parity and Matplotlib font-manager behavior.
+- Native mode supports its documented 2-D and polar surface; native 3-D,
+  ternary, geographic, and general custom projections remain outside that
+  implementation.
+- Compat mode uses Matplotlib's projection registration and units but rejects
+  three-dimensional axes before drawing. The 48 upstream 3-D examples are not
+  part of the executable compatibility corpus.
+- TeX, fonts, GUI/toolkit libraries, and related system packages belong to the
+  declared extended environment rather than a silent waiver.
 
 ### Animation
 
-- `FuncAnimation`, `ArtistAnimation`, movie writers and blitting. xy's native
-  streaming/update APIs are the preferred model.
+- Native applications continue to use XY's streaming and declarative animation
+  APIs.
+- Compat mode includes Matplotlib `FuncAnimation`, `ArtistAnimation`, timers,
+  widgets, and display-list background blitting. Gallery tests drive initial, middle, and
+  final states plus timer/callback evidence. Standalone output may embed
+  precomputed frames but cannot promise arbitrary Python callbacks.
 
-### Every Matplotlib module
+### Matplotlib modules
 
-This shim targets plotting calls and common script ergonomics. It does not aim
-to replace `matplotlib.artist`, `collections`, `patches`, `path`, `transforms`,
-`ticker`, `dates`, `units`, `tri`, `animation`, `widgets`, `backend_*`, or
-`toolkits` as import-compatible standalone modules. Small compatibility objects
-may be provided inside `xy.pyplot` when required by supported workflows.
+Native mode does not independently clone `matplotlib.artist`, `collections`,
+`patches`, `path`, `transforms`, `ticker`, `dates`, `units`, `tri`,
+`animation`, `widgets`, `backend_*`, or `toolkits`. Compat mode requires the
+supported Matplotlib extra and uses those real modules; it does not create
+parallel `xy` replacements for them.
 
 ## Appendix A — missing public upstream `pyplot` functions
 
-This is the complete name-level difference at the reference revision (73
-names). Several are intentionally out of scope; the P2 section identifies the
-high-value subset.
+This is the historical native name-level difference at the reference revision
+(73 names). It is not the compat-mode API inventory; compat lazily exposes
+Matplotlib's pyplot surface.
 
 ```text
 autoscale autumn axes bone box cla clf clim connect cool copper delaxes
@@ -514,11 +584,11 @@ tick_params ticklabel_format twiny uninstall_repl_displayhook viridis
 waitforbuttonpress winter xkcd
 ```
 
-## Appendix B — missing public upstream `Axes`/`_AxesBase` declarations
+## Appendix B — historical native `Axes`/`_AxesBase` name gaps
 
-This is the complete name-level difference at the reference revision (104
-names). It includes properties and renderer/navigation methods as well as
-ordinary user APIs.
+This is the historical native name-level difference at the reference revision
+(104 names). It includes properties and renderer/navigation methods as well as
+ordinary user APIs; genuine Matplotlib Axes own this surface in compat mode.
 
 ```text
 add_child_axes add_container add_line add_table apply_aspect artists autoscale
@@ -543,10 +613,10 @@ set_ymargin set_zorder sharex sharey start_pan tables texts ticklabel_format
 twiny update_datalim use_sticky_edges viewLim
 ```
 
-## Appendix C — missing public upstream `Figure`/`FigureBase` declarations
+## Appendix C — historical native `Figure`/`FigureBase` name gaps
 
-This is the complete name-level difference at the reference revision (60
-names).
+This is the historical native name-level difference at the reference revision
+(60 names). Compat mode returns genuine Matplotlib Figure objects.
 
 ```text
 add_artist add_axobserver add_gridspec add_subfigure align_labels align_titles
@@ -562,7 +632,7 @@ set_frameon set_layout_engine set_linewidth set_tight_layout subfigures subplots
 supxlabel supylabel text waitforbuttonpress
 ```
 
-## Appendix D — supported 2-D plotting-method inventory
+## Appendix D — native 2-D plotting-method inventory
 
 These 66 names currently satisfy the documented name-presence contract on both
 the shim `Axes` and stateful `xy.pyplot` namespace. Their option-depth work is
@@ -590,8 +660,11 @@ streamplot
 
 ---
 
-## Post-review status (rewritten 2026-07-13; the earlier pasted record was
-## corrupted and internally stale — this section is the authoritative one)
+## Historical native post-review status (rewritten 2026-07-13)
+
+The earlier pasted native record was corrupted and internally stale; this
+section is authoritative for that audit only. The 459-source gallery contract
+is authoritative for current compat remediation.
 
 ### Evidence layer — built, with known limits
 
@@ -693,7 +766,8 @@ Evidence machinery, common export options, exporter backgrounds, the legend
 discard boundary, dash geometry, interpolated fills, violin extrema, and the
 colormap validation boundary are implemented and regression-tested. Items
 listed above as approximations or open inconsistencies are exactly that —
-none of this is claimed as full Matplotlib parity.
+none of this is claimed as full Matplotlib parity. Compat mode pursues that
+separate goal through the real Matplotlib frontend and the gallery gate above.
 
 - `matplotlib.sankey.Sankey`: deliberately NOT shimmed. Its API is a
   path-drawing toolkit (trunk/branch offsets in axes units), not a flow-data

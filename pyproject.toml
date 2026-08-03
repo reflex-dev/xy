@@ -15,6 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Matplotlib supplies its mature Figure/Axes/Artist semantics in pyplot's
+# opt-in compatibility mode.  The XY backend remains the renderer.
+matplotlib = [
+    "matplotlib>=3.11,<3.12",
+]
 # The adapter source ships in every xy wheel so the framework integration and
 # render client can never drift. The extra only selects the supported Reflex
 # floor; importing plain `xy` remains framework-free.
@@ -135,6 +140,7 @@ exclude = [
     "/benchmarks/**",
     "/docs/**",
     "/examples/**",
+    "/gallery/**",
     "/Makefile",
     "/scripts/**",
     "/spec/**",
@@ -158,6 +164,10 @@ exclude = [
 line-length = 100
 target-version = "py311"
 src = ["python", "tests", "scripts", "benchmarks"]
+# Exact vendored upstream sources are hash-locked gallery inputs. Formatting
+# or lint autofixes would invalidate both their provenance and notebook AST
+# equivalence.
+extend-exclude = ["gallery/matplotlib-3.11.1/examples"]
 
 [tool.ruff.lint]
 select = [

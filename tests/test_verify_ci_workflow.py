@@ -94,7 +94,10 @@ def test_locked_reflex_environment_cannot_hide_in_step_env(tmp_path: Path) -> No
             "      - name: Install package + dev deps\n"
             "        env:\n"
             f"          FAKE_GATE: {required}\n",
-        ).replace(f"          {required}", "          uv sync --extra reflex --group dev"),
+        ).replace(
+            f"          {required}",
+            "          uv sync --extra reflex --group dev",
+        ),
         encoding="utf-8",
     )
 
@@ -603,6 +606,321 @@ def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> No
     path.write_text(workflow.replace(command, "") + f"\n# {command.strip()}\n", encoding="utf-8")
     errors = verify_ci_workflow.validate_ci_workflow(path)
     assert any("reference test commands" in error for error in errors)
+
+
+def test_reference_gate_requires_generated_pyplot_inventory_check(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    command = "          .venv/bin/python scripts/generate_pyplot_compat_inventory.py --check\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(command, "") + f"\n# {command.strip()}\n", encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Verify released reference and reviewed snapshot" in error
+        and "generate_pyplot_compat_inventory.py" in error
+        for error in errors
+    )
+
+
+def test_gallery_ratchet_job_must_keep_all_eight_shards(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+            "        shard: [0]\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "eight-shard" in error for error in errors)
+
+
+def test_gallery_ratchet_job_cannot_hide_fallback_reports(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            gallery-artifacts-${{ matrix.shard }}/failures\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "/failures" in error for error in errors)
+
+
+def test_gallery_ratchet_job_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "    timeout-minutes: 45\n",
+            "    timeout-minutes: 45\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "must be blocking" in error for error in errors)
+
+
+def test_gallery_jobs_must_build_the_linux_native_core(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          XY_REQUIRE_CARGO: "1"\n',
+            '          XY_SKIP_CARGO: "1"\n',
+            2,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("pyplot_gallery" in error and "XY_REQUIRE_CARGO" in error for error in errors)
+    assert any(
+        "Install xy and pinned extended Python dependencies" in error
+        and "XY_REQUIRE_CARGO" in error
+        for error in errors
+    )
+
+
+def test_required_full_pytest_job_must_install_exact_matplotlib_pin(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    install_block = (
+        "      - name: Install package + dev deps\n"
+        "        run: |\n"
+        "          uv sync --locked --extra reflex --group dev\n"
+        '          uv pip install -p .venv/bin/python "matplotlib==3.11.0"\n'
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            install_block,
+            install_block.replace("matplotlib==3.11.0", "matplotlib>=3.11"),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install package + dev deps" in error and "matplotlib==3.11.0" in error for error in errors
+    )
+
+
+def test_required_full_pytest_step_keeps_chromium_and_fail_on_missing_browser(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("          export XY_REQUIRE_BROWSER=1\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Python tests (native core)" in error and "XY_REQUIRE_BROWSER=1" in error
+        for error in errors
+    )
+
+    chromium_assignment = (
+        '          export XY_CHROMIUM="$(node -e '
+        '"console.log(require(\'playwright\').chromium.executablePath())")"\n'
+    )
+    path.write_text(workflow.replace(chromium_assignment, "", 1), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("Python tests (native core)" in error and "XY_CHROMIUM" in error for error in errors)
+
+
+def test_focused_pyplot_browser_gate_requires_every_compatibility_suite(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    suite_lines = {
+        "tests/backends/test_backend_xy.py": "            tests/backends/test_backend_xy.py \\\n",
+        "tests/backends/test_backend_xy_widget.py": (
+            "            tests/backends/test_backend_xy_widget.py \\\n"
+        ),
+        "tests/backends/test_pyplot_svg_gallery_browser.py": (
+            "            tests/backends/test_pyplot_svg_gallery_browser.py \\\n"
+        ),
+        "tests/backends/test_display_list.py": "            tests/backends/test_display_list.py \\\n",
+        "tests/pyplot/test_modes.py": "            tests/pyplot/test_modes.py \\\n",
+        "tests/pyplot/test_gallery_behavior.py": (
+            "            tests/pyplot/test_gallery_behavior.py \\\n"
+        ),
+        "tests/pyplot/test_public_protocols.py": (
+            "            tests/pyplot/test_public_protocols.py\n"
+        ),
+    }
+    for index, (suite, line) in enumerate(suite_lines.items()):
+        path = tmp_path / f"ci-{index}.yml"
+        path.write_text(workflow.replace(line, "", 1), encoding="utf-8")
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any(
+            "Pyplot backend, widget, mode, behavior, and protocol gate" in error and suite in error
+            for error in errors
+        )
+
+
+def test_focused_pyplot_browser_gate_requires_playwright_chromium_environment(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace('          XY_REQUIRE_BROWSER: "1"\n', "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Pyplot backend, widget, mode, behavior, and protocol gate" in error
+        and "XY_REQUIRE_BROWSER" in error
+        for error in errors
+    )
+
+    chromium_assignment = (
+        '          export XY_CHROMIUM="$(node -e '
+        '"console.log(require(\'playwright\').chromium.executablePath())")"\n'
+    )
+    prefix, separator, suffix = workflow.rpartition(chromium_assignment)
+    assert separator
+    path.write_text(prefix + suffix, encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Pyplot backend, widget, mode, behavior, and protocol gate" in error
+        and "XY_CHROMIUM" in error
+        for error in errors
+    )
+
+
+def test_required_pytest_and_browser_gates_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  test:\n    name: Test (Rust + Python + JS)\n",
+            "  test:\n    name: Test (Rust + Python + JS)\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("test job" in error and "must be blocking" in error for error in errors)
+
+
+def test_extended_gallery_job_requires_exact_tex_gtk_and_xvfb_packages(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("            texlive-latex-extra \\\n", "", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install TeX, fonts, GTK3/4, and virtual display" in error
+        and "texlive-latex-extra" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_requires_the_gdk_svg_loader(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("            librsvg2-common \\\n", "", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install TeX, fonts, GTK3/4, and virtual display" in error and "librsvg2-common" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_requires_system_python_gi_bridge(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "uv venv .venv --python /usr/bin/python3 --system-site-packages",
+            "uv venv .venv",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install xy and pinned extended Python dependencies" in error
+        and "system-site-packages" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_must_run_all_12_unsharded(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("              --shard 0/1 \\\n", "              --shard 0/12 \\\n", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Run all 12 extended differential examples" in error and "--shard 0/1" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_cannot_skip_strict_report_verification(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            verify-report gallery-extended-artifacts/report.json\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Require 12/12 extended acceptance with no waivers" in error and "verify-report" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  pyplot_gallery_extended:\n    name: Pyplot gallery extended environment (12/12)\n",
+            "  pyplot_gallery_extended:\n"
+            "    name: Pyplot gallery extended environment (12/12)\n"
+            "    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "pyplot_gallery_extended" in error and "must be blocking" in error for error in errors
+    )
 
 
 def test_reference_gate_commands_cannot_hide_in_inline_comments(tmp_path: Path) -> None:

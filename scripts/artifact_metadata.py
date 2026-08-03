@@ -6,6 +6,7 @@ import re
 from email.message import Message
 
 BASE_DEPENDENCY_FLOORS = (("anywidget", "0.9"), ("numpy", "1.24"))
+MATPLOTLIB_REQUIREMENT = "Requires-Dist: matplotlib>=3.11,<3.12; extra == 'matplotlib'"
 REFLEX_REQUIREMENT = "Requires-Dist: reflex>=0.9.6; extra == 'reflex'"
 
 
@@ -42,6 +43,19 @@ def _is_exact_reflex_extra(requirement: str) -> bool:
     )
 
 
+def _is_exact_matplotlib_extra(requirement: str) -> bool:
+    """Accept normalized specifier ordering, but no broader version range."""
+    compact = re.sub(r"\s+", "", requirement.lower()).replace('"', "'")
+    if _dependency_name(requirement) != "matplotlib" or ";" not in compact:
+        return False
+    specifier, marker = compact.split(";", 1)
+    constraints = set(specifier.removeprefix("matplotlib").split(","))
+    return constraints == {">=3.11", "<3.12"} and marker in {
+        "extra=='matplotlib'",
+        "'matplotlib'==extra",
+    }
+
+
 def dependency_metadata_errors(metadata: Message) -> list[str]:
     """Return violations of xy's base/optional dependency metadata policy."""
     requirements = metadata.get_all("Requires-Dist") or []
@@ -65,6 +79,14 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
     if len(reflex_requirements) != 1 or not _is_exact_reflex_extra(reflex_requirements[0]):
         errors.append(f"{REFLEX_REQUIREMENT} (exactly one requirement, with no conflicts)")
 
+    matplotlib_requirements = [
+        requirement for requirement in requirements if _dependency_name(requirement) == "matplotlib"
+    ]
+    if len(matplotlib_requirements) != 1 or not _is_exact_matplotlib_extra(
+        matplotlib_requirements[0]
+    ):
+        errors.append(f"{MATPLOTLIB_REQUIREMENT} (exactly one requirement, with no conflicts)")
+
     base_floors = dict(BASE_DEPENDENCY_FLOORS)
     unexpected_requirements = []
     for requirement in requirements:
@@ -74,14 +96,16 @@ def dependency_metadata_errors(metadata: Message) -> list[str]:
             continue
         if _is_exact_reflex_extra(requirement):
             continue
+        if _is_exact_matplotlib_extra(requirement):
+            continue
         unexpected_requirements.append(requirement)
     if unexpected_requirements:
         errors.append(
-            "only xy base dependencies plus the Reflex extra in Requires-Dist "
+            "only xy base dependencies plus the Matplotlib and Reflex extras in Requires-Dist "
             f"({unexpected_requirements})"
         )
 
     provided_extras = {extra.strip().lower() for extra in metadata.get_all("Provides-Extra") or []}
-    if provided_extras != {"reflex"}:
-        errors.append(f"Provides-Extra: reflex (got {sorted(provided_extras)})")
+    if provided_extras != {"matplotlib", "reflex"}:
+        errors.append(f"Provides-Extra: matplotlib and reflex (got {sorted(provided_extras)})")
     return errors

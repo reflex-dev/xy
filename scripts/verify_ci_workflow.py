@@ -24,6 +24,8 @@ DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
     "matplotlib_reference",
+    "pyplot_gallery",
+    "pyplot_gallery_extended",
     "test",
     "python_floor",
     "benchmark_vs",
@@ -786,7 +788,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "released Matplotlib compatibility gates",
         "matplotlib==3.11.0",
         "matplotlib.__version__ == '3.11.0'",
+        "scripts/generate_pyplot_compat_inventory.py --check",
         "scripts/sync_matplotlib_compat.py --check",
+        "scripts.pyplot_gallery.contract check",
+        "tests/pyplot/test_gallery_contract.py",
+        "tests/pyplot/test_gallery_metrics.py",
         "tests/pyplot/test_launch_compat.py",
         "tests/pyplot/test_reference_corpus.py",
         "tests/pyplot/test_reference_semantics.py",
@@ -808,16 +814,137 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Verify released reference and reviewed snapshot",
         "version and snapshot checks",
         ".venv/bin/python -c \"import matplotlib; assert matplotlib.__version__ == '3.11.0'\"",
+        ".venv/bin/python scripts/generate_pyplot_compat_inventory.py --check",
         ".venv/bin/python scripts/sync_matplotlib_compat.py --check",
+        ".venv/bin/python -m scripts.pyplot_gallery.contract check",
     )
     _require_step_runs_exactly(
         errors,
         reference,
         "Run optional-interoperability and dual-engine corpus tests",
         "reference test commands",
+        ".venv/bin/pytest -q tests/pyplot/test_gallery_contract.py",
+        ".venv/bin/pytest -q tests/pyplot/test_gallery_metrics.py",
         ".venv/bin/pytest -q tests/pyplot/test_launch_compat.py",
         ".venv/bin/pytest -q tests/pyplot/test_reference_corpus.py",
         ".venv/bin/pytest -q tests/pyplot/test_reference_semantics.py",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "pyplot_gallery",
+        "CI",
+        "required eight-shard pyplot compatibility ratchet",
+        "fail-fast: false",
+        "shard: [0, 1, 2, 3, 4, 5, 6, 7]",
+        "dtolnay/rust-toolchain@",
+        'XY_REQUIRE_CARGO: "1"',
+        "matplotlib==3.11.0",
+        "scripts.pyplot_gallery.run_gallery",
+        "--profile standard",
+        '--shard "${{ matrix.shard }}/8"',
+        "Upload failure-only gallery evidence",
+        "if: always()",
+        "actions/upload-artifact@",
+        "report.json",
+        "junit.xml",
+        "/failures",
+        "if-no-files-found: warn",
+    )
+    gallery_job = jobs.get("pyplot_gallery", "")
+    if "continue-on-error:" in gallery_job:
+        errors.append("CI pyplot_gallery compatibility ratchet must be blocking")
+
+    _require_job_contains(
+        errors,
+        jobs,
+        "pyplot_gallery_extended",
+        "CI",
+        "strict 12-example extended gallery environment",
+        "runs-on: ubuntu-24.04",
+        "timeout-minutes: 90",
+        "dtolnay/rust-toolchain@",
+        "Install TeX, fonts, GTK3/4, and virtual display",
+        "Install xy and pinned extended Python dependencies",
+        "Verify extended dependency and driver contract",
+        "Run all 12 extended differential examples",
+        "Require 12/12 extended acceptance with no waivers",
+        "Upload extended gallery evidence",
+        "if: always()",
+        "actions/upload-artifact@",
+        "gallery-extended-artifacts/report.json",
+        "gallery-extended-artifacts/junit.xml",
+        "gallery-extended-artifacts/failures",
+        "if-no-files-found: warn",
+    )
+    extended_gallery = jobs.get("pyplot_gallery_extended", "")
+    if "continue-on-error:" in extended_gallery:
+        errors.append("CI pyplot_gallery_extended completion gate must be blocking")
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Install TeX, fonts, GTK3/4, and virtual display",
+        "exact TeX, font, GTK, and Xvfb packages",
+        "sudo apt-get update",
+        "sudo apt-get install --no-install-recommends -y",
+        "cm-super",
+        "dvipng",
+        "fonts-dejavu-core",
+        "fonts-liberation",
+        "fonts-urw-base35",
+        "ghostscript",
+        "gir1.2-gtk-3.0",
+        "gir1.2-gtk-4.0",
+        "librsvg2-common",
+        "python3-cairo",
+        "python3-gi",
+        "python3-gi-cairo",
+        "python3-venv",
+        "texlive-fonts-recommended",
+        "texlive-latex-base",
+        "texlive-latex-extra",
+        "texlive-latex-recommended",
+        "xauth",
+        "xvfb",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Install xy and pinned extended Python dependencies",
+        "system-Python GI bridge and pinned optional dependencies",
+        'XY_REQUIRE_CARGO: "1"',
+        "uv venv .venv --python /usr/bin/python3 --system-site-packages",
+        '"colorspacious==1.1.2"',
+        '"matplotlib==3.11.0"',
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Verify extended dependency and driver contract",
+        "metadata and Xvfb preflight commands",
+        "scripts.pyplot_gallery.extended_environment check",
+        'xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24"',
+        "scripts.pyplot_gallery.extended_environment preflight",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Run all 12 extended differential examples",
+        "unsharded complete extended profile command",
+        'xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24"',
+        "scripts.pyplot_gallery.run_gallery",
+        "--profile extended",
+        "--shard 0/1 \\",
+        "--workers 2",
+        "--timeout 180",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Require 12/12 extended acceptance with no waivers",
+        "strict post-run completion check",
+        "scripts.pyplot_gallery.extended_environment",
+        "verify-report gallery-extended-artifacts/report.json",
     )
 
     _require_job_contains(
@@ -863,12 +990,42 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     test_job = jobs.get("test", "")
+    if "continue-on-error:" in test_job:
+        errors.append("CI test job and its required pytest/browser steps must be blocking")
     _require_step_runs_exactly(
         errors,
         test_job,
         "Install package + dev deps",
-        "locked Reflex development environment",
+        "locked Reflex and Matplotlib development environment",
         "uv sync --locked --extra reflex --group dev",
+        'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
+    )
+    _require_step_contains(
+        errors,
+        test_job,
+        "Python tests (native core)",
+        "required full pytest Chromium environment",
+        "XY_CHROMIUM=",
+        "require('playwright').chromium.executablePath()",
+        "XY_REQUIRE_BROWSER=1",
+        ".venv/bin/pytest -q",
+    )
+    _require_step_contains(
+        errors,
+        test_job,
+        "Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)",
+        "pinned Matplotlib browser compatibility suites",
+        'XY_REQUIRE_BROWSER: "1"',
+        "XY_CHROMIUM=",
+        "require('playwright').chromium.executablePath()",
+        "matplotlib.__version__ == '3.11.0'",
+        "tests/backends/test_backend_xy.py",
+        "tests/backends/test_backend_xy_widget.py",
+        "tests/backends/test_pyplot_svg_gallery_browser.py",
+        "tests/backends/test_display_list.py",
+        "tests/pyplot/test_modes.py",
+        "tests/pyplot/test_gallery_behavior.py",
+        "tests/pyplot/test_public_protocols.py",
     )
     _require_job_contains(
         errors,

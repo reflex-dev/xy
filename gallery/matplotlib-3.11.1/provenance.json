@@ -1,0 +1,25 @@
+{
+  "archives": {
+    "jupyter": {
+      "filename": "gallery_jupyter.zip",
+      "member_count": 507,
+      "sha256": "bb00657280bf0dfaac11ccf56bff15e959b90ba8d0365e055e9f4ef971edf870",
+      "url": "https://matplotlib.org/stable/_downloads/fcaddee3a42ae2e2c41e00ae08d70347/gallery_jupyter.zip"
+    },
+    "python": {
+      "filename": "gallery_python.zip",
+      "member_count": 507,
+      "sha256": "fcbf2359353c06443e7f6c5477acb82e7bbf9d79672bd2c1e597ff5e357248bc",
+      "url": "https://matplotlib.org/stable/_downloads/46b4cb42d5bb56cc39e2b5b2b520b38d/gallery_python.zip"
+    }
+  },
+  "initial_corpus_audit": {
+    "xy_commit": "d505ef5789d8b18e23fd838300b039932dc399ce"
+  },
+  "downloaded_on": "2026-07-30",
+  "gallery_documentation_version": "3.11.1",
+  "license": "LICENSE",
+  "compatibility_oracle_version": "3.11.0",
+  "notebook_storage": "Hashes and normalized code-cell ASTs are recorded in manifest.json; duplicate notebooks are not vendored.",
+  "source_storage": "All 507 Python members are vendored byte-for-byte below examples/."
+}

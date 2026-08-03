@@ -34,6 +34,8 @@ DEFAULT_PKG_INFO = (
     "Requires-Python: >=3.11\n"
     "Requires-Dist: anywidget>=0.9\n"
     "Requires-Dist: numpy>=1.24\n"
+    "Provides-Extra: matplotlib\n"
+    "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n"
     "Requires-Dist: reflex>=0.9.6; extra == 'reflex'\n"
     "Provides-Extra: reflex\n"
 )
@@ -102,7 +104,8 @@ def test_verify_sdist_accepts_required_source_shape(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "root", [".github", "benchmarks", "docs", "examples", "scripts", "spec", "tests"]
+    "root",
+    [".github", "benchmarks", "docs", "examples", "gallery", "scripts", "spec", "tests"],
 )
 def test_readme_does_not_reference_excluded_sdist_content(root: str) -> None:
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
@@ -249,8 +252,22 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             "only xy base dependencies",
         ),
         (
+            DEFAULT_PKG_INFO + "Provides-Extra: dev\n",
+            "Provides-Extra: matplotlib and reflex",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace(
+                "Requires-Dist: matplotlib<3.12,>=3.11; extra == 'matplotlib'\n", ""
+            ),
+            r"matplotlib>=3\.11,<3\.12",
+        ),
+        (
+            DEFAULT_PKG_INFO.replace("Provides-Extra: matplotlib\n", ""),
+            "Provides-Extra: matplotlib and reflex",
+        ),
+        (
             DEFAULT_PKG_INFO.replace("Provides-Extra: reflex", "Provides-Extra: dev"),
-            "Provides-Extra: reflex",
+            "Provides-Extra: matplotlib and reflex",
         ),
     ],
 )
@@ -267,6 +284,38 @@ def test_verify_sdist_rejects_missing_static_bundle(tmp_path: Path) -> None:
     _write_sdist(sdist, omit={"python/xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="missing required files"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_matplotlib_loopback_host(tmp_path: Path) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={"python/xy/backends/backend_xy_host.py"})
+
+    with pytest.raises(AssertionError, match="backend_xy_host"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "python/xy/backends/backend_xy.py",
+        "python/xy/backends/backend_xy_widget.js",
+        "python/xy/backends/display_list.py",
+        "python/xy/backends/raster.py",
+        "python/xy/pyplot/_compat_inventory.py",
+        "python/xy/pyplot/_figure_tree.py",
+        "python/xy/pyplot/_mode.py",
+        "python/xy/pyplot/typing.py",
+    ],
+)
+def test_verify_sdist_requires_pyplot_compat_runtime_files(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    sdist = tmp_path / "xy-0.0.1.tar.gz"
+    _write_sdist(sdist, omit={member})
+
+    with pytest.raises(AssertionError, match=Path(member).name):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -289,6 +338,7 @@ def test_verify_sdist_rejects_missing_reflex_integration(tmp_path: Path) -> None
         "benchmarks/bench.py",
         "docs/index.md",
         "examples/demo.ipynb",
+        "gallery/matplotlib-3.11.1/manifest.json",
         "pr-assets/review.png",
         "python/other-package/__init__.py",
         "python/reflex-xy/reflex_xy/__init__.py",

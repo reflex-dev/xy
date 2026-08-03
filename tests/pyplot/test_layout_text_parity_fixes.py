@@ -96,6 +96,17 @@ def test_subplots_adjust_positions_grid_panels_in_every_exporter() -> None:
     assert _svg(fig).count("<svg x=") == 6
 
 
+def test_pyplot_matshow_creates_an_array_aspect_figure() -> None:
+    plt.figure(figsize=(9, 3))
+
+    plt.matshow(np.diag(np.arange(15)))
+    fig = plt.gcf()
+
+    np.testing.assert_allclose(fig.get_size_inches(), [4.8, 4.8])
+    assert fig.axes[0].get_position().bounds == pytest.approx((0.15, 0.09, 0.775, 0.775))
+    assert _png_pixels(fig).shape[:2] == (480, 480)
+
+
 def test_shared_axes_hide_inner_tick_labels_only() -> None:
     fig, ax = plt.subplots(2, 3, sharex="col", sharey="row")
     strategies = [

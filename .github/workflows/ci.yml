@@ -48,14 +48,197 @@ jobs:
       - name: Verify released reference and reviewed snapshot
         run: |
           .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/python scripts/generate_pyplot_compat_inventory.py --check
           .venv/bin/python scripts/sync_matplotlib_compat.py --check
+          .venv/bin/python -m scripts.pyplot_gallery.contract check
+      - name: Enforce monotonic gallery baseline
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          BASELINE_REF="origin/${BASE_REF}:gallery/matplotlib-3.11.1/baseline.json"
+          if git cat-file -e "$BASELINE_REF" 2>/dev/null; then
+            git show "$BASELINE_REF" > "$RUNNER_TEMP/previous-gallery-baseline.json"
+            .venv/bin/python -m scripts.pyplot_gallery.contract check \
+              --previous-baseline "$RUNNER_TEMP/previous-gallery-baseline.json"
+          else
+            echo "Initial gallery baseline; no base-branch contract to compare."
+          fi
       - name: Run optional-interoperability and dual-engine corpus tests
         env:
           MPLBACKEND: Agg
         run: |
+          .venv/bin/pytest -q tests/pyplot/test_gallery_contract.py
+          .venv/bin/pytest -q tests/pyplot/test_gallery_metrics.py
           .venv/bin/pytest -q tests/pyplot/test_launch_compat.py
           .venv/bin/pytest -q tests/pyplot/test_reference_corpus.py
           .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py
+
+  matplotlib_patch_smoke:
+    name: Matplotlib 3.11.1 declared-range smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install the newest documented 3.11 patch
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.1"
+      - name: Exercise modes and protocols through the XY renderer
+        env:
+          MPLBACKEND: Agg
+        run: |
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.1'"
+          .venv/bin/pytest -q tests/pyplot/test_modes.py tests/pyplot/test_public_protocols.py
+
+  # The compat canvas renders PNG through XY's native display-list rasterizer
+  # and reports any forbidden fallback. The completed zero-waiver baseline
+  # makes every accepted execution/render/behavior a required gate.
+  pyplot_gallery:
+    name: Pyplot gallery ratchet (${{ matrix.shard }}/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # Gallery reports are promoted against the implementation commit,
+          # never GitHub's synthetic pull-request merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install standard gallery system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ffmpeg
+      - name: Install xy and Matplotlib 3.11
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+      - name: Run standard differential gallery shard
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
+            --output "gallery-artifacts-${{ matrix.shard }}" \
+            --profile standard \
+            --shard "${{ matrix.shard }}/8" \
+            --workers 2
+      - name: Upload failure-only gallery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyplot-gallery-${{ matrix.shard }}
+          if-no-files-found: warn
+          path: |
+            gallery-artifacts-${{ matrix.shard }}/report.json
+            gallery-artifacts-${{ matrix.shard }}/junit.xml
+            gallery-artifacts-${{ matrix.shard }}/failures
+            gallery-artifacts-${{ matrix.shard }}/runs/**/stdout.txt
+            gallery-artifacts-${{ matrix.shard }}/runs/**/stderr.txt
+
+  # The 12 extended examples are a separate, strict completion gate. They
+  # exercise TeX/font lookup, real GTK managers under Xvfb, optional
+  # colorspacious hooks, deterministic input, and multiprocessing. The final
+  # report verifier rejects every temporary waiver and requires 12/12 from
+  # both engines, so the historical environmental failures cannot pass as an
+  # empty ratchet.
+  pyplot_gallery_extended:
+    name: Pyplot gallery extended environment (12/12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install TeX, fonts, GTK3/4, and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            cm-super \
+            dvipng \
+            fonts-dejavu-core \
+            fonts-liberation \
+            fonts-urw-base35 \
+            ghostscript \
+            gir1.2-gtk-3.0 \
+            gir1.2-gtk-4.0 \
+            librsvg2-common \
+            python3-cairo \
+            python3-gi \
+            python3-gi-cairo \
+            python3-venv \
+            texlive-fonts-recommended \
+            texlive-latex-base \
+            texlive-latex-extra \
+            texlive-latex-recommended \
+            xauth \
+            xvfb
+      - name: Install xy and pinned extended Python dependencies
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv --python /usr/bin/python3 --system-site-packages
+          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python \
+            "colorspacious==1.1.2" \
+            "matplotlib==3.11.0"
+      - name: Verify extended dependency and driver contract
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.extended_environment check
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            .venv/bin/python -m scripts.pyplot_gallery.extended_environment preflight
+      - name: Run all 12 extended differential examples
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
+              --output gallery-extended-artifacts \
+              --profile extended \
+              --shard 0/1 \
+              --workers 2 \
+              --timeout 180
+      - name: Require 12/12 extended acceptance with no waivers
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.extended_environment \
+            verify-report gallery-extended-artifacts/report.json
+      - name: Upload extended gallery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyplot-gallery-extended
+          if-no-files-found: warn
+          path: |
+            gallery-extended-artifacts/report.json
+            gallery-extended-artifacts/junit.xml
+            gallery-extended-artifacts/failures
+            gallery-extended-artifacts/runs/**/stdout.txt
+            gallery-extended-artifacts/runs/**/stderr.txt
 
   test:
     name: Test (Rust + Python + JS)
@@ -138,6 +321,7 @@ jobs:
       - name: Install package + dev deps
         run: |
           uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
 
       - name: Verify bundled Reflex integration import
         run: |
@@ -194,6 +378,25 @@ jobs:
           # absence. (A crash or non-zero exit already fails unconditionally.)
           export XY_REQUIRE_BROWSER=1
           .venv/bin/pytest -q
+
+      # Keep the Matplotlib-dependent compatibility surface visible as its own
+      # required gate. The full test run above remains authoritative; this
+      # focused pass makes import-skips and browser/widget regressions obvious
+      # in the Actions UI and binds the live widget test to real Chromium.
+      - name: Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)
+        env:
+          XY_REQUIRE_BROWSER: "1"
+        run: |
+          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/pytest -q \
+            tests/backends/test_backend_xy.py \
+            tests/backends/test_backend_xy_widget.py \
+            tests/backends/test_pyplot_svg_gallery_browser.py \
+            tests/backends/test_display_list.py \
+            tests/pyplot/test_modes.py \
+            tests/pyplot/test_gallery_behavior.py \
+            tests/pyplot/test_public_protocols.py
 
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
       # exact payload path, rendered in Chromium, pixels read back. Complements
@@ -305,18 +508,22 @@ jobs:
           npm ci
           node js/build.mjs
 
-      - name: Install package for Python 3.11
+      - name: Install package and compatibility test dependencies for Python 3.11
         run: |
           python -VV
           # Absolute path: newer uv resolves a bare name as a directory, not
           # the interpreter setup-python put on PATH.
           uv venv .venv --python "$(command -v python)"
-          uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
+          uv pip install -p .venv/bin/python \
+            -e . \
+            "pytest>=8,<9" \
+            "pillow>=10" \
+            "matplotlib==3.11.0"
 
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
 
-      - name: Python 3.11 tests (native core)
+      - name: Python 3.11 tests (native + compat)
         run: .venv/bin/python -m pytest -q
 
   # Cross-library scatter benchmark incl. time-to-first-render (spec/benchmarks/results.md).
