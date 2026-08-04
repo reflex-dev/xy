@@ -15,12 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-try:
-    from _ty_tools import absolute_executable, resolve_ty_executable
-except ModuleNotFoundError as exc:  # imported by tests from the repository root
-    if exc.name != "_ty_tools":
-        raise
-    from scripts._ty_tools import absolute_executable, resolve_ty_executable
+from _ty_tools import absolute_executable, resolve_ty_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_INIT = ROOT / "python" / "xy" / "__init__.py"

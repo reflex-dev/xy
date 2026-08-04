@@ -4,9 +4,9 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
-from scripts._ty_tools import ty_executable_name
 
 
 def _load_verify_local_module():
@@ -14,8 +14,23 @@ def _load_verify_local_module():
     spec = importlib.util.spec_from_file_location("verify_local", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    try:
+        previous = sys.modules[spec.name]
+        had_previous = True
+    except KeyError:
+        previous = ModuleType(spec.name)
+        had_previous = False
+    previous_sys_path = sys.path.copy()
+    sys.path.insert(0, str(path.parent))
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = previous_sys_path
+        if had_previous:
+            sys.modules[spec.name] = previous
+        else:
+            sys.modules.pop(spec.name, None)
     return module
 
 
@@ -143,7 +158,24 @@ def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
     assert verify_local.resolve_ty_executable(str(python)) == Path("/path/ty")
 
 
-def test_ty_executable_uses_one_platform_name_for_path_lookup(tmp_path: Path, monkeypatch) -> None:
+def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    sibling = tmp_path / ("ty.exe" if verify_local.os.name == "nt" else "ty")
+    python.touch()
+    sibling.touch()
+    monkeypatch.setattr(verify_local.os, "access", lambda _path, _mode: False)
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
+
+    assert verify_local.resolve_ty_executable(str(python)) == Path("/path/ty")
+
+
+@pytest.mark.parametrize(("os_name", "expected"), [("posix", "ty"), ("nt", "ty.exe")])
+def test_ty_executable_uses_platform_name_for_path_lookup(
+    tmp_path: Path,
+    monkeypatch,
+    os_name: str,
+    expected: str,
+) -> None:
     python = tmp_path / "python"
     python.touch()
     looked_up: list[str] = []
@@ -153,16 +185,14 @@ def test_ty_executable_uses_one_platform_name_for_path_lookup(tmp_path: Path, mo
 
     monkeypatch.setattr(verify_local.shutil, "which", fake_which)
 
-    candidate = verify_local.resolve_ty_executable(str(python), required=False)
+    candidate = verify_local.resolve_ty_executable(
+        str(python),
+        required=False,
+        os_name=os_name,
+    )
 
-    expected = ty_executable_name()
     assert looked_up == [expected]
     assert candidate == Path(expected)
-
-
-@pytest.mark.parametrize(("os_name", "expected"), [("posix", "ty"), ("nt", "ty.exe")])
-def test_ty_executable_name_is_platform_specific(os_name: str, expected: str) -> None:
-    assert ty_executable_name(os_name) == expected
 
 
 def test_missing_ty_cli_has_actionable_preflight_error(monkeypatch) -> None:
@@ -178,17 +208,15 @@ def test_missing_ty_cli_has_actionable_preflight_error(monkeypatch) -> None:
 
 
 def test_ty_findings_fail_the_gate() -> None:
-    import scripts.verify_local as vl
-
     def fake_run(check: verify_local.Check) -> int:
         return 1 if check.name == "ty" else 0
 
-    original = vl.run_check
-    vl.run_check = fake_run  # type: ignore[assignment]
+    original = verify_local.run_check
+    verify_local.run_check = fake_run
     try:
-        rc = vl.main(["--only", "ty"])
+        rc = verify_local.main(["--only", "ty"])
     finally:
-        vl.run_check = original  # type: ignore[assignment]
+        verify_local.run_check = original
     assert rc == 1
 
 

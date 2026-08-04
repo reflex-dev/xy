@@ -19,12 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-try:
-    from _ty_tools import resolve_ty_executable
-except ModuleNotFoundError as exc:  # imported by tests from the repository root
-    if exc.name != "_ty_tools":
-        raise
-    from scripts._ty_tools import resolve_ty_executable
+from _ty_tools import resolve_ty_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 

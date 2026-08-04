@@ -22,10 +22,13 @@ def _load_check_typing_module():
     except KeyError:
         previous = module
         had_previous = False
+    previous_sys_path = sys.path.copy()
+    sys.path.insert(0, str(path.parent))
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
     finally:
+        sys.path[:] = previous_sys_path
         if had_previous:
             sys.modules[spec.name] = previous
         else:

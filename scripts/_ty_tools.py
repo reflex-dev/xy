@@ -25,11 +25,12 @@ def resolve_ty_executable(
     python: str | os.PathLike[str],
     *,
     required: bool = True,
+    os_name: str | None = None,
 ) -> Path:
     """Resolve the ty executable beside Python first, then through PATH."""
-    executable = ty_executable_name()
+    executable = ty_executable_name(os_name)
     sibling = Path(python).expanduser().with_name(executable)
-    if sibling.is_file():
+    if sibling.is_file() and os.access(sibling, os.X_OK):
         return sibling.absolute()
     found = shutil.which(executable)
     if found is not None:
