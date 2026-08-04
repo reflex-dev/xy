@@ -126,7 +126,7 @@ jobs:
             local label="$1" path="$2" limit="${3:-400}"
             echo "::group::${label} (${path})"
             if [[ -s "$path" ]]; then
-              tail -n "$limit" "$path"
+              tail -n "$limit" "$path" | sed 's/^::/:: /'
             elif [[ -e "$path" ]]; then
               echo "(file is empty)"
             else

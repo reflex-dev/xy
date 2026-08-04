@@ -71,7 +71,7 @@ def _with_all_docs_prerendered(
         return source
 
     config["prerender"] = [
-        route.rstrip("/")
+        route.rstrip("/") or "/"
         for route in [
             *[page.route for page in discover_docs(docs)],
             *DOCS_REDIRECTS,
