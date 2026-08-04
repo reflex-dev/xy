@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import xy
 
@@ -14,12 +16,60 @@ def _load_check_typing_module():
     spec = importlib.util.spec_from_file_location("check_typing", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    try:
+        previous = sys.modules[spec.name]
+        had_previous = True
+    except KeyError:
+        previous = module
+        had_previous = False
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if had_previous:
+            sys.modules[spec.name] = previous
+        else:
+            sys.modules.pop(spec.name, None)
     return module
 
 
 check_typing = _load_check_typing_module()
+
+
+def test_check_typing_loader_does_not_leak_module(monkeypatch) -> None:
+    monkeypatch.delitem(sys.modules, "check_typing", raising=False)
+
+    loaded = _load_check_typing_module()
+
+    assert loaded is not None
+    assert "check_typing" not in sys.modules
+
+
+def test_check_typing_loader_restores_existing_module(monkeypatch) -> None:
+    previous = ModuleType("check_typing")
+    monkeypatch.setitem(sys.modules, "check_typing", previous)
+
+    loaded = _load_check_typing_module()
+
+    assert loaded is not previous
+    assert sys.modules["check_typing"] is previous
+
+
+def test_external_consumer_fixture_is_runtime_side_effect_free(monkeypatch) -> None:
+    path = Path(__file__).with_name("typing_pep561_consumer.py")
+    namespace = runpy.run_path(str(path))
+    check = namespace["check_root_typing_surface"]
+    before = xy.registered_marks()
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("runtime consumer fixture called register_mark")
+
+    monkeypatch.setattr(xy, "register_mark", fail_if_called)
+
+    check()
+    check()
+
+    assert xy.registered_marks() == before
 
 
 def test_canonical_public_names_come_from_source_exports(tmp_path: Path) -> None:

@@ -46,6 +46,14 @@ def _python() -> str:
     return sys.executable
 
 
+def _ty_executable(python: str) -> str:
+    executable = "ty.exe" if os.name == "nt" else "ty"
+    sibling = Path(python).with_name(executable)
+    if sibling.is_file():
+        return str(sibling)
+    return shutil.which(executable) or executable
+
+
 def _base_checks(
     chromium: Optional[Path] = None,
     *,
@@ -54,6 +62,7 @@ def _base_checks(
     wheel_expect: Optional[str] = None,
 ) -> dict[str, Check]:
     py = _python()
+    ty = _ty_executable(py)
     chromium_arg = str(chromium) if chromium is not None else "<CHROMIUM>"
     chromium_paths = (chromium,) if chromium is not None else ()
     sdist_arg = str(sdist) if sdist is not None else "<SDIST>"
@@ -173,8 +182,8 @@ def _base_checks(
         Check(
             "ty",
             "type check shippable Python package and external-consumer surface",
-            (py, "scripts/check_typing.py"),
-            requires_modules=("ty",),
+            (py, "scripts/check_typing.py", "--ty-executable", ty),
+            requires_executables=(ty,),
         ),
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(
@@ -431,7 +440,11 @@ def missing_reasons(check: Check) -> list[str]:
             hint = {
                 "cargo": "Install Rust with rustup, or use `make check` for the quick non-Rust gate.",
                 "node": "Install Node 18+, or use `make check` for the quick non-JS gate.",
-            }.get(exe, f"Install {exe} or skip this check.")
+            }.get(exe)
+            if hint is None and Path(exe).name in {"ty", "ty.exe"}:
+                hint = "Run `make setup` or `uv pip install -e . --group dev` before type checks."
+            if hint is None:
+                hint = f"Install {exe} or skip this check."
             reasons.append(f"missing executable {exe!r}. {hint}")
     if check.requires_node_major is not None and shutil.which("node") is not None:
         try:

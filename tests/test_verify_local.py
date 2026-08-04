@@ -112,11 +112,46 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
 
 def test_ty_check_is_gating_and_includes_external_consumer() -> None:
     checks = verify_local._base_checks()
-    assert checks["ty"].advisory is False
-    assert checks["ty"].command[-1] == "scripts/check_typing.py"
+    check = checks["ty"]
+    assert check.advisory is False
+    assert check.command[1] == "scripts/check_typing.py"
+    assert check.command[-2] == "--ty-executable"
+    assert check.command[-1:] == check.requires_executables
+    assert check.requires_modules == ()
 
     gating = [c.name for c in checks.values() if not c.advisory]
     assert "ty" in gating and "pytest" in gating and "ruff_check" in gating
+
+
+def test_ty_executable_prefers_python_sibling(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    sibling = tmp_path / ("ty.exe" if verify_local.os.name == "nt" else "ty")
+    python.touch()
+    sibling.touch()
+    sibling.chmod(0o755)
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
+
+    assert verify_local._ty_executable(str(python)) == str(sibling)
+
+
+def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    python.touch()
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
+
+    assert verify_local._ty_executable(str(python)) == "/path/ty"
+
+
+def test_missing_ty_cli_has_actionable_preflight_error(monkeypatch) -> None:
+    executable = "ty.exe" if verify_local.os.name == "nt" else "ty"
+    monkeypatch.setattr(verify_local, "_python", lambda: "/missing/python")
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: None)
+
+    check = verify_local._base_checks()["ty"]
+    reasons = verify_local.missing_reasons(check)
+
+    assert check.requires_executables == (executable,)
+    assert any("missing executable" in reason and "make setup" in reason for reason in reasons)
 
 
 def test_ty_findings_fail_the_gate() -> None:

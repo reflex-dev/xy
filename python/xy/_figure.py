@@ -12,7 +12,7 @@ import math
 import warnings
 from collections.abc import Mapping, Sequence
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union, cast
+from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -1738,8 +1738,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.kind == "ribbon":
             # x is just the two faces; y needs all four span edges, two of
             # which ride in the `x`/`y` slots (ribbon geometry contract).
-            columns = [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
-            return cast(list[Column], columns)
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("ribbon trace missing geometry columns")
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]
