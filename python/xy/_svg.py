@@ -31,6 +31,7 @@ import numpy as np
 
 from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._chromebox import ChromeBox, box_padding, lower_box
 from .config import DEFAULT_PALETTE, polar_bar_segments
 
 
@@ -1363,8 +1364,14 @@ COLORBAR_FONT_SIZE = 10.0
 #: Slots the native writers style. Every one names chrome that a static file
 #: actually contains; the rest of `CHART_DOM_SLOTS` is live-only chrome
 #: (tooltip, modebar, crosshair, selection, badge) or a container with no
-#: painted text of its own, and stays browser-only.
+#: painted box or text of its own yet, and stays browser-only. `root`,
+#: `chrome` and `canvas` joined with the static-chrome-parity P1 family
+#: (spec/process/static-chrome-parity-plan-2026-08-04.md §3): they take the
+#: box vocabulary (`SLOT_BOX_PROPS_BY_SLOT`), not the text subset.
 STATIC_STYLED_SLOTS: tuple[str, ...] = (
+    "root",
+    "chrome",
+    "canvas",
     "title",
     "axis_title",
     "tick_label",
@@ -1427,6 +1434,68 @@ LEGEND_BOX_PROPS: frozenset[str] = frozenset(
         "--xy-legend-frame-alpha",
     }
 )
+
+#: The chrome-box vocabulary the writers honor on a box-capable slot — the
+#: declaration surface of `xy._chromebox.lower_box` plus the shorthands it
+#: expands. Owned here (the `LEGEND_BOX_PROPS` pattern) so the writers, the
+#: capability registry, and the preflight report cannot drift: preflight's
+#: `_honored_props` consumes `SLOT_BOX_PROPS_BY_SLOT` directly.
+SLOT_BOX_PROPS: frozenset[str] = frozenset(
+    {
+        "background",
+        "background-color",
+        "border",
+        "border-color",
+        "border-style",
+        "border-width",
+        "border-radius",
+        "box-shadow",
+        "padding",
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left",
+        "opacity",
+        "fill-opacity",
+    }
+)
+
+#: The padding spellings, split out so the per-slot subsets below can name
+#: "the box minus padding" without restating five strings.
+_SLOT_BOX_PADDING_PROPS: frozenset[str] = frozenset(
+    {"padding", "padding-top", "padding-right", "padding-bottom", "padding-left"}
+)
+
+#: Which box-capable slot honors which subset, per the P1 decisions:
+#: `title` takes the full box under its text; `root` and `canvas` take the
+#: box minus `box-shadow` (a shadow on either falls outside the canvas — it
+#: may never grow the export, so it is a named loss, §28) and minus padding
+#: (their geometry is the canvas/plot rect, there is no content to pad);
+#: `chrome` is background/opacity only (plan §8 flag G — the rest of its box
+#: model is recorded unrepresentable rather than half-drawn).
+SLOT_BOX_PROPS_BY_SLOT: dict[str, frozenset[str]] = {
+    "title": SLOT_BOX_PROPS,
+    "root": SLOT_BOX_PROPS - {"box-shadow"} - _SLOT_BOX_PADDING_PROPS,
+    "canvas": SLOT_BOX_PROPS - {"box-shadow"} - _SLOT_BOX_PADDING_PROPS,
+    "chrome": frozenset({"background", "background-color", "opacity"}),
+}
+
+#: Box requests a slot's RASTER path cannot draw while the vector path can:
+#: rounding the canvas needs a rounded content clip (the display list clips
+#: rectangles only) and canvas opacity needs group compositing (the display
+#: list has none) — both stay recorded losses on PNG/JPEG/WebP until the
+#: `src/raster.rs` opcode lands (plan §1.3), never silent approximations.
+SLOT_BOX_RASTER_UNSUPPORTED: dict[str, frozenset[str]] = {
+    "canvas": frozenset({"border-radius", "opacity"}),
+}
+
+
+def slot_box_declaration(style: dict[str, Any], slot: str) -> dict[str, Any]:
+    """The subset of a slot's declaration its box honors, or {} when the
+    declaration carries no box property at all — the emission gate every
+    box-capable slot shares, so unstyled output stays byte-identical."""
+    honored = SLOT_BOX_PROPS_BY_SLOT.get(slot, SLOT_BOX_PROPS)
+    return {prop: value for prop, value in style.items() if prop in honored}
 
 
 def legend_options_with_slot(spec: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
@@ -1519,6 +1588,12 @@ def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> 
     is what actually shows regardless of chart theme, instead of being buried
     under the theme paints. The plot token becomes "transparent" rather than
     the override color so translucent backgrounds composite exactly once.
+    The `root` and `canvas` slot backgrounds are part of that painted
+    backdrop (they target the same two elements the token pair does), so the
+    override silences them too — this function is the single definition of
+    the three-source precedence: export override > slot declaration > theme
+    token. Non-background box styling (a border, a radius) is chrome, not
+    backdrop, and survives the override.
     Shared by the raster exporter and (via SVG) the PDF exporter."""
     if background is None:
         return
@@ -1529,6 +1604,14 @@ def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> 
         if isinstance(style, dict):
             style.pop("background", None)
             style["--chart-bg"] = "transparent"
+        styles = dom.get("styles")
+        if isinstance(styles, dict):
+            for slot in ("root", "canvas"):
+                declaration = styles.get(slot)
+                if isinstance(declaration, dict):
+                    for prop in list(declaration):
+                        if str(prop).replace("_", "-") in ("background", "background-color"):
+                            declaration.pop(prop)
 
 
 def _solid_paint(css: Any) -> Optional[str]:
@@ -2598,15 +2681,139 @@ def _title_metrics(
     return style, size, _textblock.measure(entry["text"], size, max_width=wrap_width)
 
 
+#: Anchor math for one drawn title, shared verbatim by the SVG writer, the
+#: raster writer, and the box emitter: `x` and `baseline` (first line) are
+#: where the text goes, `anchor` its SVG anchor name (`_TEXT_ANCHOR_CODES`
+#: maps it for the raster op).
+class TitlePlacement(NamedTuple):
+    style: dict[str, Any]
+    size: float
+    block: _textblock.TextBlock
+    x: float
+    baseline: float
+    anchor: str
+
+
+def title_placement(
+    spec: dict[str, Any],
+    entry: dict[str, Any],
+    plot: dict[str, float],
+    wrap_width: float | None = None,
+) -> TitlePlacement:
+    """One authored title entry's shared anchor math (plan §3.1).
+
+    This is the hoist of the placement both writers used to duplicate —
+    change it here and both files move together, which is the property the
+    box emission relies on (a box drawn from one copy and text from another
+    would drift).
+    """
+    style, size, block = _title_metrics(spec, entry, wrap_width)
+    trailing = (block.line_count - 1) * block.line_step
+    if entry.get("automatic_y", True):
+        anchor_y = plot["y"] - plot["top_axis_room"]
+    else:
+        anchor_y = plot["y"] + (1.0 - float(entry.get("y", 1.0))) * plot["h"]
+    baseline = anchor_y - float(entry.get("pad", 8.0)) - block.descent - trailing
+    loc = str(entry.get("loc", "center"))
+    x = {
+        "left": plot["x"],
+        "center": plot["x"] + plot["w"] / 2.0,
+        "right": plot["x"] + plot["w"],
+    }.get(loc, plot["x"] + plot["w"] / 2.0)
+    anchor = {"left": "start", "center": "middle", "right": "end"}.get(loc, "middle")
+    return TitlePlacement(style, size, block, x, baseline, anchor)
+
+
+def legacy_title_placement(
+    spec: dict[str, Any],
+    plot: dict[str, float],
+    compact: bool,
+    width: float,
+    wrap_width: float | None = None,
+) -> TitlePlacement:
+    """The legacy `spec['title']` band's anchor math, shared like the above.
+
+    Kept as its own branch (not folded into `title_placement`) because its
+    offsets are the historical byte contract: centered on the CANVAS, not the
+    plot rect, with the 10/12 px compact gap instead of the entry `pad`.
+    """
+    style = slot_styles(spec).get("title") or {}
+    size = slot_font_size(style, 14.0)
+    block = _textblock.measure(spec.get("title", ""), size, max_width=wrap_width)
+    trailing = (block.line_count - 1) * block.line_step
+    baseline = plot["y"] - plot["top_axis_room"] - (10 if compact else 12) - trailing
+    return TitlePlacement(style, size, block, width / 2.0, baseline, "middle")
+
+
+def title_box(placement: TitlePlacement) -> Optional[ChromeBox]:
+    """The title's chrome box under its text, or None when nothing is declared.
+
+    The box wraps the measured `TextBlock` — width is block width plus the
+    declared padding, NOT the wrap width (the browser box is the
+    shrink-to-fit div, js/src/50_chartview.ts `_positionTitles`) — and the
+    text itself does not move: padding extends outward from the block like
+    the annotation text box, and `_title_room` reserves the extra height so
+    the box clears the top axis room. Strictly declaration-gated: no box
+    property, no box, and unstyled bytes stay identical.
+    """
+    declaration = slot_box_declaration(placement.style, "title")
+    if not declaration:
+        return None
+    block = placement.block
+    pad_top, pad_right, pad_bottom, pad_left = box_padding(declaration)
+    left = (
+        placement.x
+        - {"start": 0.0, "middle": block.width / 2.0, "end": block.width}[placement.anchor]
+    )
+    trailing = (block.line_count - 1) * block.line_step
+    # The block bottom in CSS line-box terms: the last baseline plus the
+    # descent — the same construction `_title_room` measures with.
+    bottom = placement.baseline + trailing + block.descent
+    return lower_box(
+        "title",
+        declaration,
+        x=left - pad_left,
+        y=bottom - block.height - pad_top,
+        w=block.width + pad_left + pad_right,
+        h=block.height + pad_top + pad_bottom,
+    )
+
+
+def _title_box_extent(style: dict[str, Any]) -> float:
+    """Vertical px a title's declared box adds above+below its text block.
+
+    Mirrored by `_titleBoxExtent` in js/src/50_chartview.ts — the two must
+    agree or native and browser disagree on `plot.y`. Padding counts as
+    declared; the border counts only when it would paint under the
+    `lower_box` rules (an explicit color, or a width the implied 1px chrome
+    border rule gives one), exactly like the CSS computed width collapses
+    without a border style.
+    """
+    declaration = slot_box_declaration(style, "title")
+    if not declaration:
+        return 0.0
+    probe = lower_box("title", declaration, x=0.0, y=0.0, w=1e9, h=1e9)
+    border = (
+        probe.border_width if probe.border_color is not None and probe.border_width > 0.0 else 0.0
+    )
+    return probe.padding[0] + probe.padding[2] + 2.0 * border
+
+
 def _title_room(spec: dict[str, Any], compact: bool, wrap_width: float | None = None) -> float:
     room = 0.0
     for entry in _title_entries(spec):
-        _style, _size, block = _title_metrics(spec, entry, wrap_width)
+        style, _size, block = _title_metrics(spec, entry, wrap_width)
+        # A declared box grows the band exactly like the browser element
+        # grows: padding and paintable border, above and below the block
+        # (zero when unstyled, so the reservation bytes cannot move).
+        box_extent = _title_box_extent(style)
         pad = float(entry.get("pad", 8.0))
         if entry.get("automatic_y", True):
-            candidate = max(26.0 if compact else 30.0, block.height + pad)
+            candidate = max(26.0 if compact else 30.0, block.height + box_extent + pad)
         else:
-            candidate = block.height + pad if float(entry.get("y", 1.0)) >= 1.0 else 0.0
+            candidate = (
+                block.height + box_extent + pad if float(entry.get("y", 1.0)) >= 1.0 else 0.0
+            )
         room = max(room, max(0.0, candidate))
     return room
 
@@ -4255,59 +4462,48 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     legacy_title = spec.get("title") if not spec.get("title_options") else None
     title_wrap_width = plot.get("title_wrap_width")
     if legacy_title:
-        title_slot = slots.get("title") or {}
-        legacy_size = slot_font_size(title_slot, 14.0)
-        legacy_block = _textblock.measure(legacy_title, legacy_size, max_width=title_wrap_width)
-        # Wrapped lines run downward from the baseline, so lift the block by its
-        # trailing lines: the LAST line keeps the historical single-line baseline
-        # and the extra lines fill the room `_title_room` reserved above it. A
-        # one-line title has no trailing lines and is byte-identical to before.
-        legacy_trailing = (legacy_block.line_count - 1) * legacy_block.line_step
-        legacy_y = plot["y"] - plot["top_axis_room"] - (10 if compact else 12) - legacy_trailing
-        legacy_x = width / 2
-        legacy_text = "\n".join(legacy_block.lines)
-        legacy_content = _text_block_content(legacy_text, legacy_x, legacy_block.line_step)
+        placement = legacy_title_placement(spec, plot, compact, width, title_wrap_width)
+        # Wrapped lines run downward from the baseline, so the shared anchor
+        # math lifts the block by its trailing lines: the LAST line keeps the
+        # historical single-line baseline and the extra lines fill the room
+        # `_title_room` reserved above it. A one-line title has no trailing
+        # lines and is byte-identical to before.
+        legacy_text = "\n".join(placement.block.lines)
+        legacy_content = _text_block_content(legacy_text, placement.x, placement.block.line_step)
+        legacy_box = title_box(placement)
+        if legacy_box is not None:
+            # The box rides `chrome` immediately before its text: under the
+            # title, above every earlier layer of the document.
+            chrome.append(_slot_box_svg(legacy_box))
         chrome.append(
-            f'<text x="{_num(legacy_x)}" '
-            f'y="{_num(legacy_y)}" '
-            f'text-anchor="middle" font-size="{_num(legacy_size)}"'
-            f"{slot_text_attrs(title_slot, font_weight='400')} "
-            f'fill="{escape(slot_text_color(title_slot, default_text))}">'
+            f'<text x="{_num(placement.x)}" '
+            f'y="{_num(placement.baseline)}" '
+            f'text-anchor="middle" font-size="{_num(placement.size)}"'
+            f"{slot_text_attrs(placement.style, font_weight='400')} "
+            f'fill="{escape(slot_text_color(placement.style, default_text))}">'
             f"{legacy_content}</text>"
         )
     for title_entry in [] if legacy_title else _title_entries(spec):
-        title_style, title_size, title_block = _title_metrics(spec, title_entry, title_wrap_width)
+        placement = title_placement(spec, title_entry, plot, title_wrap_width)
         # Matplotlib's `axes.titleweight`/`axes.labelweight` both default to
         # "normal", so chrome text stays at 400 unless a style or rcParam asks
         # for more. Keep this in step with the `title`/`axis_title` slot rules
         # in js/src/20_theme.ts and the raster defaults in _raster.py.
-        title_font_attrs = slot_text_attrs(title_style, font_weight="400")
-        trailing = (title_block.line_count - 1) * title_block.line_step
-        if title_entry.get("automatic_y", True):
-            title_anchor_y = plot["y"] - plot["top_axis_room"]
-        else:
-            title_anchor_y = plot["y"] + (1.0 - float(title_entry.get("y", 1.0))) * plot["h"]
-        title_y = (
-            title_anchor_y - float(title_entry.get("pad", 8.0)) - title_block.descent - trailing
-        )
-        loc = str(title_entry.get("loc", "center"))
-        title_x = {
-            "left": plot["x"],
-            "center": plot["x"] + plot["w"] / 2.0,
-            "right": plot["x"] + plot["w"],
-        }.get(loc, plot["x"] + plot["w"] / 2.0)
-        anchor = {"left": "start", "center": "middle", "right": "end"}.get(loc, "middle")
-        # `title_block.lines` is the wrapped set — drawing `entry["text"]` here
+        title_font_attrs = slot_text_attrs(placement.style, font_weight="400")
+        # `block.lines` is the wrapped set — drawing `entry["text"]` here
         # would put the whole title on one line inside a band reserved for two.
         title_content = _text_block_content(
-            "\n".join(title_block.lines), title_x, title_block.line_step
+            "\n".join(placement.block.lines), placement.x, placement.block.line_step
         )
+        entry_box = title_box(placement)
+        if entry_box is not None:
+            chrome.append(_slot_box_svg(entry_box))
         chrome.append(
-            f'<text x="{_num(title_x)}" '
-            f'y="{_num(title_y)}" '
-            f'text-anchor="{anchor}" font-size="{_num(title_size)}" '
+            f'<text x="{_num(placement.x)}" '
+            f'y="{_num(placement.baseline)}" '
+            f'text-anchor="{placement.anchor}" font-size="{_num(placement.size)}" '
             f"{title_font_attrs.lstrip()} "
-            f'fill="{escape(slot_text_color(title_style, default_text))}">'
+            f'fill="{escape(slot_text_color(placement.style, default_text))}">'
             f"{title_content}</text>"
         )
 
@@ -4586,7 +4782,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     f'stroke-width="{_num(tick_width)}"/>'
                 )
 
-    defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
+    defs_parts = svg.defs
     # Figure patch + plot-rect backgrounds, mirroring the browser: the root
     # element's CSS `background` (theme(background=)) behind everything, then
     # the --chart-bg token over the plot rect only. Solid colors only —
@@ -4599,7 +4795,24 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     if canvas_paint and canvas_paint not in ("transparent", "none"):
         backgrounds += f'<rect width="{width}" height="{height}" fill="{escape(canvas_paint)}"/>'
     figure_background = _solid_paint(dom_style.get("background"))
-    if figure_background is not None:
+    # The root slot's box (parity plan §3.4). Declaration-gated: with no box
+    # declaration the legacy figure-patch rect below emits byte-identically.
+    # When declared, the box IS the figure patch — same element in the DOM,
+    # one `background` property — so the theme paint becomes the box fill
+    # whenever the slot declares chrome around it but no fill of its own.
+    # First-painted content, like the browser's border-below-descendants;
+    # `apply_export_background` already silenced the slot fill if an export
+    # `background=` override is in force (the one precedence definition).
+    root_declaration = slot_box_declaration(slots.get("root") or {}, "root")
+    root_box: Optional[ChromeBox] = None
+    if root_declaration:
+        if figure_background is not None and not any(
+            prop in root_declaration for prop in ("background", "background-color")
+        ):
+            root_declaration = {"background": figure_background, **root_declaration}
+        root_box = lower_box("root", root_declaration, x=0.0, y=0.0, w=width, h=height)
+        backgrounds += _slot_box_svg(root_box)
+    elif figure_background is not None:
         backgrounds += (
             f'<rect width="{width}" height="{height}" fill="{escape(figure_background)}"/>'
         )
@@ -4609,6 +4822,62 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
             f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
         )
+    # The chrome slot (parity plan §3.5, background/opacity only): one rect
+    # above the root/plot backgrounds and below the grid — the browser's
+    # chrome canvas sits above the root element and holds the grid. Its DOM
+    # stacking against the title divs diverges by design and is recorded in
+    # `KNOWN_RENDERER_DIVERGENCES` (`chrome_slot_title_stacking`).
+    chrome_slot_backdrop = ""
+    chrome_declaration = slot_box_declaration(slots.get("chrome") or {}, "chrome")
+    if chrome_declaration:
+        chrome_slot_backdrop = _slot_box_svg(
+            lower_box("chrome", chrome_declaration, x=0.0, y=0.0, w=width, h=height)
+        )
+    # The canvas slot (parity plan §3.6) paints at the ABOVE-grid seam: the
+    # browser's marks canvas is a separate element over the chrome canvas, so
+    # a canvas background HIDES the grid. Deliberately NOT the --chart-bg
+    # anchor, which paints below the grid — that paint-order trap is this
+    # family's central divergence. A declared radius clips the marks through
+    # a THIRD clipPath (never by mutating clip_id/marks_clip_id: the shared
+    # clip also bounds legends, and polar legends live outside the disc);
+    # declared opacity rides the wrapping group, PDF-legal on <g>.
+    canvas_backdrop = ""
+    canvas_group_open = ""
+    canvas_group_close = ""
+    canvas_declaration = slot_box_declaration(slots.get("canvas") or {}, "canvas")
+    if canvas_declaration:
+        canvas_box = lower_box(
+            "canvas",
+            canvas_declaration,
+            x=plot["x"],
+            y=plot["y"],
+            w=plot["w"],
+            h=plot["h"],
+        )
+        canvas_backdrop = _slot_box_svg(canvas_box)
+        canvas_group_attrs = ""
+        if canvas_box.radius > 0:
+            canvas_clip_id = svg.uid("clip")
+            defs_parts.append(
+                f'<clipPath id="{canvas_clip_id}"><path d="'
+                + _rounded_rect_path(
+                    plot["x"],
+                    plot["y"],
+                    plot["w"],
+                    plot["h"],
+                    canvas_box.radius,
+                    canvas_box.radius,
+                    True,
+                )
+                + '"/></clipPath>'
+            )
+            canvas_group_attrs += f' clip-path="url(#{canvas_clip_id})"'
+        if canvas_box.opacity < 1.0:
+            canvas_group_attrs += f' opacity="{_num(canvas_box.opacity)}"'
+        if canvas_group_attrs:
+            canvas_group_open = f"<g{canvas_group_attrs}>"
+            canvas_group_close = "</g>"
+    defs = f"<defs>{''.join(defs_parts)}</defs>" if defs_parts else ""
     # One flat join over the pieces rather than nested `join`s inside an
     # f-string: the mark list is the whole document for a per-point chart (tens
     # of MB at 100k markers), and joining it separately would materialize a
@@ -4619,12 +4888,16 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">',
             defs,
             backgrounds,
+            chrome_slot_backdrop,
             "<g>",
             *grid,
             "</g>",
+            canvas_group_open,
+            canvas_backdrop,
             f'<g clip-path="url(#{marks_clip_id})">',
             *marks,
             "</g>",
+            canvas_group_close,
             *unclipped_annotation_marks,
             baselines,
             f'<g fill="{escape(default_text)}">',

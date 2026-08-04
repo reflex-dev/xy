@@ -358,20 +358,27 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
-| `styles={slot: {...}}` | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots |
+| `styles={slot: {...}}` | yes, all 48 slots | text/box subset, 12 slots | text/box subset, 12 slots |
 | `class_names={slot: "..."}` | yes, all 48 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
 | `xy.colorbar(style=...)` | yes | dropped | dropped |
 
-A per-slot `styles=` block reaches a file for the nine slots that name chrome a
-file actually contains — `title`, `axis_title`, `tick_label`, the three legend
-slots and the three colorbar slots — carrying `font-size`, `font-weight`,
-`font-style`, `font-family`, `letter-spacing`, `opacity` and the text paint.
-The rest are live-only chrome (`tooltip*`, `modebar*`, `crosshair_*`,
-`selection`, `badge*`) with nothing in a file to paint. The native raster's
-baked atlas is one face, so it honors a slot's size and paint and leaves the
-typeface properties to the vector writers.
+A per-slot `styles=` block reaches a file for the twelve slots that name
+chrome a file actually contains. The box slots `root`, `chrome` and `canvas`
+carry background, border, symmetric border-radius and opacity (`chrome` is
+background/opacity only; the raster cannot round-clip or group-fade the
+marks, so a `canvas` radius/opacity survives SVG/PDF and is a named loss on
+PNG). The text slots — `title`, `axis_title`, `tick_label`, the three legend
+slots and the three colorbar slots — carry `font-size`, `font-weight`,
+`font-style`, `font-family`, `letter-spacing`, `opacity` and the text paint,
+and the title additionally draws a box under its text (padding and border
+included, with the title band growing to fit). The rest are live-only chrome
+(`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with nothing
+in a file to paint. The raster atlas carries regular, bold and italic faces
+but no family axis, so it honors a slot's size, paint, weight and style and
+leaves `font-family`, `letter-spacing` and text opacity to the vector
+writers.
 
 The `class_names` row is dropped rather than raising: raising would break every
 native export of a chart that carries Tailwind classes for its live view, which

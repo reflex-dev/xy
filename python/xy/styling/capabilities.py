@@ -256,6 +256,44 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="stroke-width above ~4px at a sharp angle",
         tracked_by="no style property selects a join; the default is the whole contract",
     ),
+    RendererDivergence(
+        id="chrome_slot_title_stacking",
+        what="A styled `chrome` slot background against the title text and the plot fill",
+        webgl=(
+            "the chrome canvas is appended AFTER the title divs "
+            "(js/src/50_chartview.ts) and its CSS background paints under its "
+            "own bitmap, so the backdrop covers titles and sits below --chart-bg"
+        ),
+        svg=(
+            "one rect between the backgrounds and the grid group: above the "
+            "root and plot fills, below every grid line and all chrome text"
+        ),
+        native="same seam as SVG (after the plot fill, before the plot clip)",
+        visible_when=(
+            "styles={'chrome': {'background': ...}} overlaps a title, or is "
+            "combined with a --chart-bg plot fill"
+        ),
+        tracked_by=(
+            "static-chrome-parity plan §3.5 pins the writers' seam; the DOM "
+            "order is the browser's own stacking contract"
+        ),
+    ),
+    RendererDivergence(
+        id="title_entry_box_allowlist",
+        what="Box styling authored on a per-entry title `style=` (not the title slot)",
+        webgl=(
+            "dropped: the client copies only color/font-family/font-size/"
+            "font-style/font-weight from an entry's style onto the title div "
+            "(js/src/50_chartview.ts entry-style allowlist)"
+        ),
+        svg="honored: `_title_metrics` merges entry style over the slot, box included",
+        native="honored, same merge (the two writers share the title placement)",
+        visible_when="xy.title(style={'background': ...}) or another per-entry box property",
+        tracked_by=(
+            "static-chrome-parity plan §3 acceptance records the divergence; "
+            "slot-level `styles={'title': ...}` box declarations agree everywhere"
+        ),
+    ),
 )
 
 
@@ -275,6 +313,16 @@ _SLOT_SUBSET_NOTE = (
     "approximated. Properties outside the subset stay browser-only."
 )
 
+#: The box-vocabulary note shared by the P1 box slots (`_svg.SLOT_BOX_PROPS`,
+#: drawn through the shared `_chromebox` lowering in both writers).
+_SLOT_BOX_NOTE = (
+    "Box slot: both writers honor background, border (color/width/style, "
+    "dashed/dotted as dash arrays), symmetric border-radius, opacity and "
+    "fill-opacity through the shared chrome-box lowering "
+    "(`xy._chromebox.lower_box`); everything it cannot draw is a named loss "
+    "in the preflight, never silent (§28)."
+)
+
 _SLOT_EXCEPTIONS: dict[str, tuple[str, str, str]] = {
     slot: ("partial", f"styles={{{slot!r}: ...}}", _SLOT_SUBSET_NOTE)
     for slot in STATIC_STYLED_SLOTS
@@ -288,13 +336,46 @@ _SLOT_EXCEPTIONS["legend"] = (
     "`--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an "
     "explicit background paints opaque, as it does in the browser.",
 )
+_SLOT_EXCEPTIONS["title"] = (
+    "partial",
+    "styles={'title': ...}",
+    _SLOT_SUBSET_NOTE + " The title also takes the full box vocabulary "
+    "(`_svg.SLOT_BOX_PROPS`): a box under the text, sized to the measured "
+    "block plus padding, with the title band growing to fit. Per-entry "
+    "`xy.title(style=...)` box properties are native-only "
+    "(KNOWN_RENDERER_DIVERGENCES `title_entry_box_allowlist`).",
+)
 _SLOT_EXCEPTIONS["root"] = (
     "partial",
-    "chart style=",
-    "`styles={'root': ...}` is browser-only, but the chart-level `style=` "
-    "token bag targets the same element and every renderer reads it "
-    "(`spec['dom']['style']`). Prefer it for anything that must survive "
-    "export.",
+    "styles={'root': ...} / chart style=",
+    _SLOT_BOX_NOTE + " The root box is the figure patch: its fill replaces "
+    "the `theme(background=)` token when both are set (same element, one "
+    "background property, matching the browser), and an export "
+    "`background=` override silences it (`_svg.apply_export_background` is "
+    "the one precedence definition). box-shadow would fall outside the "
+    "canvas and is a named loss; text properties have no root text to style. "
+    "The chart-level `style=` token bag still reaches every renderer.",
+)
+_SLOT_EXCEPTIONS["chrome"] = (
+    "partial",
+    "styles={'chrome': ...}",
+    "Background and opacity only (parity plan §8 flag G): one full-canvas "
+    "backdrop above the root and plot fills, below the grid. The rest of the "
+    "box vocabulary is a named preflight loss, and the browser's own "
+    "stacking of this slot against titles diverges by design "
+    "(KNOWN_RENDERER_DIVERGENCES `chrome_slot_title_stacking`).",
+)
+_SLOT_EXCEPTIONS["canvas"] = (
+    "partial",
+    "styles={'canvas': ...}",
+    _SLOT_BOX_NOTE + " Painted at the above-grid seam, so a canvas "
+    "background hides the grid exactly as the browser's marks canvas does; "
+    "border-radius clips the marks through a dedicated clipPath in SVG/PDF "
+    "and opacity rides the marks group there. The raster display list clips "
+    "rectangles only and has no group compositing, so border-radius and "
+    "opacity are named raster losses (`_svg.SLOT_BOX_RASTER_UNSUPPORTED`) "
+    "until the rounded-clip opcode lands. An export `background=` override "
+    "silences a canvas background like the plot token.",
 )
 
 

@@ -186,11 +186,13 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     """(honored property names, qualifier) for a native-subset slot.
 
     The subsets are the writers' own constants — the text properties per
-    family, plus the legend frame's merged-declaration box vocabulary
-    (`_svg.LEGEND_BOX_PROPS`, owned by the writer module). A legend property
-    in neither set has no channel into a static file and is a provable loss:
-    the earlier declaration-level qualification rounded exactly those to
-    silence, which let warn stay quiet and strict permit a drop.
+    family, the legend frame's merged-declaration box vocabulary
+    (`_svg.LEGEND_BOX_PROPS`), and the chrome-box vocabulary per box-capable
+    slot (`_svg.SLOT_BOX_PROPS_BY_SLOT`, all owned by the writer module so
+    this report cannot drift from what actually draws). A property in none
+    of a slot's sets has no channel into a static file and is a provable
+    loss: the earlier declaration-level qualification rounded exactly those
+    to silence, which let warn stay quiet and strict permit a drop.
     """
     from .. import _svg
 
@@ -200,6 +202,26 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "box properties route through the merged legend declaration; see the "
             "capability matrix legend note"
         )
+    box = _svg.SLOT_BOX_PROPS_BY_SLOT.get(slot)
+    if box is not None:
+        if family == "native_raster":
+            box = box - _svg.SLOT_BOX_RASTER_UNSUPPORTED.get(slot, frozenset())
+        if slot == "title":
+            # The one slot with both text and a box under it.
+            return text | box, "box properties draw the title's own box (_svg.SLOT_BOX_PROPS)"
+        qualifier = (
+            "background/opacity only; the rest of the chrome slot's box model "
+            "is a recorded divergence (see the capability matrix chrome note)"
+            if slot == "chrome"
+            else (
+                "box properties only (this slot has no text of its own); raster "
+                "cannot round-clip or group-fade the marks, so border-radius and "
+                "opacity are raster losses"
+                if slot == "canvas" and family == "native_raster"
+                else "box properties only (this slot has no text of its own)"
+            )
+        )
+        return box, qualifier
     return text, ""
 
 
@@ -250,15 +272,14 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
                 "contain it, so nothing in the file is unstyled"
             ),
         )
-    if slot == "root" or meta.support[family] == "none":
-        detail = meta.notes if slot == "root" else "no native path for this slot yet"
+    if meta.support[family] == "none":
         return SlotFinding(
             slot=slot,
             source="styles",
             applicability="static",
             route=ROUTE_BROWSER_ONLY,
             lost=props,
-            detail=detail,
+            detail="no native path for this slot yet",
         )
     honored, qualifier = _honored_props(slot, family)
     kept = tuple(p for p in props if p in honored)
@@ -281,7 +302,10 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
             route=ROUTE_SUBSET,
             kept=kept,
             lost=lost,
-            detail="outside the writer's honored subset for this slot",
+            # The slot's own qualifier names WHY the loss exists (a raster
+            # canvas radius, the chrome background/opacity hedge) — more
+            # actionable than the generic subset sentence when there is one.
+            detail=qualifier or "outside the writer's honored subset for this slot",
         )
     return SlotFinding(
         slot=slot,
@@ -289,6 +313,7 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
         applicability="static",
         route=ROUTE_SURVIVES,
         kept=kept,
+        detail=qualifier,
     )
 
 

@@ -116,11 +116,53 @@ def test_styles_on_a_slot_with_no_native_path_are_named_lost() -> None:
     assert not report.lossless
 
 
-def test_root_styles_point_at_the_token_bag_channel() -> None:
-    report = _chart(styles={"root": {"background": "#111"}}).style_compatibility_report("png")
+def test_root_styles_route_through_the_box_vocabulary() -> None:
+    # The P1 flip: `styles={'root': ...}` reaches the writers as the figure
+    # patch's own box (static-chrome-parity plan §3.4). Box properties are
+    # kept; a property outside the box vocabulary (root has no text of its
+    # own) is a named loss, not a silent drop.
+    report = _chart(
+        styles={"root": {"background": "#111", "border_radius": "8px"}}
+    ).style_compatibility_report("png")
     finding = _finding(report, "root", "styles")
-    assert finding.route == pf.ROUTE_BROWSER_ONLY
-    assert "style=" in finding.detail
+    assert finding.route == pf.ROUTE_SURVIVES
+    assert set(finding.kept) == {"background", "border-radius"}
+    assert report.lossless
+
+    lossy = _chart(
+        styles={"root": {"background": "#111", "font_size": 20}}
+    ).style_compatibility_report("png")
+    finding = _finding(lossy, "root", "styles")
+    assert finding.route == pf.ROUTE_SUBSET
+    assert finding.lost == ("font-size",)
+    assert not lossy.lossless
+
+
+def test_canvas_radius_and_opacity_are_named_raster_losses() -> None:
+    # The raster display list clips rectangles only and has no group
+    # compositing, so a canvas radius/opacity is a recorded loss on PNG and
+    # survives on the vector targets (parity plan §3.6; the acceptance's
+    # "preflight reports raster radius partial").
+    chart = _chart(styles={"canvas": {"background": "#eee", "border_radius": "10px"}})
+    raster = chart.style_compatibility_report("png")
+    finding = _finding(raster, "canvas", "styles")
+    assert finding.route == pf.ROUTE_SUBSET
+    assert finding.lost == ("border-radius",)
+    assert "background" in finding.kept
+    assert "round-clip" in finding.detail
+    assert not raster.lossless
+    assert chart.style_compatibility_report("svg").lossless
+    assert chart.style_compatibility_report("pdf").lossless
+
+
+def test_chrome_slot_honors_background_and_opacity_only() -> None:
+    report = _chart(
+        styles={"chrome": {"background": "rgba(0, 0, 0, 0.2)", "opacity": 0.5, "border_width": 2}}
+    ).style_compatibility_report("png")
+    finding = _finding(report, "chrome", "styles")
+    assert finding.route == pf.ROUTE_SUBSET
+    assert set(finding.kept) == {"background", "opacity"}
+    assert finding.lost == ("border-width",)
 
 
 def test_legend_styles_route_at_property_level() -> None:

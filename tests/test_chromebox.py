@@ -8,8 +8,10 @@ round-trip, and the emit-nothing-when-unstyled gate.
 
 from __future__ import annotations
 
+import struct
+
 from xy import _raster, _svg
-from xy._chromebox import ChromeBox, lower_box
+from xy._chromebox import ChromeBox, box_padding, expand_box_shorthands, lower_box
 from xy._pdf import svg_to_pdf
 
 
@@ -85,6 +87,50 @@ def test_shadow_parses_zero_blur_and_rejects_multiples() -> None:
     multi = _box({"box-shadow": "1px 2px #000, 3px 4px #111"})
     assert multi.shadow is None
     assert any("multiple" in u for u in multi.unrepresentable)
+
+
+def test_border_shorthand_lowers_like_its_longhands() -> None:
+    short = _box({"border": "2px dashed #333"})
+    long = _box({"border-width": "2px", "border-style": "dashed", "border-color": "#333"})
+    assert (short.border_color, short.border_width, short.border_dash) == (
+        long.border_color,
+        long.border_width,
+        long.border_dash,
+    )
+    # An explicit longhand beside the shorthand is the narrower author
+    # intent and wins.
+    assert _box({"border": "2px solid #333", "border-color": "#f00"}).border_color == "#f00"
+
+
+def test_padding_expands_per_css_sides_and_rides_the_box() -> None:
+    assert box_padding({"padding": "4px"}) == (4.0, 4.0, 4.0, 4.0)
+    assert box_padding({"padding": "4px 8px"}) == (4.0, 8.0, 4.0, 8.0)
+    assert box_padding({"padding": "1px 2px 3px"}) == (1.0, 2.0, 3.0, 2.0)
+    assert box_padding({"padding": "1px 2px 3px 4px"}) == (1.0, 2.0, 3.0, 4.0)
+    assert box_padding({"padding": "2px", "padding-left": 9}) == (2.0, 2.0, 2.0, 9.0)
+    # em spellings stay the legend writers' domain until P4: zero, not a guess.
+    assert box_padding({"padding": "1.2em"}) == (0.0, 0.0, 0.0, 0.0)
+    assert _box({"padding": "4px 8px"}).padding == (4.0, 8.0, 4.0, 8.0)
+
+
+def test_unparsable_shorthands_pass_through_unexpanded() -> None:
+    # Nothing declared may disappear: the consumer decides what an
+    # unexpanded value means (the declared resolver keeps it as residue).
+    assert expand_box_shorthands({"padding": "1.2em"}) == {"padding": "1.2em"}
+
+
+def test_raster_emitter_paints_the_box_rect_not_a_far_corner() -> None:
+    # `_rect_pts`/`_round_rect_pts` take (x0, y0, x1, y1); the box carries a
+    # width/height pair. The P0.3 emitter passed (w, h) as the far corner,
+    # so any box not anchored at the origin painted the wrong rectangle.
+    cmd = _raster._Cmd(1.0)
+    _raster._emit_slot_box(cmd, _box({"background": "#0f172a"}))
+    buf = bytes(cmd.buf)
+    assert buf[0] == _raster._FILL
+    (count,) = struct.unpack_from("<I", buf, 1)
+    pts = struct.unpack_from(f"<{count * 2}f", buf, 5)
+    quad = list(zip(pts[0::2], pts[1::2], strict=True))
+    assert quad == [(10.0, 20.0), (110.0, 20.0), (110.0, 60.0), (10.0, 60.0)]
 
 
 # -- emitters -----------------------------------------------------------------
