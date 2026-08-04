@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
-from contextlib import suppress
+from contextlib import contextmanager, nullcontext, suppress
 from enum import StrEnum
 from os import PathLike
 from pathlib import Path
@@ -820,6 +820,7 @@ def to_png(
     sandbox: bool = True,
     gl: str = "software",
     compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -852,11 +853,19 @@ def to_png(
     # every mode, so it fires before enforcement can warn or raise.
     if resolved_engine == "native" and custom_css is not None:
         raise ValueError("custom_css requires engine=Engine.chromium")
-    _enforce_compatibility(fig, "png", resolved_engine, custom_css, compatibility)
+    snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
+    if snapshot is not None and resolved_engine != "native":
+        raise ValueError(
+            "style_snapshot feeds the native writers; the Chromium engine renders "
+            "the live cascade itself — drop one of the two"
+        )
+    if snapshot is None:
+        _enforce_compatibility(fig, "png", resolved_engine, custom_css, compatibility)
     if resolved_engine == "native":
         from . import _raster
 
-        data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
+        with _snapshot_styles(fig, snapshot) if snapshot is not None else nullcontext():
+            data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
         doc = to_html(fig, custom_css=custom_css, animation_progress=1.0)
         data = html_to_png(
@@ -929,6 +938,55 @@ def _infer_format(path: str | PathLike[str]) -> str:
             f"{', '.join('.' + f for f in (*IMAGE_FORMATS, 'jpg', 'html'))}, "
             "or pass format= explicitly"
         ) from None
+
+
+def _coerce_style_snapshot(value: object) -> Any:
+    """A validated ResolvedStyleSnapshot from either accepted spelling.
+
+    Accepts the object a capture returned, or its payload dict (a cached
+    snapshot round-trips through JSON); anything else is refused by the
+    schema's own validator, so an out-of-contract snapshot never reaches a
+    writer.
+    """
+    from .styling.resolved import ResolvedStyleSnapshot, snapshot_from_payload
+
+    if isinstance(value, ResolvedStyleSnapshot):
+        return value
+    if isinstance(value, dict):
+        return snapshot_from_payload(value)
+    raise ValueError(
+        "style_snapshot must be a ResolvedStyleSnapshot (from "
+        "capture_style_snapshot()) or its payload dict"
+    )
+
+
+@contextmanager
+def _snapshot_styles(fig: "Figure", snapshot: Any) -> "Iterator[None]":
+    """Feed a captured snapshot to the native writers for one export.
+
+    The writers read per-slot styling from the figure's chrome_styles (via
+    the declared resolver), so the snapshot overlays there for the duration
+    of the render: captured declarations win over declared ones — computed
+    values ARE the declared values after the cascade the user asked to
+    capture — and the token bag gains the snapshot's tokens the same way.
+    Per-slot granularity for now: multiple instances of one slot use the
+    first instance's declaration until the chrome-parity work gives writers
+    per-instance geometry. Restored on exit; exports are synchronous, and a
+    figure is not shared across threads mid-export.
+    """
+    slot_overlay: dict[str, dict[str, Any]] = {}
+    for inst in snapshot.instances:
+        if inst.slot not in slot_overlay:
+            slot_overlay[inst.slot] = dict(snapshot.declarations[inst.declaration])
+    saved_styles = fig.chrome_styles
+    saved_style = fig.style
+    fig.chrome_styles = {**saved_styles, **slot_overlay}
+    fig.style = {**saved_style, **dict(snapshot.tokens)}
+    try:
+        yield
+    finally:
+        fig.chrome_styles = saved_styles
+        fig.style = saved_style
 
 
 def _enforce_compatibility(
@@ -1199,6 +1257,7 @@ def to_image(
     sandbox: bool = True,
     gl: str = "software",
     compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
 ) -> bytes:
     """Render `fig` to image bytes in the requested `format`.
 
@@ -1216,7 +1275,17 @@ def to_image(
     bounded rasters (the documented hybrid-vector policy)."""
     fmt = _normalize_format(format)
     resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
-    _enforce_compatibility(fig, fmt, resolved_engine, custom_css, compatibility)
+    snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
+    if snapshot is not None and resolved_engine == "browser":
+        raise ValueError(
+            "style_snapshot feeds the native writers; the Chromium engine renders "
+            "the live cascade itself — drop one of the two"
+        )
+    if snapshot is None:
+        # A supplied snapshot IS the lossless remedy the modes recommend:
+        # the captured cascade carries what class_names would drop, so there
+        # is nothing left for warn/strict to catch on this export.
+        _enforce_compatibility(fig, fmt, resolved_engine, custom_css, compatibility)
     quality = _validated_quality(quality, fmt, resolved_engine)
     background = _validated_background(background, fmt)
     w, h = _export_dimensions(fig, width, height)
@@ -1225,16 +1294,17 @@ def to_image(
     sandbox = _bool_option(sandbox, "export sandbox")
     gl = _gl_option(gl)
     if resolved_engine == "native":
-        return _native_image(
-            fig,
-            fmt,
-            width=w,
-            height=h,
-            scale=scale,
-            background=background,
-            quality=quality,
-            optimize=optimize,
-        )
+        with _snapshot_styles(fig, snapshot) if snapshot is not None else nullcontext():
+            return _native_image(
+                fig,
+                fmt,
+                width=w,
+                height=h,
+                scale=scale,
+                background=background,
+                quality=quality,
+                optimize=optimize,
+            )
     with _browser_session(gl=gl, sandbox=sandbox) as session:
         return _browser_image(
             session,
@@ -1265,6 +1335,7 @@ def write_image(
     sandbox: bool = True,
     gl: str = "software",
     compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
 ) -> bytes:
     """Export `fig` to `path`, inferring the format from the extension.
 
@@ -1315,6 +1386,7 @@ def write_image(
         sandbox=sandbox,
         gl=gl,
         compatibility=compatibility,
+        style_snapshot=style_snapshot,
     )
     _atomic_write_bytes(path, data)
     return data

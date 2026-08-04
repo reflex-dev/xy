@@ -9,6 +9,22 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Live style capture and snapshot-fed export (wire protocol v13). A mounted
+  chart's `await chart.capture_style_snapshot()` returns the browser's
+  resolved cascade as a validated `ResolvedStyleSnapshot` (the client
+  captures every rendered slot's allowlisted computed properties after
+  fonts/layout settle; replies are validated through the schema at the
+  boundary). Passing it to `to_png(style_snapshot=...)` / `to_svg` /
+  `to_image` / `write_image` makes the native writers reproduce what the
+  browser resolved — host theme, classes, dark mode — with no browser in
+  the export path; `compatibility="strict"` passes with a snapshot where it
+  refuses without one. Standalone documents expose the same capture as
+  `window.xy.captureStyleSnapshot`, and
+  `scripts/style_capture_smoke.py` pins the browser-oracle loop end to end.
+- The declared-styling resolver (`xy.styling.declared`): the writers' slot
+  view now derives from the same pass that builds the interned
+  `ResolvedStyleSnapshot`, byte-equivalently, with the legend's em-domain
+  values as a named, tested residue.
 - The renderer-neutral styling IR: `xy.styling.resolved` defines the
   versioned, interned `ResolvedStyleSnapshot` (schema v1 — concrete values
   only, declarations deduped, instances referencing them by index), with a

@@ -71,6 +71,7 @@ class FigureWidget(anywidget.AnyWidget):
         **kwargs: Any,
     ) -> None:
         self._figure = figure
+        self._pending_style_snapshots: dict[str, Any] = {}
         self._callbacks = ChannelCallbacks(
             on_hover=on_hover,
             on_click=on_click,
@@ -79,6 +80,7 @@ class FigureWidget(anywidget.AnyWidget):
             on_view_change=on_view_change,
             on_animation_start=on_animation_start,
             on_animation_end=on_animation_end,
+            on_style_snapshot=self._settle_style_snapshot,
         )
         spec, bufs = figure.build_payload_split()
         self._configure_transport(spec)
@@ -149,6 +151,51 @@ class FigureWidget(anywidget.AnyWidget):
     def reset_view(self, axes: Any = None) -> None:
         """Navigate to the home ranges (None = the configured reset_axes)."""
         self.send(self._figure.view_nav_message(axes))
+
+    # -- live style capture (wire-protocol §8) --------------------------------
+
+    async def capture_style_snapshot(self, *, timeout: float = 10.0) -> Any:
+        """The mounted chart's live cascade as a `ResolvedStyleSnapshot`.
+
+        Asynchronous by contract: the reply arrives on the same comm the
+        request leaves on, so a synchronous wait inside the kernel would
+        deadlock against its own channel. The client captures after fonts
+        and layout settle; the reply payload is validated on arrival by
+        `resolved.snapshot_from_payload`, so an out-of-contract capture
+        raises here rather than becoming renderer-facing IR. A client-side
+        capture failure raises RuntimeError with the client's message; a
+        silent timeout raises instead of dangling (§28).
+        """
+        import asyncio
+        import uuid
+
+        request_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        future: Any = loop.create_future()
+        self._pending_style_snapshots[request_id] = future
+        try:
+            self.send(
+                {
+                    "type": "style_snapshot_request",
+                    "request_id": request_id,
+                    "style_epoch": int(getattr(self._figure, "style_epoch", 0) or 0),
+                }
+            )
+            content = await asyncio.wait_for(future, timeout)
+        finally:
+            self._pending_style_snapshots.pop(request_id, None)
+        if content.get("error") is not None:
+            raise RuntimeError(f"style capture failed in the client: {content['error']}")
+        from .styling.resolved import snapshot_from_payload
+
+        return snapshot_from_payload(content.get("snapshot") or {})
+
+    def _settle_style_snapshot(self, content: dict[str, Any]) -> None:
+        request_id = str(content.get("request_id", ""))
+        future = self._pending_style_snapshots.get(request_id)
+        if future is None or future.done():
+            return
+        future.set_result(content)
 
     def select(
         self,

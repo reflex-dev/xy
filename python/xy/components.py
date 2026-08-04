@@ -4130,6 +4130,17 @@ class Chart(Component):
         """Last committed durable view state (kernel-side cache)."""
         return self.widget().view_state()
 
+    async def capture_style_snapshot(self, *, timeout: float = 10.0) -> Any:
+        """The mounted chart's live cascade as a `ResolvedStyleSnapshot`.
+
+        Asynchronous by contract (the reply rides the same comm the request
+        leaves on); pass the result to `to_png(style_snapshot=...)` and the
+        native writers reproduce what the browser resolved — host theme,
+        classes, dark mode — with no browser in the export path. See
+        `FigureWidget.capture_style_snapshot`.
+        """
+        return await self.widget().capture_style_snapshot(timeout=timeout)
+
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
@@ -4200,14 +4211,22 @@ class Chart(Component):
         width: Optional[int] = None,
         height: Optional[int] = None,
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> str:
         """A static SVG render of the chart (written to ``path`` if given).
 
         ``compatibility`` stages the styling contract: ``"warn"`` surfaces
         any declaration this export would drop, ``"strict"`` refuses to drop
-        one; the default preserves current behavior.
+        one; the default preserves current behavior. ``style_snapshot``
+        feeds a captured live cascade to the vector writer.
         """
-        return self.figure().to_svg(path, width=width, height=height, compatibility=compatibility)
+        return self.figure().to_svg(
+            path,
+            width=width,
+            height=height,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+        )
 
     def to_png(
         self,
@@ -4222,6 +4241,7 @@ class Chart(Component):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """A PNG render of the chart, returned as bytes.
 
@@ -4241,6 +4261,7 @@ class Chart(Component):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
         )
 
     def _export_defaults(
@@ -4291,6 +4312,7 @@ class Chart(Component):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
 
@@ -4308,6 +4330,7 @@ class Chart(Component):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
             **self._export_defaults(
                 fmt,
                 width,
@@ -4335,6 +4358,7 @@ class Chart(Component):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (.png/.jpg/
         .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
@@ -4383,6 +4407,7 @@ class Chart(Component):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
             **defaults,
         )
 

@@ -254,6 +254,22 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
 
+### Exporting what the browser resolved: `style_snapshot=`
+
+`to_png` / `to_svg` / `to_image` / `write_image` accept `style_snapshot=` —
+the `ResolvedStyleSnapshot` a mounted chart's `capture_style_snapshot()`
+returned (or its payload dict; a cached snapshot round-trips through JSON).
+The native writers then consume the captured cascade: host theme, classes,
+Tailwind, dark mode — resolved by the real browser once, exported natively
+ever after. A supplied snapshot is the lossless remedy the compatibility
+modes recommend, so `strict` passes with one where it refuses without one;
+the Chromium engine rejects the combination (it renders the live cascade
+itself, so feeding it a capture is a contradiction). Snapshots overlay
+per-slot for now — first instance per slot — until the chrome-parity work
+gives the writers per-instance geometry. `scripts/style_capture_smoke.py`
+is the browser-oracle loop: capture in headless Chromium, validate through
+the schema, reproduce natively, assert the exact color.
+
 ### Asking a chart, not the table
 
 `chart.style_compatibility_report(target=..., engine=..., custom_css=...)` is

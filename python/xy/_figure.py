@@ -2245,6 +2245,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         width: Optional[int] = None,
         height: Optional[int] = None,
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> str:
         """Static SVG (_svg.py): a pure-Python render of the same decimated
         payload the browser client consumes — resolution-independent, tiny
@@ -2254,6 +2255,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         vector export would drop, "strict" refuses to drop one."""
         from . import _svg
 
+        if style_snapshot is not None:
+            snapshot = export._coerce_style_snapshot(style_snapshot)
+            with export._snapshot_styles(self, snapshot):
+                return _svg.to_svg(self, path, width=width, height=height)
         export._enforce_compatibility(self, "svg", "native", None, compatibility)
         return _svg.to_svg(self, path, width=width, height=height)
 
@@ -2270,6 +2275,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
@@ -2292,6 +2298,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
         )
 
     def to_image(
@@ -2309,6 +2316,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
 
@@ -2331,6 +2339,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
         )
 
     def write_image(
@@ -2349,6 +2358,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         sandbox: bool = True,
         gl: str = "software",
         compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (export.py):
         .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
@@ -2367,6 +2377,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             sandbox=sandbox,
             gl=gl,
             compatibility=compatibility,
+            style_snapshot=style_snapshot,
         )
 
     def memory_report(self) -> dict[str, Any]:

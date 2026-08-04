@@ -40,7 +40,11 @@ import warnings
 # v12 adds polar sector/grid-shape metadata on the angular axis and hole/origin
 # metadata on the radial axis. A v11 client would silently draw a full circular
 # grid with a centre-origin radius, so the new geometry must fail the handshake.
-PROTOCOL_VERSION = 12
+# v13 adds the style_snapshot_request/style_snapshot capture pair (wire
+# protocol §8). A cached v12 client silently ignores the request, dangling the
+# kernel's awaited capture until its timeout — a slow mystery instead of the
+# loud version mismatch the handshake exists to produce.
+PROTOCOL_VERSION = 13
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,
