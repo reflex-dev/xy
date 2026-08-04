@@ -9,6 +9,16 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- The mount-free native cascade (optional `xy-cascade` extension, ~3.8 MB
+  cdylib built from the same workspace): `chart.to_png(custom_css=css,
+  style_source="native_cascade")` resolves classes and self-contained author
+  CSS natively — Lightning CSS parsing; class/slot/descendant selectors,
+  `!important`/specificity/order, custom properties with fallbacks,
+  `em`/`rem` against the font-size cascade, `prefers-color-scheme` — and
+  exports with no browser in the path. Every out-of-profile construct is
+  reported through the compatibility modes (warn by default, refusal in
+  strict), never guessed. `scripts/cascade_differential_smoke.py` pins the
+  cascade against a live Chromium oracle.
 - Live style capture and snapshot-fed export (wire protocol v13). A mounted
   chart's `await chart.capture_style_snapshot()` returns the browser's
   resolved cascade as a validated `ResolvedStyleSnapshot` (the client

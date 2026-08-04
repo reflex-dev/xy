@@ -4212,6 +4212,7 @@ class Chart(Component):
         height: Optional[int] = None,
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
     ) -> str:
         """A static SVG render of the chart (written to ``path`` if given).
 
@@ -4226,6 +4227,7 @@ class Chart(Component):
             height=height,
             compatibility=compatibility,
             style_snapshot=style_snapshot,
+            style_source=style_source,
         )
 
     def to_png(
@@ -4242,6 +4244,7 @@ class Chart(Component):
         gl: str = "software",
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
     ) -> bytes:
         """A PNG render of the chart, returned as bytes.
 
@@ -4262,6 +4265,7 @@ class Chart(Component):
             gl=gl,
             compatibility=compatibility,
             style_snapshot=style_snapshot,
+            style_source=style_source,
         )
 
     def _export_defaults(
@@ -4313,6 +4317,7 @@ class Chart(Component):
         gl: str = "software",
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
 
@@ -4321,7 +4326,10 @@ class Chart(Component):
         See `export.to_image` for the full format/engine/background policy
         and `compatibility=` for the staged styling contract."""
         fmt = export._normalize_format(format)
-        resolved = export._resolve_image_engine(engine, fmt, custom_css)
+        # native_cascade consumes custom_css itself; the defaults pre-resolution
+        # must not route it to a browser the export will never use.
+        precheck_css = None if style_source == "native_cascade" else custom_css
+        resolved = export._resolve_image_engine(engine, fmt, precheck_css)
         return self.figure().to_image(
             format,
             engine=engine,
@@ -4331,6 +4339,7 @@ class Chart(Component):
             gl=gl,
             compatibility=compatibility,
             style_snapshot=style_snapshot,
+            style_source=style_source,
             **self._export_defaults(
                 fmt,
                 width,
@@ -4359,6 +4368,7 @@ class Chart(Component):
         gl: str = "software",
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
     ) -> bytes:
         """Atomic file export with extension-inferred format (.png/.jpg/
         .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
@@ -4369,7 +4379,8 @@ class Chart(Component):
             else export._infer_format(path)
         )
         if fmt != "html":
-            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+            precheck_css = None if style_source == "native_cascade" else custom_css
+            resolved = export._resolve_image_engine(engine, fmt, precheck_css)
             defaults = self._export_defaults(
                 fmt,
                 width,
@@ -4408,6 +4419,7 @@ class Chart(Component):
             gl=gl,
             compatibility=compatibility,
             style_snapshot=style_snapshot,
+            style_source=style_source,
             **defaults,
         )
 

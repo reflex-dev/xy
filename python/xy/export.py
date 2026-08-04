@@ -821,6 +821,7 @@ def to_png(
     gl: str = "software",
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -847,6 +848,22 @@ def to_png(
     scale = _positive_finite_float(scale, "PNG scale")
     optimize = _bool_option(optimize, "PNG optimize")
     sandbox = _bool_option(sandbox, "PNG sandbox")
+    if style_source not in ("declared", "native_cascade"):
+        raise ValueError(
+            f'style_source must be "declared" or "native_cascade", got {style_source!r}'
+        )
+    if style_source == "native_cascade":
+        if style_snapshot is not None:
+            raise ValueError(
+                "style_snapshot and style_source='native_cascade' are two sources "
+                "for the same values; pass one"
+            )
+        if engine not in (Engine.auto, "auto", None, Engine.default, "default"):
+            raise ValueError(
+                "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
+            )
+        style_snapshot = _cascade_snapshot(fig, custom_css, compatibility)
+        custom_css = None  # consumed by the cascade, not by a browser
     resolved_engine = _png_engine(engine)
     # Resolution errors precede and outrank mode logic (the migration spec's
     # contract): the custom_css/native refusal must stay a ValueError in
@@ -987,6 +1004,41 @@ def _snapshot_styles(fig: "Figure", snapshot: Any) -> "Iterator[None]":
     finally:
         fig.chrome_styles = saved_styles
         fig.style = saved_style
+
+
+def _cascade_snapshot(
+    fig: "Figure",
+    custom_css: Optional[str],
+    compatibility: str,
+) -> Any:
+    """Resolve classes + author CSS through the native cascade for export.
+
+    The cascade is the CSS engine here, so `custom_css` is consumed by it —
+    not routed to Chromium — and its `unsupported` report goes through the
+    compatibility contract: strict refuses on any unsupported construct,
+    every other mode surfaces the list as one StyleCompatibilityWarning.
+    A brand-new surface has no legacy silence to preserve (§28).
+    """
+    import warnings as _warnings
+
+    from .styling import cascade as _cascade
+    from .styling.preflight import StyleCompatibilityError, StyleCompatibilityWarning
+
+    snapshot, unsupported = _cascade.resolve_for_figure(fig, custom_css=custom_css or "")
+    if unsupported:
+        summary = "; ".join(unsupported)
+        if compatibility == "strict":
+            from .styling.preflight import route_resolved
+
+            raise StyleCompatibilityError(
+                f"native cascade could not honor: {summary}",
+                route_resolved(fig, fmt="png", resolved_engine="native", custom_css=None),
+            )
+        _warnings.warn(
+            StyleCompatibilityWarning(f"native cascade could not honor: {summary}"),
+            stacklevel=2,
+        )
+    return snapshot
 
 
 def _enforce_compatibility(
@@ -1258,6 +1310,7 @@ def to_image(
     gl: str = "software",
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
 ) -> bytes:
     """Render `fig` to image bytes in the requested `format`.
 
@@ -1274,6 +1327,21 @@ def to_image(
     PDF keeps text/axes/marks as vectors; density and heatmap layers embed as
     bounded rasters (the documented hybrid-vector policy)."""
     fmt = _normalize_format(format)
+    if style_source not in ("declared", "native_cascade"):
+        raise ValueError(
+            f'style_source must be "declared" or "native_cascade", got {style_source!r}'
+        )
+    if style_source == "native_cascade":
+        if style_snapshot is not None:
+            raise ValueError(
+                "style_snapshot and style_source='native_cascade' are two sources for the same values; pass one"
+            )
+        if engine not in (Engine.auto, "auto", None, Engine.default, "default"):
+            raise ValueError(
+                "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
+            )
+        style_snapshot = _cascade_snapshot(fig, custom_css, compatibility)
+        custom_css = None  # consumed by the cascade, not by a browser
     resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
     snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
     if snapshot is not None and resolved_engine == "browser":
@@ -1336,6 +1404,7 @@ def write_image(
     gl: str = "software",
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
 ) -> bytes:
     """Export `fig` to `path`, inferring the format from the extension.
 
@@ -1387,6 +1456,7 @@ def write_image(
         gl=gl,
         compatibility=compatibility,
         style_snapshot=style_snapshot,
+        style_source=style_source,
     )
     _atomic_write_bytes(path, data)
     return data

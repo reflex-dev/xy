@@ -1984,6 +1984,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         gl="software",
         compatibility="legacy",
         style_snapshot=None,
+        style_source="declared",
     ):
         seen.update(
             {
@@ -1999,6 +2000,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "gl": gl,
                 "compatibility": compatibility,
                 "style_snapshot": style_snapshot,
+                "style_source": style_source,
             }
         )
         return b"PNG"
@@ -2032,6 +2034,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "gl": "hardware",
         "compatibility": "warn",
         "style_snapshot": None,
+        "style_source": "declared",
     }
 
 

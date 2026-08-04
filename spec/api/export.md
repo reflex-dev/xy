@@ -249,7 +249,7 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
 | `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
-| `class_names={slot: "..."}` | yes, all 48 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
+| `class_names={slot: "..."}` | yes, all 48 slots | **dropped** (or resolved via `style_source="native_cascade"` / a captured `style_snapshot=`) | same | silent by default during migration; both opt-in routes are lossless for the published profile |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
@@ -304,7 +304,13 @@ pins the partition (24 static, 24 state-gated today) and
 
 `custom_css` raises because it is an author stylesheet: there is no honest
 partial application of it, and the caller can switch to `Engine.chromium` in one
-edit. The message says so. SVG rejects it for *every* engine, because a browser
+edit — or keep the export native with `style_source="native_cascade"`, which
+resolves the published CSS profile through the optional `xy-cascade` extension
+(Lightning CSS parsing; class/slot/descendant selectors, custom properties,
+`em`/`rem`, `prefers-color-scheme`) and reports every out-of-profile construct
+through the compatibility modes instead of guessing. The browser remains the
+oracle: `scripts/cascade_differential_smoke.py` asserts the cascade and a live
+Chromium agree on the shared profile. The message says so. SVG rejects it for *every* engine, because a browser
 screenshot cannot produce vector output — that row is a hard "never", not a
 default.
 

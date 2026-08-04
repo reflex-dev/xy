@@ -13,6 +13,9 @@ what would not survive, before any bytes exist.
 versioned, interned `ResolvedStyleSnapshot` of concrete values that every
 resolver produces and every renderer consumes.
 
+`cascade` is the mount-free resolver over the optional native extension:
+classes and author CSS cascaded to concrete values with no browser.
+
 Submodules resolve lazily (PEP 562): `capabilities` reaches the writers'
 constants and, through them, the native library — so importing this package
 costs nothing until a submodule is actually used. That keeps the documented
@@ -25,7 +28,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-__all__ = ["capabilities", "preflight", "resolved"]
+__all__ = ["capabilities", "cascade", "preflight", "resolved"]
 
 
 def __getattr__(name: str) -> Any:
