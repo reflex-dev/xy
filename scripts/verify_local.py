@@ -17,9 +17,12 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from _ty_tools import resolve_ty_executable
+if TYPE_CHECKING:
+    from scripts import _ty_tools
+else:
+    import _ty_tools
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,7 +59,7 @@ def _base_checks(
     wheel_expect: Optional[str] = None,
 ) -> dict[str, Check]:
     py = _python()
-    ty = str(resolve_ty_executable(py, required=False))
+    ty = str(_ty_tools.resolve_ty_executable(py, required=False))
     chromium_arg = str(chromium) if chromium is not None else "<CHROMIUM>"
     chromium_paths = (chromium,) if chromium is not None else ()
     sdist_arg = str(sdist) if sdist is not None else "<SDIST>"

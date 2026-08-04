@@ -13,9 +13,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from _ty_tools import absolute_executable, resolve_ty_executable
+if TYPE_CHECKING:
+    from scripts import _ty_tools
+else:
+    import _ty_tools
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_INIT = ROOT / "python" / "xy" / "__init__.py"
@@ -215,11 +218,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--ty-executable", help="ty executable used for both checks")
     args = parser.parse_args(argv)
 
-    python = absolute_executable(args.python_executable or sys.executable)
+    python = _ty_tools.absolute_executable(args.python_executable or sys.executable)
     ty = (
-        absolute_executable(args.ty_executable)
+        _ty_tools.absolute_executable(args.ty_executable)
         if args.ty_executable
-        else resolve_ty_executable(python)
+        else _ty_tools.resolve_ty_executable(python)
     )
 
     package_ok = args.consumer_only or _run_package_check(ty)

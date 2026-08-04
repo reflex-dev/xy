@@ -38,6 +38,29 @@ verify_local = _load_verify_local_module()
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("scripts/check_typing.py", "--help"),
+        ("-m", "scripts.check_typing", "--help"),
+        ("scripts/verify_local.py", "--help"),
+        ("-m", "scripts.verify_local", "--help"),
+    ],
+)
+def test_ty_script_entrypoints_support_path_and_module_execution(
+    command: tuple[str, ...],
+) -> None:
+    proc = subprocess.run(
+        [sys.executable, *command],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_default_selection_is_quick_checks_only() -> None:
     checks = verify_local._base_checks()
     selected = verify_local.select_checks(checks)
@@ -147,7 +170,7 @@ def test_ty_executable_prefers_python_sibling(tmp_path: Path, monkeypatch) -> No
     sibling.chmod(0o755)
     monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
-    assert verify_local.resolve_ty_executable(str(python)) == sibling
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == sibling
 
 
 def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
@@ -155,7 +178,7 @@ def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
     python.touch()
     monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
-    assert verify_local.resolve_ty_executable(str(python)) == Path("/path/ty")
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
 
 
 def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch) -> None:
@@ -166,7 +189,7 @@ def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(verify_local.os, "access", lambda _path, _mode: False)
     monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
-    assert verify_local.resolve_ty_executable(str(python)) == Path("/path/ty")
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
 
 
 @pytest.mark.parametrize(("os_name", "expected"), [("posix", "ty"), ("nt", "ty.exe")])
@@ -185,7 +208,7 @@ def test_ty_executable_uses_platform_name_for_path_lookup(
 
     monkeypatch.setattr(verify_local.shutil, "which", fake_which)
 
-    candidate = verify_local.resolve_ty_executable(
+    candidate = verify_local._ty_tools.resolve_ty_executable(
         str(python),
         required=False,
         os_name=os_name,
