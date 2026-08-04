@@ -4213,6 +4213,8 @@ class Chart(Component):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> str:
         """A static SVG render of the chart (written to ``path`` if given).
 
@@ -4228,6 +4230,8 @@ class Chart(Component):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def to_png(
@@ -4245,6 +4249,8 @@ class Chart(Component):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """A PNG render of the chart, returned as bytes.
 
@@ -4266,6 +4272,8 @@ class Chart(Component):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def _export_defaults(
@@ -4318,6 +4326,8 @@ class Chart(Component):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
 
@@ -4340,6 +4350,8 @@ class Chart(Component):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
             **self._export_defaults(
                 fmt,
                 width,
@@ -4369,6 +4381,8 @@ class Chart(Component):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (.png/.jpg/
         .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
@@ -4420,6 +4434,8 @@ class Chart(Component):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
             **defaults,
         )
 

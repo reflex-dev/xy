@@ -510,10 +510,14 @@ fn substituted(value: &str, custom: &BTreeMap<String, String>) -> Result<String,
 }
 
 fn fmt_px(px: f64) -> String {
-    if (px - px.round()).abs() < 1e-9 {
-        format!("{}px", px.round() as i64)
+    // Round to 1/10000 px and trim zeros: 0.025em * 14px is 0.35px, not the
+    // binary-float tail — computed values compare stringly downstream.
+    let rounded = (px * 10000.0).round() / 10000.0;
+    if (rounded - rounded.round()).abs() < 1e-9 {
+        format!("{}px", rounded.round() as i64)
     } else {
-        format!("{px}px")
+        let text = format!("{rounded:.4}");
+        format!("{}px", text.trim_end_matches('0').trim_end_matches('.'))
     }
 }
 

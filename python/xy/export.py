@@ -822,6 +822,8 @@ def to_png(
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
     style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -862,8 +864,15 @@ def to_png(
             raise ValueError(
                 "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
             )
-        style_snapshot = _cascade_snapshot(fig, custom_css, compatibility)
+        style_snapshot = _cascade_snapshot(
+            fig, custom_css, compatibility, tuple(stylesheets), tailwind_profile
+        )
         custom_css = None  # consumed by the cascade, not by a browser
+    elif stylesheets or tailwind_profile is not None:
+        raise ValueError(
+            "stylesheets/tailwind_profile are native-cascade inputs; pass "
+            'style_source="native_cascade"'
+        )
     resolved_engine = _png_engine(engine)
     # Resolution errors precede and outrank mode logic (the migration spec's
     # contract): the custom_css/native refusal must stay a ValueError in
@@ -1010,6 +1019,8 @@ def _cascade_snapshot(
     fig: "Figure",
     custom_css: Optional[str],
     compatibility: str,
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> Any:
     """Resolve classes + author CSS through the native cascade for export.
 
@@ -1024,7 +1035,12 @@ def _cascade_snapshot(
     from .styling import cascade as _cascade
     from .styling.preflight import StyleCompatibilityError, StyleCompatibilityWarning
 
-    snapshot, unsupported = _cascade.resolve_for_figure(fig, custom_css=custom_css or "")
+    snapshot, unsupported = _cascade.resolve_for_figure(
+        fig,
+        custom_css=custom_css or "",
+        stylesheets=tuple(stylesheets),
+        tailwind_profile=tailwind_profile,
+    )
     if unsupported:
         summary = "; ".join(unsupported)
         if compatibility == "strict":
@@ -1311,6 +1327,8 @@ def to_image(
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
     style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Render `fig` to image bytes in the requested `format`.
 
@@ -1340,8 +1358,15 @@ def to_image(
             raise ValueError(
                 "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
             )
-        style_snapshot = _cascade_snapshot(fig, custom_css, compatibility)
+        style_snapshot = _cascade_snapshot(
+            fig, custom_css, compatibility, tuple(stylesheets), tailwind_profile
+        )
         custom_css = None  # consumed by the cascade, not by a browser
+    elif stylesheets or tailwind_profile is not None:
+        raise ValueError(
+            "stylesheets/tailwind_profile are native-cascade inputs; pass "
+            'style_source="native_cascade"'
+        )
     resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
     snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
     if snapshot is not None and resolved_engine == "browser":
@@ -1405,6 +1430,8 @@ def write_image(
     compatibility: str = "legacy",
     style_snapshot: Optional[Any] = None,
     style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Export `fig` to `path`, inferring the format from the extension.
 
@@ -1457,6 +1484,8 @@ def write_image(
         compatibility=compatibility,
         style_snapshot=style_snapshot,
         style_source=style_source,
+        stylesheets=stylesheets,
+        tailwind_profile=tailwind_profile,
     )
     _atomic_write_bytes(path, data)
     return data

@@ -9,6 +9,14 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- The versioned Tailwind-core manifest (`tailwind_profile="core-v1"`):
+  `chart.to_png(style_source="native_cascade", tailwind_profile="core-v1")`
+  resolves the core utilities natively — the full default color palette
+  (vendored from tailwindcss@3.4.17 with provenance, never hand-typed
+  hexes), the spacing/type/weight/radius/border/tracking scales in their
+  published rem/em/px values, resolved through the cascade's own font-size
+  chain. Project Tailwind builds ride `stylesheets=`; unmatched utilities
+  are reported, never guessed.
 - The mount-free native cascade (optional `xy-cascade` extension, ~3.8 MB
   cdylib built from the same workspace): `chart.to_png(custom_css=css,
   style_source="native_cascade")` resolves classes and self-contained author

@@ -1985,6 +1985,8 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         compatibility="legacy",
         style_snapshot=None,
         style_source="declared",
+        stylesheets=(),
+        tailwind_profile=None,
     ):
         seen.update(
             {
@@ -2001,6 +2003,8 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "compatibility": compatibility,
                 "style_snapshot": style_snapshot,
                 "style_source": style_source,
+                "stylesheets": stylesheets,
+                "tailwind_profile": tailwind_profile,
             }
         )
         return b"PNG"
@@ -2035,6 +2039,8 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "compatibility": "warn",
         "style_snapshot": None,
         "style_source": "declared",
+        "stylesheets": (),
+        "tailwind_profile": None,
     }
 
 

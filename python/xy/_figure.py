@@ -2247,6 +2247,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> str:
         """Static SVG (_svg.py): a pure-Python render of the same decimated
         payload the browser client consumes — resolution-independent, tiny
@@ -2269,7 +2271,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # Classes-only here: to_svg carries no custom_css parameter, so
             # author stylesheets ride to_image("svg", custom_css=...,
             # style_source="native_cascade") instead.
-            style_snapshot = export._cascade_snapshot(self, None, compatibility)
+            style_snapshot = export._cascade_snapshot(
+                self, None, compatibility, tuple(stylesheets), tailwind_profile
+            )
         if style_snapshot is not None:
             snapshot = export._coerce_style_snapshot(style_snapshot)
             with export._snapshot_styles(self, snapshot):
@@ -2292,6 +2296,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
@@ -2316,6 +2322,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def to_image(
@@ -2335,6 +2343,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
 
@@ -2359,6 +2369,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def write_image(
@@ -2379,6 +2391,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         compatibility: str = "legacy",
         style_snapshot: Optional[Any] = None,
         style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (export.py):
         .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
@@ -2399,6 +2413,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             compatibility=compatibility,
             style_snapshot=style_snapshot,
             style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def memory_report(self) -> dict[str, Any]:

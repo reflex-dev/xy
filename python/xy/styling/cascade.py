@@ -187,6 +187,12 @@ def _expand_shorthands(declarations: dict[str, Any]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for prop, value in declarations.items():
+        if prop == "background-color":
+            # Schema v1 speaks `background` (the browser capture makes the
+            # same mapping); when both spellings cascade, the shorthand
+            # already reset the longhand upstream, so last-in wins here too.
+            out["background"] = value
+            continue
         if prop == "padding" and isinstance(value, str):
             parts = value.split()
             if 1 <= len(parts) <= 4:
@@ -211,6 +217,7 @@ def resolve_for_figure(
     *,
     custom_css: str = "",
     stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
     color_scheme: str = "light",
     root_font_size: float = 16.0,
     width: Optional[float] = None,
@@ -242,7 +249,19 @@ def resolve_for_figure(
                 "parent": index[parent] if parent is not None else None,
             }
         )
-    css = "\n".join((*stylesheets, custom_css)) if (stylesheets or custom_css) else ""
+    sheets = list(stylesheets)
+    if tailwind_profile is not None:
+        if tailwind_profile != "core-v1":
+            raise ValueError(
+                f"unknown tailwind_profile {tailwind_profile!r}; this build ships "
+                '"core-v1" (a project\'s full Tailwind build rides stylesheets=)'
+            )
+        from ._tailwind_core import TAILWIND_CORE_CSS
+
+        # The manifest is the widest sheet: project stylesheets and
+        # custom_css cascade over it in that order.
+        sheets.insert(0, TAILWIND_CORE_CSS)
+    css = "\n".join((*sheets, custom_css)) if (sheets or custom_css) else ""
     reply = _call(
         css,
         {
