@@ -1324,15 +1324,17 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
+| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label` (`_svg.STATIC_STYLED_SLOTS`) |
 | Vector — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
-| Raster — PNG, JPEG, WebP | `font-size` and the text paint only (`_svg.SLOT_RASTER_PROPS`) |
+| Raster — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
+| `annotation_label` box | additionally `background`, `border` (+ longhands), `border-radius`, `padding`, offset `box-shadow`, `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS`), folded UNDER the annotation's own `style=` per property group |
 
-The raster writer's glyph primitive takes a size and one RGBA paint and nothing
-else, so `font-weight`, `font-style`, `font-family`, `letter-spacing` and
-`opacity` are **vector-only**. They are not approximated: the atlas is a single
-baked face, and a silently substituted weight would be exactly the kind of
-invisible decision §28 forbids.
+The raster atlas carries a regular, a bold and an italic face, so a slot's
+weight and style survive PNG/JPEG/WebP (weight ≥ 600 rounds up to the bold
+face). It has no family axis, no per-glyph advance control and no alpha on
+the blit, so `font-family`, `letter-spacing` and `opacity` are
+**vector-only**. They are not approximated: a silently substituted face would
+be exactly the kind of invisible decision §28 forbids.
 
 ```python
 xy.chart(

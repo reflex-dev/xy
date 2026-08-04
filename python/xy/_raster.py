@@ -41,7 +41,6 @@ from ._svg import (
     _axis_tick_label_sides,
     _axis_tick_label_strategy,
     _axis_tick_sides,
-    _box_corner_radius,
     _colorbar_right_axis_room,
     _colormap_stops,
     _column,
@@ -49,7 +48,6 @@ from ._svg import (
     _css,
     _decode_title_geometry,
     _density_column,
-    _estimated_text_width,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
@@ -65,6 +63,8 @@ from ._svg import (
     _title_metrics,
     affine_fast_path,
     annotation_label_placement,
+    annotation_style_with_slot,
+    annotation_text_box,
     apply_export_background,
     axis_ticks,
     hexbin_ring,
@@ -1093,6 +1093,10 @@ def render_raster(
     if polar is not None:
         cmd.polar_clip(polar)
 
+    # Hoisted above the annotation passes: both phases read the annotation
+    # slots, and the chrome text below reads the rest of the same mapping.
+    slots = slot_styles(spec)
+
     spec_palette: Sequence[str] = spec.get("palette") or DEFAULT_PALETTE
     for palette_i, t in enumerate(spec["traces"]):
         style = t.get("style") or {}
@@ -1136,7 +1140,17 @@ def render_raster(
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
 
-    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height, polar=polar)
+    _emit_annotations(
+        cmd,
+        spec.get("annotations") or [],
+        sx,
+        sy,
+        plot,
+        width,
+        height,
+        polar=polar,
+        slots=slots,
+    )
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
@@ -1152,6 +1166,7 @@ def render_raster(
         height,
         phase="text",
         polar=polar,
+        slots=slots,
     )
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
@@ -1345,8 +1360,6 @@ def render_raster(
                     float(axis_style.get("tick_width", 1)),
                     _parse_color(_css(axis_style.get("tick_color"), default_axis)),
                 )
-
-    slots = slot_styles(spec)
 
     def slot_paint(slot: str, fallback: str) -> tuple:
         """A slot's text paint, or the writer's own default."""
@@ -1718,9 +1731,11 @@ def _emit_annotations(
     *,
     phase: str = "marks",
     polar: "Optional[_PolarProjection]" = None,
+    slots: Optional[dict[str, dict[str, Any]]] = None,
 ) -> None:
     px0, py0 = plot["x"], plot["y"]
     text_phase = phase == "text"
+    slots = slots or {}
 
     def point(x: float, y: float) -> tuple[float, float]:
         """Jointly project point-anchored geometry under polar coordinates."""
@@ -1733,7 +1748,7 @@ def _emit_annotations(
         # Geometry (rules/bands/arrows/markers) draws in the clipped marks
         # pass; every label draws in the unclipped chrome pass, matching
         # matplotlib's Text and the client's DOM labels.
-        style = ann.get("style") or {}
+        style = annotation_style_with_slot(ann, slots)
         restore_plot_clip = False
         color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
@@ -1924,42 +1939,25 @@ def _emit_text_box(
     font_size: float,
     anchor: int,
 ) -> None:
-    """Draw the bounded CSS approximation used by pyplot ``text(bbox=)``."""
-    background = style.get("background")
-    border = str(style.get("border", ""))
-    if background is None and not border:
-        return
-    pad_parts = str(style.get("padding", "0")).split()
+    """Adapter: the pyplot ``text(bbox=)`` approximation over the shared box.
 
-    def px(value: str) -> float:
-        try:
-            return max(0.0, float(value.removesuffix("px")))
-        except ValueError:
-            return 0.0
-
-    pad_y = px(pad_parts[0]) if pad_parts else 0.0
-    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
-    text_width = _estimated_text_width(lines, font_size)
-    left = x - (text_width / 2 if anchor == 1 else text_width if anchor == 2 else 0.0) - pad_x
-    top = first_y - font_size * 0.8 - pad_y
-    right = left + text_width + pad_x * 2
-    bottom = top + font_size + (len(lines) - 1) * line_height + pad_y * 2
-    # `boxstyle="round"`/`round4` set border_radius, which the browser applies
-    # as CSS border-radius; round the same corners here or the exported box is
-    # square where the live one is not.
-    points = _round_rect_pts(
-        left, top, right, bottom, _box_corner_radius(style, right - left, bottom - top)
+    Geometry and declaration parsing live in `annotation_text_box` (one
+    lowering for both writers); the display list comes from `_emit_slot_box`.
+    A closed border stroke rasterizes pixel-identically to the old
+    repeat-the-first-point polyline (round cap == round join for the capsule
+    distance field).
+    """
+    box = annotation_text_box(
+        style,
+        lines,
+        x,
+        first_y,
+        line_height,
+        font_size,
+        {0: "start", 1: "middle", 2: "end"}.get(anchor, "start"),
     )
-    if background is not None:
-        cmd.fill(points, _parse_color(str(background)))
-    if border:
-        parts = border.split()
-        try:
-            width = max(0.0, float(parts[0].removesuffix("px")))
-        except (IndexError, ValueError):
-            width = 1.0
-        if width:
-            cmd.stroke(points + [points[0]], width, _parse_color(parts[-1]))
+    if box is not None:
+        _emit_slot_box(cmd, box)
 
 
 def _emit_area(

@@ -14,7 +14,7 @@ which is sometimes deliberate, and the notes say which.
 ## In one line
 
 - **11** mark style properties across **21** mark kinds, drawn by all three renderers.
-- **48** stable chrome slots, CSS- and Tailwind-addressable in the browser. **24** of them name chrome a clean static export contains; **10** reach the native writers — **9** through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag. The other **24** are interaction/view chrome (tooltip, modebar, crosshair, selection, reduction badges) that a clean static file does not contain, so they are gated by an export state rather than missing.
+- **48** stable chrome slots, CSS- and Tailwind-addressable in the browser. **24** of them name chrome a clean static export contains; **11** reach the native writers — **10** through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag. The other **24** are interaction/view chrome (tooltip, modebar, crosshair, selection, reduction badges) that a clean static file does not contain, so they are gated by an export state rather than missing.
 - **1** shipped extension point.
 - **1** known default divergence between renderers, listed below rather than left to be discovered.
 
@@ -118,7 +118,7 @@ declared and names anything that would not survive.
 | `tick_mark` | clean static | full | none | none |
 | `tick_label` | clean static | full | partial | partial |
 | `axis_title` | clean static | full | partial | partial |
-| `annotation_label` | clean static | full | none | none |
+| `annotation_label` | clean static | full | partial | partial |
 
 ### Notes
 
@@ -132,6 +132,7 @@ declared and names anything that would not survive.
 - **`colorbar_title`** (via `styles={'colorbar_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
 - **`tick_label`** (via `styles={'tick_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
 - **`axis_title`** (via `styles={'axis_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`annotation_label`** (via `styles={'annotation_label': ...}`) — The per-slot text subset plus the shared chrome-box model (`xy._svg.SLOT_BOX_PROPS`): background, border — with solid/dashed/dotted lowered to a dash pattern and other border styles drawn solid and recorded (§28) — border-radius, CSS 1-4 value padding, offset box-shadow (blur/spread recorded unrepresentable), and whole-label opacity. The annotation's own `style=` is the narrower selector and wins per property group, matching the browser's slot-then-inline order. em font sizes resolve against the label's own 11px default. Vertical (rotation 90/270) labels keep only size and paint in SVG — a pre-existing limit of the rotated text path.
 
 ## Extension points
 

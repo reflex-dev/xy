@@ -110,7 +110,7 @@ would not survive, before any bytes exist.
 | `tick_mark` | clean static | full | none | none |
 | `tick_label` | clean static | full | partial | partial |
 | `axis_title` | clean static | full | partial | partial |
-| `annotation_label` | clean static | full | none | none |
+| `annotation_label` | clean static | full | partial | partial |
 
 ### Notes
 
@@ -124,6 +124,7 @@ would not survive, before any bytes exist.
 - **`colorbar_title`** (via `styles={'colorbar_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
 - **`tick_label`** (via `styles={'tick_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
 - **`axis_title`** (via `styles={'axis_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`annotation_label`** (via `styles={'annotation_label': ...}`) — The per-slot text subset plus the shared chrome-box model (`xy._svg.SLOT_BOX_PROPS`): background, border — with solid/dashed/dotted lowered to a dash pattern and other border styles drawn solid and recorded (§28) — border-radius, CSS 1-4 value padding, offset box-shadow (blur/spread recorded unrepresentable), and whole-label opacity. The annotation's own `style=` is the narrower selector and wins per property group, matching the browser's slot-then-inline order. em font sizes resolve against the label's own 11px default. Vertical (rotation 90/270) labels keep only size and paint in SVG — a pre-existing limit of the rotated text path.
 
 ## Extension points
 

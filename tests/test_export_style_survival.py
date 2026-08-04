@@ -66,12 +66,15 @@ _SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {"legend
 @pytest.mark.parametrize("slot", STATIC_STYLED_SLOTS)
 def test_every_static_slot_carries_its_paint_into_svg(slot: str) -> None:
     # The headline of the per-slot contract: a slot that names chrome a static
-    # file contains must carry that chrome's paint into the file.
+    # file contains must carry that chrome's paint into the file. The chart
+    # carries one of everything a slot can address, including an annotation
+    # label for the annotation chrome family.
     chart = xy.scatter_chart(
         xy.scatter(x=[0.0, 1.0], y=[1.0, 2.0], name="series", color=[0.0, 1.0], colormap="viridis"),
         xy.legend(title="Legend title"),
         xy.colorbar(title="Colorbar title"),
         xy.x_axis(label="x label"),
+        xy.text(0.5, 1.5, "annotation"),
         title="chart title",
         styles={slot: {_SLOT_PAINT_PROPERTY[slot]: "#123456"}},
     )

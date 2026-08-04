@@ -200,6 +200,12 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "box properties route through the merged legend declaration; see the "
             "capability matrix legend note"
         )
+    if slot == "annotation_label":
+        return text | _svg.SLOT_BOX_PROPS, (
+            "box properties route through the shared chrome-box lowering; the "
+            "annotation's own style= is the narrower selector and wins per "
+            "property group"
+        )
     return text, ""
 
 

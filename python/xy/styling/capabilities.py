@@ -296,6 +296,20 @@ _SLOT_EXCEPTIONS["root"] = (
     "(`spec['dom']['style']`). Prefer it for anything that must survive "
     "export.",
 )
+_SLOT_EXCEPTIONS["annotation_label"] = (
+    "partial",
+    "styles={'annotation_label': ...}",
+    "The per-slot text subset plus the shared chrome-box model "
+    "(`xy._svg.SLOT_BOX_PROPS`): background, border — with solid/dashed/"
+    "dotted lowered to a dash pattern and other border styles drawn solid "
+    "and recorded (§28) — border-radius, CSS 1-4 value padding, offset "
+    "box-shadow (blur/spread recorded unrepresentable), and whole-label "
+    "opacity. The annotation's own `style=` is the narrower selector and "
+    "wins per property group, matching the browser's slot-then-inline "
+    "order. em font sizes resolve against the label's own 11px default. "
+    "Vertical (rotation 90/270) labels keep only size and paint in SVG — "
+    "a pre-existing limit of the rotated text path.",
+)
 
 
 #: The state that gates each live-only slot. Listed explicitly, one entry per
