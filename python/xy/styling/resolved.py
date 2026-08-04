@@ -410,8 +410,13 @@ def _validated_environment(
     """One environment contract for both construction ends of the wire."""
     numbers = {}
     for label, value in (("width", width), ("height", height), ("dpr", dpr)):
+        # The payload path hands in whatever JSON produced, so the type is
+        # genuinely `object` here; narrow before converting rather than
+        # silencing the checker on an unguarded call.
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError(f"environment {label} must be a finite positive number")
         try:
-            out = float(value)  # type: ignore[arg-type]
+            out = float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"environment {label} must be a finite positive number") from exc
         if not math.isfinite(out) or out <= 0:

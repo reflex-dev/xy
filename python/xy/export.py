@@ -979,7 +979,9 @@ def _coerce_style_snapshot(value: object) -> Any:
     if isinstance(value, ResolvedStyleSnapshot):
         return value
     if isinstance(value, dict):
-        return snapshot_from_payload(value)
+        # Keys come from JSON, so the mapping is dict[Unknown, Unknown] to a
+        # checker; the schema validates every key and value on the way in.
+        return snapshot_from_payload(cast("dict[str, Any]", value))
     raise ValueError(
         "style_snapshot must be a ResolvedStyleSnapshot (from "
         "capture_style_snapshot()) or its payload dict"
