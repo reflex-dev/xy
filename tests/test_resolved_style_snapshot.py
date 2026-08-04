@@ -128,6 +128,32 @@ def test_concrete_values_pass_unchanged() -> None:
     assert rs.assert_resolved("transform", "matrix(1, 0, 0, 1, 4, 8)")
 
 
+def test_percentages_inside_color_functions_are_concrete() -> None:
+    # A % inside rgb()/hsl() is a color component against a fixed channel
+    # range — the repo's own color contract accepts it and the compilers
+    # emit it. A % outside those bodies (a length, a gradient stop) still
+    # carries a document dependency and still rejects.
+    assert rs.assert_resolved("color", "hsl(210 40% 96%)") == "hsl(210 40% 96%)"
+    assert rs.assert_resolved("fill", "rgb(100% 0% 0%)") == "rgb(100% 0% 0%)"
+    assert rs.assert_resolved("background-image", "linear-gradient(hsl(210 40% 96%), #fff)")
+    with pytest.raises(ValueError, match="re-derive"):
+        rs.assert_resolved("background-image", "linear-gradient(hsl(210 40% 96%) 50%, #fff)")
+    with pytest.raises(ValueError, match="re-derive"):
+        rs.assert_resolved("width", "50%")
+
+
+def test_mixed_value_kinds_sort_canonically_without_error() -> None:
+    # Both value kinds are legal per property, so the canonical sort key is
+    # type-tagged; a raw items() comparison would raise TypeError on
+    # {"font-size": 11} vs {"font-size": "11px"}.
+    a, b = rs.SnapshotBuilder(), rs.SnapshotBuilder()
+    a.add("title", {"font-size": 11})
+    a.add("axis_title", {"font-size": "11px"})
+    b.add("axis_title", {"font-size": "11px"})
+    b.add("title", {"font-size": 11})
+    assert a.build(_env()).to_payload() == b.build(_env()).to_payload()
+
+
 def test_cascade_keywords_reject_as_whole_values_not_substrings() -> None:
     # `inherit` as the value defers to a cascade; a face that merely contains
     # the letters is a concrete string. Substring matching rejected the
@@ -210,6 +236,26 @@ def test_malformed_payloads_fail_loudly() -> None:
     smuggled = {**good, "declarations": [{"color": "var(--fg)"}]}
     with pytest.raises(ValueError, match="cascade"):
         rs.snapshot_from_payload(smuggled)
+
+
+def test_malformed_payload_shapes_raise_value_error_not_key_error() -> None:
+    # The deserialization boundary raises ValueError for every malformed
+    # shape — a caller catching ValueError there must never meet a
+    # KeyError, TypeError, or AttributeError instead.
+    builder = rs.SnapshotBuilder()
+    builder.add("title", {"font-size": 18})
+    good = builder.build(_env()).to_payload()
+
+    for broken, why in [
+        ({k: v for k, v in good.items() if k != "environment"}, "missing 'environment'"),
+        ({**good, "environment": "nope"}, "width/height"),
+        ({**good, "instances": [{"d": 0}]}, "slot"),
+        ({**good, "instances": [{"s": "title"}]}, "declaration"),
+        ({**good, "instances": [{"s": "title", "d": 0, "g": ["x", 1, 2, 3]}]}, "four finite"),
+        ({**good, "declarations": ["not-a-mapping"]}, "property mapping"),
+    ]:
+        with pytest.raises(ValueError, match=why):
+            rs.snapshot_from_payload(broken)
 
 
 def test_the_payload_path_enforces_the_builders_contract() -> None:

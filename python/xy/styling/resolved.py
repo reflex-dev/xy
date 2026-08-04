@@ -121,13 +121,24 @@ _RELATIVE_UNITS: tuple[str, ...] = ("vmin", "vmax", "rem", "em", "ex", "ch", "vw
 #: A relative-unit length *anywhere* in the value — `translate(50%, 20%)`,
 #: a `2em 1em` shorthand, a gradient stop — not only as a whole-string
 #: suffix. Mid-string relative units are precisely the ones that slipped a
-#: document dependency past the earlier end-anchored check.
+#: document dependency past the earlier end-anchored check. Built from
+#: module constants through `re.escape`, so the non-literal-pattern lint
+#: does not apply: no untrusted text ever reaches `re.compile`, and the
+#: alternation is a fixed set of unit suffixes.
 _RELATIVE_UNIT_RE = re.compile(
     r"(?<![a-z0-9.#_-])\d*\.?\d+(?:"
     + "|".join(map(re.escape, _RELATIVE_UNITS))
     + r")(?![a-z0-9%])",
     re.IGNORECASE,
 )
+
+#: Percentages inside `rgb()`/`hsl()` (and their alpha forms) are color
+#: components resolved against a fixed channel range, not against document
+#: metrics — the repo's own color contract (`_validate.css_color`) accepts
+#: `hsl(210 40% 96%)` and the style compilers emit such text. Those function
+#: bodies are masked out before the relative-unit scan; a percentage
+#: *outside* them (a length, a gradient stop position) still rejects.
+_COLOR_FUNCTION_RE = re.compile(r"(?:rgba?|hsla?)\([^()]*\)", re.IGNORECASE)
 
 _COLOR_SCHEMES = frozenset({"light", "dark"})
 
@@ -149,12 +160,13 @@ def _assert_concrete_text(label: str, value: str) -> str:
                 f"{label}: {text!r} still depends on a cascade the renderer does not "
                 f"have ({marker.rstrip('(')}); resolve it before it enters the snapshot"
             )
-    relative = _RELATIVE_UNIT_RE.search(lowered)
+    relative = _RELATIVE_UNIT_RE.search(_COLOR_FUNCTION_RE.sub("", lowered))
     if relative is not None:
         raise ValueError(
             f"{label}: {text!r} carries {relative.group(0)!r}, which is relative to "
             "metrics the consumer would have to re-derive; resolved lengths are "
-            "plain numbers in CSS px"
+            "plain numbers in CSS px (percentages are accepted only as "
+            "rgb()/hsl() color components)"
         )
     return text
 
@@ -340,7 +352,7 @@ class SnapshotBuilder:
         # so logically identical styling is byte-identical on the wire.
         order = sorted(
             range(len(self._declarations)),
-            key=lambda i: tuple(self._declarations[i].items()),
+            key=lambda i: _declaration_sort_key(self._declarations[i]),
         )
         remap = {old: new for new, old in enumerate(order)}
         instances = sorted(
@@ -371,6 +383,25 @@ class SnapshotBuilder:
             unrepresentable=tuple(str(u) for u in unrepresentable),
             style_epoch=int(style_epoch),
         )
+
+
+def _declaration_sort_key(
+    declaration: Mapping[str, str | float],
+) -> tuple[tuple[str, int, float, str], ...]:
+    """A total order over declarations whose values mix numbers and strings.
+
+    `assert_resolved` accepts both value kinds for every property, so
+    `{"font-size": 11}` and `{"font-size": "11px"}` are individually legal —
+    a raw `tuple(items())` key would compare `11.0 < "11px"` and raise.
+    Type-tagging (numbers before strings per property) keeps the canonical
+    order deterministic without comparing across kinds.
+    """
+    return tuple(
+        (prop, 0, float(value), "")
+        if isinstance(value, (int, float))
+        else (prop, 1, 0.0, str(value))
+        for prop, value in declaration.items()
+    )
 
 
 def _validated_environment(
@@ -420,19 +451,33 @@ def snapshot_from_payload(payload: Mapping[str, Any]) -> ResolvedStyleSnapshot:
             f"style snapshot version {version!r} is not supported "
             f"(this build reads v{STYLE_SNAPSHOT_VERSION}); refusing to guess"
         )
+    # Deserialization failures are ValueError with the module's message
+    # style, whatever malformed shape produced them: this is the untrusted
+    # end of the wire, and a caller catching ValueError at the boundary must
+    # not meet a KeyError or TypeError instead.
+    if "environment" not in payload:
+        raise ValueError("style snapshot payload is missing 'environment'")
     env = payload["environment"]
-    declarations = [
-        {prop: assert_resolved(prop, value) for prop, value in decl.items()}
-        for decl in payload.get("declarations", ())
-    ]
+    if not isinstance(env, Mapping) or "width" not in env or "height" not in env:
+        raise ValueError(f"style snapshot environment must map width/height: {env!r}")
+    declarations = []
+    for decl in payload.get("declarations", ()):
+        if not isinstance(decl, Mapping):
+            raise ValueError(f"declaration {decl!r} must be a property mapping")
+        declarations.append({prop: assert_resolved(prop, value) for prop, value in decl.items()})
     instances = []
     for raw in payload.get("instances", ()):
+        if not isinstance(raw, Mapping) or "s" not in raw or "d" not in raw:
+            raise ValueError(f"instance {raw!r} must carry a slot ('s') and declaration ('d')")
         index = raw["d"]
         if not isinstance(index, int) or not 0 <= index < len(declarations):
             raise ValueError(f"instance {raw!r} references declaration {index!r}, which is absent")
         geometry: Optional[tuple[float, float, float, float]] = None
         if "g" in raw:
-            values = tuple(float(v) for v in raw["g"])
+            try:
+                values = tuple(float(v) for v in raw["g"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"instance {raw!r} geometry must be four finite numbers") from exc
             if len(values) != 4 or not all(math.isfinite(v) for v in values):
                 raise ValueError(f"instance {raw!r} geometry must be four finite numbers")
             geometry = values

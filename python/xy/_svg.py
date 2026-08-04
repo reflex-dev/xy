@@ -1406,6 +1406,28 @@ _LEGEND_SLOT_ALIASES: dict[str, str] = {
     "row-gap": "rowGap",
 }
 
+#: The legend frame's merged-declaration vocabulary, in every accepted
+#: spelling — the box properties `legend_options_with_slot` folds and the
+#: writers honor, per the capability-matrix legend note. The preflight
+#: consumes this to route legend declarations at property level: a name in
+#: neither this set nor the text subsets has no channel to a static file
+#: and is a provable loss, not a qualified maybe. Owned by this module so
+#: the writers and the report cannot drift apart.
+LEGEND_BOX_PROPS: frozenset[str] = frozenset(
+    {
+        "background",
+        "background-color",
+        "box-shadow",
+        "boxShadow",
+        "border-radius",
+        "borderRadius",
+        "padding",
+        "row-gap",
+        "rowGap",
+        "--xy-legend-frame-alpha",
+    }
+)
+
 
 def legend_options_with_slot(spec: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
     """Fold the chart-level legend styling into a legend's own options, so every

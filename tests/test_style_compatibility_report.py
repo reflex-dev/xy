@@ -123,16 +123,31 @@ def test_root_styles_point_at_the_token_bag_channel() -> None:
     assert "style=" in finding.detail
 
 
-def test_legend_styles_are_qualified_not_guessed() -> None:
-    # Box properties route through the merged legend declaration; until the
-    # shared IR makes that set a constant, the report qualifies rather than
-    # declaring a loss it cannot prove (or a survival it cannot prove).
-    report = _chart(styles={"legend": {"background": "black"}}).style_compatibility_report("png")
+def test_legend_styles_route_at_property_level() -> None:
+    # Box properties route through the merged legend declaration
+    # (`_svg.LEGEND_BOX_PROPS`, writer-owned), text properties through the
+    # per-family subsets — and a property in neither set is a provable loss.
+    # The earlier declaration-level qualification rounded those to silence,
+    # which let warn stay quiet and strict permit a drop.
+    boxed = _chart(styles={"legend": {"background": "black", "border-radius": "6px"}})
+    report = boxed.style_compatibility_report("png")
     finding = _finding(report, "legend", "styles")
     assert finding.route == pf.ROUTE_SUBSET
     assert finding.lost == ()
+    assert set(finding.kept) == {"background", "border-radius"}
     assert "merged legend declaration" in finding.detail
     assert report.lossless
+
+    # letter-spacing on the raster path is in neither the raster text subset
+    # nor the box vocabulary: named lost, not qualified away.
+    lossy = _chart(styles={"legend": {"letter_spacing": "0.08em", "background": "black"}})
+    raster = lossy.style_compatibility_report("png")
+    finding = _finding(raster, "legend", "styles")
+    assert finding.lost == ("letter-spacing",)
+    assert "background" in finding.kept
+    assert not raster.lossless
+    # The same declaration survives the vector writers, which honor it.
+    assert lossy.style_compatibility_report("svg").lossless
 
 
 def test_state_gated_styles_do_not_block_lossless() -> None:
@@ -222,6 +237,25 @@ def test_explain_names_every_route() -> None:
     assert "state-gated" in text
     assert "letter-spacing" in text
     assert "loss(es)" in text
+
+
+def test_importing_the_styling_package_loads_no_machinery() -> None:
+    # The package resolves submodules lazily (PEP 562): `capabilities`
+    # reaches the writers' constants and through them the native library, so
+    # a bare `import xy.styling` must not pay for any of it — the legacy
+    # path's zero-import guarantee extends to the package itself.
+    import subprocess
+    import sys as _sys
+
+    probe = (
+        "import sys; import xy.styling; "
+        "print(sorted(m for m in ('xy.styling.preflight', 'xy.styling.capabilities', "
+        "'xy.styling.resolved', 'xy._svg') if m in sys.modules))"
+    )
+    result = subprocess.run(
+        [_sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]"
 
 
 def test_chart_report_is_the_figure_report() -> None:

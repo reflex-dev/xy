@@ -3,9 +3,11 @@
 `chart.style_compatibility_report(target=...)` answers `spec/api/export.md` §9
 programmatically, per chart, before any bytes exist: for the requested target
 and engine it lists which styling sources are present, how each styled slot
-routes, and exactly which declarations would not survive. Nothing here changes
-export behavior — the staged `compatibility=` modes that act on this report
-land separately, so this module can be trusted from any code path.
+routes, and exactly which declarations would not survive. The reporting core
+(`preflight`, `route_resolved`) changes no export behavior and can be trusted
+from any code path; `enforce` is the one function that acts on a report — it
+warns in `compatibility="warn"` and refuses in `"strict"`, and does nothing
+at all in the default `"legacy"`.
 
 Three rules keep the report honest:
 
@@ -183,19 +185,20 @@ def _slot_family(fmt: str) -> str:
 def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     """(honored property names, qualifier) for a native-subset slot.
 
-    The subsets are the writers' own constants. `legend` honors box properties
-    beyond the shared text subset through its merged-declaration channel; that
-    set lives in the writer's merge logic rather than a constant yet, so the
-    report stays at declaration granularity there instead of guessing — the
-    qualifier says so, and the shared IR change makes it exact.
+    The subsets are the writers' own constants — the text properties per
+    family, plus the legend frame's merged-declaration box vocabulary
+    (`_svg.LEGEND_BOX_PROPS`, owned by the writer module). A legend property
+    in neither set has no channel into a static file and is a provable loss:
+    the earlier declaration-level qualification rounded exactly those to
+    silence, which let warn stay quiet and strict permit a drop.
     """
     from .. import _svg
 
     text = frozenset(_svg.SLOT_RASTER_PROPS if family == "native_raster" else _svg.SLOT_TEXT_PROPS)
     if slot == "legend":
-        return text, (
-            "box properties (background, shadow, radius, padding) route through the "
-            "merged legend declaration; see the capability matrix legend note"
+        return text | _svg.LEGEND_BOX_PROPS, (
+            "box properties route through the merged legend declaration; see the "
+            "capability matrix legend note"
         )
     return text, ""
 
@@ -260,10 +263,7 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
     honored, qualifier = _honored_props(slot, family)
     kept = tuple(p for p in props if p in honored)
     lost = tuple(p for p in props if p not in honored)
-    if slot == "legend":
-        # Declaration-level: unlisted properties may still route through the
-        # merged legend channel, so they are qualified rather than declared
-        # lost (§28: unsure is said out loud, not rounded either direction).
+    if slot == "legend" and not lost:
         return SlotFinding(
             slot=slot,
             source="styles",
