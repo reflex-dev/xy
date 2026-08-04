@@ -1337,6 +1337,12 @@ def render_raster(
             else slot_paint("tick_label", default_text)
         )
         font_size = slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(axis))
+        tick_italic, tick_bold = _native_font_emphasis(
+            {
+                "font_style": (slots.get("tick_label") or {}).get("font-style"),
+                "font_weight": (slots.get("tick_label") or {}).get("font-weight", 400),
+            }
+        )
         baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
@@ -1394,6 +1400,8 @@ def render_raster(
                     tick_color,
                     item["text"],
                     angle=float(item["angle"]),
+                    italic=tick_italic,
+                    bold=tick_bold,
                 )
 
     if polar is not None:
@@ -3110,6 +3118,12 @@ def _emit_legend(
         # the final edge is silently dropped for both square and rounded frames.
         cmd.stroke(frame_points, 1.0, border, closed=True)
     if title:
+        title_italic, title_bold = _native_font_emphasis(
+            {
+                "font_style": title_slot.get("font-style"),
+                "font_weight": title_slot.get("font-weight", 400),
+            }
+        )
         cmd.text(
             x + box_w / 2,
             y + pad / 2 + font_size * 0.82,
@@ -3117,6 +3131,8 @@ def _emit_legend(
             slot_font_size(title_slot, font_size),
             _parse_color(slot_text_color(title_slot, text_color)),
             str(title),
+            italic=title_italic,
+            bold=title_bold,
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
@@ -3171,6 +3187,12 @@ def _emit_legend(
                     str(hatch),
                     _parse_color(_css(style.get("hatch_color"), "#222222")),
                 )
+        label_italic, label_bold = _native_font_emphasis(
+            {
+                "font_style": label_slot.get("font-style"),
+                "font_weight": label_slot.get("font-weight", 400),
+            }
+        )
         cmd.text(
             hx1 + gap,
             ry + font_size * 0.82,
@@ -3178,6 +3200,8 @@ def _emit_legend(
             slot_font_size(label_slot, font_size),
             _parse_color(slot_text_color(label_slot, text_color)),
             legend["names"][i],
+            italic=label_italic,
+            bold=label_bold,
         )
 
 
@@ -3284,6 +3308,18 @@ def _emit_colorbar(
     title_paint = _parse_color(slot_text_color(title_slot, text_color))
     tick_size = slot_font_size(tick_slot, COLORBAR_FONT_SIZE)
     tick_paint = _parse_color(slot_text_color(tick_slot, text_color))
+    cb_title_italic, cb_title_bold = _native_font_emphasis(
+        {
+            "font_style": title_slot.get("font-style"),
+            "font_weight": title_slot.get("font-weight", 400),
+        }
+    )
+    cb_tick_italic, cb_tick_bold = _native_font_emphasis(
+        {
+            "font_style": tick_slot.get("font-style"),
+            "font_weight": tick_slot.get("font-weight", 400),
+        }
+    )
     from ._svg import _colorbar_tick_target, _fmt_log, _linear_ticks, _log_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
@@ -3452,6 +3488,8 @@ def _emit_colorbar(
                 tick_size,
                 tick_paint,
                 tick_text(value),
+                italic=cb_tick_italic,
+                bold=cb_tick_bold,
             )
         if options.get("label"):
             cmd.text(
@@ -3461,6 +3499,8 @@ def _emit_colorbar(
                 title_size,
                 title_paint,
                 str(options["label"]),
+                italic=cb_title_italic,
+                bold=cb_title_bold,
             )
     else:
         tick_positions = (
@@ -3491,6 +3531,8 @@ def _emit_colorbar(
                 tick_size,
                 tick_paint,
                 tick_text(value),
+                italic=cb_tick_italic,
+                bold=cb_tick_bold,
             )
         # Matplotlib rotates a vertical colorbar's label 90° CCW and centers it
         # alongside the bar, outboard of the tick labels. The native glyph
@@ -3508,6 +3550,8 @@ def _emit_colorbar(
                 title_size,
                 title_paint,
                 str(options["label"]),
+                italic=cb_title_italic,
+                bold=cb_title_bold,
             )
 
 

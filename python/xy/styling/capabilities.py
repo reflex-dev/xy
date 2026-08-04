@@ -266,11 +266,13 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
 #: and has nothing in a file to style.
 _SLOT_SUBSET_NOTE = (
     "Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, "
-    "letter-spacing, opacity and the text paint (`fill`, or `color`). The raster "
-    "writer's glyph primitive takes a size and one RGBA paint and nothing else, "
-    "so it honors font-size and the paint only — font-weight, font-style, "
-    "font-family, letter-spacing and opacity are vector-only rather than "
-    "silently approximated. Properties outside the subset stay browser-only."
+    "letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps "
+    "any declared family onto the base-14 Helvetica faces (regular/bold/"
+    "oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster "
+    "atlas carries regular, bold and italic faces, so font-size, the paint, "
+    "font-weight and font-style survive there too — font-family, "
+    "letter-spacing and opacity remain vector-only rather than silently "
+    "approximated. Properties outside the subset stay browser-only."
 )
 
 _SLOT_EXCEPTIONS: dict[str, tuple[str, str, str]] = {

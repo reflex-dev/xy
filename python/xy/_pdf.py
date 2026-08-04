@@ -17,12 +17,20 @@ Mapping decisions:
   (``fill-opacity``/``stroke-opacity``/``opacity`` and rgba() color alpha)
   become deduplicated ExtGStates (/ca /CA). The generator only ever emits the
   default nonzero winding rule, so even-odd variants are never produced.
-- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 Helvetica family
-  (weight >= 600 selects Helvetica-Bold) in WinAnsiEncoding, using the
-  standard AFM width tables so ``text-anchor="middle"/"end"`` offsets come
-  from real metrics. Characters outside WinAnsi are replaced with "?"
-  (``cp1252`` + ``errors="replace"``) — a deterministic, locale-independent
-  substitution policy.
+- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 Helvetica family — four
+  faces: weight >= 600 selects the bold face, ``font-style: italic|oblique``
+  the oblique one — in WinAnsiEncoding, using the standard AFM width tables
+  so ``text-anchor="middle"/"end"`` offsets come from real metrics.
+  ``letter-spacing`` becomes ``Tc`` (reset after each run — text state
+  persists past ET), with the anchor width counting the len-1 inter-glyph
+  gaps ``Tc`` actually renders. ``opacity`` on text multiplies into the
+  ExtGState alpha alongside fill-opacity and the paint's own alpha. A
+  declared ``font-family`` is accepted and maps to the Helvetica family:
+  deterministic and metrically exact for the anchor math, recorded here
+  rather than silent (§28) — exact custom faces arrive with the font
+  registry. Characters outside WinAnsi are replaced with "?" (``cp1252`` +
+  ``errors="replace"``) — a deterministic, locale-independent substitution
+  policy.
 - ``<linearGradient>`` becomes an axial shading (/ShadingType 2; exponential
   function for 2 stops, stitching for more) painted inside the gradient
   geometry's clip; per-stop alpha becomes a luminosity soft mask.
@@ -202,7 +210,20 @@ _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "polyline": frozenset({"points"}) | _PAINT_ATTRS,
     "polygon": frozenset({"points"}) | _PAINT_ATTRS,
     "text": frozenset(
-        {"x", "y", "transform", "text-anchor", "font-size", "font-weight", "fill", "fill-opacity"}
+        {
+            "x",
+            "y",
+            "transform",
+            "text-anchor",
+            "font-size",
+            "font-weight",
+            "font-style",
+            "font-family",
+            "letter-spacing",
+            "opacity",
+            "fill",
+            "fill-opacity",
+        }
     ),
     "tspan": frozenset({"x", "y"}),
     "image": frozenset({"x", "y", "width", "height", "preserveAspectRatio", "style", "href"}),
@@ -678,8 +699,20 @@ class _Converter:
 
     # -- resource registration ---------------------------------------------
 
-    def _font(self, bold: bool) -> str:
-        base = "Helvetica-Bold" if bold else "Helvetica"
+    def _font(self, bold: bool, italic: bool = False) -> str:
+        # The four Helvetica base-14 faces. Any declared font-family maps to
+        # this family for now — deterministic, and the anchor math stays
+        # exact because _text_width_px speaks Helvetica metrics. The mapping
+        # is recorded in the module contract note, not silent (§28); exact
+        # custom faces arrive with the font registry.
+        if bold and italic:
+            base = "Helvetica-BoldOblique"
+        elif bold:
+            base = "Helvetica-Bold"
+        elif italic:
+            base = "Helvetica-Oblique"
+        else:
+            base = "Helvetica"
         if base not in self.fonts:
             num = self.pdf.reserve()
             name = f"F{len(self.fonts) + 1}"
@@ -1063,6 +1096,16 @@ class _Converter:
         _check_attrs(el, "text", _ALLOWED_ATTRS["text"])
         font_size = _float(el.get("font-size"), state.font_size, "font-size")
         bold = _weight(el.get("font-weight"), state.font_weight) >= 600
+        # font-style selects the oblique base-14 face; font-family is
+        # accepted and maps to the Helvetica family (module contract note) —
+        # the attribute must not be a crash, because the SVG writer emits it
+        # for any declared family and PDF inherits SVG's markup.
+        italic = str(el.get("font-style", "")).strip().lower() in ("italic", "oblique")
+        # The writer emits letter-spacing either as a bare number (author
+        # gave a number; normalized to px) or as an "Npx" string passed
+        # verbatim — both are px by the styling contract.
+        spacing_raw = str(el.get("letter-spacing") or "0").strip().removesuffix("px")
+        letter_spacing = _float(spacing_raw, 0.0, "letter-spacing")
         anchor = el.get("text-anchor", "start")
         if anchor not in ("start", "middle", "end"):
             _unsupported(f"text-anchor {anchor!r}")
@@ -1073,6 +1116,7 @@ class _Converter:
         ca = (
             state.opacity
             * _float(el.get("fill-opacity"), state.fill_opacity, "fill-opacity")
+            * _float(el.get("opacity"), 1.0, "opacity")
             * alpha
         )
 
@@ -1110,7 +1154,7 @@ class _Converter:
                 (_float(el.get("x"), 0.0, "x"), _float(el.get("y"), 0.0, "y"), el.text or "")
             )
 
-        font_name = self._font(bold)
+        font_name = self._font(bold, italic)
         theta = math.radians(angle)
         cos_t, sin_t = math.cos(theta), math.sin(theta)
         for x, y, s in runs:
@@ -1124,7 +1168,12 @@ class _Converter:
                     cx + cos_t * (x - cx) - sin_t * (y - cy),
                     cy + sin_t * (x - cx) + cos_t * (y - cy),
                 )
+            # Letter-spacing widens every advance, including after the last
+            # glyph in SVG's model — anchor math must match what Tc renders,
+            # which spaces between glyphs only, so count len-1 gaps.
             width = _text_width_px(data, font_size, bold)
+            if letter_spacing:
+                width += letter_spacing * max(0, len(data) - 1)
             dx = -width / 2.0 if anchor == "middle" else (-width if anchor == "end" else 0.0)
             tx = x + dx * cos_t
             ty = y + dx * sin_t
@@ -1134,10 +1183,16 @@ class _Converter:
             # rotation is the SVG angle (clockwise in screen space).
             self.ops.append("BT")
             self.ops.append(f"/{font_name} {_f(font_size)} Tf")
+            if letter_spacing:
+                # Text state persists past ET; reset below so a spaced run
+                # never leaks into a later unspaced one.
+                self.ops.append(f"{_f(letter_spacing)} Tc")
             self.ops.append(
                 f"{_f(cos_t)} {_f(sin_t)} {_f(sin_t)} {_f(-cos_t)} {_f(tx)} {_f(ty)} Tm"
             )
             self.ops.append(f"{_pdf_string(data)} Tj")
+            if letter_spacing:
+                self.ops.append("0 Tc")
             self.ops.append("ET")
 
     # -- images -------------------------------------------------------------
