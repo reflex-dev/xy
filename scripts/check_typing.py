@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_INIT = ROOT / "python" / "xy" / "__init__.py"
 SOURCE_PATHS = ("python", "tests/typing_pep561_consumer.py")
 REVEAL_RE = re.compile(
     r"consumer\.py:(?P<line>\d+):\d+: info\[revealed-type\] "
@@ -53,14 +55,49 @@ def _run_package_check(ty: Path) -> bool:
     return proc.returncode == 0
 
 
-def _installed_public_names(python: Path, *, cwd: Path) -> list[str]:
-    code = "import json, xy; print(json.dumps(xy.__all__))"
+def _environment_without_pythonpath() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    return env
+
+
+def _canonical_public_names(init_path: Path = SOURCE_INIT) -> list[str]:
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
+    except (OSError, SyntaxError) as exc:
+        raise RuntimeError(f"cannot inspect canonical xy exports in {init_path}: {exc}") from exc
+
+    for statement in tree.body:
+        if not (
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "_EXPORTS"
+                for target in statement.targets
+            )
+        ):
+            continue
+        try:
+            exports = ast.literal_eval(statement.value)
+        except (ValueError, SyntaxError) as exc:
+            raise RuntimeError(f"{init_path} _EXPORTS must be a literal dict") from exc
+        if not isinstance(exports, dict) or any(
+            not isinstance(name, str) or not name.isidentifier() or not isinstance(module, str)
+            for name, module in exports.items()
+        ):
+            raise RuntimeError(
+                f"{init_path} _EXPORTS must be a literal dict[str, str] with identifier keys"
+            )
+        return sorted({*exports, "__version__"})
+
+    raise RuntimeError(f"{init_path} does not define canonical _EXPORTS")
+
+
+def _installed_public_names(python: Path, *, cwd: Path) -> list[str]:
+    code = "import json, xy; print(json.dumps(xy.__all__))"
     proc = subprocess.run(
         [str(python), "-c", code],
         cwd=cwd,
-        env=env,
+        env=_environment_without_pythonpath(),
         check=False,
         capture_output=True,
         text=True,
@@ -79,6 +116,10 @@ def _installed_public_names(python: Path, *, cwd: Path) -> list[str]:
     if len(value) != len(set(value)):
         raise RuntimeError("installed xy.__all__ contains duplicate names")
     return sorted(value)
+
+
+def _public_name_drift(expected: list[str], installed: list[str]) -> tuple[list[str], list[str]]:
+    return sorted(set(expected) - set(installed)), sorted(set(installed) - set(expected))
 
 
 def _parse_revealed_types(output: str, line_names: dict[int, str]) -> dict[str, str]:
@@ -102,7 +143,22 @@ def _dynamic_root_names(revealed: dict[str, str]) -> list[str]:
 def _run_installed_consumer_check(python: Path, ty: Path) -> bool:
     with tempfile.TemporaryDirectory(prefix="xy-typing-consumer-") as raw_tmp:
         tmp = Path(raw_tmp)
-        names = _installed_public_names(python, cwd=tmp)
+        names = _canonical_public_names()
+        installed_names = _installed_public_names(python, cwd=tmp)
+        missing_exports, extra_exports = _public_name_drift(names, installed_names)
+        if missing_exports:
+            print(
+                f"installed xy.__all__ is missing canonical exports: {missing_exports}",
+                file=sys.stderr,
+            )
+        if extra_exports:
+            print(
+                f"installed xy.__all__ contains unexpected exports: {extra_exports}",
+                file=sys.stderr,
+            )
+        if missing_exports or extra_exports:
+            return False
+
         lines = ["from typing import reveal_type", "", "import xy", ""]
         line_names: dict[int, str] = {}
         for name in names:
@@ -138,6 +194,7 @@ requires-python = ">=3.11"
         proc = subprocess.run(
             command,
             cwd=tmp,
+            env=_environment_without_pythonpath(),
             check=False,
             capture_output=True,
             text=True,
@@ -158,7 +215,7 @@ requires-python = ">=3.11"
             print(output, file=sys.stderr)
             return False
 
-        print(f"installed typing consumer OK: {len(names)} xy.__all__ exports have concrete types")
+        print(f"installed typing consumer OK: {len(names)} canonical exports have concrete types")
         return True
 
 

@@ -365,9 +365,15 @@ def validate_static_typing_surface(
             and statement.test.id == "TYPE_CHECKING"
         ):
             continue
-        for child in ast.walk(statement):
-            if isinstance(child, ast.ImportFrom | ast.Import):
-                declared.update(alias.asname or alias.name for alias in child.names)
+        for child in statement.body:
+            if isinstance(child, ast.ImportFrom):
+                declared.update(
+                    alias.asname or alias.name for alias in child.names if alias.name != "*"
+                )
+            elif isinstance(child, ast.Import):
+                declared.update(
+                    alias.asname or alias.name.split(".", 1)[0] for alias in child.names
+                )
 
     missing = sorted(public_names - declared)
     if missing:

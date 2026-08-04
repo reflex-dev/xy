@@ -425,4 +425,36 @@ if TYPE_CHECKING:
 
     errors = check_public_api.validate_static_typing_surface(fake, init_path)
 
-    assert any("LazyOnly" in error and "TYPE_CHECKING" in error for error in errors)
+    assert errors == [
+        "xy public names have no static TYPE_CHECKING import or annotation: ['LazyOnly']"
+    ]
+
+
+def test_static_typing_surface_ignores_nested_and_else_imports(tmp_path: Path) -> None:
+    init_path = tmp_path / "__init__.py"
+    init_path.write_text(
+        """\
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .components import Typed
+
+    def helper():
+        from .components import FunctionOnly
+
+    class Namespace:
+        from .components import ClassOnly
+else:
+    from .components import ElseOnly
+""",
+        encoding="utf-8",
+    )
+    fake = ModuleType("xy")
+    fake.__all__ = ["Typed", "FunctionOnly", "ClassOnly", "ElseOnly"]
+
+    errors = check_public_api.validate_static_typing_surface(fake, init_path)
+
+    assert errors == [
+        "xy public names have no static TYPE_CHECKING import or annotation: "
+        "['ClassOnly', 'ElseOnly', 'FunctionOnly']"
+    ]
