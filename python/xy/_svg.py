@@ -1383,17 +1383,17 @@ def slot_styles(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     `chrome_styles` keeps whatever spelling the caller used (`font_size` and
     `font-size` both reach the browser, which sees the same declaration); the
     static writers match on property names, so they need one spelling.
+
+    Since the resolved-style IR landed, this view is produced by the declared
+    resolver (`xy.styling.declared.resolve_declared`), which builds the
+    interned `ResolvedStyleSnapshot` from the same normalization in the same
+    pass — the writers keep reading the byte-exact authored view, and every
+    IR consumer reads the snapshot, so the two cannot disagree about what was
+    declared.
     """
-    raw = (spec.get("dom") or {}).get("styles") or {}
-    out: dict[str, dict[str, Any]] = {}
-    for slot, decls in raw.items():
-        if not isinstance(decls, dict):
-            continue
-        out[str(slot)] = {
-            (k if str(k).startswith("--") else str(k).replace("_", "-")): v
-            for k, v in decls.items()
-        }
-    return out
+    from .styling.declared import resolve_declared
+
+    return resolve_declared(spec).slot_view()
 
 
 #: `styles={"legend": ...}` is CSS; `xy.legend(style=...)` reaches the writers
