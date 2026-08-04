@@ -554,7 +554,10 @@ def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
         return None
     space = "mark"
     if isinstance(value, dict):
-        unknown = sorted(set(value) - {"gradient", "space"})
+        # Sort the *rendered* keys: `value` is user input, so its keys need not
+        # be mutually comparable (`{1: ..., "a": ...}` made `sorted` raise a bare
+        # TypeError instead of reporting the unknown key).
+        unknown = sorted(str(key) for key in set(value) - {"gradient", "space"})
         if unknown:
             raise ValueError(f"{label} has unknown key(s) {unknown}; expected gradient, space")
         space = value.get("space", "mark")

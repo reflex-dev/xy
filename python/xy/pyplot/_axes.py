@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional
 
 import numpy as np
 
@@ -1889,12 +1889,12 @@ class Axes(PlotTypeMixin):
         if transform is not None:
             x, y = self._transform_points(x, y, transform)
         if np.ma.isMaskedArray(x):
-            masked_x = cast(np.ma.MaskedArray, np.ma.asarray(x))
+            masked_x = np.ma.asarray(x)
             if masked_x.dtype.kind in "iub":
                 masked_x = masked_x.astype(np.float64)
             x = np.ma.filled(masked_x, np.nan)
         if np.ma.isMaskedArray(y):
-            masked_y = cast(np.ma.MaskedArray, np.ma.asarray(y))
+            masked_y = np.ma.asarray(y)
             if masked_y.dtype.kind in "iub":
                 masked_y = masked_y.astype(np.float64)
             y = np.ma.filled(masked_y, np.nan)
