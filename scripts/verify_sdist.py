@@ -21,8 +21,10 @@ from typing import Optional
 
 try:
     from artifact_metadata import dependency_metadata_errors
+    from js_exports import missing_esm_exports
 except ModuleNotFoundError:  # imported by tests from the repository root
     from scripts.artifact_metadata import dependency_metadata_errors
+    from scripts.js_exports import missing_esm_exports
 
 REQUIRED_FILES = {
     "CHANGELOG.md",
@@ -215,7 +217,7 @@ def _require_pkg_info(path: str, root: str) -> None:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 
 
-def _require_file_contains(path: str, root: str, member: str, needles: set[str]) -> None:
+def _read_substantial_member(path: str, root: str, member: str) -> str:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/{member}")
         if data is None:
@@ -223,9 +225,21 @@ def _require_file_contains(path: str, root: str, member: str, needles: set[str])
         text = data.read().decode("utf-8")
     if len(text) < 1000:
         raise AssertionError(f"{member} is suspiciously small")
+    return text
+
+
+def _require_file_contains(path: str, root: str, member: str, needles: set[str]) -> None:
+    text = _read_substantial_member(path, root, member)
     missing = sorted(needle for needle in needles if needle not in text)
     if missing:
         raise AssertionError(f"{member} missing expected markers: {missing}")
+
+
+def _require_esm_exports(path: str, root: str, member: str, required: set[str]) -> None:
+    text = _read_substantial_member(path, root, member)
+    missing = missing_esm_exports(text, required)
+    if missing:
+        raise AssertionError(f"{member} missing expected exports: {missing}")
 
 
 def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> None:
@@ -262,13 +276,13 @@ def verify_sdist(path: str) -> None:
     _require_pkg_info(path, root)
     _require_exact_file(path, root, "python/xy/py.typed", b"")
     _require_exact_file(path, root, "python/reflex_xy/py.typed", b"")
-    _require_file_contains(
+    _require_esm_exports(
         path,
         root,
         "python/xy/static/index.js",
-        # The bundle is minified (identifiers renamed), so markers are the
-        # export aliases the minifier must preserve.
-        {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
+        # The bundle is minified (identifiers renamed), so the public surface is
+        # checked through the export block rather than by name spelling.
+        {"render", "renderStandalone", "decodeFrame", "ChartView"},
     )
     _require_file_contains(
         path,

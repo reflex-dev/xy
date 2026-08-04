@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from scripts.js_exports import missing_esm_exports
 
 from xy.channel import (
     FRAME_ALIGNMENT,
@@ -302,6 +303,6 @@ def test_widget_entry_no_longer_slices_binary_views() -> None:
     assert "raw.map(bytesToSpan)" in header
     for text in (source, header):
         assert ".buffer.slice(b.byteOffset" not in text
-    # The built bundle is minified; the decodeFrame export alias is the marker
-    # that survives identifier renaming.
-    assert "as decodeFrame" in built
+    # The built bundle is minified; its export block is what survives
+    # identifier renaming.
+    assert not missing_esm_exports(built, ("decodeFrame",))
