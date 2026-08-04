@@ -1817,6 +1817,46 @@ def _rounded_rect_path(
     return " ".join(s for s in p if s)
 
 
+def _slot_box_svg(box: Any) -> str:
+    """One chrome box as SVG rects — the writer half of `_chromebox`.
+
+    Shadow first, then the background/border rect; every attribute exactly
+    once (the duplicate-attribute XML trap: parsers keep the first value
+    silently), always an explicit `fill` (a rect inside the labels group
+    would inherit the text paint otherwise), radius as symmetric `rx` only
+    (PDF rejects `ry`). Emits nothing for a box that paints nothing, so the
+    unstyled document stays byte-identical.
+    """
+    if not box.paints_anything and box.shadow is None:
+        return ""
+    parts: list[str] = []
+    common_opacity = f' opacity="{_num(box.opacity)}"' if box.opacity < 1.0 else ""
+    radius_attr = f' rx="{_num(box.radius)}"' if box.radius > 0 else ""
+    if box.shadow is not None:
+        dx, dy, color = box.shadow
+        parts.append(
+            f'<rect x="{_num(box.x + dx)}" y="{_num(box.y + dy)}" '
+            f'width="{_num(box.w)}" height="{_num(box.h)}"{radius_attr} '
+            f'fill="{_escape_attr(color)}"{common_opacity}/>'
+        )
+    fill = _escape_attr(box.fill) if box.fill is not None else "none"
+    stroke = ""
+    if box.border_color is not None and box.border_width > 0:
+        stroke = (
+            f' stroke="{_escape_attr(box.border_color)}" stroke-width="{_num(box.border_width)}"'
+        )
+        if box.border_dash:
+            dashes = " ".join(_num(v) for v in box.border_dash)
+            stroke += f' stroke-dasharray="{dashes}"'
+    fill_opacity = f' fill-opacity="{_num(box.fill_opacity)}"' if box.fill_opacity < 1.0 else ""
+    parts.append(
+        f'<rect x="{_num(box.x)}" y="{_num(box.y)}" '
+        f'width="{_num(box.w)}" height="{_num(box.h)}"{radius_attr} '
+        f'fill="{fill}"{fill_opacity}{stroke}{common_opacity}/>'
+    )
+    return "".join(parts)
+
+
 def _poly_path(px: np.ndarray, py: np.ndarray) -> str:
     return _native.svg_poly_path(px, py)
 

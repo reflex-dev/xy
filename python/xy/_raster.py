@@ -770,6 +770,40 @@ def _round_rect_pts(
     return pts
 
 
+def _emit_slot_box(cmd: "_Cmd", box: Any) -> None:
+    """One chrome box in the raster display list — `_slot_box_svg`'s twin.
+
+    Slot opacity folds into every RGBA (the display list has no group
+    compositing); rounded corners go through `_round_rect_pts`; the border
+    strokes closed so the final edge is not silently dropped. Emits nothing
+    for a box that paints nothing — the unstyled-bytes gate.
+    """
+    if not box.paints_anything and box.shadow is None:
+        return
+
+    def pts(x: float, y: float) -> list[tuple[float, float]]:
+        if box.radius > 0:
+            return _round_rect_pts(x, y, box.w, box.h, box.radius)
+        return _rect_pts(x, y, box.w, box.h)
+
+    if box.shadow is not None:
+        dx, dy, color = box.shadow
+        cmd.fill(pts(box.x + dx, box.y + dy), _parse_color(color, opacity=box.opacity))
+    if box.fill is not None:
+        cmd.fill(
+            pts(box.x, box.y),
+            _parse_color(box.fill, opacity=box.opacity * box.fill_opacity),
+        )
+    if box.border_color is not None and box.border_width > 0:
+        cmd.stroke(
+            pts(box.x, box.y),
+            box.border_width,
+            _parse_color(box.border_color, opacity=box.opacity),
+            closed=True,
+            dash=list(box.border_dash) if box.border_dash else None,
+        )
+
+
 def _grad_line(
     space: str,
     direction: str,
