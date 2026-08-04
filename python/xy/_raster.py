@@ -79,6 +79,7 @@ from ._svg import (
     polar_tick_label_layout,
     polar_wedge_points,
     slot_font_size,
+    slot_in_labels_container,
     slot_styles,
     slot_text_color,
     warp_grid_rgba,
@@ -1098,6 +1099,15 @@ def render_raster(
     # Hoisted above the annotation passes: both phases read the annotation
     # slots, and the chrome text below reads the rest of the same mapping.
     slots = slot_styles(spec)
+    labels_slot = slots.get("labels") or {}
+    # The live chain for every text in the labels container is
+    # `color: var(--chart-text, inherit)`: the theme token wins, the
+    # container's own declared color is the inherited fallback, then the
+    # writer default. Title/legend/colorbar are siblings and keep
+    # `default_text`.
+    label_text_default = (
+        _css(dom_style.get("--chart-text"), "") or slot_text_color(labels_slot, "") or _TEXT
+    )
 
     spec_palette: Sequence[str] = spec.get("palette") or DEFAULT_PALETTE
     for palette_i, t in enumerate(spec["traces"]):
@@ -1156,6 +1166,16 @@ def render_raster(
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
+    # labels-container box (flag D, resolved): the background paints UNDER
+    # the baselines and every label text — the live DOM's order, where the
+    # spine/tick rules are children of the labels container. Painted before
+    # the annotation text phase because the raster draws those labels ahead
+    # of the spines (a pre-existing phase-order difference from SVG).
+    labels_paint = labels_slot.get("background", labels_slot.get("background-color"))
+    if labels_paint is not None:
+        _emit_slot_box(
+            cmd, lower_box("labels", {"background": labels_paint}, x=0, y=0, w=width, h=height)
+        )
     # Text annotations are unclipped like matplotlib Text (clip_on=False):
     # margin titles and edge labels may live outside the plot rectangle.
     _emit_annotations(
@@ -1377,19 +1397,20 @@ def render_raster(
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
+        tick_slot = slot_in_labels_container(slots, "tick_label")
         # The axis's own tick_label_color/tick_color is the narrower
         # selector and wins; the chart-wide slot fills in when it says nothing.
         axis_tick_paint = _css(axis_style.get("tick_label_color", axis_style.get("tick_color")), "")
         tick_color = (
             _parse_color(axis_tick_paint)
             if axis_tick_paint
-            else slot_paint("tick_label", default_text)
+            else _parse_color(slot_text_color(tick_slot, "") or label_text_default)
         )
-        font_size = slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(axis))
+        font_size = slot_font_size(tick_slot, _axis_tick_font_size(axis))
         tick_italic, tick_bold = _native_font_emphasis(
             {
-                "font_style": (slots.get("tick_label") or {}).get("font-style"),
-                "font_weight": (slots.get("tick_label") or {}).get("font-weight", 400),
+                "font_style": tick_slot.get("font-style"),
+                "font_weight": tick_slot.get("font-weight", 400),
             }
         )
         baseline_shift = _axis_tick_label_baseline_shift(axis)
@@ -1463,10 +1484,10 @@ def render_raster(
             ystep,
             xa,
             ya,
-            slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(xa)),
-            slot_font_size(slots.get("tick_label") or {}, _axis_tick_font_size(ya)),
-            _polar_label_paint(xa, slot_paint, default_text),
-            _polar_label_paint(ya, slot_paint, default_text),
+            slot_font_size(slot_in_labels_container(slots, "tick_label"), _axis_tick_font_size(xa)),
+            slot_font_size(slot_in_labels_container(slots, "tick_label"), _axis_tick_font_size(ya)),
+            _polar_label_paint(xa, slot_paint, label_text_default),
+            _polar_label_paint(ya, slot_paint, label_text_default),
             hide_x or xa.get("tick_label_strategy") == "off",
             hide_y or ya.get("tick_label_strategy") == "off",
         )
@@ -1550,7 +1571,7 @@ def render_raster(
         axis_style = axis.get("style") or {}
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
-        axis_title_slot = slots.get("axis_title") or {}
+        axis_title_slot = slot_in_labels_container(slots, "axis_title")
         italic, bold = _native_font_emphasis(
             {
                 "font_style": axis_style.get("label_font_style")
@@ -1565,11 +1586,11 @@ def render_raster(
             float(geometry["x"]),
             float(geometry["y"]),
             anchor,
-            slot_font_size(slots.get("axis_title") or {}, float(geometry["font_size"])),
+            slot_font_size(axis_title_slot, float(geometry["font_size"])),
             (
                 _parse_color(_css(axis_style.get("label_color"), ""))
                 if _css(axis_style.get("label_color"), "")
-                else slot_paint("axis_title", default_text)
+                else _parse_color(slot_text_color(axis_title_slot, "") or label_text_default)
             ),
             str(axis["label"]),
             angle=float(geometry["angle"]),

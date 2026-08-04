@@ -1378,6 +1378,7 @@ STATIC_STYLED_SLOTS: tuple[str, ...] = (
     "colorbar_tick",
     "annotation_label",
     "annotation_layer",
+    "labels",
 )
 
 
@@ -3900,7 +3901,7 @@ def _polar_tick_labels(
     hide_r: bool,
 ) -> None:
     """Emit polar tick labels as SVG text, from the shared placement."""
-    slot = slots.get("tick_label") or {}
+    slot = slot_in_labels_container(slots, "tick_label")
     attrs = slot_text_attrs(slot)
 
     def tick_color(axis: dict[str, Any]) -> str:
@@ -3999,6 +4000,15 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
     slots = slot_styles(spec)
+    labels_slot = slots.get("labels") or {}
+    # The live chain for every text in the labels container is
+    # `color: var(--chart-text, inherit)`: the theme token wins, the
+    # container's own declared color is the inherited fallback, then the
+    # writer default. Title/legend/colorbar are siblings of the container
+    # and keep `default_text`.
+    label_text_default = (
+        _css(dom_style.get("--chart-text"), "") or slot_text_color(labels_slot, "") or _TEXT
+    )
     grid: list[str] = []
     labels: list[str] = []
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
@@ -4068,7 +4078,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
-        slot = slots.get("tick_label") or {}
+        slot = slot_in_labels_container(slots, "tick_label")
         # The axis's own tick_label_color/tick_color is the narrower selector
         # and wins; the chart-wide slot fills in when the axis says nothing.
         color = escape(
@@ -4076,7 +4086,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
                 "",
             )
-            or slot_text_color(slot, default_text)
+            or slot_text_color(slot, label_text_default)
         )
         font_size = slot_font_size(slot, _axis_tick_font_size(axis))
         slot_attrs = slot_text_attrs(slot)
@@ -4154,7 +4164,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             xa,
             ya,
             slots,
-            default_text,
+            label_text_default,
             hide_x or xa.get("tick_label_strategy") == "off",
             hide_y or ya.get("tick_label_strategy") == "off",
         )
@@ -4352,7 +4362,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
-        slot = slots.get("axis_title") or {}
+        slot = slot_in_labels_container(slots, "axis_title")
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
@@ -4362,7 +4372,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         family = axis_style.get("label_font_family")
         font_style = axis_style.get("label_font_style")
         weight = axis_style.get("label_font_weight", 400)
-        paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, default_text)
+        paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, label_text_default)
         font_attrs = (f' font-family="{_escape_attr(family)}"' if family is not None else "") + (
             f' font-style="{_escape_attr(font_style)}"' if font_style is not None else ""
         )
@@ -4646,6 +4656,21 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
             f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
         )
+    # labels-container box (flag D, resolved): the background paints UNDER
+    # the axis baselines and every label text, exactly where the live DOM
+    # puts it — the spine/tick rules are children of the labels container,
+    # so its background sits below them and above marks + annotation shapes.
+    # The residual stacking difference (live, the full-bleed container also
+    # covers the title/legend/colorbar, which are earlier/later siblings) is
+    # recorded in KNOWN_RENDERER_DIVERGENCES, never silent.
+    labels_background = ""
+    container_paint = labels_slot.get("background", labels_slot.get("background-color"))
+    if container_paint is not None:
+        labels_background = _slot_box_svg(
+            lower_box("labels", {"background": container_paint}, x=0, y=0, w=width, h=height)
+        )
+    labels_opacity = _layer_opacity(labels_slot)
+    labels_group_attrs = f' opacity="{_num(labels_opacity)}"' if labels_opacity < 1.0 else ""
     # One flat join over the pieces rather than nested `join`s inside an
     # f-string: the mark list is the whole document for a per-point chart (tens
     # of MB at 100k markers), and joining it separately would materialize a
@@ -4663,8 +4688,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             *marks,
             "</g>",
             *unclipped_annotation_marks,
+            labels_background,
             baselines,
-            f'<g fill="{escape(default_text)}">',
+            f'<g fill="{escape(label_text_default)}"{labels_group_attrs}>',
             *labels,
             "</g>",
             *chrome,
@@ -5179,6 +5205,46 @@ _LABELS_CONTAINER_ANNOTATION_PROPS: tuple[str, ...] = (
 #: an em-valued slot font-size resolves against — the legend precedent:
 #: relative units resolve in the slot's own unit domain, never silently drop.
 _ANNOTATION_FONT_SIZE = 11.0
+
+#: What a labels-container declaration cascades into each text slot living in
+#: the container, per property. Read straight off the live stylesheet
+#: (`20_theme.ts`): a `:where()` rule on the child beats inheritance from the
+#: container even at zero specificity, so only the properties the child's
+#: rule leaves unset inherit. tick_label has a color rule only; axis_title
+#: pins font-size (12px) and font-weight (400); annotation_label pins both
+#: plus line-height (`_LABELS_CONTAINER_ANNOTATION_PROPS`).
+_LABELS_CONTAINER_TEXT_PROPS: dict[str, tuple[str, ...]] = {
+    "tick_label": ("font-size", "font-weight", "font-style", "font-family", "letter-spacing"),
+    "axis_title": ("font-style", "font-family", "letter-spacing"),
+}
+
+#: The labels container's own inherited font size (`:where(.xy){font:12px…}`),
+#: the base an em-valued labels-slot font-size resolves against.
+_LABELS_CONTAINER_FONT_SIZE = 12.0
+
+
+def slot_in_labels_container(slots: dict[str, Any], name: str) -> dict[str, Any]:
+    """The effective declaration for a text slot inside the labels container.
+
+    The labels-slot typography folds UNDER the specific slot (container <
+    specific slot < axis/annotation style — the cascade order the live DOM
+    gives inherited container styling). Color is deliberately absent: every
+    contained text resolves paint through `var(--chart-text, inherit)`, so
+    the container's color is a *default* below the theme token, threaded by
+    the writers as the label-text fallback instead of merged here.
+    """
+    slot = slots.get(name) or {}
+    container = slots.get("labels") or {}
+    if not container:
+        return slot
+    inherited = {
+        prop: container[prop] for prop in _LABELS_CONTAINER_TEXT_PROPS[name] if prop in container
+    }
+    if not inherited:
+        return slot
+    if "font-size" in inherited:
+        inherited["font-size"] = _annotation_em(inherited["font-size"], _LABELS_CONTAINER_FONT_SIZE)
+    return {**inherited, **slot}
 
 
 def _annotation_em(value: Any, base: float) -> Any:

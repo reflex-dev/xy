@@ -248,7 +248,7 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
-| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | 11 slots: the text subset, + the chrome-box subset on `annotation_label`, + opacity/background on `annotation_layer` | 11 slots: the text subset, + the chrome-box subset on `annotation_label`, + opacity/background on `annotation_layer` | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | 12 slots: the text subset, + the chrome-box subset on `annotation_label`, + opacity/background on `annotation_layer`, + the container defaults on `labels` | 12 slots: the text subset, + the chrome-box subset on `annotation_label`, + opacity/background on `annotation_layer`, + the container defaults on `labels` | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
 | `class_names={slot: "..."}` | yes, all 48 slots | **dropped** (or resolved via `style_source="native_cascade"` / a captured `style_snapshot=`) | same | silent by default during migration; both opt-in routes are lossless for the published profile |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
@@ -327,9 +327,12 @@ contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_title`,
 `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`,
 `colorbar_title`, `colorbar_tick`, `annotation_label` (which additionally
 carries the chrome-box subset — `_svg.SLOT_BOX_PROPS` — under the
-annotation's own `style=`, the narrower selector), and `annotation_layer`
+annotation's own `style=`, the narrower selector), `annotation_layer`
 (group opacity over the annotation shapes plus a plot-clipped background;
-the capability matrix records the two layer divergences). The remaining
+the capability matrix records the two layer divergences), and `labels`
+(the container: its color and typography are the inherited defaults under
+the contained tick/axis-title/annotation slots, and its background paints
+under the axis rules per the resolved flag-D order). The remaining
 slots are live-only chrome — `tooltip*`, `modebar*`, `crosshair_*`,
 `selection`, `badge*` — or containers with no painted text of their own;
 there is nothing in a PNG for them to style.

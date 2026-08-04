@@ -212,6 +212,12 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "per-primitive) and a plot-clipped background; the rest of the "
             "overlay's box model stays browser-only"
         )
+    if slot == "labels":
+        return text | frozenset({"background", "background-color"}), (
+            "the container's color and typography are defaults under the "
+            "contained slots; the background paints under the axis rules and "
+            "every label text (flag D)"
+        )
     return text, ""
 
 

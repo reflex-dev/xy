@@ -1324,11 +1324,12 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer` (`_svg.STATIC_STYLED_SLOTS`) |
+| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
 | Vector — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
 | Raster — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
 | `annotation_label` box | additionally `background`, `border` (+ longhands), `border-radius`, `padding`, offset `box-shadow`, `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS`), folded UNDER the annotation's own `style=` per property group |
 | `annotation_layer` | `opacity` (group over the annotation shapes; raster folds per-primitive) and `background`/`background-color` (plot-clipped) only |
+| `labels` | container defaults: color under the `var(--chart-text, inherit)` chain, typography folded under the contained slots per the live stylesheet's un-ruled properties, full-bleed `background` under the axis rules (flag D), `opacity` on the SVG label group |
 
 The raster atlas carries a regular, a bold and an italic face, so a slot's
 weight and style survive PNG/JPEG/WebP (weight ≥ 600 rounds up to the bold

@@ -85,14 +85,16 @@ implementation. The bullets below are the boundaries that page's rows imply.
 - **Styling does not survive every export path equally, and the boundary is
   published rather than left to be discovered.** Mark, axis, and chart-level
   `style=` reach all three renderers. Per-slot `styles={slot: {...}}` reaches
-  them for the eleven slots that name chrome a static file contains — `title`,
+  them for the twelve slots that name chrome a static file contains — `title`,
   `axis_title`, `tick_label`, the three legend slots, the three colorbar
-  slots, `annotation_label`, and `annotation_layer` — carrying `font-size`,
-  `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`,
-  and the text paint; `annotation_label` additionally carries the chrome-box
-  subset (background, border, radius, padding, offset shadow) under the
-  annotation's own `style=`, and `annotation_layer` takes a group opacity
-  over the annotation shapes plus a plot-clipped background. The remaining
+  slots, `annotation_label`, `annotation_layer`, and `labels` — carrying
+  `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
+  `opacity`, and the text paint; `annotation_label` additionally carries the
+  chrome-box subset (background, border, radius, padding, offset shadow)
+  under the annotation's own `style=`, `annotation_layer` takes a group
+  opacity over the annotation shapes plus a plot-clipped background, and
+  `labels` supplies the container defaults (color and typography) under the
+  contained slots. The remaining
   slots are live
   chrome (`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with
   nothing in a file to paint, and `class_names={slot: "..."}` cannot apply in a

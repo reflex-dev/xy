@@ -266,6 +266,19 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         tracked_by="tests/test_chrome_parity_p3.py pins the plot-rect geometry",
     ),
     RendererDivergence(
+        id="labels_container_stacking",
+        what="Where the labels-container background sits among its siblings (flag D)",
+        webgl="over the chart title (the container is a later DOM sibling), "
+        "under the axis rules and label texts it contains",
+        svg="under the axis rules and label texts (the resolved flag-D order), "
+        "and under the title/legend/colorbar chrome, which joins later",
+        native="same as SVG: filled after the marks, before the chrome text phase",
+        visible_when="styles={'labels': {'background': ...}} on a chart with a title, "
+        "legend or colorbar",
+        tracked_by="flag D of the static-chrome parity plan; "
+        "tests/test_chrome_parity_p3.py pins the writers' order",
+    ),
+    RendererDivergence(
         id="annotation_layer_opacity_compositing",
         what="How the annotation_layer slot's opacity composites overlapping shapes",
         webgl="group opacity: the overlay canvas is dimmed once as a whole",
@@ -314,6 +327,23 @@ _SLOT_EXCEPTIONS["root"] = (
     "token bag targets the same element and every renderer reads it "
     "(`spec['dom']['style']`). Prefer it for anything that must survive "
     "export.",
+)
+_SLOT_EXCEPTIONS["labels"] = (
+    "partial",
+    "styles={'labels': ...}",
+    "The label container. Its color is the default under the live chain "
+    "`var(--chart-text, inherit)` for every contained text (tick labels, "
+    "axis titles, annotation labels): the theme token wins, then the "
+    "container color, then the writer default — the axis's own colors and "
+    "the specific slots stay narrower and win. Typography folds under the "
+    "contained slots exactly where the live stylesheet leaves the property "
+    "un-ruled (font-size/weight cascade into tick labels only; style/family/"
+    "letter-spacing into all three). `background` paints full-bleed under "
+    "the axis rules and every label text, the live order; the residual "
+    "sibling stacking difference is in KNOWN_RENDERER_DIVERGENCES. "
+    "`opacity` rides the SVG label group (vector-only); live it also dims "
+    "the contained axis rules and the container background — recorded here "
+    "rather than approximated.",
 )
 _SLOT_EXCEPTIONS["annotation_layer"] = (
     "partial",

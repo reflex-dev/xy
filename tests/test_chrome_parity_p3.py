@@ -394,6 +394,140 @@ def test_layer_preflight_routes_opacity_and_background_only() -> None:
     assert finding.lost == ("border-radius",)
 
 
+# -- labels (the container slot) ----------------------------------------------
+
+
+def test_labels_color_is_every_contained_labels_default_in_both_writers() -> None:
+    # tick labels, the axis title and annotation labels all live in the
+    # labels container; its color is their inherited default.
+    def chart(**kwargs):
+        return xy.line_chart(
+            _line(),
+            xy.x_axis(label="x title"),
+            xy.text(0.5, 0.5, "note"),
+            **kwargs,
+        )
+
+    styled = chart(styles={"labels": {"color": "#123456"}})
+    svg = _svg_of(styled)
+    assert '<g fill="#123456"' in svg  # the container group itself
+    tick = next(t for t in re.findall(r"<text[^>]*>.*?</text>", svg) if ">0.5<" in t)
+    title = next(t for t in re.findall(r"<text[^>]*>.*?</text>", svg) if ">x title<" in t)
+    assert 'fill="#123456"' in tick and 'fill="#123456"' in title
+    assert not (_raster_of(chart()) == _raster_of(styled)).all()
+    # Byte-exact unstyled fallback: the empty declaration changes nothing.
+    assert _svg_of(chart()) == _svg_of(chart(styles={"labels": {}}))
+    assert (_raster_of(chart()) == _raster_of(chart(styles={"labels": {}}))).all()
+
+
+def test_the_theme_token_outranks_the_labels_container_color() -> None:
+    # The live chain is `color: var(--chart-text, inherit)`: the token wins
+    # over the container's own color, which is only the inherit fallback.
+    chart = xy.line_chart(
+        _line(),
+        style={"--chart-text": "#ff8800"},
+        styles={"labels": {"color": "#123456"}},
+    )
+    svg = _svg_of(chart)
+    assert "#ff8800" in svg
+    tick = next(t for t in re.findall(r"<text[^>]*>.*?</text>", svg) if ">0.5<" in t)
+    assert 'fill="#ff8800"' in tick and "#123456" not in tick
+
+
+def test_labels_typography_cascades_container_under_slot_under_axis() -> None:
+    # The acceptance cascade, per property: labels < tick_label < axis style.
+    def tick(svg: str) -> str:
+        return next(t for t in re.findall(r"<text[^>]*>.*?</text>", svg) if ">0.5<" in t)
+
+    container_only = _svg_of(
+        xy.line_chart(_line(), styles={"labels": {"font_size": 15, "font_style": "italic"}})
+    )
+    assert 'font-size="15"' in tick(container_only)
+    assert 'font-style="italic"' in tick(container_only)
+
+    slot_wins = _svg_of(
+        xy.line_chart(
+            _line(),
+            styles={"labels": {"font_size": 15}, "tick_label": {"font_size": 9}},
+        )
+    )
+    assert 'font-size="9"' in tick(slot_wins)
+
+    # The axis's own styling is the narrowest selector for paint (the
+    # pre-existing font-size knot — slot beats axis — is the axis family's
+    # to untangle, plan §4.6; this pins the paint direction only).
+    axis_wins = _svg_of(
+        xy.line_chart(
+            _line(),
+            xy.y_axis(style={"tick_label_color": "#ff0000"}),
+            styles={"labels": {"color": "#123456"}, "tick_label": {"fill": "#00ff00"}},
+        )
+    )
+    y_tick = next(t for t in re.findall(r"<text[^>]*>.*?</text>", axis_wins) if ">0.5<" in t)
+    assert 'fill="#ff0000"' in y_tick
+
+    # The live stylesheet pins the axis title's font-size (12px rule), so the
+    # container's size must NOT cascade into it — only style/family/spacing.
+    titled = _svg_of(
+        xy.line_chart(
+            _line(),
+            xy.x_axis(label="x title"),
+            styles={"labels": {"font_size": 15, "font_style": "italic"}},
+        )
+    )
+    title = next(t for t in re.findall(r"<text[^>]*>.*?</text>", titled) if ">x title<" in t)
+    assert 'font-size="15"' not in title
+    assert 'font-style="italic"' in title
+
+    # And the raster writer honors the same merged view (font-size lands).
+    plain = xy.line_chart(_line())
+    sized = xy.line_chart(_line(), styles={"labels": {"font_size": 15}})
+    assert not (_raster_of(plain) == _raster_of(sized)).all()
+
+
+def test_labels_background_paints_under_the_baselines_and_texts() -> None:
+    # Flag D, resolved and pinned: the container background sits UNDER the
+    # axis rules and every label text — the live order, where the spine and
+    # tick rules are children of the labels container. The residual sibling
+    # stacking (title/legend live under the full-bleed container) is in
+    # KNOWN_RENDERER_DIVERGENCES.
+    chart = xy.line_chart(
+        _line(),
+        xy.text(0.5, 0.5, "note"),
+        styles={"labels": {"background": "#123456"}},
+    )
+    svg = _svg_of(chart)
+    rect = next(r for r in _rects(svg) if "#123456" in r)
+    assert 'x="0" y="0"' in rect  # full-bleed, matching the inset:0 container
+    # Order: after the clipped marks group, before the first baseline <line>
+    # outside it, before the labels <g>.
+    tail = svg.split("</g>", 2)[2]  # past grid + marks groups
+    assert tail.index("#123456") < tail.index("<line ")
+    assert tail.index("#123456") < tail.index("<g fill=")
+    assert svg_to_pdf(svg)[:4] == b"%PDF"
+
+    plain = xy.line_chart(_line(), xy.text(0.5, 0.5, "note"))
+    assert not (_raster_of(plain) == _raster_of(chart)).all()
+
+
+def test_labels_opacity_rides_the_label_group() -> None:
+    chart = xy.line_chart(_line(), styles={"labels": {"opacity": 0.5}})
+    svg = _svg_of(chart)
+    assert re.search(r'<g fill="[^"]*" opacity="0.5">', svg)
+    assert svg_to_pdf(svg)[:4] == b"%PDF"
+
+
+def test_labels_preflight_routes_text_and_background() -> None:
+    figure = xy.line_chart(
+        _line(),
+        styles={"labels": {"color": "#123456", "background": "#fff", "border_radius": "3px"}},
+    ).figure()
+    report = figure.style_compatibility_report(target="png")
+    (finding,) = [f for f in report.findings if f.slot == "labels"]
+    assert set(finding.kept) == {"color", "background"}
+    assert finding.lost == ("border-radius",)
+
+
 # -- badge / badge_item: view-gated, excluded from static parity --------------
 
 
