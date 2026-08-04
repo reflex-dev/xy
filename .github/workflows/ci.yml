@@ -763,7 +763,7 @@ jobs:
       - name: Typecheck installed-wheel public surface
         shell: bash
         run: |
-          uv pip install -p smoke ty
+          uv pip install -p smoke ty==0.0.57
           if [ -x smoke/bin/python ]; then
             python_exe=smoke/bin/python
             ty_exe=smoke/bin/ty

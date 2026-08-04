@@ -5,6 +5,8 @@ at ``xy``: importing the implementation modules directly would miss regressions
 where a lazy root export silently falls back to ``Any``.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from typing import assert_type
 
