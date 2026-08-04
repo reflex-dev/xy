@@ -19,6 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+try:
+    from _ty_tools import resolve_ty_executable
+except ModuleNotFoundError as exc:  # imported by tests from the repository root
+    if exc.name != "_ty_tools":
+        raise
+    from scripts._ty_tools import resolve_ty_executable
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -46,14 +53,6 @@ def _python() -> str:
     return sys.executable
 
 
-def _ty_executable(python: str) -> str:
-    executable = "ty.exe" if os.name == "nt" else "ty"
-    sibling = Path(python).with_name(executable)
-    if sibling.is_file():
-        return str(sibling)
-    return shutil.which(executable) or executable
-
-
 def _base_checks(
     chromium: Optional[Path] = None,
     *,
@@ -62,7 +61,7 @@ def _base_checks(
     wheel_expect: Optional[str] = None,
 ) -> dict[str, Check]:
     py = _python()
-    ty = _ty_executable(py)
+    ty = str(resolve_ty_executable(py, required=False))
     chromium_arg = str(chromium) if chromium is not None else "<CHROMIUM>"
     chromium_paths = (chromium,) if chromium is not None else ()
     sdist_arg = str(sdist) if sdist is not None else "<SDIST>"

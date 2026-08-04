@@ -9,12 +9,18 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+try:
+    from _ty_tools import absolute_executable, resolve_ty_executable
+except ModuleNotFoundError as exc:  # imported by tests from the repository root
+    if exc.name != "_ty_tools":
+        raise
+    from scripts._ty_tools import absolute_executable, resolve_ty_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_INIT = ROOT / "python" / "xy" / "__init__.py"
@@ -23,25 +29,6 @@ REVEAL_RE = re.compile(
     r"consumer\.py:(?P<line>\d+):\d+: info\[revealed-type\] "
     r"Revealed type(?: is)?(?::)? `(?P<type>.*)`$"
 )
-
-
-def _absolute_executable(value: str | os.PathLike[str]) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        resolved = shutil.which(str(path))
-        path = Path(resolved) if resolved is not None else Path.cwd() / path
-    return path.absolute()
-
-
-def _default_ty(python: Path) -> Path:
-    executable = "ty.exe" if os.name == "nt" else "ty"
-    sibling = python.with_name(executable)
-    if sibling.is_file():
-        return sibling
-    found = shutil.which("ty")
-    if found is None:
-        raise FileNotFoundError("cannot find ty beside Python or on PATH")
-    return Path(found).absolute()
 
 
 def _print_command(command: list[str], *, cwd: Path) -> None:
@@ -233,8 +220,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--ty-executable", help="ty executable used for both checks")
     args = parser.parse_args(argv)
 
-    python = _absolute_executable(args.python_executable or sys.executable)
-    ty = _absolute_executable(args.ty_executable) if args.ty_executable else _default_ty(python)
+    python = absolute_executable(args.python_executable or sys.executable)
+    ty = (
+        absolute_executable(args.ty_executable)
+        if args.ty_executable
+        else resolve_ty_executable(python)
+    )
 
     package_ok = args.consumer_only or _run_package_check(ty)
     consumer_ok = _run_installed_consumer_check(python, ty)
