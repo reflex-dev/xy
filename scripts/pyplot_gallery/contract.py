@@ -30,6 +30,7 @@ BASELINE_PATH = CORPUS_ROOT / "baseline.json"
 PROVENANCE_PATH = CORPUS_ROOT / "provenance.json"
 EXTENDED_SPEC_PATH = CORPUS_ROOT / "extended-environment.json"
 COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 GALLERY_DOCUMENTATION_VERSION = "3.11.1"
 COMPATIBILITY_ORACLE_VERSION = "3.11.0"
 GALLERY_SNAPSHOT_DOWNLOADED_ON = "2026-07-30"
@@ -38,6 +39,21 @@ EXCLUDED_3D_SOURCE_COUNT = 48
 CONTRACT_SOURCE_COUNT = ARCHIVE_SOURCE_COUNT - EXCLUDED_3D_SOURCE_COUNT
 PYPLOT_ELIGIBLE_COUNT = 437
 EXPECTED_PROFILE_COUNTS = {"extended": 12, "non_pyplot": 22, "standard": 425}
+# Independently pinned from the initial d505ef... audit after removing the 48
+# examples outside XY's two-dimensional contract.  The verifier must not
+# derive this oracle from the mutable schema-1 baseline it is checking.
+LEGACY_SCHEMA_ONE_AUDIT_COMMIT = "d505ef5789d8b18e23fd838300b039932dc399ce"
+LEGACY_SCHEMA_ONE_SUMMARY = {
+    "source_count": CONTRACT_SOURCE_COUNT,
+    "pyplot_eligible_count": PYPLOT_ELIGIBLE_COUNT,
+    "standard_profile_count": EXPECTED_PROFILE_COUNTS["standard"],
+    "extended_profile_count": EXPECTED_PROFILE_COUNTS["extended"],
+    "xy_execution_passed": 189,
+    "capture_parity_passed": 172,
+    "dimension_parity_passed": 168,
+    "visual_gate_passed": 127,
+    "temporary_waiver_count": 327,
+}
 
 EXPECTED_ARCHIVES = {
     "python": {
@@ -709,7 +725,7 @@ def build_contract(
 
     baseline = {
         "schema_version": 1,
-        "audit_commit": "d505ef5789d8b18e23fd838300b039932dc399ce",
+        "audit_commit": LEGACY_SCHEMA_ONE_AUDIT_COMMIT,
         "matplotlib_version": "3.11.0",
         "summary": _legacy_summary(
             manifest=manifest,
@@ -1367,22 +1383,18 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
         errors.append("baseline paths do not exactly match the manifest")
 
     if baseline.get("schema_version") in {2, 3}:
-        expected_summary = (
-            _promoted_summary(
+        expected_summary: dict[str, Any] = {}
+        if baseline_paths_match:
+            expected_summary = _promoted_summary(
                 manifest=manifest,
                 baseline_examples=baseline_examples,
             )
-            if baseline_paths_match
-            else {}
-        )
-        if not expected_summary:
-            return errors
-        if expected_summary["acceptance_complete"] is not True:
-            errors.append(
-                f"promoted baseline must accept all {PYPLOT_ELIGIBLE_COUNT} pyplot examples"
-            )
-        if expected_summary["temporary_waiver_count"] != 0:
-            errors.append("promoted baseline must contain zero temporary waivers")
+            if expected_summary["acceptance_complete"] is not True:
+                errors.append(
+                    f"promoted baseline must accept all {PYPLOT_ELIGIBLE_COUNT} pyplot examples"
+                )
+            if expected_summary["temporary_waiver_count"] != 0:
+                errors.append("promoted baseline must contain zero temporary waivers")
         if baseline.get("schema_version") == 3:
             if COMMIT_SHA_PATTERN.fullmatch(str(baseline.get("audit_commit", ""))) is None:
                 errors.append("promoted baseline audit_commit must be a 40-character SHA")
@@ -1403,33 +1415,34 @@ def verify_contract(root: Path = CORPUS_ROOT) -> list[str]:
                 errors.append("promoted baseline acceptance report provenance is invalid")
             else:
                 assert isinstance(acceptance_reports, list)
-                if {
-                    record.get("profile") for record in acceptance_reports
-                } != expected_acceptance_profiles or any(
-                    record.get("harness_version") != HARNESS_VERSION
-                    or not isinstance(record.get("sha256"), str)
-                    or len(record["sha256"]) != 64
-                    or record.get("implementation_commit") != baseline.get("audit_commit")
-                    or not isinstance(record.get("report_manifest_sha256"), str)
-                    or len(record["report_manifest_sha256"]) != 64
-                    or record.get("promoted_manifest_sha256") != baseline.get("manifest_sha256")
-                    or record.get("extended_spec_sha256") != baseline.get("extended_spec_sha256")
-                    or (
-                        "python_interpreter" in record
-                        and not valid_python_interpreter(record["python_interpreter"])
+                report_manifest_sha256s = {
+                    record.get("report_manifest_sha256") for record in acceptance_reports
+                }
+                if (
+                    {record.get("profile") for record in acceptance_reports}
+                    != expected_acceptance_profiles
+                    or len(report_manifest_sha256s) != 1
+                    or any(
+                        record.get("harness_version") != HARNESS_VERSION
+                        or SHA256_PATTERN.fullmatch(str(record.get("sha256", ""))) is None
+                        or record.get("implementation_commit") != baseline.get("audit_commit")
+                        or SHA256_PATTERN.fullmatch(str(record.get("report_manifest_sha256", "")))
+                        is None
+                        or record.get("promoted_manifest_sha256") != baseline.get("manifest_sha256")
+                        or record.get("extended_spec_sha256")
+                        != baseline.get("extended_spec_sha256")
+                        or (
+                            "python_interpreter" in record
+                            and not valid_python_interpreter(record["python_interpreter"])
+                        )
+                        for record in acceptance_reports
                     )
-                    for record in acceptance_reports
                 ):
                     errors.append("promoted baseline acceptance report provenance is invalid")
     else:
-        expected_summary = (
-            _legacy_summary(
-                manifest=manifest,
-                baseline_examples=baseline_examples,
-            )
-            if baseline_paths_match
-            else {}
-        )
+        if baseline.get("audit_commit") != LEGACY_SCHEMA_ONE_AUDIT_COMMIT:
+            errors.append("schema-1 baseline audit_commit is not the pinned historical audit")
+        expected_summary = dict(LEGACY_SCHEMA_ONE_SUMMARY) if baseline_paths_match else {}
     for key, expected in expected_summary.items():
         if baseline.get("summary", {}).get(key) != expected:
             errors.append(f"baseline summary {key} must be {expected}")

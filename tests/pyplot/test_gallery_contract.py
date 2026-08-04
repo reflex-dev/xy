@@ -136,20 +136,75 @@ def test_contract_cleanup_only_deletes_excluded_archive_members(tmp_path: Path) 
     assert not excluded.exists()
 
 
-def test_schema_one_summary_is_derived_from_the_filtered_audit(tmp_path: Path) -> None:
+def test_schema_one_summary_is_independently_pinned(tmp_path: Path) -> None:
     root = tmp_path / "contract"
     shutil.copytree(CORPUS_ROOT, root)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     baseline_path = root / "baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     baseline["schema_version"] = 1
+    baseline["audit_commit"] = gallery_contract.LEGACY_SCHEMA_ONE_AUDIT_COMMIT
+    baseline["summary"] = dict(gallery_contract.LEGACY_SCHEMA_ONE_SUMMARY)
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    assert verify_contract(root) == []
+
     baseline["summary"] = gallery_contract._legacy_summary(
         manifest=manifest,
         baseline_examples=baseline["examples"],
     )
     baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
 
-    assert verify_contract(root) == []
+    assert any(
+        error == "baseline summary xy_execution_passed must be 189"
+        for error in verify_contract(root)
+    )
+
+
+def test_contract_verifier_accumulates_provenance_errors_after_path_mismatch(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    baseline_path = root / "baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["examples"].pop(next(iter(baseline["examples"])))
+    baseline["acceptance_reports"][0]["report_manifest_sha256"] = "invalid"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    provenance_path = root / "provenance.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance["archives"]["python"]["sha256"] = "0" * 64
+    provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    errors = verify_contract(root)
+
+    assert "baseline paths do not exactly match the manifest" in errors
+    assert "promoted baseline acceptance report provenance is invalid" in errors
+    assert "python archive provenance mismatch" in errors
+
+
+def test_contract_verifier_rejects_unshared_report_manifest_hashes(tmp_path: Path) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    baseline_path = root / "baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["acceptance_reports"][0]["report_manifest_sha256"] = "1" * 64
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    assert "promoted baseline acceptance report provenance is invalid" in verify_contract(root)
+
+
+def test_contract_verifier_rejects_non_lowercase_report_manifest_hashes(tmp_path: Path) -> None:
+    root = tmp_path / "contract"
+    shutil.copytree(CORPUS_ROOT, root)
+    baseline_path = root / "baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    for record in baseline["acceptance_reports"]:
+        record["report_manifest_sha256"] = "A" * 64
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    assert "promoted baseline acceptance report provenance is invalid" in verify_contract(root)
 
 
 def test_pyplot_pause_loop_is_classified_as_animation() -> None:
