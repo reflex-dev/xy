@@ -40,7 +40,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from os import PathLike
-from typing import Any, Literal, Optional, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, Union
+
+if TYPE_CHECKING:
+    from .styling.preflight import StyleCompatibilityReport
 
 import numpy as np
 
@@ -4175,7 +4178,7 @@ class Chart(Component):
         *,
         engine: Optional[export.Engine | str] = None,
         custom_css: Optional[str] = None,
-    ) -> Any:
+    ) -> StyleCompatibilityReport:
         """What of this chart's styling survives an export to ``target``.
 
         Report-only preflight: lists the styling sources present, how each

@@ -465,6 +465,10 @@ def summary() -> dict[str, object]:
         "slots_styleable_natively": sum(
             1 for s in CHART_SLOTS if s.support["native_raster"] != "none"
         ),
+        # The `styles={slot: ...}` channel specifically — the writers' own
+        # STATIC_STYLED_SLOTS, counted from the registry so generated prose
+        # cannot hold a stale number (the axis_style_keys lesson).
+        "slots_via_styles": sum(1 for s in CHART_SLOTS if s.channel.startswith("styles={")),
         "extension_points_shipped": sum(1 for e in EXTENSION_POINTS if e.status == "shipped"),
         "known_renderer_divergences": len(KNOWN_RENDERER_DIVERGENCES),
     }
