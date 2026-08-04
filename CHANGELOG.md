@@ -9,6 +9,13 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- The renderer-neutral styling IR: `xy.styling.resolved` defines the
+  versioned, interned `ResolvedStyleSnapshot` (schema v1 — concrete values
+  only, declarations deduped, instances referencing them by index), with a
+  generated TypeScript mirror (`js/src/14_style_snapshot.ts`) that the test
+  suite pins to the Python schema. Wire shape and reserved message names:
+  `spec/design/wire-protocol.md` §8; nothing rides the wire yet, so
+  `PROTOCOL_VERSION` is unchanged.
 - Every image-export API (`to_png`, `to_svg`, `to_image`, `write_image`,
   `export.write_images`) accepts `compatibility=`: `"legacy"` (default —
   behavior unchanged), `"warn"` (one `StyleCompatibilityWarning` naming each

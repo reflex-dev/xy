@@ -8,10 +8,14 @@ checked against it rather than against a reading of `styles.py`.
 `preflight` applies that inventory to one concrete chart and export target:
 `chart.style_compatibility_report()` routes every declared style and names
 what would not survive, before any bytes exist.
+
+`resolved` is the renderer-neutral styling IR those two converge on: the
+versioned, interned `ResolvedStyleSnapshot` of concrete values that every
+resolver produces and every renderer consumes.
 """
 
 from __future__ import annotations
 
-from . import capabilities, preflight
+from . import capabilities, preflight, resolved
 
-__all__ = ["capabilities", "preflight"]
+__all__ = ["capabilities", "preflight", "resolved"]

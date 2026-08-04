@@ -482,3 +482,54 @@ installed `xy` distribution, repairing a stale link if the install moved. The
 JS that renders a payload is therefore always the build that shipped with the
 Python that produced it. The protocol check exists for the case that survives
 this: a browser holding a cached bundle against a restarted kernel.
+
+## 8. Resolved style snapshot (schema v1, transport pending)
+
+`python/xy/styling/resolved.py` defines the renderer-neutral styling IR —
+the `ResolvedStyleSnapshot` — and `js/src/14_style_snapshot.ts` is its
+generated TypeScript mirror (`scripts/gen_style_snapshot_types.py`; the test
+suite fails when the two drift). Nothing here rides the wire yet, so
+`PROTOCOL_VERSION` stays at 12: the capture change that adds the
+`style_snapshot_request` / `style_snapshot` request-reply pair bumps it and
+carries this schema as the reply payload. The message names are reserved
+now so nothing else claims them.
+
+The schema is versioned independently (`STYLE_SNAPSHOT_VERSION = 1`),
+because a snapshot can outlive a session: it is cacheable and supplyable to
+an unmounted export, so a consumer may meet one produced by another build.
+A consumer that sees a version it does not know refuses; it never guesses.
+
+Shape (JSON-safe; spelled-out keys at snapshot level, one-letter keys on
+instances because instances are the part that repeats with chart density):
+
+```text
+{
+  version: 1,
+  style_epoch: int,                  # producer's style generation counter
+  environment: { width, height, dpr, color_scheme },   # resolution inputs
+  tokens: { name: value, ... },      # resolved chart tokens (open names)
+  states: [ "hover", ... ],          # export states included, if any
+  unrepresentable: [ property, ... ],# values with no target representation
+  declarations: [ { property: value, ... }, ... ],     # interned, deduped
+  instances: [ { s: slot, d: decl_index,
+                 q?: [qualifiers], g?: [x,y,w,h], c?: text }, ... ]
+}
+```
+
+Three contract properties, all enforced at construction on both ends of the
+eventual wire:
+
+- **Concrete values only.** No `var()`/`calc()`/`env()`/`inherit`, no
+  relative units (`em`, `%`, `vw`, …): a value that still depends on a
+  cascade or on metrics the consumer would re-derive is rejected loudly
+  (§28). This is what lets every renderer consume one shape without a CSS
+  engine.
+- **Interned declarations.** Each distinct declaration is stored once;
+  instances reference it by index and carry only identity
+  (`q`, e.g. `["y","major","3"]`), geometry, and content. A dense-axis
+  fixture (460 instances, 2 declarations, ~39 KB) pins the spec's 50 KB
+  uncompressed budget in `tests/test_resolved_style_snapshot.py`.
+- **Closed vocabulary per version.** Schema v1's property list is the
+  generated constant in both languages; growing it is a
+  `STYLE_SNAPSHOT_VERSION` bump, so a snapshot's vocabulary is always
+  recoverable from its version field alone.
