@@ -483,5 +483,3 @@ This roadmap is complete when:
   studies and overlays are either screen-bounded, incrementally computed, or
   precomputed.
 - Native and NumPy fallback calculations match for all finance kernels.
-- The example Reflex app contains a finance-workstation page exercising the
-  major tools side by side.
