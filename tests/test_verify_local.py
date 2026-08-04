@@ -61,6 +61,27 @@ def test_ty_script_entrypoints_support_path_and_module_execution(
     assert proc.returncode == 0, proc.stderr
 
 
+def test_scripts_package_replaces_conflicting_ty_tools_alias() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys, types; "
+                "sys.modules['_ty_tools'] = types.ModuleType('_ty_tools'); "
+                "import scripts, _ty_tools; "
+                "assert _ty_tools is scripts._ty_tools"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_default_selection_is_quick_checks_only() -> None:
     checks = verify_local._base_checks()
     selected = verify_local.select_checks(checks)

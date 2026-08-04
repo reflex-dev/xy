@@ -13,12 +13,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
-if TYPE_CHECKING:
-    from scripts import _ty_tools
-else:
-    import _ty_tools
+import _ty_tools
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_INIT = ROOT / "python" / "xy" / "__init__.py"

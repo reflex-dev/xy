@@ -17,12 +17,9 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
-if TYPE_CHECKING:
-    from scripts import _ty_tools
-else:
-    import _ty_tools
+import _ty_tools
 
 ROOT = Path(__file__).resolve().parents[1]
 

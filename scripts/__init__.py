@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import sys
 
-from . import _ty_tools
+from scripts import _ty_tools
 
 # Direct path execution imports helpers from the scripts directory by their
-# local name. Package execution loads this module first, so expose that same
-# name once here instead of duplicating fallbacks in every entry point.
-sys.modules.setdefault("_ty_tools", _ty_tools)
+# local name. Package execution loads this module first, so make that name
+# resolve to the same helper without duplicating fallbacks in every entry point.
+sys.modules["_ty_tools"] = _ty_tools
