@@ -37,9 +37,8 @@ class Check:
     requires_rust_toolchain: bool = False
     requires_rust_clippy: bool = False
     requires_argument: Optional[str] = None
-    # Advisory checks report findings but do not fail the gate — mirrors how CI
-    # runs them (e.g. ty is pre-1.0 and can't narrow known-non-None Optionals or
-    # NumPy dtypes across stub versions). Keep this in sync with ci.yml.
+    # Advisory checks report findings but do not fail the gate. Keep this in
+    # sync with ci.yml whenever a workflow check intentionally runs that way.
     advisory: bool = False
 
 
@@ -104,6 +103,7 @@ def _base_checks(
                 "pytest",
                 "-q",
                 "tests/test_public_api.py",
+                "tests/test_check_typing.py",
                 "tests/test_type_surface.py",
                 "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction",
                 "tests/test_components.py::test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract",
@@ -172,10 +172,9 @@ def _base_checks(
         ),
         Check(
             "ty",
-            "type check shippable Python package (advisory)",
-            (py, "-m", "ty", "check", "python"),
+            "type check shippable Python package and external-consumer surface",
+            (py, "scripts/check_typing.py"),
             requires_modules=("ty",),
-            advisory=True,
         ),
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(

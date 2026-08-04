@@ -11,7 +11,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterator, Sequence
 from operator import index as operator_index
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -568,7 +568,7 @@ class PathCollection(Artist):
         else:
             from ._ticker import MaxNLocator
 
-            count = 9 if num == "auto" else max(1, int(num))
+            count = 9 if num == "auto" else max(1, int(cast(Any, num)))
             ticks = MaxNLocator(count).tick_values(
                 float(transformed.min()), float(transformed.max())
             )
@@ -1621,7 +1621,7 @@ def _legend_item_from_entry(
         style["stroke"] = stroke
     stroke_width = kw.get("stroke_width")
     if stroke_width is not None and np.isscalar(stroke_width):
-        style["stroke_width"] = float(stroke_width)
+        style["stroke_width"] = float(cast(Any, stroke_width))
     hatch = kw.get("hatch", entry.get("pie_hatch"))
     if hatch:
         style["hatch"] = str(hatch)
@@ -1681,7 +1681,7 @@ def _legend_marker_style(entry: dict[str, Any]) -> dict[str, Any]:
     for key in ("size", "stroke_width"):
         value = kw.get(key)
         if value is not None and np.isscalar(value):
-            marker[key] = float(value)
+            marker[key] = float(cast(Any, value))
     return marker
 
 

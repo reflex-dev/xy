@@ -455,13 +455,15 @@ def compose_svg(
         block,
         size,
     )
-    title = (
-        f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
-        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">'
-        f"{_svg_text_lines(suptitle, width * float(style.get('x', 0.5)), block.line_step)}</text>"
-        if suptitle
-        else ""
-    )
+    if suptitle:
+        assert block is not None
+        title = (
+            f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
+            f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">'
+            f"{_svg_text_lines(suptitle, width * float(style.get('x', 0.5)), block.line_step)}</text>"
+        )
+    else:
+        title = ""
     labels = _svg_figure_labels(figure_labels or [], width, height)
     legend = ""
     if figure_legend and figure_legend.get("items"):

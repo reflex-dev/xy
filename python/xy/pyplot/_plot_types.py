@@ -706,8 +706,12 @@ def _pie_hatch_geometry(
             y0.append(clipped_start[1])
             x1.append(clipped_end[0])
             y1.append(clipped_end[1])
-    arrays = tuple(np.asarray(values, dtype=np.float64) for values in (x0, y0, x1, y1))
-    return arrays  # type: ignore[return-value]
+    return (
+        np.asarray(x0, dtype=np.float64),
+        np.asarray(y0, dtype=np.float64),
+        np.asarray(x1, dtype=np.float64),
+        np.asarray(y1, dtype=np.float64),
+    )
 
 
 def _limit_error(error: Any, lower_limits: Any, upper_limits: Any, size: int) -> Any:
@@ -1234,6 +1238,11 @@ class PlotTypeMixin:
     """Additional Matplotlib chart methods kept out of the core ``Axes`` type."""
 
     if TYPE_CHECKING:
+        figure: Any
+        transAxes: Any
+        _entries: list[dict[str, Any]]
+        _scale_specs: dict[str, dict[str, Any]]
+        _y2_of: Any
 
         def _add(self, kind: str, entry: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -1278,6 +1287,20 @@ class PlotTypeMixin:
         def _axis_props(self, axis: str) -> dict[str, Any]: ...
 
         def _invalidate(self) -> None: ...
+
+        def _reserve_annotation_margin(self, axis: str, margin: float) -> None: ...
+
+        def scatter(self, *args: Any, **kwargs: Any) -> PathCollection: ...
+
+        def get_position(self, original: bool = False) -> Any: ...
+
+        def get_xlim(self) -> tuple[float, float]: ...
+
+        def get_ylim(self) -> tuple[float, float]: ...
+
+        def set_aspect(self, aspect: Any, **kwargs: Any) -> None: ...
+
+        def set_axis_off(self) -> None: ...
 
     def semilogx(self, *args: Any, **kwargs: Any) -> list[Line2D]:
         """Like ``plot``, but sets the x-axis to log scale first.
@@ -2125,15 +2148,16 @@ class PlotTypeMixin:
                 dx = pixel_padding * display_direction * (1.0 if positive else -1.0)
                 dy = 0.0
                 vertical_align = "center"
+            text_style: dict[str, Any] = {"vertical_align": vertical_align}
             text_kwargs: dict[str, Any] = {
                 "color": resolve_color(color) if color is not None else None,
                 "anchor": anchor,
                 "dx": dx,
                 "dy": dy,
-                "style": {"vertical_align": vertical_align},
+                "style": text_style,
             }
             if fontsize is not None:
-                text_kwargs["style"]["font_size"] = float(fontsize)
+                text_style["font_size"] = float(fontsize)
             entry = self._add("@text", {"args": (x, y, label), "kwargs": text_kwargs})
             result.append(Text(self, entry))
         return result
@@ -5461,12 +5485,10 @@ class PlotTypeMixin:
                     else resolve_color(darkened)
                 )
                 opacity = face_rgba[3] if shadow_alpha is None else float(shadow_alpha)
-                shifted = tuple(
-                    (
-                        vertex[0] + shift_x,
-                        vertex[1] + shift_y,
-                    )
-                    for vertex in vertices
+                shifted = (
+                    (vertices[0][0] + shift_x, vertices[0][1] + shift_y),
+                    (vertices[1][0] + shift_x, vertices[1][1] + shift_y),
+                    (vertices[2][0] + shift_x, vertices[2][1] + shift_y),
                 )
                 shadow_entry = self._add(
                     "@mark",
@@ -6498,7 +6520,7 @@ class PlotTypeMixin:
                 anchor_rx = self._quiver_render_values([raw_x], metrics["x_spec"])[0]
                 anchor_ry = self._quiver_render_values([raw_y], metrics["y_spec"])[0]
                 x_fraction = y_fraction = None
-            if x_fraction is not None:
+            if x_fraction is not None and y_fraction is not None:
                 anchor_rx = float(metrics["render_xlim"][0]) + float(x_fraction) * (
                     float(metrics["render_xlim"][1]) - float(metrics["render_xlim"][0])
                 )

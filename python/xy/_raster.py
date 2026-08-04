@@ -16,7 +16,7 @@ import struct
 from collections.abc import Callable, Sequence
 from itertools import pairwise
 from os import PathLike
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -3372,7 +3372,7 @@ def _emit_colorbar(
     ticks = options.get("ticks")
     supplied_labels = options.get("tick_labels")
     tick_label_map = (
-        {float(value): str(supplied_labels[index]) for index, value in enumerate(ticks)}
+        {float(cast(Any, value)): str(supplied_labels[index]) for index, value in enumerate(ticks)}
         if isinstance(ticks, list)
         and isinstance(supplied_labels, list)
         and len(ticks) == len(supplied_labels)

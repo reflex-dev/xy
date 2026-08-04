@@ -12,7 +12,7 @@ import math
 import warnings
 from collections.abc import Mapping, Sequence
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import Any, Optional, TypeAlias, Union, cast
 
 import numpy as np
 
@@ -1738,7 +1738,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.kind == "ribbon":
             # x is just the two faces; y needs all four span edges, two of
             # which ride in the `x`/`y` slots (ribbon geometry contract).
-            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
+            columns = [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
+            return cast(list[Column], columns)
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]
@@ -1958,7 +1959,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[memoryview]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay

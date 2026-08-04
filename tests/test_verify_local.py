@@ -110,21 +110,16 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
     assert selected[0].requires_modules == ("pytest",)
 
 
-def test_ty_check_is_advisory_matching_ci() -> None:
-    # ci.yml runs `ty check python || echo "::warning::..."` — advisory, not
-    # gating (pre-1.0, can't narrow Optionals / NumPy dtypes across stub
-    # versions). The local full gate must match, or `make check-full` fails on
-    # findings CI ignores. If ty ever goes gating, flip both together.
+def test_ty_check_is_gating_and_includes_external_consumer() -> None:
     checks = verify_local._base_checks()
-    assert checks["ty"].advisory is True
-    # every other check stays gating
+    assert checks["ty"].advisory is False
+    assert checks["ty"].command[-1] == "scripts/check_typing.py"
+
     gating = [c.name for c in checks.values() if not c.advisory]
-    assert "ty" not in gating and "pytest" in gating and "ruff_check" in gating
+    assert "ty" in gating and "pytest" in gating and "ruff_check" in gating
 
 
-def test_advisory_check_findings_do_not_fail_the_gate() -> None:
-    # A failing advisory check warns but returns success; a failing gating
-    # check still fails. Drive main() with a stubbed runner.
+def test_ty_findings_fail_the_gate() -> None:
     import scripts.verify_local as vl
 
     def fake_run(check: verify_local.Check) -> int:
@@ -136,7 +131,7 @@ def test_advisory_check_findings_do_not_fail_the_gate() -> None:
         rc = vl.main(["--only", "ty"])
     finally:
         vl.run_check = original  # type: ignore[assignment]
-    assert rc == 0  # advisory finding does not gate
+    assert rc == 1
 
 
 def test_error_safety_check_is_known_as_targeted_gate() -> None:
@@ -171,6 +166,7 @@ def test_api_surface_check_is_known_as_targeted_gate() -> None:
     assert [check.name for check in selected] == ["api_surface"]
     command = selected[0].command
     assert "tests/test_public_api.py" in command
+    assert "tests/test_check_typing.py" in command
     assert "tests/test_type_surface.py" in command
     assert (
         "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction"
@@ -406,6 +402,7 @@ def test_dry_run_includes_api_surface_gate(capsys) -> None:
     assert "scripts/check_public_api.py" in out
     assert "api_surface" in out
     assert "tests/test_public_api.py" in out
+    assert "tests/test_check_typing.py" in out
     assert "tests/test_type_surface.py" in out
 
 

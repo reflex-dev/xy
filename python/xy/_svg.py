@@ -25,7 +25,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from itertools import pairwise
 from os import PathLike
-from typing import Any, NamedTuple, Optional
+from typing import Any, NamedTuple, Optional, cast
 
 import numpy as np
 
@@ -86,7 +86,7 @@ def _flag_stops() -> list[tuple[int, int, int]]:
     # Match Matplotlib's ``bytes=True`` conversion, which truncates rather than
     # rounds each clipped channel after scaling it to the uint8 range.
     rgb = (np.clip(channels, 0.0, 1.0) * 255.0).astype(np.uint8)
-    return [tuple(int(channel) for channel in row) for row in rgb]
+    return [(int(row[0]), int(row[1]), int(row[2])) for row in rgb]
 
 
 # Mirrors js/src/10_colormaps.ts COLORMAP_STOPS (§36) — test-guarded.
@@ -4700,7 +4700,7 @@ def _annotation_connector_unclipped(
     else:
         return False
     try:
-        x, y = float(target[0]), float(target[1])
+        x, y = float(cast(Any, target[0])), float(cast(Any, target[1]))
         if polar is not None:
             if not bool(polar.position_mask(x, y)):
                 return False

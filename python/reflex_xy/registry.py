@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -38,7 +38,8 @@ DEFAULT_TTL_SECONDS = 30 * 60.0
 _SWEEP_INTERVAL_SECONDS = 60.0
 
 
-PushHook = Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
+PushBuffer = bytes | bytearray | memoryview
+PushHook = Callable[[str, dict, Sequence[PushBuffer], Optional[int]], Awaitable[None]]
 
 
 @dataclass
@@ -48,7 +49,7 @@ class _QueuedPush:
     callback: PushHook
     token: str
     message: dict
-    buffers: list[bytes]
+    buffers: list[PushBuffer]
     version: Optional[int]
     completion: Optional[asyncio.Future[None]] = None
 
@@ -153,7 +154,7 @@ class FigureRegistry:
         entry: FigureEntry,
         token: str,
         message: dict,
-        buffers: list[bytes],
+        buffers: Sequence[PushBuffer],
         version: Optional[int],
         *,
         completion: Optional[asyncio.Future[None]] = None,
@@ -169,7 +170,7 @@ class FigureRegistry:
         loop = self._loop
         if callback is None or loop is None:
             return False, None
-        queued = _QueuedPush(callback, token, message, buffers, version, completion)
+        queued = _QueuedPush(callback, token, message, list(buffers), version, completion)
         with self._mutex:
             entry._push_queue.append(queued)
             if entry._push_drain_scheduled:

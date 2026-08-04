@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import urllib.parse
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Optional
 
 from socketio import AsyncNamespace
@@ -123,7 +123,9 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _buffer_bytes(buffers: Any) -> list[bytes]:
+def _buffer_bytes(
+    buffers: Optional[Sequence[bytes | bytearray | memoryview]],
+) -> list[bytes | bytearray]:
     """socket.io attaches `bytes`/`bytearray` only; memoryviews must convert.
 
     This is the single wire copy of each column (the join copy the split
@@ -334,7 +336,7 @@ class XYNamespace(AsyncNamespace):
         self,
         token: str,
         message: dict[str, Any],
-        buffers: Optional[list[bytes]] = None,
+        buffers: Optional[Sequence[bytes | bytearray | memoryview]] = None,
         version: Optional[int] = None,
     ) -> None:
         """Push one channel message to every subscriber of a figure."""
