@@ -39,6 +39,32 @@ ROUTE_SUBSET = "native-subset"
 ROUTE_BROWSER_ONLY = "browser-only"
 ROUTE_STATE_GATED = "state-gated"
 
+#: The staged compatibility modes, in rollout order. `legacy` is today's
+#: behavior and the default; `warn` surfaces every loss as one
+#: `StyleCompatibilityWarning`; `strict` refuses to emit bytes that drop a
+#: declaration. "lossless" is reserved for the phase that lets `Engine.auto`
+#: re-route on preflight evidence — accepting it before that phase would make
+#: the name a lie, so it is rejected now. The default flips on the schedule in
+#: `spec/process/style-compatibility-migration.md`, never silently.
+COMPATIBILITY_MODES: tuple[str, ...] = ("legacy", "warn", "strict")
+
+
+class StyleCompatibilityWarning(UserWarning):
+    """An export in `compatibility="warn"` mode dropped declared styling."""
+
+
+class StyleCompatibilityError(ValueError):
+    """An export in `compatibility="strict"` mode refused to drop styling.
+
+    Carries the full preflight `report`; the message is its `explain()` plus
+    the ways out, so the fix is in the traceback rather than a docs hunt.
+    """
+
+    def __init__(self, message: str, report: StyleCompatibilityReport) -> None:
+        super().__init__(message)
+        self.report = report
+
+
 _RASTER_FORMATS = frozenset({"png", "jpeg", "webp"})
 _VECTOR_FORMATS = frozenset({"svg", "pdf"})
 
@@ -238,39 +264,28 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
     )
 
 
-def preflight(
+def route_resolved(
     figure: Figure,
     *,
-    target: str = "png",
-    engine: object = None,
+    fmt: str,
+    resolved_engine: str,
     custom_css: Optional[str] = None,
 ) -> StyleCompatibilityReport:
-    """Route every declared style for one export target, without exporting.
+    """The routing core, for callers that already resolved format and engine.
 
-    `engine` accepts the same values as the export APIs (`Engine`, its string
-    aliases, or None for auto). The report mirrors the export path's actual
-    behavior, including its refusals — it never predicts a different outcome
-    than running the export would produce.
+    The export paths call this with their own resolution result so the
+    resolver (and its deprecation warnings) runs exactly once per export;
+    `preflight()` wraps it with a resolution of its own for standalone use.
     """
-    fmt, resolved, error = _resolve(target, engine, custom_css)
     sources = _sources(figure, custom_css)
-    if error:
-        return StyleCompatibilityReport(
-            target=fmt,
-            engine=resolved,
-            sources=sources,
-            lossless=False,
-            losses=(error,),
-            error=error,
-        )
-    if resolved == "browser":
+    if resolved_engine == "browser":
         # The live client renders the full cascade; nothing can drop.
-        return StyleCompatibilityReport(target=fmt, engine=resolved, sources=sources)
+        return StyleCompatibilityReport(target=fmt, engine=resolved_engine, sources=sources)
     if not (figure.class_names or figure.chrome_styles):
         # The constant-time path: chart-level `style=` and mark/axis `style=`
         # are full in every renderer (see the capability matrix), so with no
         # class or per-slot declarations there is nothing that can drop.
-        return StyleCompatibilityReport(target=fmt, engine=resolved, sources=sources)
+        return StyleCompatibilityReport(target=fmt, engine=resolved_engine, sources=sources)
 
     findings: list[SlotFinding] = []
     for slot in figure.class_names:
@@ -287,7 +302,7 @@ def preflight(
     )
     return StyleCompatibilityReport(
         target=fmt,
-        engine=resolved,
+        engine=resolved_engine,
         sources=sources,
         findings=tuple(findings),
         losses=losses,
@@ -295,12 +310,105 @@ def preflight(
     )
 
 
+def preflight(
+    figure: Figure,
+    *,
+    target: str = "png",
+    engine: object = None,
+    custom_css: Optional[str] = None,
+) -> StyleCompatibilityReport:
+    """Route every declared style for one export target, without exporting.
+
+    `engine` accepts the same values as the export APIs (`Engine`, its string
+    aliases, or None for auto). The report mirrors the export path's actual
+    behavior, including its refusals — it never predicts a different outcome
+    than running the export would produce.
+    """
+    fmt, resolved, error = _resolve(target, engine, custom_css)
+    if error:
+        return StyleCompatibilityReport(
+            target=fmt,
+            engine=resolved,
+            sources=_sources(figure, custom_css),
+            lossless=False,
+            losses=(error,),
+            error=error,
+        )
+    return route_resolved(figure, fmt=fmt, resolved_engine=resolved, custom_css=custom_css)
+
+
+def validate_compatibility(value: object) -> str:
+    """The mode, or a loud error naming the vocabulary (and the reserved word)."""
+    if isinstance(value, str) and value in COMPATIBILITY_MODES:
+        return value
+    if value == "lossless":
+        raise ValueError(
+            'compatibility="lossless" is reserved for the lossless-routing phase '
+            "(spec/process/style-compatibility-migration.md); until it can re-route "
+            f"engines on preflight evidence, pick one of {COMPATIBILITY_MODES}"
+        )
+    raise ValueError(f"compatibility must be one of {COMPATIBILITY_MODES}, got {value!r}")
+
+
+def enforce(
+    figure: Figure,
+    *,
+    fmt: str,
+    resolved_engine: str,
+    custom_css: Optional[str],
+    compatibility: str,
+) -> None:
+    """Apply a compatibility mode to one already-resolved export.
+
+    `legacy` returns before doing anything at all — the default path pays
+    zero. `warn` and `strict` pay the preflight only when the chart carries
+    class or per-slot declarations and the engine is native; a lossless
+    report also returns quietly. Engines are never re-routed here: the mode
+    decides whether to proceed, warn, or refuse — never where to render
+    (spec/process/style-compatibility-migration.md pins that contract).
+    """
+    import warnings
+
+    mode = validate_compatibility(compatibility)
+    if mode == "legacy":
+        return
+    if resolved_engine == "browser" or not (figure.class_names or figure.chrome_styles):
+        return
+    report = route_resolved(figure, fmt=fmt, resolved_engine=resolved_engine, custom_css=custom_css)
+    if report.lossless:
+        return
+    if mode == "warn":
+        warnings.warn(
+            StyleCompatibilityWarning(
+                f"this {fmt} export drops declared styling — "
+                + "; ".join(report.losses)
+                + " — chart.style_compatibility_report() has the full routing; "
+                "engine=Engine.chromium or to_html() keeps everything"
+            ),
+            stacklevel=2,
+        )
+        return
+    raise StyleCompatibilityError(
+        report.explain() + "\nstrict compatibility refuses to drop declared styling; keep it with "
+        "engine=Engine.chromium or to_html(), move it into chart/mark style= or a "
+        'supported styles= subset, or export with compatibility="warn" during '
+        "migration",
+        report,
+    )
+
+
 __all__ = [
+    "COMPATIBILITY_MODES",
     "ROUTE_BROWSER_ONLY",
     "ROUTE_STATE_GATED",
     "ROUTE_SUBSET",
     "ROUTE_SURVIVES",
     "SlotFinding",
+    "StyleCompatibilityError",
     "StyleCompatibilityReport",
+    "StyleCompatibilityWarning",
+    "enforce",
     "preflight",
+    "route_resolved",
+    "validate_compatibility",
 ]

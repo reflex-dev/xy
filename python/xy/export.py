@@ -43,6 +43,19 @@ class Engine(StrEnum):
     chromium = "chromium"
 
 
+def __getattr__(name: str) -> object:
+    # StyleCompatibilityError / StyleCompatibilityWarning are catchable from
+    # the module users already import for `Engine`, but resolved lazily: the
+    # preflight chain reaches the native library via the writers' constants,
+    # and importing this module must stay exactly as heavy as it was before
+    # the compatibility modes existed.
+    if name in ("StyleCompatibilityError", "StyleCompatibilityWarning"):
+        from .styling import preflight as _preflight
+
+        return getattr(_preflight, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # Warn above this payload size; base64 carries a stated ~33% tax (§29).
 EMBED_WARN_BYTES = 64 * 2**20
 
@@ -649,6 +662,7 @@ def write_images(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
 ) -> list[bytes]:
     """Export many figures through ONE amortized pipeline (mixed formats OK).
 
@@ -665,7 +679,10 @@ def write_images(
     exactly as in `Chart.to_image`. Writes are atomic per file; on error,
     files already exported remain. Other options match `to_image`; quality
     applies to JPEG and Chromium WebP and is ignored by the other formats
-    (native WebP stays lossless), so mixed batches stay ergonomic."""
+    (native WebP stays lossless), so mixed batches stay ergonomic.
+    `compatibility=` applies per figure while the plan is resolved, so a
+    strict batch refuses whole — before any file is written — rather than
+    after a partial export."""
     if figures is not None:
         if figs is not None:
             raise ValueError("pass figs positionally or figures=, not both")
@@ -709,6 +726,9 @@ def write_images(
             plan.append((fig, path, fmt, "html", {}, None, None))
             continue
         resolved = _resolve_image_engine(engine, fmt, custom_css)
+        # Per figure, up front with the rest of the plan: a strict batch
+        # fails whole before any file is written, never after a partial one.
+        _enforce_compatibility(fig, fmt, resolved, custom_css, compatibility)
         if callable(getattr(obj, "_export_defaults", None)):
             settings = obj._export_defaults(
                 fmt,
@@ -792,6 +812,7 @@ def to_png(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -819,6 +840,7 @@ def to_png(
     optimize = _bool_option(optimize, "PNG optimize")
     sandbox = _bool_option(sandbox, "PNG sandbox")
     resolved_engine = _png_engine(engine)
+    _enforce_compatibility(fig, "png", resolved_engine, custom_css, compatibility)
     if resolved_engine == "native":
         if custom_css is not None:
             raise ValueError("custom_css requires engine=Engine.chromium")
@@ -897,6 +919,35 @@ def _infer_format(path: str | PathLike[str]) -> str:
             f"{', '.join('.' + f for f in (*IMAGE_FORMATS, 'jpg', 'html'))}, "
             "or pass format= explicitly"
         ) from None
+
+
+def _enforce_compatibility(
+    fig: "Figure",
+    fmt: str,
+    resolved_engine: str,
+    custom_css: Optional[str],
+    compatibility: str,
+) -> None:
+    """Apply the staged compatibility mode to one already-resolved export.
+
+    The literal-"legacy" short-circuit is the whole performance contract:
+    the default export path does one string comparison and never imports the
+    preflight machinery. Everything else — mode validation, the constant-time
+    unstyled path, warning versus refusing — lives in
+    `styling.preflight.enforce`. Modes never re-route an engine; they decide
+    whether to proceed, warn, or refuse on the engine the caller resolved.
+    """
+    if compatibility == "legacy":
+        return
+    from .styling import preflight as _preflight
+
+    _preflight.enforce(
+        fig,
+        fmt=fmt,
+        resolved_engine=resolved_engine,
+        custom_css=custom_css,
+        compatibility=compatibility,
+    )
 
 
 def _resolve_image_engine(engine: object, fmt: str, custom_css: Optional[str]) -> str:
@@ -1137,6 +1188,7 @@ def to_image(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
 ) -> bytes:
     """Render `fig` to image bytes in the requested `format`.
 
@@ -1154,6 +1206,7 @@ def to_image(
     bounded rasters (the documented hybrid-vector policy)."""
     fmt = _normalize_format(format)
     resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
+    _enforce_compatibility(fig, fmt, resolved_engine, custom_css, compatibility)
     quality = _validated_quality(quality, fmt, resolved_engine)
     background = _validated_background(background, fmt)
     w, h = _export_dimensions(fig, width, height)
@@ -1201,6 +1254,7 @@ def write_image(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
 ) -> bytes:
     """Export `fig` to `path`, inferring the format from the extension.
 
@@ -1221,6 +1275,10 @@ def write_image(
                 ("background", background, None),
                 ("quality", quality, None),
                 ("optimize", optimize, False),
+                # HTML renders the full cascade in the browser — nothing can
+                # drop, so a compatibility mode has nothing to check and is
+                # rejected like the other options that cannot apply.
+                ("compatibility", compatibility, "legacy"),
             )
             if value != default
         ]
@@ -1246,6 +1304,7 @@ def write_image(
         custom_css=custom_css,
         sandbox=sandbox,
         gl=gl,
+        compatibility=compatibility,
     )
     _atomic_write_bytes(path, data)
     return data

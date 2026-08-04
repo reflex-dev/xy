@@ -2241,13 +2241,17 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        compatibility: str = "legacy",
     ) -> str:
         """Static SVG (_svg.py): a pure-Python render of the same decimated
         payload the browser client consumes — resolution-independent, tiny
         (screen-bounded regardless of source size), and dependency-free.
-        `width`/`height` override the figure's pixel size."""
+        `width`/`height` override the figure's pixel size. `compatibility`
+        stages the styling contract: "warn" surfaces any declaration this
+        vector export would drop, "strict" refuses to drop one."""
         from . import _svg
 
+        export._enforce_compatibility(self, "svg", "native", None, compatibility)
         return _svg.to_svg(self, path, width=width, height=height)
 
     def to_png(
@@ -2262,6 +2266,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
@@ -2283,6 +2288,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
         )
 
     def to_image(
@@ -2299,13 +2305,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
 
         `engine=Engine.auto` is deterministic — the browser-free native path
         for every format, Chromium only when `custom_css` needs a real CSS
         engine. See `export.to_image` for the format, quality, and background
-        policies."""
+        policies, and `compatibility=` ("legacy"/"warn"/"strict") for the
+        staged styling contract."""
         return export.to_image(
             self,
             format,
@@ -2319,6 +2327,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
         )
 
     def write_image(
@@ -2336,6 +2345,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """Atomic file export with extension-inferred format (export.py):
         .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
@@ -2353,6 +2363,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
         )
 
     def memory_report(self) -> dict[str, Any]:

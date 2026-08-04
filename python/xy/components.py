@@ -4196,9 +4196,15 @@ class Chart(Component):
         *,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        compatibility: str = "legacy",
     ) -> str:
-        """A static SVG render of the chart (written to ``path`` if given)."""
-        return self.figure().to_svg(path, width=width, height=height)
+        """A static SVG render of the chart (written to ``path`` if given).
+
+        ``compatibility`` stages the styling contract: ``"warn"`` surfaces
+        any declaration this export would drop, ``"strict"`` refuses to drop
+        one; the default preserves current behavior.
+        """
+        return self.figure().to_svg(path, width=width, height=height, compatibility=compatibility)
 
     def to_png(
         self,
@@ -4212,12 +4218,14 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """A PNG render of the chart, returned as bytes.
 
         ``scale`` multiplies the pixel density; ``engine`` picks the
         raster path (native or headless Chromium). Written to ``path``
-        when given.
+        when given. ``compatibility`` stages the styling contract
+        (``"legacy"``/``"warn"``/``"strict"``).
         """
         return self.figure().to_png(
             path,
@@ -4229,6 +4237,7 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
         )
 
     def _export_defaults(
@@ -4278,12 +4287,14 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
 
         Omitted width/height/scale/background/quality fall back to the
         chart's `export_config` defaults; explicit arguments override them.
-        See `export.to_image` for the full format/engine/background policy."""
+        See `export.to_image` for the full format/engine/background policy
+        and `compatibility=` for the staged styling contract."""
         fmt = export._normalize_format(format)
         resolved = export._resolve_image_engine(engine, fmt, custom_css)
         return self.figure().to_image(
@@ -4293,6 +4304,7 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
             **self._export_defaults(
                 fmt,
                 width,
@@ -4319,6 +4331,7 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
     ) -> bytes:
         """Atomic file export with extension-inferred format (.png/.jpg/
         .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
@@ -4356,6 +4369,7 @@ class Chart(Component):
                 custom_css=custom_css,
                 sandbox=sandbox,
                 gl=gl,
+                compatibility=compatibility,
             )
         return self.figure().write_image(
             path,
@@ -4365,6 +4379,7 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
             **defaults,
         )
 

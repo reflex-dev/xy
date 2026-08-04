@@ -263,8 +263,13 @@ into exactly one of four outcomes — `survives`, `native-subset` (with the kept
 and lost property names), `browser-only`, or `state-gated` — and mirrors the
 export path's refusals (`custom_css` with a pinned native engine, Chromium
 SVG) rather than re-deciding them. It is report-only: computing it never
-changes an export. The staged `compatibility=` modes that act on the report
-are a separate, later contract.
+changes an export. The staged `compatibility=` modes act on this report:
+`legacy` (the default — today's behavior, one string comparison of cost),
+`warn` (one `StyleCompatibilityWarning` naming every loss), and `strict`
+(`StyleCompatibilityError` before emission, report attached). `"lossless"`
+is reserved and rejected until preflight routing exists. Modes never
+re-route an explicit engine, and the default only flips on the schedule in
+`spec/process/style-compatibility-migration.md`.
 
 Two properties are load-bearing. First, the report is constant-time when
 there is nothing to route: no `class_names`, no per-slot `styles`, and no

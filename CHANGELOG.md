@@ -9,6 +9,15 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Every image-export API (`to_png`, `to_svg`, `to_image`, `write_image`,
+  `export.write_images`) accepts `compatibility=`: `"legacy"` (default —
+  behavior unchanged), `"warn"` (one `StyleCompatibilityWarning` naming each
+  declaration the export would drop), or `"strict"`
+  (`StyleCompatibilityError` before emission, preflight report attached).
+  Modes never re-route an explicit engine; `"lossless"` is reserved and
+  rejected until preflight routing exists. The default flips only on the
+  published schedule in `spec/process/style-compatibility-migration.md`
+  (warn in 0.0.7, strict in 0.1.0, legacy removed in 0.2.0).
 - `chart.style_compatibility_report(target=..., engine=..., custom_css=...)`:
   a report-only export preflight that routes every declared slot style into
   `survives`, `native-subset` (naming the kept and lost properties per
