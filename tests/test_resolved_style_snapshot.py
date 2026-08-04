@@ -66,15 +66,20 @@ def test_a_dense_axis_stays_inside_the_size_budget() -> None:
     assert snapshot.payload_bytes() < 50_000
 
 
-def test_builder_output_is_insertion_order_independent() -> None:
+def test_builders_fed_the_same_styling_in_any_order_emit_identical_bytes() -> None:
+    # Canonicalization is byte-level, not set-level: declaration slots are
+    # assigned by content and instances sorted by identity at build, so a
+    # cacheable snapshot cannot depend on which chrome happened to be walked
+    # first. Comparing payloads (not declaration sets) is what pins the
+    # instance-index remapping too.
     a, b = rs.SnapshotBuilder(), rs.SnapshotBuilder()
     a.add("title", {"font-size": 18, "color": "#fff"})
     a.add("axis_title", {"font-size": 12})
+    a.add("tick_label", {"font-size": 12}, qualifiers=("x", "0"))
+    b.add("tick_label", {"font-size": 12}, qualifiers=("x", "0"))
     b.add("axis_title", {"font-size": 12})
     b.add("title", {"color": "#fff", "font-size": 18})
-    left = a.build(_env()).declarations
-    right = b.build(_env()).declarations
-    assert set(map(tuple, (d.items() for d in left))) == set(map(tuple, (d.items() for d in right)))
+    assert a.build(_env()).to_payload() == b.build(_env()).to_payload()
 
 
 def test_empty_declarations_are_refused() -> None:
@@ -92,9 +97,17 @@ def test_empty_declarations_are_refused() -> None:
         ("calc(100% - 8px)", "cascade"),
         ("env(safe-area-inset-top)", "cascade"),
         ("inherit", "cascade"),
+        ("unset", "cascade"),
+        ("revert-layer", "cascade"),
         ("1.5em", "re-derive"),
         ("120%", "re-derive"),
         ("2rem", "re-derive"),
+        # Relative units anywhere in the value, not only as a whole-string
+        # suffix — the shapes that slipped the earlier end-anchored check.
+        ("translate(50%, 20%)", "re-derive"),
+        ("2em 1em", "re-derive"),
+        ("linear-gradient(45deg, red 50%, blue 50%)", "re-derive"),
+        ("0.5ch", "re-derive"),
         (float("nan"), "finite"),
         (float("inf"), "finite"),
         (True, "numbers or strings"),
@@ -115,6 +128,16 @@ def test_concrete_values_pass_unchanged() -> None:
     assert rs.assert_resolved("transform", "matrix(1, 0, 0, 1, 4, 8)")
 
 
+def test_cascade_keywords_reject_as_whole_values_not_substrings() -> None:
+    # `inherit` as the value defers to a cascade; a face that merely contains
+    # the letters is a concrete string. Substring matching rejected the
+    # latter; whole-value matching may not miss the former.
+    assert rs.assert_resolved("font-family", "Inheritance Sans") == "Inheritance Sans"
+    assert rs.assert_resolved("font-family", '"Unsettled Grotesk", sans-serif')
+    with pytest.raises(ValueError, match="cascade"):
+        rs.assert_resolved("font-family", "  INHERIT  ")
+
+
 def test_vocabulary_is_closed_per_version() -> None:
     with pytest.raises(ValueError, match="STYLE_SNAPSHOT_VERSION"):
         rs.assert_resolved("backdrop-filter", "blur(4px)")
@@ -128,6 +151,12 @@ def test_tokens_carry_open_names_but_the_same_value_contract() -> None:
     assert snapshot.tokens["--chart-legend-bg"] == "#0f172a"
     with pytest.raises(ValueError, match="cascade"):
         builder.build(_env(), tokens={"--chart-legend-bg": "var(--slate-900)"})
+    # The whole string contract, not just the function markers: a token
+    # `1.5em` smuggles the same document dependency a declaration would.
+    with pytest.raises(ValueError, match="re-derive"):
+        builder.build(_env(), tokens={"--chart-pad": "1.5em"})
+    with pytest.raises(ValueError, match="empty"):
+        builder.build(_env(), tokens={"--chart-pad": "  "})
 
 
 # -- wire round-trip ---------------------------------------------------------
@@ -183,11 +212,40 @@ def test_malformed_payloads_fail_loudly() -> None:
         rs.snapshot_from_payload(smuggled)
 
 
+def test_the_payload_path_enforces_the_builders_contract() -> None:
+    # from_payload is the untrusted end of the wire: a payload that could
+    # only have been made by bypassing the builder must not round-trip into
+    # renderer-facing IR. Same vocabulary, same validators, both ends.
+    builder = rs.SnapshotBuilder()
+    builder.add("title", {"font-size": 18})
+    good = builder.build(_env()).to_payload()
+
+    sepia = {**good, "environment": {**good["environment"], "color_scheme": "sepia"}}
+    with pytest.raises(ValueError, match="color_scheme"):
+        rs.snapshot_from_payload(sepia)
+
+    unresolved_token = {**good, "tokens": {"--fg": "var(--slate-50)"}}
+    with pytest.raises(ValueError, match="cascade"):
+        rs.snapshot_from_payload(unresolved_token)
+
+    relative_token = {**good, "tokens": {"--pad": "2em"}}
+    with pytest.raises(ValueError, match="re-derive"):
+        rs.snapshot_from_payload(relative_token)
+
+    non_finite = {**good, "environment": {**good["environment"], "width": float("nan")}}
+    with pytest.raises(ValueError, match="finite"):
+        rs.snapshot_from_payload(non_finite)
+
+
 def test_environment_is_validated() -> None:
     with pytest.raises(ValueError, match="color_scheme"):
         rs.SnapshotBuilder().build(
             rs.SnapshotEnvironment(width=100, height=100, color_scheme="sepia")
         )
+    with pytest.raises(ValueError, match="finite"):
+        rs.SnapshotBuilder().build(rs.SnapshotEnvironment(width=float("inf"), height=100))
+    with pytest.raises(ValueError, match="finite"):
+        rs.SnapshotBuilder().build(rs.SnapshotEnvironment(width=100, height=100, dpr=0.0))
 
 
 # -- the TypeScript mirror ---------------------------------------------------

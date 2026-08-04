@@ -524,9 +524,12 @@ eventual wire:
   cascade or on metrics the consumer would re-derive is rejected loudly
   (§28). This is what lets every renderer consume one shape without a CSS
   engine.
-- **Interned declarations.** Each distinct declaration is stored once;
-  instances reference it by index and carry only identity
-  (`q`, e.g. `["y","major","3"]`), geometry, and content. A dense-axis
+- **Interned declarations, canonically ordered.** Each distinct declaration
+  is stored once; instances reference it by index and carry only identity
+  (`q`, e.g. `["y","major","3"]`), geometry, and content. The builder emits
+  declarations sorted by content and instances sorted by identity, so
+  logically identical styling serializes byte-identically regardless of
+  production order — instance order carries no meaning. A dense-axis
   fixture (460 instances, 2 declarations, ~39 KB) pins the spec's 50 KB
   uncompressed budget in `tests/test_resolved_style_snapshot.py`.
 - **Closed vocabulary per version.** Schema v1's property list is the

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -100,26 +101,72 @@ PROPERTIES_V1: tuple[str, ...] = (
 
 _PROPERTY_SET = frozenset(PROPERTIES_V1)
 
-#: Constructs whose value depends on a document, a cascade, or an
-#: environment the renderer does not have. Their presence means the value is
-#: not resolved, whatever else it looks like.
-_UNRESOLVED_MARKERS: tuple[str, ...] = ("var(", "calc(", "env(", "attr(", "inherit", "unset")
+#: Function-shaped constructs whose value depends on a document, a cascade,
+#: or an environment the renderer does not have. Matched as substrings —
+#: a `var(` buried inside a gradient is exactly as unresolved as one alone.
+_UNRESOLVED_FUNCTIONS: tuple[str, ...] = ("var(", "calc(", "env(", "attr(")
+
+#: Cascade keywords, matched only as the entire normalized value: `inherit`
+#: as a value defers to a cascade, but a face named "Inheritance Sans" is a
+#: concrete string and must not be rejected for containing the letters.
+_UNRESOLVED_KEYWORDS: frozenset[str] = frozenset(
+    {"inherit", "initial", "unset", "revert", "revert-layer"}
+)
 
 #: Length units a *resolved* value may not carry: every one is relative to
 #: font metrics or viewport the consumer would have to re-derive. Resolved
 #: lengths are plain numbers (CSS px).
-_RELATIVE_UNITS: tuple[str, ...] = ("em", "rem", "ex", "ch", "vw", "vh", "vmin", "vmax", "%")
+_RELATIVE_UNITS: tuple[str, ...] = ("vmin", "vmax", "rem", "em", "ex", "ch", "vw", "vh", "%")
+
+#: A relative-unit length *anywhere* in the value — `translate(50%, 20%)`,
+#: a `2em 1em` shorthand, a gradient stop — not only as a whole-string
+#: suffix. Mid-string relative units are precisely the ones that slipped a
+#: document dependency past the earlier end-anchored check.
+_RELATIVE_UNIT_RE = re.compile(
+    r"(?<![a-z0-9.#_-])\d*\.?\d+(?:"
+    + "|".join(map(re.escape, _RELATIVE_UNITS))
+    + r")(?![a-z0-9%])",
+    re.IGNORECASE,
+)
 
 _COLOR_SCHEMES = frozenset({"light", "dark"})
+
+
+def _assert_concrete_text(label: str, value: str) -> str:
+    """The one string contract, shared by declarations and tokens alike."""
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{label}: a resolved value cannot be empty")
+    lowered = text.lower()
+    if lowered in _UNRESOLVED_KEYWORDS:
+        raise ValueError(
+            f"{label}: {text!r} defers to a cascade the renderer does not have; "
+            "resolve it before it enters the snapshot"
+        )
+    for marker in _UNRESOLVED_FUNCTIONS:
+        if marker in lowered:
+            raise ValueError(
+                f"{label}: {text!r} still depends on a cascade the renderer does not "
+                f"have ({marker.rstrip('(')}); resolve it before it enters the snapshot"
+            )
+    relative = _RELATIVE_UNIT_RE.search(lowered)
+    if relative is not None:
+        raise ValueError(
+            f"{label}: {text!r} carries {relative.group(0)!r}, which is relative to "
+            "metrics the consumer would have to re-derive; resolved lengths are "
+            "plain numbers in CSS px"
+        )
+    return text
 
 
 def assert_resolved(prop: str, value: object) -> str | float:
     """A schema-v1 value, or a loud error saying exactly why it is not one.
 
     Numbers pass as finite floats. Strings pass unless they carry an
-    unresolved construct or end in a relative unit — the two ways a value can
-    quietly mean something different in the consumer than it did in the
-    source. There is no silent coercion in either direction.
+    unresolved construct or a relative-unit length anywhere in the value —
+    the two ways a value can quietly mean something different in the
+    consumer than it did in the source. There is no silent coercion in
+    either direction.
     """
     if prop not in _PROPERTY_SET:
         raise ValueError(
@@ -133,26 +180,7 @@ def assert_resolved(prop: str, value: object) -> str | float:
         if not math.isfinite(number):
             raise ValueError(f"{prop}: resolved numbers must be finite, got {value!r}")
         return number
-    text = value.strip()
-    if not text:
-        raise ValueError(f"{prop}: a resolved value cannot be empty")
-    lowered = text.lower()
-    for marker in _UNRESOLVED_MARKERS:
-        if marker in lowered:
-            raise ValueError(
-                f"{prop}: {text!r} still depends on a cascade the renderer does not "
-                f"have ({marker.rstrip('(')}); resolve it before it enters the snapshot"
-            )
-    for unit in _RELATIVE_UNITS:
-        if (
-            lowered.endswith(unit)
-            and lowered[: -len(unit)].replace(".", "", 1).lstrip("+-").isdigit()
-        ):
-            raise ValueError(
-                f"{prop}: {text!r} is relative to metrics the consumer would have to "
-                "re-derive; resolved lengths are plain numbers in CSS px"
-            )
-    return text
+    return _assert_concrete_text(prop, value)
 
 
 @dataclass(frozen=True)
@@ -237,9 +265,12 @@ class SnapshotBuilder:
     """Interning constructor: identical declarations share one record.
 
     The producer calls `add(slot, declaration, ...)` per styled instance and
-    `build(...)` once; canonicalization (sorted property order) makes
-    interning independent of declaration insertion order, so a builder fed
-    the same styling in any order emits the same snapshot.
+    `build(...)` once. `build` emits a **canonical** snapshot: declarations
+    sorted by their property content (instance indices remapped to match)
+    and instances sorted by identity, so a builder fed the same styling in
+    any order emits byte-identical payloads. Instance order therefore
+    carries no meaning — identity lives in `(slot, qualifiers)` — which is
+    what makes a snapshot cacheable and comparable across producers.
     """
 
     def __init__(self) -> None:
@@ -299,15 +330,42 @@ class SnapshotBuilder:
         unrepresentable: Sequence[str] = (),
         style_epoch: int = 0,
     ) -> ResolvedStyleSnapshot:
-        if environment.color_scheme not in _COLOR_SCHEMES:
-            raise ValueError(f"color_scheme must be one of {sorted(_COLOR_SCHEMES)}")
+        environment = _validated_environment(
+            environment.width, environment.height, environment.dpr, environment.color_scheme
+        )
         resolved_tokens = {
             str(name): assert_resolved_token(name, value) for name, value in (tokens or {}).items()
         }
+        # Canonicalize: declaration slots by content, instances by identity,
+        # so logically identical styling is byte-identical on the wire.
+        order = sorted(
+            range(len(self._declarations)),
+            key=lambda i: tuple(self._declarations[i].items()),
+        )
+        remap = {old: new for new, old in enumerate(order)}
+        instances = sorted(
+            (
+                SlotInstance(
+                    slot=inst.slot,
+                    declaration=remap[inst.declaration],
+                    qualifiers=inst.qualifiers,
+                    geometry=inst.geometry,
+                    content=inst.content,
+                )
+                for inst in self._instances
+            ),
+            key=lambda inst: (
+                inst.slot,
+                inst.qualifiers,
+                inst.declaration,
+                inst.geometry or (),
+                inst.content or "",
+            ),
+        )
         return ResolvedStyleSnapshot(
             environment=environment,
-            declarations=tuple(self._declarations),
-            instances=tuple(self._instances),
+            declarations=tuple(self._declarations[i] for i in order),
+            instances=tuple(instances),
             tokens=resolved_tokens,
             states=tuple(str(s) for s in states),
             unrepresentable=tuple(str(u) for u in unrepresentable),
@@ -315,8 +373,35 @@ class SnapshotBuilder:
         )
 
 
+def _validated_environment(
+    width: object, height: object, dpr: object, color_scheme: object
+) -> SnapshotEnvironment:
+    """One environment contract for both construction ends of the wire."""
+    numbers = {}
+    for label, value in (("width", width), ("height", height), ("dpr", dpr)):
+        try:
+            out = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"environment {label} must be a finite positive number") from exc
+        if not math.isfinite(out) or out <= 0:
+            raise ValueError(f"environment {label} must be a finite positive number")
+        numbers[label] = out
+    scheme = str(color_scheme)
+    if scheme not in _COLOR_SCHEMES:
+        raise ValueError(f"color_scheme must be one of {sorted(_COLOR_SCHEMES)}")
+    return SnapshotEnvironment(
+        width=numbers["width"], height=numbers["height"], dpr=numbers["dpr"], color_scheme=scheme
+    )
+
+
 def assert_resolved_token(name: object, value: object) -> str | float:
-    """Chart tokens carry open names but the same resolved-value contract."""
+    """Chart tokens carry open names but the same resolved-value contract.
+
+    The string rules are `_assert_concrete_text`, shared with declarations —
+    a token `1.5em` smuggles the identical document dependency a declaration
+    `1.5em` would, so the two vocabularies differ only in that token *names*
+    are open while the schema property list is closed.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise ValueError(f"token {name!r}: resolved values are numbers or strings, got {value!r}")
     if isinstance(value, (int, float)):
@@ -324,14 +409,7 @@ def assert_resolved_token(name: object, value: object) -> str | float:
         if not math.isfinite(number):
             raise ValueError(f"token {name!r}: resolved numbers must be finite")
         return number
-    lowered = value.lower()
-    for marker in _UNRESOLVED_MARKERS:
-        if marker in lowered:
-            raise ValueError(
-                f"token {name!r}: {value!r} still depends on a cascade "
-                f"({marker.rstrip('(')}); resolve it before it enters the snapshot"
-            )
-    return value
+    return _assert_concrete_text(f"token {name!r}", value)
 
 
 def snapshot_from_payload(payload: Mapping[str, Any]) -> ResolvedStyleSnapshot:
@@ -369,18 +447,26 @@ def snapshot_from_payload(payload: Mapping[str, Any]) -> ResolvedStyleSnapshot:
                 content=raw.get("c"),
             )
         )
+    # The payload path is the untrusted end of the wire, so it enforces the
+    # identical contract `build()` enforces: environment vocabulary and
+    # finiteness, and every token through the shared resolved-value rules. A
+    # snapshot that could only have been made by bypassing the builder must
+    # not become renderer-facing IR by arriving serialized.
     return ResolvedStyleSnapshot(
-        environment=SnapshotEnvironment(
-            width=float(env["width"]),
-            height=float(env["height"]),
-            dpr=float(env.get("dpr", 1.0)),
-            color_scheme=str(env.get("color_scheme", "light")),
+        environment=_validated_environment(
+            env["width"],
+            env["height"],
+            env.get("dpr", 1.0),
+            env.get("color_scheme", "light"),
         ),
         declarations=tuple(dict(d) for d in declarations),
         instances=tuple(instances),
-        tokens=dict(payload.get("tokens", {})),
-        states=tuple(payload.get("states", ())),
-        unrepresentable=tuple(payload.get("unrepresentable", ())),
+        tokens={
+            str(name): assert_resolved_token(name, value)
+            for name, value in dict(payload.get("tokens", {})).items()
+        },
+        states=tuple(str(s) for s in payload.get("states", ())),
+        unrepresentable=tuple(str(u) for u in payload.get("unrepresentable", ())),
         style_epoch=int(payload.get("style_epoch", 0)),
     )
 
