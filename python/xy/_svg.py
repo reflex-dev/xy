@@ -5060,7 +5060,8 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return _annotation_layer_wrap(marks, unclipped_marks, slots, plot) + (labels,)
+    wrapped_marks, wrapped_unclipped = _annotation_layer_wrap(marks, unclipped_marks, slots, plot)
+    return wrapped_marks, wrapped_unclipped, labels
 
 
 def _layer_opacity(layer: dict[str, Any]) -> float:
