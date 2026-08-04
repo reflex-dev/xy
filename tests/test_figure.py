@@ -1694,7 +1694,7 @@ def test_log_explicit_margin_keeps_lower_bound_positive():
     fig = Figure().scatter(np.array([0.0, 1.0]), np.array([1e-300, 1e10]))
     fig.set_axis("y", type_="log", margin=0.1)
     lo, hi = fig.y_range()
-    assert lo > 0.0
+    assert lo == np.nextafter(0.0, 1.0)
     assert hi > lo
 
 
