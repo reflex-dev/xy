@@ -85,21 +85,12 @@ implementation. The bullets below are the boundaries that page's rows imply.
 - **Styling does not survive every export path equally, and the boundary is
   published rather than left to be discovered.** Mark, axis, and chart-level
   `style=` reach all three renderers. Per-slot `styles={slot: {...}}` reaches
-  them for the twelve slots that name chrome a static file contains — the box
-  slots `root`, `chrome`, and `canvas` (background, border, radius, opacity;
-  `chrome` is background/opacity only), plus `title`, `axis_title`,
+  them for the fifteen slots that name chrome a static file contains — the box
+  slots `root`, `chrome`, `canvas` and `title` (background, border, radius,
+  opacity; `chrome` is background/opacity only), `annotation_label` with the
+  same box subset under its own `style=`, `annotation_layer` (opacity +
+  background) and `labels` (container defaults), plus `axis_title`,
   `tick_label`, the three legend slots, and the three colorbar slots carrying
-  `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
-  `opacity`, and the text paint (the title also draws a box under its text).
-  The remaining slots are live chrome (`tooltip*`, `modebar*`, `crosshair_*`,
-  `selection`, `badge*`) with nothing in a file to paint, and
-  `class_names={slot: "..."}` cannot apply in a file at all: a class selects
-  a rule out of a stylesheet an exported file does not have. The raster atlas
-  carries regular/bold/italic faces but no family axis, so PNG/JPEG/WebP
-  honor a slot's size, paint, weight, and style but not its typeface — and
-  the raster's rectangular clip makes a `canvas` radius/opacity a named
-  raster loss. `xy.colorbar(style=...)` still has no native channel — use the
-  `colorbar_*` slots. The full matrix is
   [Static export §9](https://github.com/reflex-dev/xy/blob/main/spec/api/export.md),
   pinned by `tests/test_export_style_survival.py`.
 - Native PNG cannot apply author `custom_css`, and neither can native SVG, PDF,

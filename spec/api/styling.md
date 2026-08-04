@@ -1324,30 +1324,12 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `root`, `chrome`, `canvas`, `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
+| Slots | `root`, `chrome`, `canvas`, `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
 | Vector text — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
 | Raster text — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
 | Box slots | `background`, `border` (color/width/style, dashed/dotted as dash arrays), symmetric `border-radius`, `padding` (title only), `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS_BY_SLOT`), drawn through the shared `xy._chromebox` lowering in both writers |
-
-The raster atlas carries a regular, a bold and an italic face, so weight
-(>= 600 rounds to the bold face) and style survive the raster path;
-`font-family`, `letter-spacing` and `opacity` are **vector-only**. They are
-not approximated: the atlas has no family axis, no per-glyph advance control
-and no alpha on the blit, and a silently substituted face would be exactly
-the kind of invisible decision §28 forbids.
-
-The box slots landed with static-chrome-parity phase 1
-([the plan](../process/static-chrome-parity-plan-2026-08-04.md) §3): `title`
-draws its box under the text (sized to the measured block plus padding, with
-the title band growing to fit — mirrored by `_titleBoxExtent` in the
-client); `root` IS the figure patch (its fill replaces `theme(background=)`
-when both are set, and an export `background=` override silences it —
-`_svg.apply_export_background` is the single precedence definition:
-override > slot > token); `chrome` honors background/opacity only; `canvas`
-paints at the above-grid seam so its background hides the grid, clips marks
-through a dedicated clipPath for `border-radius` in SVG/PDF, and reports
-radius/opacity as named raster losses until the rounded-clip opcode lands
-(`_svg.SLOT_BOX_RASTER_UNSUPPORTED`).
+| `annotation_label` box | the same chrome-box subset (`_svg.SLOT_BOX_PROPS`), folded UNDER the annotation's own `style=` per property group |
+| `annotation_layer` / `labels` | group opacity + plot-clipped background on the overlay; container text defaults + background on `labels` |
 
 ```python
 xy.chart(

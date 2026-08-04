@@ -212,3 +212,66 @@ def test_direct_chromebox_construction_defaults_paint_nothing() -> None:
     box = ChromeBox(slot="title", x=0, y=0, w=10, h=10)
     assert not box.paints_anything
     assert _svg._slot_box_svg(box) == ""
+
+
+def _fill_points(cmd: _raster._Cmd) -> list[tuple[float, float]]:
+    import struct
+
+    buf = bytes(cmd.buf)
+    assert buf[0] == _raster._FILL
+    (count,) = struct.unpack_from("<I", buf, 1)
+    coords = struct.unpack_from(f"<{count * 2}f", buf, 5)
+    return list(zip(coords[0::2], coords[1::2], strict=True))
+
+
+def test_raster_emitter_treats_w_h_as_extents_like_the_svg_twin() -> None:
+    # `w`/`h` are extents (the SVG twin emits width=/height=), not the far
+    # corner. The raster emitter briefly read them as absolute corner
+    # coordinates, so a box at (50, 40) sized 60x20 filled the rectangle
+    # (50, 40)-(60, 20) instead of (50, 40)-(110, 60).
+    cmd = _raster._Cmd(1.0)
+    _raster._emit_slot_box(cmd, lower_box("legend", {"background": "#f00"}, x=50, y=40, w=60, h=20))
+    assert _fill_points(cmd) == [(50.0, 40.0), (110.0, 40.0), (110.0, 60.0), (50.0, 60.0)]
+
+
+def test_explicit_stroke_keeps_the_pinned_pyplot_bbox_serialization() -> None:
+    # The pre-parity text-bbox emitter always wrote a stroke pair; a
+    # borderless bbox rect carried the inert `stroke="none" stroke-width="0"`
+    # and that output is byte-pinned, so the adapter's boxes reproduce it.
+    box = ChromeBox(slot="annotation_label", x=1, y=2, w=30, h=10, fill="#ffee88")
+    modern = _svg._slot_box_svg(box)
+    assert "stroke" not in modern
+    legacy = _svg._slot_box_svg(
+        ChromeBox(
+            slot="annotation_label",
+            x=1,
+            y=2,
+            w=30,
+            h=10,
+            fill="#ffee88",
+            explicit_stroke=("none", 0.0),
+        )
+    )
+    assert legacy == modern.replace("/>", ' stroke="none" stroke-width="0"/>')
+    # An active border wins over the legacy pair — never two stroke attrs.
+    bordered = _svg._slot_box_svg(
+        ChromeBox(
+            slot="annotation_label",
+            x=1,
+            y=2,
+            w=30,
+            h=10,
+            border_color="#123",
+            border_width=2.0,
+            explicit_stroke=("none", 0.0),
+        )
+    )
+    assert bordered.count("stroke=") == 1 and 'stroke="#123"' in bordered
+    # A zero-width-border-only rect still serializes (the legacy emitter drew
+    # it as invisible bytes), while the raster twin paints nothing — exactly
+    # the old pair's behavior.
+    invisible = ChromeBox(slot="annotation_label", x=0, y=0, w=8, h=8, explicit_stroke=("red", 0.0))
+    assert 'stroke="red" stroke-width="0"' in _svg._slot_box_svg(invisible)
+    cmd = _raster._Cmd(1.0)
+    _raster._emit_slot_box(cmd, invisible)
+    assert bytes(cmd.buf) == b""

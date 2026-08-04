@@ -18,6 +18,7 @@ browser-dependent in SVG and use the native PNG fallback.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import math
 import re
@@ -1381,6 +1382,9 @@ STATIC_STYLED_SLOTS: tuple[str, ...] = (
     "colorbar",
     "colorbar_title",
     "colorbar_tick",
+    "annotation_label",
+    "annotation_layer",
+    "labels",
 )
 
 
@@ -1440,6 +1444,9 @@ LEGEND_BOX_PROPS: frozenset[str] = frozenset(
 #: expands. Owned here (the `LEGEND_BOX_PROPS` pattern) so the writers, the
 #: capability registry, and the preflight report cannot drift: preflight's
 #: `_honored_props` consumes `SLOT_BOX_PROPS_BY_SLOT` directly.
+#: Kebab spellings only — the declared resolver normalizes before any
+#: writer reads a declaration; `border`/`padding` are the CSS shorthands the
+#: writers split before `lower_box` reads the longhands.
 SLOT_BOX_PROPS: frozenset[str] = frozenset(
     {
         "background",
@@ -1909,8 +1916,14 @@ def _slot_box_svg(box: Any) -> str:
     would inherit the text paint otherwise), radius as symmetric `rx` only
     (PDF rejects `ry`). Emits nothing for a box that paints nothing, so the
     unstyled document stays byte-identical.
+
+    `explicit_stroke` is the one legacy accommodation: the pyplot text-bbox
+    emitter always wrote a stroke pair, even the inert `stroke="none"
+    stroke-width="0"` of a borderless box, and that output is byte-pinned —
+    a box carrying it is serialized (never skipped) with exactly that pair
+    when no active border exists.
     """
-    if not box.paints_anything and box.shadow is None:
+    if not box.paints_anything and box.shadow is None and box.explicit_stroke is None:
         return ""
     parts: list[str] = []
     common_opacity = f' opacity="{_num(box.opacity)}"' if box.opacity < 1.0 else ""
@@ -1931,6 +1944,9 @@ def _slot_box_svg(box: Any) -> str:
         if box.border_dash:
             dashes = " ".join(_num(v) for v in box.border_dash)
             stroke += f' stroke-dasharray="{dashes}"'
+    elif box.explicit_stroke is not None:
+        paint, width = box.explicit_stroke
+        stroke = f' stroke="{_escape_attr(paint)}" stroke-width="{_num(width)}"'
     fill_opacity = f' fill-opacity="{_num(box.fill_opacity)}"' if box.fill_opacity < 1.0 else ""
     parts.append(
         f'<rect x="{_num(box.x)}" y="{_num(box.y)}" '
@@ -4070,7 +4086,7 @@ def _polar_tick_labels(
     hide_r: bool,
 ) -> None:
     """Emit polar tick labels as SVG text, from the shared placement."""
-    slot = slots.get("tick_label") or {}
+    slot = slot_in_labels_container(slots, "tick_label")
     attrs = slot_text_attrs(slot)
 
     def tick_color(axis: dict[str, Any]) -> str:
@@ -4169,6 +4185,15 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
     default_text = _css(dom_style.get("--chart-text"), _TEXT)
     slots = slot_styles(spec)
+    labels_slot = slots.get("labels") or {}
+    # The live chain for every text in the labels container is
+    # `color: var(--chart-text, inherit)`: the theme token wins, the
+    # container's own declared color is the inherited fallback, then the
+    # writer default. Title/legend/colorbar are siblings of the container
+    # and keep `default_text`.
+    label_text_default = (
+        _css(dom_style.get("--chart-text"), "") or slot_text_color(labels_slot, "") or _TEXT
+    )
     grid: list[str] = []
     labels: list[str] = []
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
@@ -4238,7 +4263,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         is_x: bool,
     ) -> None:
         axis_style = axis.get("style") or {}
-        slot = slots.get("tick_label") or {}
+        slot = slot_in_labels_container(slots, "tick_label")
         # The axis's own tick_label_color/tick_color is the narrower selector
         # and wins; the chart-wide slot fills in when the axis says nothing.
         color = escape(
@@ -4246,7 +4271,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 axis_style.get("tick_label_color", axis_style.get("tick_color")),
                 "",
             )
-            or slot_text_color(slot, default_text)
+            or slot_text_color(slot, label_text_default)
         )
         font_size = slot_font_size(slot, _axis_tick_font_size(axis))
         slot_attrs = slot_text_attrs(slot)
@@ -4324,7 +4349,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             xa,
             ya,
             slots,
-            default_text,
+            label_text_default,
             hide_x or xa.get("tick_label_strategy") == "off",
             hide_y or ya.get("tick_label_strategy") == "off",
         )
@@ -4511,7 +4536,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
             return
         axis_style = axis.get("style") or {}
-        slot = slots.get("axis_title") or {}
+        slot = slot_in_labels_container(slots, "axis_title")
         geometry = _axis_label_geometry(axis, plot, is_x=is_x)
         x, y = float(geometry["x"]), float(geometry["y"])
         angle = float(geometry["angle"])
@@ -4521,7 +4546,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         family = axis_style.get("label_font_family")
         font_style = axis_style.get("label_font_style")
         weight = axis_style.get("label_font_weight", 400)
-        paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, default_text)
+        paint = _css(axis_style.get("label_color"), "") or slot_text_color(slot, label_text_default)
         font_attrs = (f' font-family="{_escape_attr(family)}"' if family is not None else "") + (
             f' font-style="{_escape_attr(font_style)}"' if font_style is not None else ""
         )
@@ -4591,7 +4616,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
 
     annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
-        spec.get("annotations") or [], sx, sy, plot, width, height, polar
+        spec.get("annotations") or [], sx, sy, plot, width, height, polar, slots
     )
     marks.extend(annotation_marks)
     labels.extend(annotation_labels)
@@ -4822,6 +4847,21 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
             f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
         )
+    # labels-container box (flag D, resolved): the background paints UNDER
+    # the axis baselines and every label text, exactly where the live DOM
+    # puts it — the spine/tick rules are children of the labels container,
+    # so its background sits below them and above marks + annotation shapes.
+    # The residual stacking difference (live, the full-bleed container also
+    # covers the title/legend/colorbar, which are earlier/later siblings) is
+    # recorded in KNOWN_RENDERER_DIVERGENCES, never silent.
+    labels_background = ""
+    container_paint = labels_slot.get("background", labels_slot.get("background-color"))
+    if container_paint is not None:
+        labels_background = _slot_box_svg(
+            lower_box("labels", {"background": container_paint}, x=0, y=0, w=width, h=height)
+        )
+    labels_opacity = _layer_opacity(labels_slot)
+    labels_group_attrs = f' opacity="{_num(labels_opacity)}"' if labels_opacity < 1.0 else ""
     # The chrome slot (parity plan §3.5, background/opacity only): one rect
     # above the root/plot backgrounds and below the grid — the browser's
     # chrome canvas sits above the root element and holds the grid. Its DOM
@@ -4899,8 +4939,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             "</g>",
             canvas_group_close,
             *unclipped_annotation_marks,
+            labels_background,
             baselines,
-            f'<g fill="{escape(default_text)}">',
+            f'<g fill="{escape(label_text_default)}"{labels_group_attrs}>',
             *labels,
             "</g>",
             *chrome,
@@ -5061,10 +5102,12 @@ def _annotation_svg(
     width: float,
     height: float,
     polar: "Optional[_PolarProjection]" = None,
+    slots: Optional[dict[str, dict[str, Any]]] = None,
 ) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
     unclipped_marks: list[str] = []
     labels: list[str] = []
+    slots = slots or {}
     px0, py0 = plot["x"], plot["y"]
 
     def point(x: float, y: float) -> tuple[float, float]:
@@ -5085,7 +5128,7 @@ def _annotation_svg(
         return float(sx(x)), float(sy(y))
 
     for ann in annotations:
-        style = ann.get("style") or {}
+        style = annotation_style_with_slot(ann, slots)
         color = escape(_css(style.get("color"), "#667085"))
         opacity = float(style.get("opacity", 1.0))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
@@ -5268,18 +5311,87 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return marks, unclipped_marks, labels
+    wrapped_marks, wrapped_unclipped = _annotation_layer_wrap(marks, unclipped_marks, slots, plot)
+    return wrapped_marks, wrapped_unclipped, labels
+
+
+def _layer_opacity(layer: dict[str, Any]) -> float:
+    """The annotation_layer slot's declared group opacity, clamped, 1 unset."""
+    if "opacity" not in layer:
+        return 1.0
+    try:
+        return min(1.0, max(0.0, float(layer["opacity"])))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _annotation_layer_wrap(
+    marks: list[str],
+    unclipped_marks: list[str],
+    slots: dict[str, Any],
+    plot: dict[str, float],
+) -> tuple[list[str], list[str]]:
+    """Apply the annotation_layer slot to the annotation shape lists.
+
+    Group opacity rides a `<g>` (PDF-legal), wrapping the clipped tail and
+    the unclipped connectors alike — never the labels, which live in the
+    labels container in the browser too. The layer background is a
+    plot-rect chrome box painted UNDER the shapes, inside the marks clip:
+    the live overlay canvas is full-bleed (`inset:0`), but a full-bleed rect
+    cannot sit above the traces and below the shapes in either writer, so
+    the writers pin the plot-clipped geometry and the divergence is recorded
+    in `KNOWN_RENDERER_DIVERGENCES` rather than left to be discovered.
+    """
+    layer = slots.get("annotation_layer") or {}
+    if not layer:
+        return marks, unclipped_marks
+    prefix: list[str] = []
+    background = layer.get("background", layer.get("background-color"))
+    if background is not None:
+        box = lower_box(
+            "annotation_layer",
+            {"background": background, "opacity": _layer_opacity(layer)},
+            x=plot["x"],
+            y=plot["y"],
+            w=plot["w"],
+            h=plot["h"],
+        )
+        # The rect carries the folded opacity itself (it sits outside the
+        # group so the group cannot double-dim it).
+        rect = _slot_box_svg(box)
+        if rect:
+            prefix.append(rect)
+    opacity = _layer_opacity(layer)
+    if opacity < 1.0:
+        wrap = f'<g opacity="{_num(opacity)}">'
+        if marks:
+            marks = [wrap, *marks, "</g>"]
+        if unclipped_marks:
+            unclipped_marks = [wrap, *unclipped_marks, "</g>"]
+    return prefix + marks, unclipped_marks
 
 
 def _svg_font_attrs(style: dict[str, Any]) -> str:
+    """Annotation-label font attributes, each emitted exactly once.
+
+    `letter_spacing` joined the tuple with the annotation_label slot channel
+    (it is in `SLOT_TEXT_PROPS`, and the merge translates the slot's kebab
+    spelling onto this vocabulary); a bare number is normalized to px the way
+    `slot_text_attrs` does for the other text slots.
+    """
     attrs = []
     for key, attribute in (
         ("font_family", "font-family"),
         ("font_weight", "font-weight"),
         ("font_style", "font-style"),
+        ("letter_spacing", "letter-spacing"),
     ):
-        if style.get(key) is not None:
-            attrs.append(f' {attribute}="{escape(str(style[key]))}"')
+        value = style.get(key)
+        if value is None:
+            continue
+        if key == "letter_spacing" and not isinstance(value, str):
+            value = _num(_px_size(value, 0.0))
+        attrs.append(f' {attribute}="{_escape_attr(value)}"')
     return "".join(attrs)
 
 
@@ -5317,6 +5429,293 @@ def _svg_mathtext_spans(line: str, style: dict[str, Any], offset: int) -> str:
     return "".join(out)
 
 
+#: Annotation vocabulary ↔ slot CSS vocabulary, defined exactly once (the
+#: two-vocabulary collision is this family's named risk). Left: the kebab
+#: property a `styles={'annotation_label': ...}` declaration carries after
+#: resolver normalization; right: the pyplot-derived key the annotation's own
+#: `style=` mapping (and both writers) have always used. Paint and opacity
+#: are handled separately — their targets depend on the annotation kind.
+_ANNOTATION_SLOT_TEXT_KEYS: tuple[tuple[str, str], ...] = (
+    ("font-size", "font_size"),
+    ("font-weight", "font_weight"),
+    ("font-style", "font_style"),
+    ("font-family", "font_family"),
+    ("letter-spacing", "letter_spacing"),
+)
+
+#: What a labels-container declaration cascades into an annotation label.
+#: Exactly the text properties the live stylesheet leaves un-ruled on the
+#: label div: `20_theme.ts` pins font-size (11px), font-weight (400) and the
+#: color chain per label, so only these three inherit from the container.
+_LABELS_CONTAINER_ANNOTATION_PROPS: tuple[str, ...] = (
+    "font-style",
+    "font-family",
+    "letter-spacing",
+)
+
+#: The annotation label's own stylesheet font size (`20_theme.ts`), the base
+#: an em-valued slot font-size resolves against — the legend precedent:
+#: relative units resolve in the slot's own unit domain, never silently drop.
+_ANNOTATION_FONT_SIZE = 11.0
+
+#: What a labels-container declaration cascades into each text slot living in
+#: the container, per property. Read straight off the live stylesheet
+#: (`20_theme.ts`): a `:where()` rule on the child beats inheritance from the
+#: container even at zero specificity, so only the properties the child's
+#: rule leaves unset inherit. tick_label has a color rule only; axis_title
+#: pins font-size (12px) and font-weight (400); annotation_label pins both
+#: plus line-height (`_LABELS_CONTAINER_ANNOTATION_PROPS`).
+_LABELS_CONTAINER_TEXT_PROPS: dict[str, tuple[str, ...]] = {
+    "tick_label": ("font-size", "font-weight", "font-style", "font-family", "letter-spacing"),
+    "axis_title": ("font-style", "font-family", "letter-spacing"),
+}
+
+#: The labels container's own inherited font size (`:where(.xy){font:12px…}`),
+#: the base an em-valued labels-slot font-size resolves against.
+_LABELS_CONTAINER_FONT_SIZE = 12.0
+
+
+def slot_in_labels_container(slots: dict[str, Any], name: str) -> dict[str, Any]:
+    """The effective declaration for a text slot inside the labels container.
+
+    The labels-slot typography folds UNDER the specific slot (container <
+    specific slot < axis/annotation style — the cascade order the live DOM
+    gives inherited container styling). Color is deliberately absent: every
+    contained text resolves paint through `var(--chart-text, inherit)`, so
+    the container's color is a *default* below the theme token, threaded by
+    the writers as the label-text fallback instead of merged here.
+    """
+    slot = slots.get(name) or {}
+    container = slots.get("labels") or {}
+    if not container:
+        return slot
+    inherited = {
+        prop: container[prop] for prop in _LABELS_CONTAINER_TEXT_PROPS[name] if prop in container
+    }
+    if not inherited:
+        return slot
+    if "font-size" in inherited:
+        inherited["font-size"] = _annotation_em(inherited["font-size"], _LABELS_CONTAINER_FONT_SIZE)
+    return {**inherited, **slot}
+
+
+def _annotation_em(value: Any, base: float) -> Any:
+    """Resolve an em spelling against `base`; pass everything else through."""
+    if isinstance(value, str) and value.strip().endswith("em"):
+        try:
+            return float(value.strip().removesuffix("em")) * base
+        except ValueError:
+            return value
+    return value
+
+
+def annotation_style_with_slot(ann: dict[str, Any], slots: dict[str, Any]) -> dict[str, Any]:
+    """One annotation's effective label styling: slot folded UNDER `style=`.
+
+    Mirrors the browser exactly: `_applySlot(d, "annotation_label")` runs
+    before the per-annotation inline styles (`51_annotations.ts`), so the
+    chart-wide declaration is the wider selector and the annotation's own
+    `style=` wins. The fold is per property GROUP, not per key, because the
+    two vocabularies overlap without matching one-to-one:
+
+    - text paint: slot `fill`/`color` becomes `label_color`, yielding to the
+      annotation's own `label_color` OR `color` (the browser pins inline
+      color when either is present);
+    - `opacity`: the slot's is a label dimmer (the div's CSS opacity), so it
+      becomes `label_opacity` + the box opacity, yielding to the annotation's
+      own `label_opacity` — and, for `kind="text"`, to its own `opacity`,
+      which already acts as the label alpha; a shape-bearing annotation's
+      `opacity` is shape alpha and never collides;
+    - box groups (`background`, the border, `border_radius`, `padding`):
+      whichever vocabulary the annotation used wins the whole group;
+    - `box-shadow` and `fill-opacity` exist only in the slot vocabulary and
+      pass through.
+
+    The labels-container slot sits under everything, restricted to the
+    properties that genuinely inherit in the live DOM
+    (`_LABELS_CONTAINER_ANNOTATION_PROPS`).
+    """
+    style = ann.get("style") or {}
+    slot = slots.get("annotation_label") or {}
+    container = slots.get("labels") or {}
+    if not slot and not container:
+        return style
+    merged: dict[str, Any] = {}
+    for prop, key in _ANNOTATION_SLOT_TEXT_KEYS:
+        if prop in _LABELS_CONTAINER_ANNOTATION_PROPS and prop in container:
+            merged[key] = container[prop]
+        if prop in slot:
+            merged[key] = slot[prop]
+    if "font_size" in merged:
+        merged["font_size"] = _annotation_em(merged["font_size"], _ANNOTATION_FONT_SIZE)
+    paint = slot_text_color(slot, "")
+    if paint and "label_color" not in style and "color" not in style:
+        merged["label_color"] = paint
+    if (
+        "opacity" in slot
+        and "label_opacity" not in style
+        and not (ann.get("kind") == "text" and "opacity" in style)
+    ):
+        merged["label_opacity"] = slot["opacity"]
+        merged["box-opacity"] = slot["opacity"]
+    if "background" not in style:
+        background = slot.get("background", slot.get("background-color"))
+        if background is not None:
+            merged["background"] = background
+    if "border" not in style:
+        for prop in ("border", "border-width", "border-color", "border-style"):
+            if prop in slot:
+                merged[prop] = slot[prop]
+    if "border_radius" not in style and "border-radius" in slot:
+        merged["border_radius"] = slot["border-radius"]
+    if "padding" not in style and "padding" in slot:
+        merged["padding"] = slot["padding"]
+    if "box-shadow" in slot:
+        merged["box-shadow"] = slot["box-shadow"]
+    if "fill-opacity" in slot:
+        merged["fill-opacity"] = slot["fill-opacity"]
+    return {**merged, **style}
+
+
+def _css_box_padding(value: Any, font_size: float) -> tuple[float, float, float, float]:
+    """CSS `padding` as (top, right, bottom, left) px.
+
+    The historical parsers read tokens [0]/[1] only, silently misreading
+    4-value CSS (`declared top/RIGHT/bottom/left` became `vertical/
+    horizontal`); this is the one correct read both writers now share. Em
+    tokens resolve against the label font size, like the browser; anything
+    unparseable stays 0, the failure mode the old parsers had.
+    """
+    tokens = str(value).split()
+
+    def length(token: str) -> float:
+        resolved = _annotation_em(token, font_size)
+        if isinstance(resolved, (int, float)):
+            return max(0.0, float(resolved))
+        try:
+            return max(0.0, float(str(resolved).removesuffix("px")))
+        except ValueError:
+            return 0.0
+
+    if not tokens:
+        return 0.0, 0.0, 0.0, 0.0
+    sides = [length(token) for token in tokens[:4]]
+    if len(sides) == 1:
+        top = right = bottom = left = sides[0]
+    elif len(sides) == 2:
+        top = bottom = sides[0]
+        right = left = sides[1]
+    elif len(sides) == 3:
+        top, right, bottom = sides
+        left = right
+    else:
+        top, right, bottom, left = sides
+    return top, right, bottom, left
+
+
+#: `border` shorthand middle tokens the writers lower to a dash pattern.
+#: Any other style keyword passes through to `lower_box`, which keeps the
+#: solid border the old emitters drew and records the approximation (§28).
+_BORDER_STYLE_TOKENS = frozenset({"solid", "dashed", "dotted"})
+
+
+def annotation_text_box(
+    style: dict[str, Any],
+    lines: list[str],
+    x: float,
+    first_y: float,
+    line_height: float,
+    font_size: float,
+    anchor: str,
+) -> Optional[ChromeBox]:
+    """One annotation label's box, lowered onto the shared chrome-box model.
+
+    The single geometry + declaration lowering both writers consume — the
+    fold of the formerly duplicated `_svg_text_box` / `_emit_text_box` pair.
+    Reads the merged vocabulary `annotation_style_with_slot` produces: the
+    pyplot text-bbox keys (`background`, `border` shorthand, `padding`,
+    `border_radius`) plus the slot longhands the merge passes through.
+    Returns None when nothing was declared, so the unstyled document stays
+    byte-identical.
+    """
+    background = style.get("background")
+    border = str(style.get("border", "") or "")
+    has_slot_box = any(
+        prop in style for prop in ("border-width", "border-color", "border-style", "box-shadow")
+    )
+    if background is None and not border and not has_slot_box:
+        return None
+
+    pad_top, pad_right, pad_bottom, pad_left = _css_box_padding(
+        style.get("padding", "0"), font_size
+    )
+    text_width = _estimated_text_width(lines, font_size)
+    left = (
+        x
+        - (text_width / 2 if anchor == "middle" else text_width if anchor == "end" else 0.0)
+        - pad_left
+    )
+    top = first_y - font_size * 0.8 - pad_top
+    width = text_width + (pad_left + pad_right)
+    height = font_size + (len(lines) - 1) * line_height + (pad_top + pad_bottom)
+
+    decl: dict[str, Any] = {}
+    if background is not None:
+        decl["background"] = background
+    explicit_stroke: Optional[tuple[str, float]] = None
+    if border:
+        parts = border.split()
+        stroke_paint = parts[-1]
+        try:
+            stroke_width = max(0.0, float(parts[0].removesuffix("px")))
+        except (IndexError, ValueError):
+            stroke_width = 1.0
+        if stroke_width > 0:
+            decl["border-width"] = stroke_width
+            decl["border-color"] = stroke_paint
+            if len(parts) >= 3 and parts[1] in _BORDER_STYLE_TOKENS:
+                decl["border-style"] = parts[1]
+            elif len(parts) >= 3:
+                decl["border-style"] = parts[1] if parts[1] not in ("none", "hidden") else "solid"
+        else:
+            # A declared zero-width border has always serialized as an
+            # invisible stroke pair in SVG and as nothing in raster.
+            explicit_stroke = (stroke_paint, stroke_width)
+    else:
+        for prop in ("border-width", "border-color", "border-style"):
+            if prop in style:
+                decl[prop] = style[prop]
+    # `boxstyle="round"`/`round4` set border_radius; the browser gets it as
+    # CSS border-radius, so the exporters round the same corners or an
+    # exported box is square where the live one is not.
+    radius = style.get("border_radius", style.get("border-radius"))
+    if radius is not None:
+        decl["border-radius"] = _annotation_em(radius, font_size)
+    if "box-shadow" in style:
+        decl["box-shadow"] = style["box-shadow"]
+    if "box-opacity" in style:
+        decl["opacity"] = style["box-opacity"]
+    if "fill-opacity" in style:
+        decl["fill-opacity"] = style["fill-opacity"]
+
+    box = lower_box("annotation_label", decl, x=left, y=top, w=width, h=height)
+    if (
+        background is not None
+        and box.fill is None
+        and not any(unrep.startswith("background") for unrep in box.unrepresentable)
+    ):
+        # `lower_box` elides transparent paints; the legacy emitters wrote
+        # them verbatim (`fill="transparent"`), and those bytes are pinned.
+        box = dataclasses.replace(box, fill=str(background))
+    if box.border_color is None and explicit_stroke is None:
+        # The legacy pair: every drawn bbox rect carries a stroke, inert
+        # (`stroke="none" stroke-width="0"`) when no border was declared.
+        explicit_stroke = ("none", 0.0)
+    if explicit_stroke is not None and box.border_color is None:
+        box = dataclasses.replace(box, explicit_stroke=explicit_stroke)
+    return box
+
+
 def _svg_text_box(
     style: dict[str, Any],
     lines: list[str],
@@ -5326,62 +5725,9 @@ def _svg_text_box(
     font_size: float,
     anchor: str,
 ) -> list[str]:
-    """SVG counterpart of the pyplot text-bbox CSS approximation."""
-    background = style.get("background")
-    border = str(style.get("border", ""))
-    if background is None and not border:
-        return []
-    pad_parts = str(style.get("padding", "0")).split()
-
-    def px(value: str) -> float:
-        try:
-            return max(0.0, float(value.removesuffix("px")))
-        except ValueError:
-            return 0.0
-
-    pad_y = px(pad_parts[0]) if pad_parts else 0.0
-    pad_x = px(pad_parts[1]) if len(pad_parts) > 1 else pad_y
-    text_width = _estimated_text_width(lines, font_size)
-    left = (
-        x
-        - (text_width / 2 if anchor == "middle" else text_width if anchor == "end" else 0.0)
-        - pad_x
-    )
-    top = first_y - font_size * 0.8 - pad_y
-    height = font_size + (len(lines) - 1) * line_height + pad_y * 2
-    fill = "none" if background is None else escape(str(background))
-    stroke = "none"
-    stroke_width = 0.0
-    if border:
-        parts = border.split()
-        stroke = escape(parts[-1])
-        try:
-            stroke_width = max(0.0, float(parts[0].removesuffix("px")))
-        except (IndexError, ValueError):
-            stroke_width = 1.0
-    # `boxstyle="round"`/`round4` set border_radius; the browser gets it as CSS
-    # border-radius, so the exporters have to round the same corners or an
-    # exported box is square where the live one is not.
-    radius = _box_corner_radius(style, text_width + pad_x * 2, height)
-    radius_attr = f' rx="{_num(radius)}"' if radius > 0 else ""
-    return [
-        f'<rect x="{_num(left)}" y="{_num(top)}" '
-        f'width="{_num(text_width + pad_x * 2)}" height="{_num(height)}"{radius_attr} '
-        f'fill="{fill}" stroke="{stroke}" stroke-width="{_num(stroke_width)}"/>'
-    ]
-
-
-def _box_corner_radius(style: dict[str, Any], width: float, height: float) -> float:
-    """`border_radius` in px, clamped to the box like CSS does.
-
-    Shared by the SVG and native raster text-box emitters so an exported
-    ``boxstyle="round"`` bbox is rounded exactly once, the same way.
-    """
-    try:
-        radius = float(str(style.get("border_radius", 0) or 0).removesuffix("px"))
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(radius, width / 2.0, height / 2.0))
+    """Adapter: the pyplot text-bbox CSS approximation over the shared box."""
+    box = annotation_text_box(style, lines, x, first_y, line_height, font_size, anchor)
+    return [_slot_box_svg(box)] if box is not None else []
 
 
 def _fontmetrics_text_width(

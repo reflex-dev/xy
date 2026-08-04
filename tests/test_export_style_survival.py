@@ -57,23 +57,27 @@ def test_native_writers_read_a_property_subset_not_the_whole_cascade() -> None:
         assert f"cls-{slot}" not in svg
 
 
-#: The paint property each static slot answers to. The box slots (`legend`'s
-#: frame and the P1 family: `root`, `chrome`, `canvas`) take `background`;
-#: every other static slot is text, so it takes the SVG text paint.
+#: The paint property each static slot answers to. The box slots take
+#: `background` — `legend`'s frame, the P1 family (`root`, `chrome`,
+#: `canvas`) and `annotation_layer`'s shape overlay; every other static slot
+#: is text, so it takes the SVG text paint.
 _SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
-    slot: "background" for slot in ("legend", "root", "chrome", "canvas")
+    slot: "background" for slot in ("legend", "root", "chrome", "canvas", "annotation_layer")
 }
 
 
 @pytest.mark.parametrize("slot", STATIC_STYLED_SLOTS)
 def test_every_static_slot_carries_its_paint_into_svg(slot: str) -> None:
     # The headline of the per-slot contract: a slot that names chrome a static
-    # file contains must carry that chrome's paint into the file.
+    # file contains must carry that chrome's paint into the file. The chart
+    # carries one of everything a slot can address, including an annotation
+    # label for the annotation chrome family.
     chart = xy.scatter_chart(
         xy.scatter(x=[0.0, 1.0], y=[1.0, 2.0], name="series", color=[0.0, 1.0], colormap="viridis"),
         xy.legend(title="Legend title"),
         xy.colorbar(title="Colorbar title"),
         xy.x_axis(label="x label"),
+        xy.text(0.5, 1.5, "annotation"),
         title="chart title",
         styles={slot: {_SLOT_PAINT_PROPERTY[slot]: "#123456"}},
     )

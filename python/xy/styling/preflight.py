@@ -202,6 +202,24 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "box properties route through the merged legend declaration; see the "
             "capability matrix legend note"
         )
+    if slot == "annotation_label":
+        return text | _svg.SLOT_BOX_PROPS, (
+            "box properties route through the shared chrome-box lowering; the "
+            "annotation's own style= is the narrower selector and wins per "
+            "property group"
+        )
+    if slot == "annotation_layer":
+        return frozenset({"background", "background-color", "opacity"}), (
+            "group opacity over the annotation shapes (raster folds it "
+            "per-primitive) and a plot-clipped background; the rest of the "
+            "overlay's box model stays browser-only"
+        )
+    if slot == "labels":
+        return text | frozenset({"background", "background-color"}), (
+            "the container's color and typography are defaults under the "
+            "contained slots; the background paints under the axis rules and "
+            "every label text (flag D)"
+        )
     box = _svg.SLOT_BOX_PROPS_BY_SLOT.get(slot)
     if box is not None:
         if family == "native_raster":

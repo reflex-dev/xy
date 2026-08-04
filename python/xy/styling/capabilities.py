@@ -294,6 +294,38 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
             "slot-level `styles={'title': ...}` box declarations agree everywhere"
         ),
     ),
+    RendererDivergence(
+        id="annotation_layer_background_geometry",
+        what="The annotation_layer slot's background extent",
+        webgl="full-bleed (the overlay canvas is inset:0 over the whole chart)",
+        svg="plot rect, inside the marks clip (the only seam above traces and below shapes)",
+        native="plot rect, under the active marks clip (same seam as SVG)",
+        visible_when="styles={'annotation_layer': {'background': ...}} is declared",
+        tracked_by="tests/test_chrome_parity_p3.py pins the plot-rect geometry",
+    ),
+    RendererDivergence(
+        id="labels_container_stacking",
+        what="Where the labels-container background sits among its siblings (flag D)",
+        webgl="over the chart title (the container is a later DOM sibling), "
+        "under the axis rules and label texts it contains",
+        svg="under the axis rules and label texts (the resolved flag-D order), "
+        "and under the title/legend/colorbar chrome, which joins later",
+        native="same as SVG: filled after the marks, before the chrome text phase",
+        visible_when="styles={'labels': {'background': ...}} on a chart with a title, "
+        "legend or colorbar",
+        tracked_by="flag D of the static-chrome parity plan; "
+        "tests/test_chrome_parity_p3.py pins the writers' order",
+    ),
+    RendererDivergence(
+        id="annotation_layer_opacity_compositing",
+        what="How the annotation_layer slot's opacity composites overlapping shapes",
+        webgl="group opacity: the overlay canvas is dimmed once as a whole",
+        svg="group opacity on the wrapping <g>, PDF-legal, same as live",
+        native="folded into each shape's RGBA (no group compositing opcode): "
+        "overlapping translucent shapes double-blend",
+        visible_when="the slot declares opacity below 1 over overlapping annotation shapes",
+        tracked_by="tests/test_chrome_parity_p3.py documents the double-blend delta",
+    ),
 )
 
 
@@ -376,6 +408,49 @@ _SLOT_EXCEPTIONS["canvas"] = (
     "opacity are named raster losses (`_svg.SLOT_BOX_RASTER_UNSUPPORTED`) "
     "until the rounded-clip opcode lands. An export `background=` override "
     "silences a canvas background like the plot token.",
+)
+_SLOT_EXCEPTIONS["labels"] = (
+    "partial",
+    "styles={'labels': ...}",
+    "The label container. Its color is the default under the live chain "
+    "`var(--chart-text, inherit)` for every contained text (tick labels, "
+    "axis titles, annotation labels): the theme token wins, then the "
+    "container color, then the writer default — the axis's own colors and "
+    "the specific slots stay narrower and win. Typography folds under the "
+    "contained slots exactly where the live stylesheet leaves the property "
+    "un-ruled (font-size/weight cascade into tick labels only; style/family/"
+    "letter-spacing into all three). `background` paints full-bleed under "
+    "the axis rules and every label text, the live order; the residual "
+    "sibling stacking difference is in KNOWN_RENDERER_DIVERGENCES. "
+    "`opacity` rides the SVG label group (vector-only); live it also dims "
+    "the contained axis rules and the container background — recorded here "
+    "rather than approximated.",
+)
+_SLOT_EXCEPTIONS["annotation_layer"] = (
+    "partial",
+    "styles={'annotation_layer': ...}",
+    "The annotation-shape overlay. `opacity` dims every annotation shape as "
+    "a group (never the labels, which live in the labels container): SVG/PDF "
+    "as real group opacity on a `<g>`, raster folded into each shape's RGBA "
+    "because the display list has no group compositing — overlapping "
+    "translucent shapes double-blend there, a recorded approximation (§28). "
+    "`background` paints under the shapes, plot-clipped; the live overlay is "
+    "full-bleed, a divergence recorded in KNOWN_RENDERER_DIVERGENCES. "
+    "Everything else stays browser-only.",
+)
+_SLOT_EXCEPTIONS["annotation_label"] = (
+    "partial",
+    "styles={'annotation_label': ...}",
+    "The per-slot text subset plus the shared chrome-box model "
+    "(`xy._svg.SLOT_BOX_PROPS`): background, border — with solid/dashed/"
+    "dotted lowered to a dash pattern and other border styles drawn solid "
+    "and recorded (§28) — border-radius, CSS 1-4 value padding, offset "
+    "box-shadow (blur/spread recorded unrepresentable), and whole-label "
+    "opacity. The annotation's own `style=` is the narrower selector and "
+    "wins per property group, matching the browser's slot-then-inline "
+    "order. em font sizes resolve against the label's own 11px default. "
+    "Vertical (rotation 90/270) labels keep only size and paint in SVG — "
+    "a pre-existing limit of the rotated text path.",
 )
 
 
