@@ -10,5 +10,8 @@
     "playwright": "1.61.1",
     "typescript": "^7.0.2",
     "vite": "^8.1.5"
+  },
+  "overrides": {
+    "postcss": "^8.5.23"
   }
 }
