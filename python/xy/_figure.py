@@ -12,7 +12,10 @@ import math
 import warnings
 from collections.abc import Mapping, Sequence
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeAlias, Union
+
+if TYPE_CHECKING:
+    from .styling.preflight import StyleCompatibilityReport
 
 import numpy as np
 
@@ -2223,7 +2226,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         engine: Optional[export.Engine | str] = None,
         custom_css: Optional[str] = None,
-    ) -> Any:
+    ) -> StyleCompatibilityReport:
         """Route every declared style for one export target, without exporting.
 
         The programmatic answer to export.md §9: which styling sources this

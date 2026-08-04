@@ -14,7 +14,7 @@ which is sometimes deliberate, and the notes say which.
 ## In one line
 
 - **11** mark style properties across **21** mark kinds, drawn by all three renderers.
-- **48** stable chrome slots, CSS- and Tailwind-addressable in the browser. **24** of them name chrome a clean static export contains; **10** reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag. The other **24** are interaction/view chrome (tooltip, modebar, crosshair, selection, reduction badges) that a clean static file does not contain, so they are gated by an export state rather than missing.
+- **48** stable chrome slots, CSS- and Tailwind-addressable in the browser. **24** of them name chrome a clean static export contains; **10** reach the native writers — **9** through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag. The other **24** are interaction/view chrome (tooltip, modebar, crosshair, selection, reduction badges) that a clean static file does not contain, so they are gated by an export state rather than missing.
 - **1** shipped extension point.
 - **1** known default divergence between renderers, listed below rather than left to be discovered.
 

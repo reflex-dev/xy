@@ -158,6 +158,38 @@ def test_custom_css_routes_auto_to_browser_and_stays_lossless() -> None:
     assert report.lossless
 
 
+def test_browser_targets_mirror_custom_css_validation() -> None:
+    # A browser-resolved export still validates the stylesheet itself
+    # (`export._custom_css_block`): wrong type, or a sequence that could
+    # break out of the <style> element. The report must carry the same
+    # refusal instead of calling the export lossless.
+    chart = _chart()
+    for target in ("png", "html"):
+        breakout = chart.style_compatibility_report(target, custom_css="</style><script>")
+        assert breakout.error is not None
+        assert not breakout.lossless
+        assert "</style>" in breakout.error or "style" in breakout.error
+
+        wrong_type = chart.style_compatibility_report(target, custom_css=123)  # type: ignore[arg-type]
+        assert wrong_type.error == "custom_css must be a string"
+
+
+def test_malformed_figure_styling_raises_exactly_like_the_export() -> None:
+    # class_names/chrome_styles are assignable on the figure, so a report can
+    # be requested before the spec build validates them. Skipping such an
+    # entry would hide a declaration (§28); instead the report raises the
+    # same error the export's own spec build raises.
+    fig = _chart().figure()
+    fig.class_names["not_a_slot"] = "x"
+    with pytest.raises(ValueError, match="unknown slot"):
+        fig.style_compatibility_report("png")
+
+    fig = _chart().figure()
+    fig.chrome_styles["title"] = "not-a-mapping"  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="must be a mapping"):
+        fig.style_compatibility_report("png")
+
+
 def test_refusals_are_mirrored_not_re_decided() -> None:
     # The export path raises for these; the report carries the same message
     # instead of predicting a different outcome.
