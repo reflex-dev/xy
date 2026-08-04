@@ -91,6 +91,12 @@ REQUIRED_FILES = {
     "python/xy/static/index.js",
     "python/xy/static/standalone.js",
     "python/xy/widget.py",
+    # The cascade extension's own crate: required, so an sdist that silently
+    # dropped it (and with it `style_source="native_cascade"`) fails here
+    # rather than at a user's first class-styled export.
+    "cascade/Cargo.toml",
+    "cascade/src/lib.rs",
+    "cascade/src/resolve.rs",
     "src/css.rs",
     "src/font.rs",
     "src/kernels.rs",
@@ -132,6 +138,10 @@ ALLOWED_TOP_LEVEL = {
     "README.md",
     "SECURITY.md",
     "hatch_build.py",
+    # The optional style-cascade extension is a workspace member: its source
+    # ships for the same reason `src/` does — a source build must be able to
+    # produce every cdylib the wheel offers, not just the core.
+    "cascade",
     "js",
     "package-lock.json",
     "package.json",
