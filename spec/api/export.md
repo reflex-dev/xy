@@ -248,7 +248,7 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
-| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text + box subsets, 11 slots | text + box subsets, 11 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
 | `class_names={slot: "..."}` | yes, all 48 slots | **dropped** (or resolved via `style_source="native_cascade"` / a captured `style_snapshot=`) | same | silent by default during migration; both opt-in routes are lossless for the published profile |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
@@ -323,19 +323,24 @@ and an exported file has no stylesheet to select from.
 ### Which per-slot styles reach a file, and why only those
 
 A slot reaches the native writers when it names chrome a static file actually
-contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_title`,
-`tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`,
-`colorbar_title`, and `colorbar_tick`. The remaining slots are live-only chrome
-— `tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*` — or containers
-with no painted text of their own; there is nothing in a PNG for them to style.
+contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_line`,
+`tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`,
+`legend_label`, `colorbar`, `colorbar_title`, and `colorbar_tick`. The
+remaining slots are live-only chrome — `tooltip*`, `modebar*`, `crosshair_*`,
+`selection`, `badge*`, and `axis_band`, which exists only while its axis is
+navigable — or containers with no painted text of their own; there is nothing
+in a PNG for them to style.
 
 Within a supported slot the writers read a property subset, not a cascade:
-`font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
-`opacity`, and the text paint (`fill`, or `color`). The native raster's atlas is
-a single baked face, so it honors size and paint and leaves the typeface
-properties to the vector writers — the one documented divergence, and
-`tests/test_export_style_survival.py` pins it. A declaration outside the subset
-stays browser-only.
+the text subset — `font-size`, `font-weight`, `font-style`, `font-family`,
+`letter-spacing`, `opacity`, and the text paint (`fill`, or `color`) — plus,
+on the axis-chrome slots (`axis_line`, `tick_mark`, `tick_label`,
+`axis_title`), the shared box vocabulary (`_svg.SLOT_BOX_PROPS`). The raster
+atlas carries regular/bold/italic faces but no family axis, per-glyph
+advances, or blit alpha, so `font-family`, `letter-spacing` and text
+`opacity` stay vector-only — the documented divergence
+`tests/test_export_style_survival.py` pins. A declaration outside a slot's
+subsets stays browser-only.
 
 Where two surfaces name the same chrome, the narrower selector wins: an axis's
 own `label_color` beats `styles={"axis_title": ...}`, which beats the

@@ -723,7 +723,7 @@ raises before it reaches the client.
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
-| `axis_band` | Invisible axis-only pan/zoom gesture band |
+| `axis_band` | Invisible axis-only pan/zoom gesture band (exists only while its axis is navigable — navigation-gated for export, like the badge) |
 | `axis_line` | One Cartesian axis baseline |
 | `tick_mark` | One Cartesian major or minor tick mark |
 
@@ -1324,15 +1324,70 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
-| Vector — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
-| Raster — PNG, JPEG, WebP | `font-size` and the text paint only (`_svg.SLOT_RASTER_PROPS`) |
+| Slots | `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick` (`_svg.STATIC_STYLED_SLOTS`) |
+| Vector text — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
+| Raster text — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
+| Box, both writers | `background`/`background-color`, `border-color`/`border-width`/`border-style`, `border-radius`, `box-shadow` (offset only), `opacity`, `fill-opacity`, `padding` (`_svg.SLOT_BOX_PROPS`) — on `axis_line`, `tick_mark`, `tick_label`, `axis_title` (the legend keeps its own merged vocabulary) |
 
-The raster writer's glyph primitive takes a size and one RGBA paint and nothing
-else, so `font-weight`, `font-style`, `font-family`, `letter-spacing` and
-`opacity` are **vector-only**. They are not approximated: the atlas is a single
-baked face, and a silently substituted weight would be exactly the kind of
-invisible decision §28 forbids.
+The raster atlas carries a regular, a bold and an italic face, so weight
+(>= 600 rounds up to bold) and style survive rasterization; it has no family
+axis, no per-glyph advance control and no alpha channel on the glyph blit, so
+`font-family`, `letter-spacing` and `opacity` are **vector-only for text**.
+They are not approximated: a silently substituted face would be exactly the
+kind of invisible decision §28 forbids. (A declared `opacity` still reaches a
+slot's *box* in the raster — the box is ordinary geometry — which the
+capability matrix notes per slot.)
+
+#### Axis chrome boxes (parity phase 2)
+
+`axis_line` and `tick_mark` are pure box slots. Emission is strictly gated on
+a box declaration being present — an unstyled chart's bytes never move — and
+when it is, the spine/tick strokes are replaced by boxes from one shared
+producer (`_svg.axis_chrome_boxes`) consumed identically by the SVG writer,
+the raster writer, and the declared style snapshot (per-instance
+`qualifiers`/`geometry`: axis id, major|minor, side, tick index). Decisions,
+each recorded rather than silent:
+
+- **Geometry.** Spines stay centered on the plot edge, exactly where the
+  unstyled stroke has always run; the browser insets right/bottom spines by
+  their own width (`KNOWN_RENDERER_DIVERGENCES`, `axis_line_edge_geometry`).
+  A tick box is the centered stroke's own coverage — the same pixels as the
+  browser's rect.
+- **Ink.** The slot's `background` replaces the axis ink when declared (an
+  explicit `transparent` erases it, as in the browser); otherwise the box
+  keeps the axis's own `axis_color`/`tick_color` — the narrower selector
+  still wins the paint.
+- **No invented ticks.** `tick_length` defaults to 0; a zero-area box draws
+  nothing and casts no shadow, and the preflight says so instead of a length
+  being invented.
+- **Polar.** Spines and ticks keep stroke semantics under polar in every
+  renderer — the browser shares the limit (DIV spines cannot express a
+  circle).
+- **Rotated boxes** (an axis y-title) lower to pre-rotated geometry — a
+  `<polygon>` at radius 0, a `<path>` with circular arcs at radius > 0 —
+  because the PDF closed subset accepts no `transform` on `<rect>`. One
+  lowering repo-wide (`_chromebox` / `_svg._rotated_box_shape`).
+- **Rooms.** A `tick_label`/`axis_title` padding/border grows the measured
+  gutters (both orientations) so the box stays on the canvas; the polar
+  label ring keeps its flat 30 px allowance. Box geometry is measured with
+  the writers' DejaVu metrics — an authored `font-family` renders its own
+  glyphs inside a DejaVu-measured box, and `letter-spacing` is likewise
+  outside the gutter measurement (recorded misfits).
+
+`axis_band` is **navigation-gated** chrome, not structural: the browser
+creates it only while its axis is navigable (`57_viewstate.ts`
+`_axisBandNavigable`), a static file has no gesture for it to serve, and so —
+resolving the plan's flag F by the badge precedent — no writer draws it and
+the preflight reports it state-gated rather than dropped.
+
+`axis_title` precedence is per property. The axis's own `label_color`,
+`label_font_family`, `label_font_style` and `label_font_weight` are the
+narrower selector and win; the slot supplies whatever they leave unset —
+`letter-spacing` and `opacity` have no axis spelling, so the slot always
+carries them (the pre-parity writers dropped both the moment the axis
+authored a family or style). One documented exception, kept for
+compatibility: **font-size runs the other way** — the slot's `font-size` wins
+over the axis `label_size`.
 
 ```python
 xy.chart(

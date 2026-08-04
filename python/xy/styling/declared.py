@@ -28,11 +28,47 @@ the residue until then.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..dom import CHART_DOM_SLOTS
 from .resolved import ResolvedStyleSnapshot, SnapshotBuilder, SnapshotEnvironment, assert_resolved
+
+#: Slots whose snapshot instances carry per-instance qualifiers + geometry,
+#: produced by the writers' own `axis_chrome_boxes` (one geometry source for
+#: the SVG writer, the raster writer, and this snapshot). The rest of the
+#: axis family joins as its per-instance identity becomes load-bearing.
+_PER_INSTANCE_SLOTS: tuple[str, ...] = ("axis_line", "tick_mark")
+
+#: Re-entrancy guard for the per-instance producer: `axis_chrome_boxes` runs
+#: `_svg.layout`, whose title measurement calls back into `resolve_declared`.
+#: The nested resolution only needs the writer view, so it skips instance
+#: production instead of recursing.
+_INSTANCE_GUARD = threading.local()
+
+
+def _axis_instance_records(
+    spec: dict[str, Any], view: dict[str, dict[str, Any]]
+) -> dict[str, list[tuple[tuple[str, ...], tuple[float, float, float, float]]]]:
+    """Per-instance (qualifiers, geometry) records for the axis box slots."""
+    if getattr(_INSTANCE_GUARD, "active", False):
+        return {}
+    if "x_axis" not in spec or "y_axis" not in spec:
+        return {}  # a bare styling spec has no layout to resolve against
+    from .._svg import _has_box_declaration, axis_chrome_boxes
+
+    if not any(_has_box_declaration(view.get(slot)) for slot in _PER_INSTANCE_SLOTS):
+        return {}
+    _INSTANCE_GUARD.active = True
+    try:
+        boxes = axis_chrome_boxes(spec, view)
+    finally:
+        _INSTANCE_GUARD.active = False
+    records: dict[str, list[tuple[tuple[str, ...], tuple[float, float, float, float]]]] = {}
+    for box in boxes:
+        records.setdefault(box.slot, []).append((box.qualifiers, (box.x, box.y, box.w, box.h)))
+    return records
 
 
 @dataclass(frozen=True)
@@ -78,9 +114,13 @@ def resolve_declared(
     for slot, decls in raw.items():
         if not isinstance(decls, dict):
             continue
-        slot_name = str(slot)
-        normalized = {_kebab(prop): value for prop, value in decls.items()}
-        view[slot_name] = normalized
+        view[str(slot)] = {_kebab(prop): value for prop, value in decls.items()}
+    # Axis-chrome box slots intern one declaration and record N instances,
+    # each with its qualifiers (axis id, major|minor, side, tick index) and
+    # resolved geometry — produced by the writers' own box producer, so the
+    # snapshot cannot disagree with what either writer draws.
+    instance_records = _axis_instance_records(spec, view)
+    for slot_name, normalized in view.items():
         if slot_name not in CHART_DOM_SLOTS:
             writer_domain[slot_name] = dict(normalized)
             continue
@@ -94,7 +134,12 @@ def resolve_declared(
             else:
                 legal[name] = value
         if legal:
-            builder.add(slot_name, legal)
+            records = instance_records.get(slot_name)
+            if records:
+                for qualifiers, geometry in records:
+                    builder.add(slot_name, legal, qualifiers=qualifiers, geometry=geometry)
+            else:
+                builder.add(slot_name, legal)
         if residue:
             writer_domain[slot_name] = residue
     environment = SnapshotEnvironment(

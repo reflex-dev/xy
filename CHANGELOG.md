@@ -9,6 +9,16 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- Axis chrome joins static-export styling (parity phase 2): `axis_line` and
+  `tick_mark` accept the shared box vocabulary (background, border, radius,
+  offset shadow, opacity) in SVG, PNG and PDF, `tick_label` and `axis_title`
+  additionally draw padded boxes with the axis gutters growing to fit, and a
+  rotated y-title box lowers to PDF-legal pre-rotated geometry. Emission is
+  strictly declaration-gated (unstyled bytes are untouched), one shared
+  producer feeds both writers and the declared snapshot (per-tick
+  qualifiers + geometry), and `axis_band` is recorded as navigation-gated
+  live chrome rather than drawn. The preflight, capability registry and
+  matrix moved in the same change.
 - The mount-free native cascade (optional `xy-cascade` extension, ~3.8 MB
   cdylib built from the same workspace): `chart.to_png(custom_css=css,
   style_source="native_cascade")` resolves classes and self-contained author

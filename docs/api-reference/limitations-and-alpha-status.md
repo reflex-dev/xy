@@ -85,15 +85,20 @@ implementation. The bullets below are the boundaries that page's rows imply.
 - **Styling does not survive every export path equally, and the boundary is
   published rather than left to be discovered.** Mark, axis, and chart-level
   `style=` reach all three renderers. Per-slot `styles={slot: {...}}` reaches
-  them for the nine slots that name chrome a static file contains — `title`,
-  `axis_title`, `tick_label`, the three legend slots, and the three colorbar
-  slots — carrying `font-size`, `font-weight`, `font-style`, `font-family`,
-  `letter-spacing`, `opacity`, and the text paint. The remaining slots are live
-  chrome (`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with
-  nothing in a file to paint, and `class_names={slot: "..."}` cannot apply in a
-  file at all: a class selects a rule out of a stylesheet an exported file does
-  not have. The native raster's baked atlas is one face, so PNG/JPEG/WebP honor
-  a slot's size and paint but not its typeface. `xy.colorbar(style=...)` still
+  them for the eleven slots that name chrome a static file contains — `title`,
+  `axis_line`, `tick_mark`, `axis_title`, `tick_label`, the three legend
+  slots, and the three colorbar slots — carrying the text subset
+  (`font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
+  `opacity`, and the text paint) and, on the axis-chrome slots, the box
+  subset (background, border, radius, offset shadow, padding, opacity). The
+  remaining slots are live chrome (`tooltip*`, `modebar*`, `crosshair_*`,
+  `selection`, `badge*`, `axis_band`) with nothing in a file to paint, and
+  `class_names={slot: "..."}` cannot apply in a file at all: a class selects
+  a rule out of a stylesheet an exported file does not have. The native
+  raster's atlas carries regular/bold/italic faces but no family axis or
+  per-glyph advances, so PNG/JPEG/WebP honor a slot's size, paint, weight and
+  style but not `font-family`/`letter-spacing`/text `opacity`.
+  `xy.colorbar(style=...)` still
   has no native channel — use the `colorbar_*` slots. The full matrix is
   [Static export §9](https://github.com/reflex-dev/xy/blob/main/spec/api/export.md),
   pinned by `tests/test_export_style_survival.py`.

@@ -57,21 +57,27 @@ def test_native_writers_read_a_property_subset_not_the_whole_cascade() -> None:
         assert f"cls-{slot}" not in svg
 
 
-#: The paint property each static slot answers to. `legend` is the frame box,
-#: so it takes `background`; every other static slot is text, so it takes the
-#: SVG text paint.
-_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {"legend": "background"}
+#: The paint property each static slot answers to. `legend` is the frame box
+#: and `axis_line`/`tick_mark` are pure box slots, so they take `background`;
+#: every other static slot is text, so it takes the SVG text paint.
+_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
+    "legend": "background",
+    "axis_line": "background",
+    "tick_mark": "background",
+}
 
 
 @pytest.mark.parametrize("slot", STATIC_STYLED_SLOTS)
 def test_every_static_slot_carries_its_paint_into_svg(slot: str) -> None:
     # The headline of the per-slot contract: a slot that names chrome a static
-    # file contains must carry that chrome's paint into the file.
+    # file contains must carry that chrome's paint into the file. The x axis
+    # authors tick_length so the chart actually contains tick marks —
+    # tick_length defaults to 0 and a styled tick_mark slot invents no length.
     chart = xy.scatter_chart(
         xy.scatter(x=[0.0, 1.0], y=[1.0, 2.0], name="series", color=[0.0, 1.0], colormap="viridis"),
         xy.legend(title="Legend title"),
         xy.colorbar(title="Colorbar title"),
-        xy.x_axis(label="x label"),
+        xy.x_axis(label="x label", style={"tick_length": 4}),
         title="chart title",
         styles={slot: {_SLOT_PAINT_PROPERTY[slot]: "#123456"}},
     )

@@ -22,6 +22,8 @@ import numpy as np
 
 from . import _paint, _png, _scene, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._chromebox import box_template, padding_sides, text_box
+from ._chromebox import rotate_points as _chromebox_rotate
 from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
@@ -50,6 +52,7 @@ from ._svg import (
     _decode_title_geometry,
     _density_column,
     _estimated_text_width,
+    _has_box_declaration,
     _heatmap_rgba_grid,
     _legend_layout,
     _lut,
@@ -66,6 +69,7 @@ from ._svg import (
     affine_fast_path,
     annotation_label_placement,
     apply_export_background,
+    axis_chrome_boxes,
     axis_ticks,
     hexbin_ring,
     layout,
@@ -79,6 +83,7 @@ from ._svg import (
     slot_font_size,
     slot_styles,
     slot_text_color,
+    tick_span,
     warp_grid_rgba,
 )
 
@@ -775,16 +780,26 @@ def _emit_slot_box(cmd: "_Cmd", box: Any) -> None:
 
     Slot opacity folds into every RGBA (the display list has no group
     compositing); rounded corners go through `_round_rect_pts`; the border
-    strokes closed so the final edge is not silently dropped. Emits nothing
-    for a box that paints nothing — the unstyled-bytes gate.
+    strokes closed so the final edge is not silently dropped. A posed box
+    (`angle != 0`) is pre-rotated in Python — `cmd.fill` takes any polygon
+    and the display list has no transform primitive — the raster half of the
+    repo's one rotated-box lowering (plan flag E). Emits nothing for a box
+    that paints nothing — including any zero-area box, which casts no shadow
+    either — the unstyled-bytes gate.
     """
+    if box.w <= 0.0 or box.h <= 0.0:
+        return
     if not box.paints_anything and box.shadow is None:
         return
 
     def pts(x: float, y: float) -> list[tuple[float, float]]:
         if box.radius > 0:
-            return _round_rect_pts(x, y, box.w, box.h, box.radius)
-        return _rect_pts(x, y, box.w, box.h)
+            shape = _round_rect_pts(x, y, x + box.w, y + box.h, box.radius)
+        else:
+            shape = _rect_pts(x, y, x + box.w, y + box.h)
+        if box.angle:
+            shape = _chromebox_rotate(shape, box.angle, box.cx, box.cy)
+        return shape
 
     if box.shadow is not None:
         dx, dy, color = box.shadow
@@ -920,13 +935,23 @@ def _emit_polar_tick_labels(
     r_color: tuple[int, ...],
     hide_theta: bool,
     hide_r: bool,
+    tick_label_slot: Optional[dict[str, Any]] = None,
 ) -> None:
     """Emit polar tick labels as display-list text, from the shared placement.
 
     Placement lives in `_svg.polar_tick_label_layout`; this is only the sink,
     so the two exporters cannot drift on rim offsets, quadrant anchors or the
-    radial spoke angle.
+    radial spoke angle. `tick_label_slot` carries the chart-wide slot: its
+    font emphasis routes to the atlas faces here exactly as on the cartesian
+    path (the P0.2 contract — this sink was the one emitter it had missed),
+    and its declared box rides `text_box` like every other label.
     """
+    slot = tick_label_slot or {}
+    italic, bold = _native_font_emphasis(
+        {"font_style": slot.get("font-style"), "font_weight": slot.get("font-weight", 400)}
+    )
+    box_tmpl = box_template("tick_label", slot) if _has_box_declaration(slot) else None
+    box_pads = padding_sides(slot)
     angular, radial = polar_tick_label_layout(
         polar,
         theta_values,
@@ -942,6 +967,19 @@ def _emit_polar_tick_labels(
     )
     for placed, paint in ((angular, theta_color), (radial, r_color)):
         for item in placed:
+            if box_tmpl is not None:
+                _emit_slot_box(
+                    cmd,
+                    text_box(
+                        box_tmpl,
+                        box_pads,
+                        x=item.x,
+                        y=item.y,
+                        anchor=item.anchor,
+                        block=_textblock.measure(item.text, item.size),
+                        angle=item.spin,
+                    ),
+                )
             cmd.text(
                 item.x,
                 item.y,
@@ -952,6 +990,8 @@ def _emit_polar_tick_labels(
                 paint,
                 item.text,
                 angle=item.spin,
+                italic=italic,
+                bold=bold,
             )
 
 
@@ -1153,6 +1193,17 @@ def render_raster(
         phase="text",
         polar=polar,
     )
+    # Hoisted above the axis chrome: the axis_line/tick_mark box slots are
+    # read here (formerly assigned after the tick loops, which could never
+    # see them). Same resolver, same view — a pure reorder for unstyled
+    # charts.
+    slots = slot_styles(spec)
+    axis_line_boxed = polar is None and _has_box_declaration(slots.get("axis_line"))
+    tick_mark_boxed = polar is None and _has_box_declaration(slots.get("tick_mark"))
+    # One producer feeds both writers and the declared snapshot, so a styled
+    # spine or tick cannot mean different geometry in different outputs.
+    # Polar keeps stroke semantics (the browser shares the limit).
+    axis_boxes = axis_chrome_boxes(spec, slots) if (axis_line_boxed or tick_mark_boxed) else []
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
@@ -1189,64 +1240,63 @@ def render_raster(
                     )
                     boundary = [*outer, *reversed(inner)]
                     cmd.stroke([*boundary, boundary[0]], width_, paint)
-    if not hide_y or explicit_frame_sides:
-        if "left" in frame_sides:
+    if not axis_line_boxed:
+        if not hide_y or explicit_frame_sides:
+            if "left" in frame_sides:
+                cmd.stroke(
+                    [(px0, py0), (px0, py1)],
+                    float(ystyle.get("axis_width", 1)),
+                    _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+                )
+            if "right" in frame_sides:
+                cmd.stroke(
+                    [(px1, py0), (px1, py1)],
+                    float(ystyle.get("axis_width", 1)),
+                    _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+                )
+        if not hide_x or explicit_frame_sides:
+            if "top" in frame_sides:
+                cmd.stroke(
+                    [(px0, py0), (px1, py0)],
+                    float(xstyle.get("axis_width", 1)),
+                    _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+                )
+            if "bottom" in frame_sides:
+                cmd.stroke(
+                    [(px0, py1), (px1, py1)],
+                    float(xstyle.get("axis_width", 1)),
+                    _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+                )
+        for _axis_id, axis, _axis_scale in extra_x_axes:
+            if _axis_tick_label_strategy(axis) == "none":
+                continue
+            axis_style = axis.get("style") or {}
+            edge = py0 if axis.get("side", "bottom") == "top" else py1
             cmd.stroke(
-                [(px0, py0), (px0, py1)],
-                float(ystyle.get("axis_width", 1)),
-                _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+                [(px0, edge), (px1, edge)],
+                float(axis_style.get("axis_width", 1)),
+                _parse_color(_css(axis_style.get("axis_color"), default_axis)),
             )
-        if "right" in frame_sides:
+        for _axis_id, axis, _axis_scale in extra_y_axes:
+            if _axis_tick_label_strategy(axis) == "none":
+                continue
+            axis_style = axis.get("style") or {}
+            edge = px1 if axis.get("side", "right") == "right" else px0
             cmd.stroke(
-                [(px1, py0), (px1, py1)],
-                float(ystyle.get("axis_width", 1)),
-                _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+                [(edge, py0), (edge, py1)],
+                float(axis_style.get("axis_width", 1)),
+                _parse_color(_css(axis_style.get("axis_color"), default_axis)),
             )
-    if not hide_x or explicit_frame_sides:
-        if "top" in frame_sides:
-            cmd.stroke(
-                [(px0, py0), (px1, py0)],
-                float(xstyle.get("axis_width", 1)),
-                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
-            )
-        if "bottom" in frame_sides:
-            cmd.stroke(
-                [(px0, py1), (px1, py1)],
-                float(xstyle.get("axis_width", 1)),
-                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
-            )
-    for _axis_id, axis, _axis_scale in extra_x_axes:
-        if _axis_tick_label_strategy(axis) == "none":
-            continue
-        axis_style = axis.get("style") or {}
-        edge = py0 if axis.get("side", "bottom") == "top" else py1
-        cmd.stroke(
-            [(px0, edge), (px1, edge)],
-            float(axis_style.get("axis_width", 1)),
-            _parse_color(_css(axis_style.get("axis_color"), default_axis)),
-        )
-    for _axis_id, axis, _axis_scale in extra_y_axes:
-        if _axis_tick_label_strategy(axis) == "none":
-            continue
-        axis_style = axis.get("style") or {}
-        edge = px1 if axis.get("side", "right") == "right" else px0
-        cmd.stroke(
-            [(edge, py0), (edge, py1)],
-            float(axis_style.get("axis_width", 1)),
-            _parse_color(_css(axis_style.get("axis_color"), default_axis)),
-        )
+    else:
+        # The styled spines as boxes, centered on the plot edge exactly where
+        # the unstyled stroke ran (the browser insets right/bottom spines —
+        # recorded divergence in `KNOWN_RENDERER_DIVERGENCES`).
+        for box in axis_boxes:
+            if box.slot == "axis_line":
+                _emit_slot_box(cmd, box)
 
-    def tick_span(style: dict[str, Any]) -> tuple[float, float]:
-        length = max(0.0, float(style.get("tick_length", 0)))
-        direction = str(style.get("tick_direction", "out"))
-        if direction == "in":
-            return length, 0.0
-        if direction == "inout":
-            return length / 2, length / 2
-        return 0.0, length
-
-    if not hide_x and polar is None:
-        inward, outward = tick_span(xmstyle)
+    if not tick_mark_boxed and not hide_x and polar is None:
+        inward, outward, tick_width = tick_span(xmstyle)
         side = xa.get("side", "bottom")
         edge = py0 if side == "top" else py1
         for value in xmt:
@@ -1258,10 +1308,10 @@ def render_raster(
             )
             cmd.stroke(
                 [(x, y0), (x, y1)],
-                float(xmstyle.get("tick_width", 1)),
+                tick_width,
                 _parse_color(_css(xmstyle.get("tick_color"), default_axis)),
             )
-        inward, outward = tick_span(xstyle)
+        inward, outward, tick_width = tick_span(xstyle)
         for side in _axis_tick_sides(xa, is_x=True):
             edge = py0 if side == "top" else py1
             for value in xt:
@@ -1273,11 +1323,11 @@ def render_raster(
                 )
                 cmd.stroke(
                     [(x, y0), (x, y1)],
-                    float(xstyle.get("tick_width", 1)),
+                    tick_width,
                     _parse_color(_css(xstyle.get("tick_color"), default_axis)),
                 )
-    if not hide_y and polar is None:
-        inward, outward = tick_span(ymstyle)
+    if not tick_mark_boxed and not hide_y and polar is None:
+        inward, outward, tick_width = tick_span(ymstyle)
         side = ya.get("side", "left")
         edge = px1 if side == "right" else px0
         for value in ymt:
@@ -1289,10 +1339,10 @@ def render_raster(
             )
             cmd.stroke(
                 [(x0, y), (x1, y)],
-                float(ymstyle.get("tick_width", 1)),
+                tick_width,
                 _parse_color(_css(ymstyle.get("tick_color"), default_axis)),
             )
-        inward, outward = tick_span(ystyle)
+        inward, outward, tick_width = tick_span(ystyle)
         for side in _axis_tick_sides(ya, is_x=False):
             edge = px1 if side == "right" else px0
             for value in yt:
@@ -1304,49 +1354,55 @@ def render_raster(
                 )
                 cmd.stroke(
                     [(x0, y), (x1, y)],
-                    float(ystyle.get("tick_width", 1)),
+                    tick_width,
                     _parse_color(_css(ystyle.get("tick_color"), default_axis)),
                 )
-    for axis_id, axis, axis_scale in extra_x_axes:
-        if _axis_tick_label_strategy(axis) == "none":
-            continue
-        axis_style = axis.get("style") or {}
-        inward, outward = tick_span(axis_style)
-        for side in _axis_tick_sides(axis, is_x=True):
-            edge = py0 if side == "top" else py1
-            for value in extra_x_ticks[axis_id][0]:
-                x = float(axis_scale(value))
-                y0, y1 = (
-                    (edge - outward, edge + inward)
-                    if side == "top"
-                    else (edge - inward, edge + outward)
-                )
-                cmd.stroke(
-                    [(x, y0), (x, y1)],
-                    float(axis_style.get("tick_width", 1)),
-                    _parse_color(_css(axis_style.get("tick_color"), default_axis)),
-                )
-    for axis_id, axis, axis_scale in extra_y_axes:
-        if _axis_tick_label_strategy(axis) == "none":
-            continue
-        axis_style = axis.get("style") or {}
-        inward, outward = tick_span(axis_style)
-        for side in _axis_tick_sides(axis, is_x=False):
-            edge = px1 if side == "right" else px0
-            for value in extra_y_ticks[axis_id][0]:
-                y = float(axis_scale(value))
-                x0, x1 = (
-                    (edge - inward, edge + outward)
-                    if side == "right"
-                    else (edge - outward, edge + inward)
-                )
-                cmd.stroke(
-                    [(x0, y), (x1, y)],
-                    float(axis_style.get("tick_width", 1)),
-                    _parse_color(_css(axis_style.get("tick_color"), default_axis)),
-                )
-
-    slots = slot_styles(spec)
+    if not tick_mark_boxed:
+        for axis_id, axis, axis_scale in extra_x_axes:
+            if _axis_tick_label_strategy(axis) == "none":
+                continue
+            axis_style = axis.get("style") or {}
+            inward, outward, tick_width = tick_span(axis_style)
+            for side in _axis_tick_sides(axis, is_x=True):
+                edge = py0 if side == "top" else py1
+                for value in extra_x_ticks[axis_id][0]:
+                    x = float(axis_scale(value))
+                    y0, y1 = (
+                        (edge - outward, edge + inward)
+                        if side == "top"
+                        else (edge - inward, edge + outward)
+                    )
+                    cmd.stroke(
+                        [(x, y0), (x, y1)],
+                        tick_width,
+                        _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+                    )
+        for axis_id, axis, axis_scale in extra_y_axes:
+            if _axis_tick_label_strategy(axis) == "none":
+                continue
+            axis_style = axis.get("style") or {}
+            inward, outward, tick_width = tick_span(axis_style)
+            for side in _axis_tick_sides(axis, is_x=False):
+                edge = px1 if side == "right" else px0
+                for value in extra_y_ticks[axis_id][0]:
+                    y = float(axis_scale(value))
+                    x0, x1 = (
+                        (edge - inward, edge + outward)
+                        if side == "right"
+                        else (edge - outward, edge + inward)
+                    )
+                    cmd.stroke(
+                        [(x0, y), (x1, y)],
+                        tick_width,
+                        _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+                    )
+    if tick_mark_boxed:
+        # The styled tick marks, from the shared producer — the same boxes the
+        # SVG writer and the declared snapshot consume, at the stroke's own
+        # paint position in the display list.
+        for box in axis_boxes:
+            if box.slot == "tick_mark":
+                _emit_slot_box(cmd, box)
 
     def slot_paint(slot: str, fallback: str) -> tuple:
         """A slot's text paint, or the writer's own default."""
@@ -1377,6 +1433,16 @@ def render_raster(
                 "font_weight": (slots.get("tick_label") or {}).get("font-weight", 400),
             }
         )
+        # The slot's box, lowered once and stamped per label — the raster
+        # twin of the SVG writer's per-<text> rect, from the same shared
+        # `text_box` metrics.
+        tick_label_slot = slots.get("tick_label") or {}
+        box_tmpl = (
+            box_template("tick_label", tick_label_slot)
+            if _has_box_declaration(tick_label_slot)
+            else None
+        )
+        box_pads = padding_sides(tick_label_slot)
         baseline_shift = _axis_tick_label_baseline_shift(axis)
         # An explicit tick_label_anchor (axis spec or style) overrides the
         # side-derived default, matching the browser client and SVG export.
@@ -1425,6 +1491,19 @@ def render_raster(
                     anchor = (
                         _TEXT_ANCHOR_CODES[explicit_anchor] if explicit_anchor else default_anchor
                     )
+                if box_tmpl is not None:
+                    _emit_slot_box(
+                        cmd,
+                        text_box(
+                            box_tmpl,
+                            box_pads,
+                            x=x,
+                            y=y,
+                            anchor=("start", "middle", "end")[anchor],
+                            block=block,
+                            angle=float(item["angle"]),
+                        ),
+                    )
                 _emit_text_block(
                     cmd,
                     x,
@@ -1454,6 +1533,7 @@ def render_raster(
             _polar_label_paint(ya, slot_paint, default_text),
             hide_x or xa.get("tick_label_strategy") == "off",
             hide_y or ya.get("tick_label_strategy") == "off",
+            tick_label_slot=slots.get("tick_label") or {},
         )
     else:
         emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
@@ -1545,12 +1625,30 @@ def render_raster(
                 ),
             }
         )
+        font_size = slot_font_size(axis_title_slot, float(geometry["font_size"]))
+        if _has_box_declaration(axis_title_slot):
+            # The title's box before its text, from the same shared `text_box`
+            # metrics the SVG writer uses; a rotated y-title box is
+            # pre-rotated by the emitter (flag-E lowering, no transform
+            # primitive in the display list).
+            _emit_slot_box(
+                cmd,
+                text_box(
+                    box_template("axis_title", axis_title_slot),
+                    padding_sides(axis_title_slot),
+                    x=float(geometry["x"]),
+                    y=float(geometry["y"]),
+                    anchor=str(geometry["anchor"]),
+                    block=_textblock.measure(str(axis["label"]), font_size),
+                    angle=float(geometry["angle"]),
+                ),
+            )
         _emit_text_block(
             cmd,
             float(geometry["x"]),
             float(geometry["y"]),
             anchor,
-            slot_font_size(slots.get("axis_title") or {}, float(geometry["font_size"])),
+            font_size,
             (
                 _parse_color(_css(axis_style.get("label_color"), ""))
                 if _css(axis_style.get("label_color"), "")

@@ -186,10 +186,12 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     """(honored property names, qualifier) for a native-subset slot.
 
     The subsets are the writers' own constants — the text properties per
-    family, plus the legend frame's merged-declaration box vocabulary
-    (`_svg.LEGEND_BOX_PROPS`, owned by the writer module). A legend property
-    in neither set has no channel into a static file and is a provable loss:
-    the earlier declaration-level qualification rounded exactly those to
+    family, the shared chrome-box vocabulary (`_svg.SLOT_BOX_PROPS`) for the
+    slots whose boxes the writers draw, plus the legend frame's merged-
+    declaration box vocabulary (`_svg.LEGEND_BOX_PROPS`, owned by the writer
+    module until P4 retires the em residue). A property in none of a slot's
+    sets has no channel into a static file and is a provable loss: the
+    earlier declaration-level qualification rounded exactly those to
     silence, which let warn stay quiet and strict permit a drop.
     """
     from .. import _svg
@@ -200,6 +202,23 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "box properties route through the merged legend declaration; see the "
             "capability matrix legend note"
         )
+    if slot in ("axis_line", "tick_mark"):
+        # Pure box slots: no text of their own, so the text subsets do not
+        # apply; the box vocabulary is honored by both writers.
+        qualifier = ""
+        if slot == "tick_mark":
+            qualifier = (
+                "tick marks exist only where an axis authors tick_length > 0; a "
+                "zero-length tick draws no box (no length is invented for a "
+                "styled slot)"
+            )
+        return frozenset(_svg.SLOT_BOX_PROPS), qualifier
+    if slot in ("tick_label", "axis_title"):
+        # Text slots that also draw a box: the union of the family's text
+        # subset and the box vocabulary. On the raster family a declared
+        # `opacity` reaches the box but not the glyphs (the atlas blit has
+        # no alpha channel) — recorded in the capability-matrix note.
+        return text | _svg.SLOT_BOX_PROPS, ""
     return text, ""
 
 
@@ -263,7 +282,10 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
     honored, qualifier = _honored_props(slot, family)
     kept = tuple(p for p in props if p in honored)
     lost = tuple(p for p in props if p not in honored)
-    if slot == "legend" and not lost:
+    if qualifier and not lost:
+        # Nothing drops, but the slot's channel carries a condition the
+        # author should know (the merged legend declaration; tick marks
+        # existing only at authored tick_length) — qualified, never silent.
         return SlotFinding(
             slot=slot,
             source="styles",
