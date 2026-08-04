@@ -78,9 +78,23 @@ def test_warn_is_silent_when_nothing_drops() -> None:
         _chart(styles={"tick_label": {"letter_spacing": "0.08em"}}).to_svg(compatibility="warn")
 
 
-def test_warn_applies_to_the_vector_writers_too() -> None:
+def test_warn_fires_when_the_raster_drops_a_vector_only_declaration() -> None:
+    # letter-spacing survives the vector writers but not the raster one, so
+    # the PNG path must warn where the SVG path (covered above) stays silent.
     with pytest.warns(StyleCompatibilityWarning, match="tick_label"):
         _chart(styles={"tick_label": {"letter_spacing": "0.08em"}}).to_png(compatibility="warn")
+
+
+def test_warnings_land_on_the_callers_line_not_export_plumbing() -> None:
+    # The distance from the warn call to user code differs per entry point,
+    # so the stacklevel is measured; every public route must attribute the
+    # warning to this file, not to export.py or preflight.py internals.
+    chart = _lossy_chart()
+    with pytest.warns(StyleCompatibilityWarning) as caught:
+        chart.to_png(compatibility="warn")
+        chart.figure().to_svg(compatibility="warn")
+        chart.to_image("jpeg", compatibility="warn")
+    assert [w.filename for w in caught] == [__file__] * len(caught)
 
 
 # -- strict ------------------------------------------------------------------
@@ -132,9 +146,22 @@ def test_no_mode_reroutes_an_explicit_engine() -> None:
 def test_resolution_errors_precede_and_outrank_mode_logic() -> None:
     # custom_css with a pinned native engine raises today's ValueError in
     # every mode — never a StyleCompatibilityError, never a silent re-route.
-    for mode in ("legacy", "warn", "strict"):
-        with pytest.raises(ValueError, match="custom_css requires"):
-            _chart().to_png(engine=export.Engine.default, custom_css=".x{}", compatibility=mode)
+    # The lossy chart is the load-bearing case: enforcement would otherwise
+    # run its preflight (and warn or raise) before the resolution check.
+    for chart in (_chart(), _lossy_chart()):
+        for mode in ("legacy", "warn", "strict"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", StyleCompatibilityWarning)
+                with pytest.raises(ValueError, match="custom_css requires") as excinfo:
+                    chart.to_png(
+                        engine=export.Engine.default, custom_css=".x{}", compatibility=mode
+                    )
+            assert not isinstance(excinfo.value, StyleCompatibilityError)
+            with pytest.raises(ValueError, match="custom_css requires") as excinfo:
+                chart.to_image(
+                    "png", engine=export.Engine.default, custom_css=".x{}", compatibility=mode
+                )
+            assert not isinstance(excinfo.value, StyleCompatibilityError)
 
 
 def test_auto_with_custom_css_is_lossless_in_every_mode() -> None:
@@ -171,3 +198,27 @@ def test_html_rejects_a_compatibility_mode_like_other_inapplicable_options(
         _chart().write_image(tmp_path / "chart.html", compatibility="strict")
     # The default passes through untouched.
     _chart().write_image(tmp_path / "chart2.html")
+
+
+def test_batch_validates_the_mode_vocabulary_even_for_all_html(tmp_path) -> None:
+    # A mixed batch legitimately carries a mode for its image entries, so
+    # HTML entries are exempt rather than rejecting the whole batch — but the
+    # vocabulary is validated up front, so a typo fails an all-HTML batch too
+    # instead of passing silently.
+    chart = _lossy_chart()
+    with pytest.raises(ValueError, match="compatibility"):
+        export.write_images([chart], [str(tmp_path / "a.html")], compatibility="stricted")
+    # strict + only HTML: nothing to check, bytes written.
+    export.write_images([chart], [str(tmp_path / "b.html")], compatibility="strict")
+    assert (tmp_path / "b.html").exists()
+
+
+def test_strict_svg_remediation_does_not_recommend_a_refused_engine() -> None:
+    # SVG is native-only; a strict SVG failure must not point at
+    # engine=Engine.chromium, which that format rejects.
+    with pytest.raises(StyleCompatibilityError) as svg_err:
+        _lossy_chart().to_svg(compatibility="strict")
+    assert "SVG is native-only" in str(svg_err.value)
+    with pytest.raises(StyleCompatibilityError) as png_err:
+        _lossy_chart().to_png(compatibility="strict")
+    assert "engine=Engine.chromium or to_html()" in str(png_err.value)

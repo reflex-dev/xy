@@ -414,24 +414,56 @@ def enforce(
     report = route_resolved(figure, fmt=fmt, resolved_engine=resolved_engine, custom_css=custom_css)
     if report.lossless:
         return
+    # SVG is native-only (a browser screenshot cannot emit vector SVG), so
+    # recommending engine=Engine.chromium there would recommend a refusal.
+    keeps = (
+        "to_html() keeps everything (SVG is native-only, so Engine.chromium "
+        "is not a route for this format)"
+        if fmt == "svg"
+        else "engine=Engine.chromium or to_html() keeps everything"
+    )
     if mode == "warn":
         warnings.warn(
             StyleCompatibilityWarning(
                 f"this {fmt} export drops declared styling — "
                 + "; ".join(report.losses)
                 + " — chart.style_compatibility_report() has the full routing; "
-                "engine=Engine.chromium or to_html() keeps everything"
+                + keeps
             ),
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
         return
     raise StyleCompatibilityError(
-        report.explain() + "\nstrict compatibility refuses to drop declared styling; keep it with "
-        "engine=Engine.chromium or to_html(), move it into chart/mark style= or a "
-        'supported styles= subset, or export with compatibility="warn" during '
-        "migration",
+        report.explain()
+        + "\nstrict compatibility refuses to drop declared styling; "
+        + keeps
+        + ", or move it into chart/mark style= or a supported styles= subset, "
+        'or export with compatibility="warn" during migration',
         report,
     )
+
+
+def _caller_stacklevel() -> int:
+    """The stacklevel that lands the warning on the caller's export line.
+
+    The distance from `enforce` to user code varies by entry point (module
+    function, Figure method, Chart method, batch plan), so it is measured:
+    walk outward from `enforce` until the first frame outside the xy
+    package. Counted so `warnings.warn(..., stacklevel=n)` inside `enforce`
+    attributes the warning to that frame.
+    """
+    import sys
+    from pathlib import Path
+
+    package_dir = str(Path(__file__).resolve().parents[1])
+    frame = sys._getframe(1)  # enforce's frame
+    level = 1
+    while frame.f_back is not None and str(Path(frame.f_code.co_filename).resolve()).startswith(
+        package_dir
+    ):
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 __all__ = [
