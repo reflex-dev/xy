@@ -38,7 +38,7 @@ chart renders, pans/zooms, and resolves hover tooltips client-side; its small
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Set
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import reflex as rx
 
@@ -83,17 +83,24 @@ def _build_component_cls() -> Any:
         # Semantic events out (small JSON by construction — §1). Point and
         # selection events are live-only because static charts have no row
         # resolution kernel; view changes are already complete client-side.
-        on_point_hover: rx.EventHandler[lambda row: [row]]
-        on_point_click: rx.EventHandler[lambda row: [row]]
-        on_select_end: rx.EventHandler[lambda selection: [selection]]
-        on_view_change: rx.EventHandler[lambda view: [view]]
-        on_animation_start: rx.EventHandler[lambda event: [event]]
-        on_animation_end: rx.EventHandler[lambda event: [event]]
+        #
+        # Spelled `Annotated[rx.EventHandler, <args spec>]`, not the shorthand
+        # `rx.EventHandler[<args spec>]` — the same object either way, since
+        # `EventHandler.__class_getitem__` returns exactly this form and reflex
+        # reads the spec back out of `__metadata__`. Only the shorthand is a
+        # runtime-only DSL: `EventHandler` is not generic, so subscripting it is
+        # invalid in a type expression and checkers reject it. Don't fold it back.
+        on_point_hover: Annotated[rx.EventHandler, lambda row: [row]]
+        on_point_click: Annotated[rx.EventHandler, lambda row: [row]]
+        on_select_end: Annotated[rx.EventHandler, lambda selection: [selection]]
+        on_view_change: Annotated[rx.EventHandler, lambda view: [view]]
+        on_animation_start: Annotated[rx.EventHandler, lambda event: [event]]
+        on_animation_end: Annotated[rx.EventHandler, lambda event: [event]]
         # Structured hover payload (view-state.md §7.1): resolved fully in the
         # browser — cursor px/data coordinates plus the picked points — so it
         # works on static charts too. `on_point_hover` stays the narrow
         # legacy row form; new code uses this.
-        on_hover: rx.EventHandler[lambda payload: [payload]]
+        on_hover: Annotated[rx.EventHandler, lambda payload: [payload]]
 
     # The class is created lazily inside this function; reflex derives JS
     # identifiers from __qualname__, and "<locals>" would leak an illegal

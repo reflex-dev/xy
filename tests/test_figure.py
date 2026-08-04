@@ -2089,6 +2089,11 @@ def test_mark_fill_rejects_invalid_gradients() -> None:
         fig.area(
             [0.0, 1.0], [1.0, 2.0], fill={"gradient": "linear-gradient(red, blue)", "mode": "x"}
         )
+    # Keys of a user-supplied dict need not be mutually comparable; report the
+    # unknown key rather than letting the sort raise a bare TypeError
+    # (spec/api/styling.md: closed grammars raise ValueError, naming the reason).
+    with pytest.raises(ValueError, match="unknown key"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill={1: "x", "mode": "y"})
     # validation happens before ingest — the failed call leaves no partial trace
     assert fig.traces == []
 
