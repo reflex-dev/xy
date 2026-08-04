@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -13,13 +14,72 @@ def _load_verify_local_module():
     spec = importlib.util.spec_from_file_location("verify_local", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    try:
+        previous = sys.modules[spec.name]
+        had_previous = True
+    except KeyError:
+        previous = ModuleType(spec.name)
+        had_previous = False
+    previous_sys_path = sys.path.copy()
+    sys.path.insert(0, str(path.parent))
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = previous_sys_path
+        if had_previous:
+            sys.modules[spec.name] = previous
+        else:
+            sys.modules.pop(spec.name, None)
     return module
 
 
 verify_local = _load_verify_local_module()
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("scripts/check_typing.py", "--help"),
+        ("-m", "scripts.check_typing", "--help"),
+        ("scripts/verify_local.py", "--help"),
+        ("-m", "scripts.verify_local", "--help"),
+    ],
+)
+def test_ty_script_entrypoints_support_path_and_module_execution(
+    command: tuple[str, ...],
+) -> None:
+    proc = subprocess.run(
+        [sys.executable, *command],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_scripts_package_replaces_conflicting_ty_tools_alias() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys, types; "
+                "sys.modules['_ty_tools'] = types.ModuleType('_ty_tools'); "
+                "import scripts, _ty_tools; "
+                "assert _ty_tools is scripts._ty_tools"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_default_selection_is_quick_checks_only() -> None:
@@ -110,33 +170,98 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
     assert selected[0].requires_modules == ("pytest",)
 
 
-def test_ty_check_is_advisory_matching_ci() -> None:
-    # ci.yml runs `ty check python || echo "::warning::..."` — advisory, not
-    # gating (pre-1.0, can't narrow Optionals / NumPy dtypes across stub
-    # versions). The local full gate must match, or `make check-full` fails on
-    # findings CI ignores. If ty ever goes gating, flip both together.
+def test_ty_check_is_gating_and_includes_external_consumer() -> None:
     checks = verify_local._base_checks()
-    assert checks["ty"].advisory is True
-    # every other check stays gating
+    check = checks["ty"]
+    assert check.advisory is False
+    assert check.command[1] == "scripts/check_typing.py"
+    assert check.command[-2] == "--ty-executable"
+    assert check.command[-1:] == check.requires_executables
+    assert check.requires_modules == ()
+
     gating = [c.name for c in checks.values() if not c.advisory]
-    assert "ty" not in gating and "pytest" in gating and "ruff_check" in gating
+    assert "ty" in gating and "pytest" in gating and "ruff_check" in gating
 
 
-def test_advisory_check_findings_do_not_fail_the_gate() -> None:
-    # A failing advisory check warns but returns success; a failing gating
-    # check still fails. Drive main() with a stubbed runner.
-    import scripts.verify_local as vl
+def test_ty_executable_prefers_python_sibling(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    sibling = tmp_path / ("ty.exe" if verify_local.os.name == "nt" else "ty")
+    python.touch()
+    sibling.touch()
+    sibling.chmod(0o755)
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
 
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == sibling
+
+
+def test_ty_executable_falls_back_to_path(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    python.touch()
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
+
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
+
+
+def test_ty_executable_skips_non_executable_sibling(tmp_path: Path, monkeypatch) -> None:
+    python = tmp_path / "python"
+    sibling = tmp_path / ("ty.exe" if verify_local.os.name == "nt" else "ty")
+    python.touch()
+    sibling.touch()
+    monkeypatch.setattr(verify_local.os, "access", lambda _path, _mode: False)
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: "/path/ty")
+
+    assert verify_local._ty_tools.resolve_ty_executable(str(python)) == Path("/path/ty")
+
+
+@pytest.mark.parametrize(("os_name", "expected"), [("posix", "ty"), ("nt", "ty.exe")])
+def test_ty_executable_uses_platform_name_for_path_lookup(
+    tmp_path: Path,
+    monkeypatch,
+    os_name: str,
+    expected: str,
+) -> None:
+    python = tmp_path / "python"
+    python.touch()
+    looked_up: list[str] = []
+
+    def fake_which(executable: str) -> None:
+        looked_up.append(executable)
+
+    monkeypatch.setattr(verify_local.shutil, "which", fake_which)
+
+    candidate = verify_local._ty_tools.resolve_ty_executable(
+        str(python),
+        required=False,
+        os_name=os_name,
+    )
+
+    assert looked_up == [expected]
+    assert candidate == Path(expected)
+
+
+def test_missing_ty_cli_has_actionable_preflight_error(monkeypatch) -> None:
+    executable = "ty.exe" if verify_local.os.name == "nt" else "ty"
+    monkeypatch.setattr(verify_local, "_python", lambda: "/missing/python")
+    monkeypatch.setattr(verify_local.shutil, "which", lambda _executable: None)
+
+    check = verify_local._base_checks()["ty"]
+    reasons = verify_local.missing_reasons(check)
+
+    assert check.requires_executables == (executable,)
+    assert any("missing executable" in reason and "make setup" in reason for reason in reasons)
+
+
+def test_ty_findings_fail_the_gate() -> None:
     def fake_run(check: verify_local.Check) -> int:
         return 1 if check.name == "ty" else 0
 
-    original = vl.run_check
-    vl.run_check = fake_run  # type: ignore[assignment]
+    original = verify_local.run_check
+    verify_local.run_check = fake_run
     try:
-        rc = vl.main(["--only", "ty"])
+        rc = verify_local.main(["--only", "ty"])
     finally:
-        vl.run_check = original  # type: ignore[assignment]
-    assert rc == 0  # advisory finding does not gate
+        verify_local.run_check = original
+    assert rc == 1
 
 
 def test_error_safety_check_is_known_as_targeted_gate() -> None:
@@ -171,6 +296,7 @@ def test_api_surface_check_is_known_as_targeted_gate() -> None:
     assert [check.name for check in selected] == ["api_surface"]
     command = selected[0].command
     assert "tests/test_public_api.py" in command
+    assert "tests/test_check_typing.py" in command
     assert "tests/test_type_surface.py" in command
     assert (
         "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction"
@@ -406,6 +532,7 @@ def test_dry_run_includes_api_surface_gate(capsys) -> None:
     assert "scripts/check_public_api.py" in out
     assert "api_surface" in out
     assert "tests/test_public_api.py" in out
+    assert "tests/test_check_typing.py" in out
     assert "tests/test_type_surface.py" in out
 
 

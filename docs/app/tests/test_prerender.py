@@ -29,12 +29,12 @@ def test_production_prerender_config_lists_every_docs_route() -> None:
 
     assert config["basename"] == "/docs/xy/"
     assert config["prerender"] == [
-        *[page.route for page in discover_docs(DOCS_CONFIG)],
-        *DOCS_REDIRECTS,
+        *[page.route.rstrip("/") or "/" for page in discover_docs(DOCS_CONFIG)],
+        *[route.rstrip("/") or "/" for route in DOCS_REDIRECTS],
     ]
-    assert "/core-concepts/data/" in config["prerender"]
-    assert "/core-concepts/large-data-and-performance/" in config["prerender"]
-    assert "/charts/annotations/" in config["prerender"]
+    assert "/core-concepts/data" in config["prerender"]
+    assert "/core-concepts/large-data-and-performance" in config["prerender"]
+    assert "/charts/annotations" in config["prerender"]
 
 
 def test_development_router_config_is_unchanged() -> None:

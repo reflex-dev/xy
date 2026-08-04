@@ -71,8 +71,11 @@ def _with_all_docs_prerendered(
         return source
 
     config["prerender"] = [
-        *[page.route for page in discover_docs(docs)],
-        *DOCS_REDIRECTS,
+        route.rstrip("/") or "/"
+        for route in [
+            *[page.route for page in discover_docs(docs)],
+            *DOCS_REDIRECTS,
+        ]
     ]
     return f"{_CONFIG_PREFIX}{json.dumps(config)};"
 

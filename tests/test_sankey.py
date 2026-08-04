@@ -200,6 +200,14 @@ def test_ribbon_autorange_covers_both_spans() -> None:
     assert lo <= 0.0 and hi >= 0.95
 
 
+def test_ribbon_autorange_rejects_incomplete_geometry() -> None:
+    figure = _ribbon_figure()
+    figure.traces[0].x0 = None
+
+    with pytest.raises(ValueError, match="ribbon trace missing geometry columns"):
+        figure.x_range()
+
+
 def test_sankey_chart_builds_ribbon_traces_only() -> None:
     chart = xy.sankey_chart(LINKS, width=680, height=420)
     figure = chart.figure()

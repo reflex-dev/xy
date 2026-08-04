@@ -11,7 +11,7 @@ import inspect
 import uuid
 from os import PathLike
 from pathlib import Path
-from typing import Any, Literal, Optional, overload
+from typing import Any, Literal, Optional, cast, overload
 
 import numpy as np
 
@@ -176,13 +176,13 @@ def _probe_axis_spec(ax: Axes, width: int, height: int) -> dict[str, Any]:
             if hasattr(ax, "_materialize_plot_px"):
                 del ax._materialize_plot_px
         else:
-            ax._materialize_plot_px = previous_plot_px
+            ax._materialize_plot_px = cast(tuple[float, float], previous_plot_px)
         if twin is not None:
             if previous_twin_plot_px is missing:
                 if hasattr(twin, "_materialize_plot_px"):
                     del twin._materialize_plot_px
             else:
-                twin._materialize_plot_px = previous_twin_plot_px
+                twin._materialize_plot_px = cast(tuple[float, float], previous_twin_plot_px)
 
 
 def _measured_axis_chrome(ax: Axes, width: int, height: int) -> tuple[float, float, float, float]:
@@ -1298,7 +1298,9 @@ class Figure:
                     "colorbar(format=...) without fixed ticks",
                     "format= together with ticks= or a discrete mappable",
                 )
-            options["tick_labels"] = _colorbar_tick_labels(formatter, options["ticks"])
+            options["tick_labels"] = _colorbar_tick_labels(
+                formatter, cast(list[float], options["ticks"])
+            )
         extend = kwargs.pop("extend", None)
         if extend is None:
             # A contour set owns its extend state. Matplotlib colorbars inherit
@@ -1643,6 +1645,7 @@ class Figure:
         if sharex or sharey:
             for ax in axes.values():
                 spec = ax._subplot_spec
+                assert spec is not None
                 if sharex and spec.rows[1] < nrows:
                     ax._apply_tick_label_side_visibility("x", {"labelbottom": False})
                 if sharey and spec.cols[0] > 0:
@@ -1898,7 +1901,8 @@ class Figure:
                     members = [figures[i] for i in group]
                     source_ax = self._axes[group[0]]
                     if dim in source_ax._explicit_domains:
-                        domain = tuple(map(float, source_ax._axis[dim]["domain"]))
+                        raw_domain = source_ax._axis[dim]["domain"]
+                        domain = float(raw_domain[0]), float(raw_domain[1])
                     else:
                         # Matplotlib shared limits autoscale over the group's
                         # data; dataless panels follow the group instead of
@@ -1922,14 +1926,13 @@ class Figure:
             for index, (ax, domains) in enumerate(zip(self._axes, shared_domains, strict=True)):
                 if not any(entry["kind"] == "@axline" for entry in ax._entries):
                     continue
-                data_domains = {}
+                data_domains: dict[str, tuple[float, float]] = {}
                 for dim, domain in domains.items():
                     spec = ax._scale_specs[dim]
-                    data_domains[dim] = tuple(
-                        map(
-                            float,
-                            _scale_values(np.asarray(domain), spec, inverse=True),
-                        )
+                    transformed = _scale_values(np.asarray(domain), spec, inverse=True)
+                    data_domains[dim] = (
+                        float(transformed[0]),
+                        float(transformed[1]),
                     )
                 if getattr(ax, "_shared_render_domains", {}) != data_domains:
                     ax._shared_render_domains = data_domains

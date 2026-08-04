@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numbers
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, NamedTuple, Optional, TypeGuard, cast
 
 import numpy as np
@@ -506,8 +506,11 @@ def prepare_boundary_norm(
 
     source = np.ma.asarray(values, dtype=np.float64)
     raw = np.asarray(source.filled(np.nan), dtype=np.float64)
-    mapped = np.ma.asarray(norm(source))
-    cmap_callable = cmap if callable(cmap) else Cmap(resolve_cmap(cmap))
+    norm_callable = cast(Callable[[Any], Any], norm)
+    mapped = np.ma.asarray(norm_callable(source))
+    cmap_callable: Callable[[Any], Any] = (
+        cast(Callable[[Any], Any], cmap) if callable(cmap) else Cmap(resolve_cmap(cmap))
+    )
     rgba = np.asarray(cmap_callable(mapped.filled(0)), dtype=np.float64)
     expected = raw.shape + (3,)
     if rgba.shape not in {expected, raw.shape + (4,)}:
@@ -524,7 +527,7 @@ def prepare_boundary_norm(
 
     midpoints = (boundaries[:-1] + boundaries[1:]) * 0.5
     band_rgba = np.asarray(
-        cmap_callable(np.ma.asarray(norm(midpoints)).filled(0)), dtype=np.float64
+        cmap_callable(np.ma.asarray(norm_callable(midpoints)).filled(0)), dtype=np.float64
     )
     if (
         band_rgba.ndim != 2
@@ -588,8 +591,16 @@ def normalize_scalar_grid(
     if norm_name == "linear":
         if lo_arg is None and hi_arg is None:
             return raw, None, "linear"
-        lo = float(lo_arg) if lo_arg is not None else (float(finite.min()) if finite.size else 0.0)
-        hi = float(hi_arg) if hi_arg is not None else (float(finite.max()) if finite.size else 1.0)
+        lo = (
+            scalar_float(lo_arg)
+            if lo_arg is not None
+            else (float(finite.min()) if finite.size else 0.0)
+        )
+        hi = (
+            scalar_float(hi_arg)
+            if hi_arg is not None
+            else (float(finite.max()) if finite.size else 1.0)
+        )
         if not np.isfinite([lo, hi]).all():
             raise ValueError("vmin and vmax must be finite")
         if hi < lo:
@@ -599,8 +610,8 @@ def normalize_scalar_grid(
     positive = finite[finite > 0.0]
     if not positive.size and (lo_arg is None or hi_arg is None):
         raise ValueError("log normalization requires at least one positive finite value")
-    lo = float(lo_arg) if lo_arg is not None else float(positive.min())
-    hi = float(hi_arg) if hi_arg is not None else float(positive.max())
+    lo = scalar_float(lo_arg) if lo_arg is not None else float(positive.min())
+    hi = scalar_float(hi_arg) if hi_arg is not None else float(positive.max())
     if not np.isfinite([lo, hi]).all() or lo <= 0.0 or hi <= 0.0:
         raise ValueError("Invalid vmin or vmax")
     if hi < lo:

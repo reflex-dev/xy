@@ -117,10 +117,42 @@ jobs:
           server_log="$RUNNER_TEMP/xy-docs.log"
           response="$RUNNER_TEMP/xy-docs-index.html"
           nested_response="$RUNNER_TEMP/xy-docs-data.html"
+          stage="starting the production server"
+
+          # Every failure below is otherwise invisible in CI ("exit code 1" and
+          # nothing else), so dump the server log and the fetched responses on
+          # any non-zero exit — a local run has these on the terminal, CI does not.
+          dump_file() {
+            local label="$1" path="$2" limit="${3:-400}"
+            echo "::group::${label} (${path})"
+            if [[ -s "$path" ]]; then
+              tail -n "$limit" "$path" | sed 's/^::/:: /'
+            elif [[ -e "$path" ]]; then
+              echo "(file is empty)"
+            else
+              echo "(file was never created)"
+            fi
+            echo "::endgroup::"
+          }
+
+          dump_diagnostics() {
+            echo "XY docs production check failed while ${stage}"
+            dump_file "reflex server log" "$server_log" 2000
+            dump_file "response: /docs/xy/" "$response"
+            dump_file "response: /docs/xy/core-concepts/data/" "$nested_response"
+            echo "::group::listening sockets"
+            ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || echo "(no socket tool)"
+            echo "::endgroup::"
+          }
+
           setsid uv run --no-sync reflex run --env prod --loglevel debug >"$server_log" 2>&1 &
           server_pid=$!
           cleanup() {
+            local status=$?
             trap - EXIT INT TERM
+            if (( status != 0 )); then
+              dump_diagnostics || true
+            fi
             kill -TERM -- "-$server_pid" 2>/dev/null || true
             for _ in {1..10}; do
               kill -0 "$server_pid" 2>/dev/null || break
@@ -128,14 +160,16 @@ jobs:
             done
             kill -KILL -- "-$server_pid" 2>/dev/null || true
             wait "$server_pid" 2>/dev/null || true
+            exit "$status"
           }
           trap cleanup EXIT
           trap 'exit 130' INT TERM
 
+          stage="waiting for http://127.0.0.1:3000/docs/xy/ to serve"
           deadline=$((SECONDS + 300))
           while (( SECONDS < deadline )); do
             if ! kill -0 "$server_pid" 2>/dev/null; then
-              cat "$server_log"
+              stage="waiting for the server (it exited early)"
               exit 1
             fi
             if curl --fail --location --silent \
@@ -148,18 +182,21 @@ jobs:
           done
 
           if [[ ! -s "$response" ]]; then
-            cat "$server_log"
             echo "XY docs did not become ready within 300 seconds"
             exit 1
           fi
 
+          stage="fetching /docs/xy/core-concepts/data/"
           curl --fail --location --silent \
             --connect-timeout 2 --max-time 10 \
             http://127.0.0.1:3000/docs/xy/core-concepts/data/ \
             --output "$nested_response"
+
+          stage="checking the title of /docs/xy/core-concepts/data/"
           grep -Fq '<title>Data and Columns · XY</title>' "$nested_response"
 
           if [[ "$DOCS_PYTHON_VERSION" == "3.12" ]]; then
+            stage="running the production-DOM accessibility checks"
             XY_DOCS_BASE_URL=http://127.0.0.1:3000/docs/xy/ \
               uv run --no-sync pytest \
                 tests/test_code_copy.py::test_production_copy_buttons_have_accessible_names \
@@ -167,8 +204,8 @@ jobs:
                 -v
           fi
 
+          stage="scanning the server log for runtime errors"
           if grep -Eiq "traceback|uncaught|unhandled|fatal error" "$server_log"; then
-            cat "$server_log"
             echo "XY docs emitted a production runtime error"
             exit 1
           fi

@@ -26,6 +26,7 @@ class FigureHost(Protocol):
     axis_options: dict[str, dict[str, Any]]
     _axis_categories: dict[str, list[str]]
     title: Optional[str]
+    title_options: list[dict[str, Any]]
     width: Any
     height: Any
     padding: Any

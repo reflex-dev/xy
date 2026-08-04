@@ -1741,6 +1741,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.kind == "ribbon":
             # x is just the two faces; y needs all four span edges, two of
             # which ride in the `x`/`y` slots (ribbon geometry contract).
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("ribbon trace missing geometry columns")
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
@@ -1961,7 +1963,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[memoryview]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay

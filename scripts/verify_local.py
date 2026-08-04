@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import _ty_tools
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -37,9 +39,8 @@ class Check:
     requires_rust_toolchain: bool = False
     requires_rust_clippy: bool = False
     requires_argument: Optional[str] = None
-    # Advisory checks report findings but do not fail the gate — mirrors how CI
-    # runs them (e.g. ty is pre-1.0 and can't narrow known-non-None Optionals or
-    # NumPy dtypes across stub versions). Keep this in sync with ci.yml.
+    # Advisory checks report findings but do not fail the gate. Keep this in
+    # sync with ci.yml whenever a workflow check intentionally runs that way.
     advisory: bool = False
 
 
@@ -55,6 +56,7 @@ def _base_checks(
     wheel_expect: Optional[str] = None,
 ) -> dict[str, Check]:
     py = _python()
+    ty = str(_ty_tools.resolve_ty_executable(py, required=False))
     chromium_arg = str(chromium) if chromium is not None else "<CHROMIUM>"
     chromium_paths = (chromium,) if chromium is not None else ()
     sdist_arg = str(sdist) if sdist is not None else "<SDIST>"
@@ -104,6 +106,7 @@ def _base_checks(
                 "pytest",
                 "-q",
                 "tests/test_public_api.py",
+                "tests/test_check_typing.py",
                 "tests/test_type_surface.py",
                 "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction",
                 "tests/test_components.py::test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract",
@@ -172,10 +175,9 @@ def _base_checks(
         ),
         Check(
             "ty",
-            "type check shippable Python package (advisory)",
-            (py, "-m", "ty", "check", "python"),
-            requires_modules=("ty",),
-            advisory=True,
+            "type check shippable Python package and external-consumer surface",
+            (py, "scripts/check_typing.py", "--ty-executable", ty),
+            requires_executables=(ty,),
         ),
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(
@@ -432,7 +434,11 @@ def missing_reasons(check: Check) -> list[str]:
             hint = {
                 "cargo": "Install Rust with rustup, or use `make check` for the quick non-Rust gate.",
                 "node": "Install Node 18+, or use `make check` for the quick non-JS gate.",
-            }.get(exe, f"Install {exe} or skip this check.")
+            }.get(exe)
+            if hint is None and Path(exe).name in {"ty", "ty.exe"}:
+                hint = "Run `make setup` or `uv pip install -e . --group dev` before type checks."
+            if hint is None:
+                hint = f"Install {exe} or skip this check."
             reasons.append(f"missing executable {exe!r}. {hint}")
     if check.requires_node_major is not None and shutil.which("node") is not None:
         try:

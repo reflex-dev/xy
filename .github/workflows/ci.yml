@@ -177,12 +177,10 @@ jobs:
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
 
-      # ty is pre-1.0 (0.0.x) and advisory here: it type-checks the shippable
-      # library and reports findings, but doesn't gate the build — pytest, ruff,
-      # and cargo are the hard gates. Test/benchmark code intentionally
-      # subscripts known-non-None Optionals, which ty can't narrow.
-      - name: Typecheck (ty, advisory)
-        run: .venv/bin/ty check python || echo "::warning::ty reported type findings (advisory)"
+      # Include a package-external consumer so lazy root exports cannot silently
+      # degrade to Any even when the implementation modules remain well typed.
+      - name: Typecheck (ty)
+        run: .venv/bin/python scripts/check_typing.py
 
       - name: Python tests (native core)
         # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
@@ -761,6 +759,20 @@ jobs:
           uv pip install -p smoke dist/*.whl numpy anywidget
           ./smoke/bin/python -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')" \
             || ./smoke/Scripts/python.exe -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')"
+
+      - name: Typecheck installed-wheel public surface
+        shell: bash
+        run: |
+          uv pip install -p smoke ty==0.0.57
+          if [ -x smoke/bin/python ]; then
+            python_exe=smoke/bin/python
+            ty_exe=smoke/bin/ty
+          else
+            python_exe=smoke/Scripts/python.exe
+            ty_exe=smoke/Scripts/ty.exe
+          fi
+          python scripts/check_typing.py --consumer-only \
+            --python-executable "$python_exe" --ty-executable "$ty_exe"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
