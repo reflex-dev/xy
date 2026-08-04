@@ -809,15 +809,33 @@ export class ChartView {
     if (!paneCount) return;
 
     const availableH = this.plot.h;
-    const gap = 10;
+    // The normal 10 px gaps and 36 px pane floor are preferences, not a
+    // license to extend past the authored plot rect. Reserve the hard 40 px
+    // main-plot floor first, then spend the remaining budget on pane content
+    // before whitespace; only shrink panes once every gap has collapsed.
+    const mainFloor = Math.min(40, availableH);
+    const paneFloor = 36;
+    const paneRegion = Math.max(0, availableH - mainFloor);
+    const gap = Math.min(
+      10,
+      Math.max(0, Math.floor((paneRegion - paneFloor * paneCount) / paneCount)),
+    );
     let paneH = Math.max(
       44,
       Math.min(86, Math.floor((availableH * 0.42) / paneCount)),
     );
     if (availableH - (paneH + gap) * paneCount < 90) {
-      paneH = Math.max(36, Math.floor((availableH - 90 - gap * paneCount) / paneCount));
+      paneH = Math.max(
+        paneFloor,
+        Math.floor((availableH - 90 - gap * paneCount) / paneCount),
+      );
     }
-    this.plot.h = Math.max(40, availableH - (paneH + gap) * paneCount);
+    const maxPaneH = Math.max(
+      0,
+      Math.floor((availableH - mainFloor - gap * paneCount) / paneCount),
+    );
+    paneH = Math.min(paneH, maxPaneH);
+    this.plot.h = availableH - (paneH + gap) * paneCount;
     let paneY = this.plot.y + this.plot.h;
     if (hasVolume) {
       paneY += gap;

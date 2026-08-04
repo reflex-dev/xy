@@ -476,6 +476,57 @@ def test_modebar_active_button_uses_dark_active_color(tmp_path: Path) -> None:
     assert "rgb(0, 255, 0)" in result["customFocusShadow"], result
 
 
+def test_short_finance_chart_keeps_all_lower_panes_inside_plot(tmp_path: Path) -> None:
+    x = list(range(32))
+    close = [100.0 + index * 0.25 for index in x]
+    chart = xy.finance_chart(
+        xy.candlestick(
+            x,
+            [value - 0.1 for value in close],
+            [value + 0.4 for value in close],
+            [value - 0.4 for value in close],
+            close,
+            volume=[1_000.0 + index * 10 for index in x],
+            id="price",
+        ),
+        xy.volume_bars(source="price", pane="volume"),
+        xy.rsi(source="price", window=3, pane="rsi"),
+        xy.macd(source="price", fast=2, slow=3, signal=2, pane="macd"),
+        width=500,
+        height=320,
+    )
+    script = (
+        _PRELUDE
+        + """
+    const availableH = 150;
+    const top = view.plot.y;
+    view.plot.h = availableH;
+    view._layoutFinancePanes();
+    const panes = [view.volumePane, ...view.oscillatorPanes].filter(Boolean);
+    const paneBottom = Math.max(...panes.map((pane) => pane.y + pane.h));
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      paneCount: panes.length,
+      mainPlotHeight: view.plot.h,
+      paneHeights: panes.map((pane) => pane.h),
+      panesOrdered: panes.every(
+        (pane, index) => index === 0 ||
+          pane.y >= panes[index - 1].y + panes[index - 1].h
+      ),
+      allocatedHeight: paneBottom - top,
+      availableH,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "short finance pane layout")
+
+    assert result["paneCount"] == 3, result
+    assert result["mainPlotHeight"] >= 40, result
+    assert all(height >= 36 for height in result["paneHeights"]), result
+    assert result["panesOrdered"] is True, result
+    assert result["allocatedHeight"] <= result["availableH"], result
+
+
 def test_narrow_annotation_labels_stay_inside_and_do_not_collide(tmp_path: Path) -> None:
     chart = xy.line_chart(
         xy.line([0, 25, 50, 75, 100], [0.1, 0.3, 0.55, 0.8, 1.0]),
