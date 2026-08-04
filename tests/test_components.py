@@ -1983,6 +1983,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         sandbox=True,
         gl="software",
         compatibility="legacy",
+        style_snapshot=None,
     ):
         seen.update(
             {
@@ -1997,6 +1998,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "sandbox": sandbox,
                 "gl": gl,
                 "compatibility": compatibility,
+                "style_snapshot": style_snapshot,
             }
         )
         return b"PNG"
@@ -2029,6 +2031,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "sandbox": False,
         "gl": "hardware",
         "compatibility": "warn",
+        "style_snapshot": None,
     }
 
 
