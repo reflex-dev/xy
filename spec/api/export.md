@@ -254,6 +254,31 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
 
+### Asking a chart, not the table
+
+`chart.style_compatibility_report(target=..., engine=..., custom_css=...)` is
+this section applied to one concrete chart, before any bytes exist. It lists
+which styling sources the chart carries and routes every declared slot style
+into exactly one of four outcomes — `survives`, `native-subset` (with the kept
+and lost property names), `browser-only`, or `state-gated` — and mirrors the
+export path's refusals (`custom_css` with a pinned native engine, Chromium
+SVG) rather than re-deciding them. It is report-only: computing it never
+changes an export. The staged `compatibility=` modes that act on the report
+are a separate, later contract.
+
+Two properties are load-bearing. First, the report is constant-time when
+there is nothing to route: no `class_names`, no per-slot `styles`, and no
+`custom_css` means no slot walk — preflight is free exactly where exports are
+hot. Second, *state-gated is not lost*. The capability registry tags every
+slot with an applicability — present in a clean static export, or gated by an
+export state (`hover`, `selection`, `crosshair`, `modebar`, `view` for the
+reduction badges). A clean static file contains no tooltip, so a styled
+tooltip is recorded with its gating state and does not count against
+losslessness; counting it would overstate the parity gap by exactly the
+chrome a static file never contains. `tests/test_capability_registry.py`
+pins the partition (24 static, 24 state-gated today) and
+`tests/test_style_compatibility_report.py` pins the routing.
+
 ### Why two of those rows are silent, and why that is the right default
 
 `custom_css` raises because it is an author stylesheet: there is no honest

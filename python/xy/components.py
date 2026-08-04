@@ -4169,6 +4169,27 @@ class Chart(Component):
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
 
+    def style_compatibility_report(
+        self,
+        target: str = "png",
+        *,
+        engine: Optional[export.Engine | str] = None,
+        custom_css: Optional[str] = None,
+    ) -> Any:
+        """What of this chart's styling survives an export to ``target``.
+
+        Report-only preflight: lists the styling sources present, how each
+        styled slot routes for the target and engine, and exactly which
+        declarations would not survive — before any bytes exist. Mirrors the
+        export path's behavior (including its refusals) rather than
+        re-deciding it; see `spec/api/export.md` §9.
+        """
+        return self.figure().style_compatibility_report(
+            target,
+            engine=engine,
+            custom_css=custom_css,
+        )
+
     def to_svg(
         self,
         path: Optional[str] = None,

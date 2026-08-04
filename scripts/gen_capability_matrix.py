@@ -63,10 +63,15 @@ def render() -> str:
         f"- **{counts['mark_style_properties_shipped']}** mark style properties across "
         f"**{counts['mark_kinds']}** mark kinds, {claim}.",
         f"- **{counts['chart_slots']}** stable chrome slots, CSS- and Tailwind-addressable "
-        "in the browser; "
-        f"**{counts['slots_styleable_natively']}** of them reach the native writers — "
+        "in the browser. "
+        f"**{counts['chart_slots_static']}** of them name chrome a clean static export "
+        f"contains; **{counts['slots_styleable_natively']}** reach the native writers — "
         "nine through `styles={slot: ...}` itself, and `root` through the "
-        "chart-level `style=` token bag.",
+        "chart-level `style=` token bag. The other "
+        f"**{counts['chart_slots_state_gated']}** are interaction/view chrome "
+        "(tooltip, modebar, crosshair, selection, reduction badges) that a clean "
+        "static file does not contain, so they are gated by an export state "
+        "rather than missing.",
         f"- **{counts['extension_points_shipped']}** shipped extension point.",
         f"- **{counts['known_renderer_divergences']}** known default divergence between "
         "renderers, listed below rather than left to be discovered.",
@@ -95,6 +100,13 @@ def render() -> str:
         "stylesheet an exported file does not have. That boundary is",
         "contracted in [export.md](export.md) §9 and pinned by",
         "`tests/test_export_style_survival.py`.",
+        "",
+        "The *applicable in* column records which export contains the slot at all: a",
+        "clean static export has no tooltip, modebar, crosshair, selection overlay, or",
+        "reduction badge, so styling one is not dropped by such an export — there is",
+        "nothing in the file to style. Per chart and target,",
+        "`chart.style_compatibility_report()` applies this table to what was actually",
+        "declared and names anything that would not survive.",
         "",
     ]
     lines += caps.markdown_slot_table()
@@ -168,7 +180,9 @@ def render_public() -> str:
         "",
         f"- **{counts['mark_style_properties_shipped']}** mark style properties across "
         f"**{counts['mark_kinds']}** mark kinds, {claim}.",
-        f"- **{counts['chart_slots']}** stable chrome slots for CSS and Tailwind in the browser.",
+        f"- **{counts['chart_slots']}** stable chrome slots for CSS and Tailwind in the "
+        f"browser — **{counts['chart_slots_static']}** of them in a clean static export, "
+        f"**{counts['chart_slots_state_gated']}** gated by an interaction or view state.",
         f"- **{counts['extension_points_shipped']}** way to add a mark kind XY does not "
         "ship, without forking it.",
         "",
@@ -191,6 +205,13 @@ def render_public() -> str:
         "raster and vector writers have no cascade, so per-slot styling is a browser",
         "mechanism; put anything that must survive export in the chart-level `style=`",
         "token bag or in mark and axis `style=`, which every renderer reads.",
+        "",
+        "The *applicable in* column says which export contains the slot at all: a clean",
+        "static export has no tooltip, modebar, crosshair, selection overlay, or",
+        "reduction badge, so styling one is not lost in such a file — it simply is not",
+        "there. Ask `chart.style_compatibility_report(target=...)` for the per-chart",
+        "answer: it routes every declared style for a target and names anything that",
+        "would not survive, before any bytes exist.",
         "",
     ]
     lines += caps.markdown_slot_table()

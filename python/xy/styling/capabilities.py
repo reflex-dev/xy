@@ -49,6 +49,20 @@ SUPPORT_LEVELS: frozenset[str] = frozenset({"full", "partial", "none"})
 STATUSES: frozenset[str] = frozenset({"shipped", "partial", "planned"})
 VOCABULARIES: frozenset[str] = frozenset({"css", "svg", "xy"})
 
+#: Interaction/view states that gate live-only chrome. A slot tagged with one
+#: of these exists in the document only while its state is active — a tooltip
+#: under hover, the modebar under a pointer, a reduction badge under the view
+#: that triggered it — so a clean static export does not *contain* it. Styling
+#: such a slot is therefore not "dropped" by a clean static export: there is
+#: nothing in the file to style. Counting those slots against static parity
+#: overstated the gap; tagging them records the distinction instead of leaving
+#: it silent (§28).
+EXPORT_STATES: tuple[str, ...] = ("hover", "selection", "crosshair", "modebar", "view")
+
+#: Every slot is either present in a clean static export ("static") or gated
+#: by exactly one export state.
+APPLICABILITIES: frozenset[str] = frozenset({"static", *EXPORT_STATES})
+
 
 @dataclass(frozen=True)
 class MarkStyleProperty:
@@ -79,6 +93,7 @@ class SlotCapability:
     support: dict[str, str]
     notes: str
     channel: str = ""
+    applicability: str = "static"
 
 
 @dataclass(frozen=True)
@@ -281,6 +296,39 @@ _SLOT_EXCEPTIONS["root"] = (
 )
 
 
+#: The state that gates each live-only slot. Listed explicitly, one entry per
+#: slot rather than by prefix, so `tests/test_capability_registry.py` can
+#: assert the partition covers `CHART_DOM_SLOTS` exactly and that every member
+#: of a chrome family carries its family's state — a new `modebar_*` slot that
+#: forgets its entry fails the suite instead of quietly counting as static.
+_STATE_GATED_SLOTS: dict[str, str] = {
+    "tooltip": "hover",
+    "tooltip_title": "hover",
+    "tooltip_row": "hover",
+    "tooltip_label": "hover",
+    "tooltip_value": "hover",
+    "modebar": "modebar",
+    "modebar_drag_handle": "modebar",
+    "modebar_control_group": "modebar",
+    "modebar_separator": "modebar",
+    "modebar_button": "modebar",
+    "modebar_icon": "modebar",
+    "modebar_zoom_value": "modebar",
+    "modebar_indicator": "modebar",
+    "modebar_selection_icon": "modebar",
+    "modebar_menu": "modebar",
+    "modebar_menu_separator": "modebar",
+    "modebar_menu_icon": "modebar",
+    "modebar_menu_label": "modebar",
+    "modebar_history_controls": "modebar",
+    "selection": "selection",
+    "crosshair_x": "crosshair",
+    "crosshair_y": "crosshair",
+    "badge": "view",
+    "badge_item": "view",
+}
+
+
 CHART_SLOTS: tuple[SlotCapability, ...] = tuple(
     SlotCapability(
         id=slot,
@@ -291,6 +339,7 @@ CHART_SLOTS: tuple[SlotCapability, ...] = tuple(
         },
         channel=_SLOT_EXCEPTIONS[slot][1] if slot in _SLOT_EXCEPTIONS else "",
         notes=_SLOT_EXCEPTIONS[slot][2] if slot in _SLOT_EXCEPTIONS else "",
+        applicability=_STATE_GATED_SLOTS.get(slot, "static"),
     )
     for slot in CHART_DOM_SLOTS
 )
@@ -358,12 +407,15 @@ def markdown_mark_property_table(
 def markdown_slot_table(slots: Iterable[SlotCapability] = CHART_SLOTS) -> list[str]:
     """One row per chrome slot, with how far its styling travels."""
     lines = [
-        "| slot | browser | native raster | native vector |",
-        "|---|---|---|---|",
+        "| slot | applicable in | browser | native raster | native vector |",
+        "|---|---|---|---|---|",
     ]
     for slot in slots:
+        applicable = (
+            "clean static" if slot.applicability == "static" else f"{slot.applicability} state"
+        )
         lines.append(
-            f"| `{slot.id}` | {slot.support['browser']} | "
+            f"| `{slot.id}` | {applicable} | {slot.support['browser']} | "
             f"{slot.support['native_raster']} | {slot.support['native_vector']} |"
         )
     return lines
@@ -400,12 +452,16 @@ def axis_style_keys() -> tuple[str, ...]:
 def summary() -> dict[str, object]:
     """Counts a release note can quote without anyone recounting by hand."""
     shipped = [p for p in MARK_STYLE_PROPERTIES if p.status == "shipped"]
+    static = [s for s in CHART_SLOTS if s.applicability == "static"]
     return {
         "axis_style_keys": len(axis_style_keys()),
         "mark_style_properties": len(MARK_STYLE_PROPERTIES),
         "mark_style_properties_shipped": len(shipped),
         "mark_kinds": len(styles._MARK_KINDS),
         "chart_slots": len(CHART_SLOTS),
+        "chart_slots_static": len(static),
+        "chart_slots_state_gated": len(CHART_SLOTS) - len(static),
+        "static_slots_native": sum(1 for s in static if s.support["native_raster"] != "none"),
         "slots_styleable_natively": sum(
             1 for s in CHART_SLOTS if s.support["native_raster"] != "none"
         ),
@@ -415,7 +471,9 @@ def summary() -> dict[str, object]:
 
 
 __all__ = [
+    "APPLICABILITIES",
     "CHART_SLOTS",
+    "EXPORT_STATES",
     "EXTENSION_POINTS",
     "KNOWN_RENDERER_DIVERGENCES",
     "MARK_STYLE_PROPERTIES",

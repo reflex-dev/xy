@@ -54,6 +54,49 @@ def test_registry_covers_exactly_the_public_dom_slots() -> None:
     assert tuple(slot.id for slot in caps.CHART_SLOTS) == CHART_DOM_SLOTS
 
 
+def test_every_slot_has_exactly_one_applicability() -> None:
+    # The applicable-slot contract: a slot is either present in a clean static
+    # export or gated by exactly one export state. An unknown value here would
+    # quietly break the matrix column and the preflight routing.
+    for slot in caps.CHART_SLOTS:
+        assert slot.applicability in caps.APPLICABILITIES, slot.id
+    counts = caps.summary()
+    assert counts["chart_slots_static"] + counts["chart_slots_state_gated"] == len(caps.CHART_SLOTS)
+
+
+def test_state_gated_families_cannot_be_misfiled() -> None:
+    # A new `modebar_*` (or tooltip/crosshair/badge) slot must carry its
+    # family's state; defaulting to "static" would overstate the clean-static
+    # surface — the direction that is easy to miss.
+    families = {
+        "tooltip": "hover",
+        "modebar": "modebar",
+        "crosshair_": "crosshair",
+        "badge": "view",
+    }
+    for slot in caps.CHART_SLOTS:
+        expected = next(
+            (state for prefix, state in families.items() if slot.id.startswith(prefix)),
+            "selection" if slot.id == "selection" else "static",
+        )
+        assert slot.applicability == expected, (
+            f"{slot.id!r} is {slot.applicability!r}, expected {expected!r}"
+        )
+
+
+def test_native_paths_exist_only_for_clean_static_chrome() -> None:
+    # Today no writer draws state-gated chrome (a frozen tooltip, a modebar):
+    # the interaction-snapshot phase changes this deliberately, and this test
+    # with it. Until then, a native support level on a gated slot would claim
+    # a path that does not exist.
+    for slot in caps.CHART_SLOTS:
+        if slot.applicability != "static":
+            assert slot.support["native_raster"] == "none", slot.id
+            assert slot.support["native_vector"] == "none", slot.id
+    counts = caps.summary()
+    assert counts["static_slots_native"] == counts["slots_styleable_natively"]
+
+
 def test_axis_style_registry_covers_the_compiler_vocabulary() -> None:
     expected = (
         styles._AXIS_COLOR_PROPERTIES

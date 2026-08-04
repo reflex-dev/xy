@@ -8,6 +8,22 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- `chart.style_compatibility_report(target=..., engine=..., custom_css=...)`:
+  a report-only export preflight that routes every declared slot style into
+  `survives`, `native-subset` (naming the kept and lost properties per
+  format family), `browser-only`, or `state-gated`, mirrors the export
+  path's refusals, and short-circuits in constant time for charts with no
+  class or per-slot declarations. The programmatic answer to
+  `spec/api/export.md` §9.
+- The capability registry now tags every chrome slot with an
+  **applicability** — present in a clean static export, or gated by an
+  export state (`hover`, `selection`, `crosshair`, `modebar`, `view`) — and
+  the generated capability matrices gained the *applicable in* column and
+  applicable-slot counts (24 static / 24 state-gated of 48). Live-only
+  chrome a static file never contains is no longer counted as missing from
+  static export parity.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added

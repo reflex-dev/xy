@@ -12,7 +12,7 @@ and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against.
 
 - **11** mark style properties across **21** mark kinds, drawn by all three renderers.
-- **48** stable chrome slots for CSS and Tailwind in the browser.
+- **48** stable chrome slots for CSS and Tailwind in the browser — **24** of them in a clean static export, **24** gated by an interaction or view state.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
 ## Mark style properties
@@ -54,56 +54,63 @@ raster and vector writers have no cascade, so per-slot styling is a browser
 mechanism; put anything that must survive export in the chart-level `style=`
 token bag or in mark and axis `style=`, which every renderer reads.
 
-| slot | browser | native raster | native vector |
-|---|---|---|---|
-| `root` | full | partial | partial |
-| `title` | full | partial | partial |
-| `chrome` | full | none | none |
-| `canvas` | full | none | none |
-| `annotation_layer` | full | none | none |
-| `labels` | full | none | none |
-| `legend` | full | partial | partial |
-| `legend_title` | full | partial | partial |
-| `legend_item` | full | none | none |
-| `legend_swatch` | full | none | none |
-| `legend_label` | full | partial | partial |
-| `colorbar` | full | partial | partial |
-| `colorbar_bar` | full | none | none |
-| `colorbar_extension` | full | none | none |
-| `colorbar_line` | full | none | none |
-| `colorbar_tick` | full | partial | partial |
-| `colorbar_minor_tick` | full | none | none |
-| `colorbar_title` | full | partial | partial |
-| `tooltip` | full | none | none |
-| `tooltip_title` | full | none | none |
-| `tooltip_row` | full | none | none |
-| `tooltip_label` | full | none | none |
-| `tooltip_value` | full | none | none |
-| `modebar` | full | none | none |
-| `modebar_drag_handle` | full | none | none |
-| `modebar_control_group` | full | none | none |
-| `modebar_separator` | full | none | none |
-| `modebar_button` | full | none | none |
-| `modebar_icon` | full | none | none |
-| `modebar_zoom_value` | full | none | none |
-| `modebar_indicator` | full | none | none |
-| `modebar_selection_icon` | full | none | none |
-| `modebar_menu` | full | none | none |
-| `modebar_menu_separator` | full | none | none |
-| `modebar_menu_icon` | full | none | none |
-| `modebar_menu_label` | full | none | none |
-| `modebar_history_controls` | full | none | none |
-| `selection` | full | none | none |
-| `crosshair_x` | full | none | none |
-| `crosshair_y` | full | none | none |
-| `badge` | full | none | none |
-| `badge_item` | full | none | none |
-| `axis_band` | full | none | none |
-| `axis_line` | full | none | none |
-| `tick_mark` | full | none | none |
-| `tick_label` | full | partial | partial |
-| `axis_title` | full | partial | partial |
-| `annotation_label` | full | none | none |
+The *applicable in* column says which export contains the slot at all: a clean
+static export has no tooltip, modebar, crosshair, selection overlay, or
+reduction badge, so styling one is not lost in such a file — it simply is not
+there. Ask `chart.style_compatibility_report(target=...)` for the per-chart
+answer: it routes every declared style for a target and names anything that
+would not survive, before any bytes exist.
+
+| slot | applicable in | browser | native raster | native vector |
+|---|---|---|---|---|
+| `root` | clean static | full | partial | partial |
+| `title` | clean static | full | partial | partial |
+| `chrome` | clean static | full | none | none |
+| `canvas` | clean static | full | none | none |
+| `annotation_layer` | clean static | full | none | none |
+| `labels` | clean static | full | none | none |
+| `legend` | clean static | full | partial | partial |
+| `legend_title` | clean static | full | partial | partial |
+| `legend_item` | clean static | full | none | none |
+| `legend_swatch` | clean static | full | none | none |
+| `legend_label` | clean static | full | partial | partial |
+| `colorbar` | clean static | full | partial | partial |
+| `colorbar_bar` | clean static | full | none | none |
+| `colorbar_extension` | clean static | full | none | none |
+| `colorbar_line` | clean static | full | none | none |
+| `colorbar_tick` | clean static | full | partial | partial |
+| `colorbar_minor_tick` | clean static | full | none | none |
+| `colorbar_title` | clean static | full | partial | partial |
+| `tooltip` | hover state | full | none | none |
+| `tooltip_title` | hover state | full | none | none |
+| `tooltip_row` | hover state | full | none | none |
+| `tooltip_label` | hover state | full | none | none |
+| `tooltip_value` | hover state | full | none | none |
+| `modebar` | modebar state | full | none | none |
+| `modebar_drag_handle` | modebar state | full | none | none |
+| `modebar_control_group` | modebar state | full | none | none |
+| `modebar_separator` | modebar state | full | none | none |
+| `modebar_button` | modebar state | full | none | none |
+| `modebar_icon` | modebar state | full | none | none |
+| `modebar_zoom_value` | modebar state | full | none | none |
+| `modebar_indicator` | modebar state | full | none | none |
+| `modebar_selection_icon` | modebar state | full | none | none |
+| `modebar_menu` | modebar state | full | none | none |
+| `modebar_menu_separator` | modebar state | full | none | none |
+| `modebar_menu_icon` | modebar state | full | none | none |
+| `modebar_menu_label` | modebar state | full | none | none |
+| `modebar_history_controls` | modebar state | full | none | none |
+| `selection` | selection state | full | none | none |
+| `crosshair_x` | crosshair state | full | none | none |
+| `crosshair_y` | crosshair state | full | none | none |
+| `badge` | view state | full | none | none |
+| `badge_item` | view state | full | none | none |
+| `axis_band` | clean static | full | none | none |
+| `axis_line` | clean static | full | none | none |
+| `tick_mark` | clean static | full | none | none |
+| `tick_label` | clean static | full | partial | partial |
+| `axis_title` | clean static | full | partial | partial |
+| `annotation_label` | clean static | full | none | none |
 
 ### Notes
 

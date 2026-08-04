@@ -2217,6 +2217,24 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Notebook HTML repr isolated from the host document's styles."""
         return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
 
+    def style_compatibility_report(
+        self,
+        target: str = "png",
+        *,
+        engine: Optional[export.Engine | str] = None,
+        custom_css: Optional[str] = None,
+    ) -> Any:
+        """Route every declared style for one export target, without exporting.
+
+        The programmatic answer to export.md §9: which styling sources this
+        figure carries, how each styled slot routes under `target`/`engine`,
+        and exactly what would not survive — including the export path's own
+        refusals, mirrored rather than re-decided. Report-only: computing it
+        never changes an export."""
+        from .styling.preflight import preflight
+
+        return preflight(self, target=target, engine=engine, custom_css=custom_css)
+
     def to_svg(
         self,
         path: Optional[str | PathLike[str]] = None,
