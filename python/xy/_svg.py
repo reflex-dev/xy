@@ -1377,6 +1377,7 @@ STATIC_STYLED_SLOTS: tuple[str, ...] = (
     "colorbar_title",
     "colorbar_tick",
     "annotation_label",
+    "annotation_layer",
 )
 
 
@@ -5033,7 +5034,63 @@ def _annotation_svg(
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
                 + f'fill="{label_color}">{tspans}</text>'
             )
-    return marks, unclipped_marks, labels
+    return _annotation_layer_wrap(marks, unclipped_marks, slots, plot) + (labels,)
+
+
+def _layer_opacity(layer: dict[str, Any]) -> float:
+    """The annotation_layer slot's declared group opacity, clamped, 1 unset."""
+    if "opacity" not in layer:
+        return 1.0
+    try:
+        return min(1.0, max(0.0, float(layer["opacity"])))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _annotation_layer_wrap(
+    marks: list[str],
+    unclipped_marks: list[str],
+    slots: dict[str, Any],
+    plot: dict[str, float],
+) -> tuple[list[str], list[str]]:
+    """Apply the annotation_layer slot to the annotation shape lists.
+
+    Group opacity rides a `<g>` (PDF-legal), wrapping the clipped tail and
+    the unclipped connectors alike — never the labels, which live in the
+    labels container in the browser too. The layer background is a
+    plot-rect chrome box painted UNDER the shapes, inside the marks clip:
+    the live overlay canvas is full-bleed (`inset:0`), but a full-bleed rect
+    cannot sit above the traces and below the shapes in either writer, so
+    the writers pin the plot-clipped geometry and the divergence is recorded
+    in `KNOWN_RENDERER_DIVERGENCES` rather than left to be discovered.
+    """
+    layer = slots.get("annotation_layer") or {}
+    if not layer:
+        return marks, unclipped_marks
+    prefix: list[str] = []
+    background = layer.get("background", layer.get("background-color"))
+    if background is not None:
+        box = lower_box(
+            "annotation_layer",
+            {"background": background, "opacity": _layer_opacity(layer)},
+            x=plot["x"],
+            y=plot["y"],
+            w=plot["w"],
+            h=plot["h"],
+        )
+        # The rect carries the folded opacity itself (it sits outside the
+        # group so the group cannot double-dim it).
+        rect = _slot_box_svg(box)
+        if rect:
+            prefix.append(rect)
+    opacity = _layer_opacity(layer)
+    if opacity < 1.0:
+        wrap = f'<g opacity="{_num(opacity)}">'
+        if marks:
+            marks = [wrap, *marks, "</g>"]
+        if unclipped_marks:
+            unclipped_marks = [wrap, *unclipped_marks, "</g>"]
+    return prefix + marks, unclipped_marks
 
 
 def _svg_font_attrs(style: dict[str, Any]) -> str:

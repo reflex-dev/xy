@@ -67,7 +67,7 @@ would not survive, before any bytes exist.
 | `title` | clean static | full | partial | partial |
 | `chrome` | clean static | full | none | none |
 | `canvas` | clean static | full | none | none |
-| `annotation_layer` | clean static | full | none | none |
+| `annotation_layer` | clean static | full | partial | partial |
 | `labels` | clean static | full | none | none |
 | `legend` | clean static | full | partial | partial |
 | `legend_title` | clean static | full | partial | partial |
@@ -116,6 +116,7 @@ would not survive, before any bytes exist.
 
 - **`root`** (via `chart style=`) — `styles={'root': ...}` is browser-only, but the chart-level `style=` token bag targets the same element and every renderer reads it (`spec['dom']['style']`). Prefer it for anything that must survive export.
 - **`title`** (via `styles={'title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`annotation_layer`** (via `styles={'annotation_layer': ...}`) — The annotation-shape overlay. `opacity` dims every annotation shape as a group (never the labels, which live in the labels container): SVG/PDF as real group opacity on a `<g>`, raster folded into each shape's RGBA because the display list has no group compositing — overlapping translucent shapes double-blend there, a recorded approximation (§28). `background` paints under the shapes, plot-clipped; the live overlay is full-bleed, a divergence recorded in KNOWN_RENDERER_DIVERGENCES. Everything else stays browser-only.
 - **`legend`** (via `styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg`) — The frame box. Both spellings and the theme token now converge on one merged declaration block before the writers see it, so what agrees in the browser agrees in a PNG. `background`, `boxShadow`, `borderRadius`, `--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an explicit background paints opaque, as it does in the browser.
 - **`legend_title`** (via `styles={'legend_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
 - **`legend_label`** (via `styles={'legend_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
@@ -144,6 +145,8 @@ an undocumented difference reads as a bug; a documented one is a contract.
 | what | browser | svg | native png | visible when |
 |---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle |
+| The annotation_layer slot's background extent | full-bleed (the overlay canvas is inset:0 over the whole chart) | plot rect, inside the marks clip (the only seam above traces and below shapes) | plot rect, under the active marks clip (same seam as SVG) | styles={'annotation_layer': {'background': ...}} is declared |
+| How the annotation_layer slot's opacity composites overlapping shapes | group opacity: the overlay canvas is dimmed once as a whole | group opacity on the wrapping <g>, PDF-legal, same as live | folded into each shape's RGBA (no group compositing opcode): overlapping translucent shapes double-blend | the slot declares opacity below 1 over overlapping annotation shapes |
 
 For what is still alpha, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).

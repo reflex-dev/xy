@@ -57,10 +57,13 @@ def test_native_writers_read_a_property_subset_not_the_whole_cascade() -> None:
         assert f"cls-{slot}" not in svg
 
 
-#: The paint property each static slot answers to. `legend` is the frame box,
-#: so it takes `background`; every other static slot is text, so it takes the
-#: SVG text paint.
-_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {"legend": "background"}
+#: The paint property each static slot answers to. `legend` is the frame box
+#: and `annotation_layer` the shape overlay, so they take `background`; every
+#: other static slot is text, so it takes the SVG text paint.
+_SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
+    "legend": "background",
+    "annotation_layer": "background",
+}
 
 
 @pytest.mark.parametrize("slot", STATIC_STYLED_SLOTS)

@@ -294,6 +294,106 @@ def test_annotation_label_preflight_routes_text_and_box_props() -> None:
     assert finding.lost == ("outline-color",)
 
 
+# -- annotation_layer ---------------------------------------------------------
+
+
+def test_layer_opacity_wraps_shapes_in_a_group_and_survives_pdf() -> None:
+    chart = xy.line_chart(
+        _line(),
+        xy.hline(1.5, text="target"),
+        xy.marker(1.0, 1.0),
+        styles={"annotation_layer": {"opacity": 0.5}},
+    )
+    svg = _svg_of(chart)
+    assert '<g opacity="0.5">' in svg
+    # The group wraps shapes only — the label rides the labels container.
+    group = svg.split('<g opacity="0.5">', 1)[1].split("</g>", 1)[0]
+    assert "<line" in group and ">target<" not in group
+    assert svg_to_pdf(svg)[:4] == b"%PDF"
+    # Strictly declaration-gated in both writers.
+    plain = xy.line_chart(_line(), xy.hline(1.5, text="target"), xy.marker(1.0, 1.0))
+    empty = xy.line_chart(
+        _line(),
+        xy.hline(1.5, text="target"),
+        xy.marker(1.0, 1.0),
+        styles={"annotation_layer": {}},
+    )
+    assert _svg_of(plain) == _svg_of(empty)
+    assert (_raster_of(plain) == _raster_of(empty)).all()
+
+
+def test_layer_opacity_folds_per_primitive_in_raster_with_double_blend() -> None:
+    # The recorded divergence made executable: the display list has no group
+    # compositing, so two overlapping opaque bands under layer opacity 0.5
+    # blend TWICE where they overlap (darker), while the SVG group dims the
+    # union once (uniform). Both facts are asserted so the delta cannot rot
+    # silently.
+    def chart(**styles):
+        return xy.line_chart(
+            xy.line([0.0, 4.0], [0.0, 4.0], name="s"),
+            xy.x_band(1.0, 2.5, style={"color": "#2563eb", "opacity": 1.0}),
+            xy.x_band(1.5, 3.0, style={"color": "#2563eb", "opacity": 1.0}),
+            **styles,
+        )
+
+    dimmed = _raster_of(chart(styles={"annotation_layer": {"opacity": 0.5}}))
+    full = _raster_of(chart())
+    assert not (dimmed == full).all()
+    height, width = dimmed.shape[:2]
+    row = dimmed[height // 2]
+    full_row = full[height // 2]
+    # Sample one single-coverage column and one double-coverage column by
+    # walking the fully-opaque render: single-coverage pixels equal the band
+    # color exactly; the overlap is identical there (opaque over opaque).
+    band = np.array([37, 99, 235, 255])
+    on_band = np.where((full_row == band).all(axis=-1))[0]
+    assert on_band.size > 4
+    single_col, overlap_col = on_band[2], on_band[on_band.size // 2]
+    single = row[single_col].astype(float)
+    overlap = row[overlap_col].astype(float)
+    # Double-blend: the overlap is strictly darker than single coverage in
+    # the raster, where a browser-style group composite would keep them
+    # equal (KNOWN_RENDERER_DIVERGENCES: annotation_layer_opacity_compositing).
+    assert overlap[2] < single[2] < 255.0
+
+
+def test_layer_background_is_plot_clipped_and_under_the_shapes() -> None:
+    # Flagged geometry decision, pinned: the live overlay is full-bleed
+    # (inset:0) but the writers paint the plot rect — the only seam that is
+    # above the traces and below the annotation shapes in both writers
+    # (KNOWN_RENDERER_DIVERGENCES: annotation_layer_background_geometry).
+    chart = xy.line_chart(
+        _line(),
+        xy.hline(1.5),
+        styles={"annotation_layer": {"background": "#123456"}},
+    )
+    svg = _svg_of(chart)
+    rect = next(r for r in _rects(svg) if "#123456" in r)
+    clip_rect = re.search(r"<clipPath[^>]*><rect ([^/]*)/>", svg).group(1)
+    for key in ("x", "y", "width", "height"):
+        expected = re.search(rf'{key}="([-\d.]+)"', clip_rect).group(1)
+        assert f'{key}="{expected}"' in rect, (key, rect, clip_rect)
+    # Inside the clipped marks group, before the annotation shapes.
+    clipped = svg.split('<g clip-path="', 1)[1]
+    assert clipped.index("#123456") < clipped.index("<line ")
+    assert svg_to_pdf(svg)[:4] == b"%PDF"
+    # And the raster writer paints it (declaration-gated).
+    plain = xy.line_chart(_line(), xy.hline(1.5))
+    assert not (_raster_of(plain) == _raster_of(chart)).all()
+
+
+def test_layer_preflight_routes_opacity_and_background_only() -> None:
+    figure = xy.line_chart(
+        _line(),
+        xy.hline(1.5),
+        styles={"annotation_layer": {"opacity": 0.5, "border_radius": "4px"}},
+    ).figure()
+    report = figure.style_compatibility_report(target="png")
+    (finding,) = [f for f in report.findings if f.slot == "annotation_layer"]
+    assert finding.kept == ("opacity",)
+    assert finding.lost == ("border-radius",)
+
+
 # -- badge / badge_item: view-gated, excluded from static parity --------------
 
 

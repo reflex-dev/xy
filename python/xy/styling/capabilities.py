@@ -256,6 +256,25 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="stroke-width above ~4px at a sharp angle",
         tracked_by="no style property selects a join; the default is the whole contract",
     ),
+    RendererDivergence(
+        id="annotation_layer_background_geometry",
+        what="The annotation_layer slot's background extent",
+        webgl="full-bleed (the overlay canvas is inset:0 over the whole chart)",
+        svg="plot rect, inside the marks clip (the only seam above traces and below shapes)",
+        native="plot rect, under the active marks clip (same seam as SVG)",
+        visible_when="styles={'annotation_layer': {'background': ...}} is declared",
+        tracked_by="tests/test_chrome_parity_p3.py pins the plot-rect geometry",
+    ),
+    RendererDivergence(
+        id="annotation_layer_opacity_compositing",
+        what="How the annotation_layer slot's opacity composites overlapping shapes",
+        webgl="group opacity: the overlay canvas is dimmed once as a whole",
+        svg="group opacity on the wrapping <g>, PDF-legal, same as live",
+        native="folded into each shape's RGBA (no group compositing opcode): "
+        "overlapping translucent shapes double-blend",
+        visible_when="the slot declares opacity below 1 over overlapping annotation shapes",
+        tracked_by="tests/test_chrome_parity_p3.py documents the double-blend delta",
+    ),
 )
 
 
@@ -295,6 +314,18 @@ _SLOT_EXCEPTIONS["root"] = (
     "token bag targets the same element and every renderer reads it "
     "(`spec['dom']['style']`). Prefer it for anything that must survive "
     "export.",
+)
+_SLOT_EXCEPTIONS["annotation_layer"] = (
+    "partial",
+    "styles={'annotation_layer': ...}",
+    "The annotation-shape overlay. `opacity` dims every annotation shape as "
+    "a group (never the labels, which live in the labels container): SVG/PDF "
+    "as real group opacity on a `<g>`, raster folded into each shape's RGBA "
+    "because the display list has no group compositing — overlapping "
+    "translucent shapes double-blend there, a recorded approximation (§28). "
+    "`background` paints under the shapes, plot-clipped; the live overlay is "
+    "full-bleed, a divergence recorded in KNOWN_RENDERER_DIVERGENCES. "
+    "Everything else stays browser-only.",
 )
 _SLOT_EXCEPTIONS["annotation_label"] = (
     "partial",

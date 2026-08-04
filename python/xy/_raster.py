@@ -22,6 +22,7 @@ import numpy as np
 
 from . import _paint, _png, _scene, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._chromebox import lower_box
 from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
@@ -49,6 +50,7 @@ from ._svg import (
     _decode_title_geometry,
     _density_column,
     _heatmap_rgba_grid,
+    _layer_opacity,
     _legend_layout,
     _lut,
     _physical_density_alpha,
@@ -1736,6 +1738,29 @@ def _emit_annotations(
     px0, py0 = plot["x"], plot["y"]
     text_phase = phase == "text"
     slots = slots or {}
+    # annotation_layer: the display list has no group compositing, so the
+    # declared layer opacity folds into every shape RGBA (overlapping
+    # translucent shapes double-blend — recorded divergence, §28) and never
+    # into the labels, which live in the labels container in the browser.
+    # The layer background is a plot-rect box under the shapes, inside the
+    # active marks clip — the geometry pinned against the browser's
+    # full-bleed overlay in KNOWN_RENDERER_DIVERGENCES.
+    layer = slots.get("annotation_layer") or {}
+    layer_alpha = 1.0 if text_phase else _layer_opacity(layer)
+    if not text_phase and layer:
+        layer_background = layer.get("background", layer.get("background-color"))
+        if layer_background is not None:
+            _emit_slot_box(
+                cmd,
+                lower_box(
+                    "annotation_layer",
+                    {"background": layer_background, "opacity": layer_alpha},
+                    x=plot["x"],
+                    y=plot["y"],
+                    w=plot["w"],
+                    h=plot["h"],
+                ),
+            )
 
     def point(x: float, y: float) -> tuple[float, float]:
         """Jointly project point-anchored geometry under polar coordinates."""
@@ -1750,7 +1775,7 @@ def _emit_annotations(
         # matplotlib's Text and the client's DOM labels.
         style = annotation_style_with_slot(ann, slots)
         restore_plot_clip = False
-        color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
+        color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)) * layer_alpha)
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
         if text_phase:
@@ -1782,7 +1807,11 @@ def _emit_annotations(
                 x0, x1 = px0 + start * plot["w"], px0 + end * plot["w"]
             cmd.fill(
                 _rect_pts(x0, y0, x1, y1),
-                _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
+                _rgba(
+                    style.get("color"),
+                    "#64748b",
+                    float(style.get("opacity", 0.14)) * layer_alpha,
+                ),
             )
         elif ann.get("kind") in ("arrow", "callout"):
             if _annotation_connector_unclipped(ann, sx, sy, plot, polar):
@@ -1820,7 +1849,7 @@ def _emit_annotations(
         elif ann.get("kind") == "marker":
             mx, my = point(float(ann["x"]), float(ann["y"]))
             if np.isfinite(mx) and np.isfinite(my):
-                alpha = float(style.get("opacity", 1.0))
+                alpha = float(style.get("opacity", 1.0)) * layer_alpha
                 stroke_w = float(style.get("stroke_width", 0.0))
                 cmd.point(
                     mx,

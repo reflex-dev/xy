@@ -206,6 +206,12 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "annotation's own style= is the narrower selector and wins per "
             "property group"
         )
+    if slot == "annotation_layer":
+        return frozenset({"background", "background-color", "opacity"}), (
+            "group opacity over the annotation shapes (raster folds it "
+            "per-primitive) and a plot-clipped background; the rest of the "
+            "overlay's box model stays browser-only"
+        )
     return text, ""
 
 
