@@ -78,6 +78,16 @@ Object.assign(ChartView.prototype, {
       row.y = y;
       if (xKind !== undefined) row.x_kind = xKind;
       if (yKind !== undefined) row.y_kind = yKind;
+    } else if (g.candle?.cpu) {
+      const candle = g.candle.cpu;
+      const rawX = candle.x[hit.index];
+      const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, g.xMeta?.kind);
+      row.x = x;
+      row.open = candle.o[hit.index];
+      row.high = candle.h[hit.index];
+      row.low = candle.l[hit.index];
+      row.close = candle.c[hit.index];
+      if (xKind !== undefined) row.x_kind = xKind;
     } else if (cpu) {
       const xMeta = cpu.xMeta || g.xMeta;
       const yMeta = cpu.yMeta || g.yMeta;
@@ -344,6 +354,16 @@ Object.assign(ChartView.prototype, {
           value: polar ? polar.value : fmtValue(row.x, row.x_kind),
         });
       }
+    }
+    for (const [field, fallback] of [
+      ["open", "Open"],
+      ["high", "High"],
+      ["low", "Low"],
+      ["close", "Close"],
+    ]) {
+      if (row[field] === undefined) continue;
+      const { label } = this._defaultTooltipLabel(field, fallback, labels, aliases);
+      items.push({ kind: "field", label, value: fmtValue(row[field], row.y_kind) });
     }
     if (row.y !== undefined) {
       const polar = this._polarTooltipField("y", row.y, row.y_kind);

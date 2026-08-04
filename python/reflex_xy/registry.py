@@ -746,9 +746,42 @@ def reset_registry_for_tests() -> FigureRegistry:
     return registry
 
 
+class _PayloadFigureAdapter:
+    """Keep a chart's richer payload while delegating figure kernels.
+
+    Most public charts are thin factories whose ``figure()`` result owns the
+    complete wire payload.  FinanceChart is deliberately different: its base
+    Figure owns the ordinary traces, while ``FinanceChart.build_payload()``
+    adds studies, drawings, tools, panes, and their computed axis ranges.  A
+    figure var therefore needs to publish that richer payload without making
+    FinanceChart reimplement every interaction kernel on Figure.
+    """
+
+    def __init__(self, chart: Any) -> None:
+        self._chart = chart
+        self._figure = chart.figure()
+
+    def build_payload(self, px_width: Any = None):
+        if px_width is None:
+            return self._chart.build_payload()
+        return self._chart.build_payload(px_width)
+
+    def build_payload_split(self, px_width: Any = None):
+        # Finance-layer arrays are JSON materialized today.  Preserve the
+        # chart's joined buffer layout as one Socket.IO attachment rather than
+        # asking the base Figure for a split payload that omits those layers.
+        spec, blob = self.build_payload(px_width)
+        return spec, [blob]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._figure, name)
+
+
 def _figure_of(chart: Any) -> "Figure":
-    """Accept either a public `xy.Chart` or an internal Figure."""
+    """Accept a public chart, a richer payload chart, or an internal Figure."""
     figure = getattr(chart, "figure", None)
     if callable(figure):
+        if callable(getattr(chart, "build_payload", None)):
+            return _PayloadFigureAdapter(chart)  # type: ignore[return-value]
         return figure()
     return chart

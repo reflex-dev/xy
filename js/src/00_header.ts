@@ -61,6 +61,7 @@ export const PROTOCOL = 12;
 // so adding a channel buffer cannot silently reintroduce the leak.
 export const TRACE_GPU_BUFFERS = [
   "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+  "oBuf", "hBuf", "lBuf",
   "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
   "t0Buf", "t1Buf",
   "posBuf", "value1Buf", "value0Buf",

@@ -1348,6 +1348,135 @@ def area(
         raise
 
 
+def candlestick(
+    self: "Figure",
+    x: ArrayLike,
+    open: ArrayLike,  # noqa: A002 - OHLC domain naming
+    high: ArrayLike,
+    low: ArrayLike,
+    close: ArrayLike,
+    *,
+    name: Optional[str] = None,
+    up_color: str = "#26a69a",
+    down_color: str = "#ef5350",
+    width_frac: float = 0.7,
+    opacity: float = 1.0,
+    hollow: bool = False,
+    wick_color: Optional[str] = None,
+) -> "Figure":
+    """Add an OHLC candlestick trace with low/high autorange."""
+    return _add_ohlc(
+        self,
+        "candlestick",
+        x,
+        open,
+        high,
+        low,
+        close,
+        name=name,
+        up_color=up_color,
+        down_color=down_color,
+        width_frac=width_frac,
+        opacity=opacity,
+        hollow=hollow,
+        wick_color=wick_color,
+    )
+
+
+def ohlc(
+    self: "Figure",
+    x: ArrayLike,
+    open: ArrayLike,  # noqa: A002 - OHLC domain naming
+    high: ArrayLike,
+    low: ArrayLike,
+    close: ArrayLike,
+    *,
+    name: Optional[str] = None,
+    up_color: str = "#26a69a",
+    down_color: str = "#ef5350",
+    width_frac: float = 0.7,
+    opacity: float = 1.0,
+) -> "Figure":
+    """Add an OHLC bar trace."""
+    return _add_ohlc(
+        self,
+        "ohlc",
+        x,
+        open,
+        high,
+        low,
+        close,
+        name=name,
+        up_color=up_color,
+        down_color=down_color,
+        width_frac=width_frac,
+        opacity=opacity,
+        hollow=False,
+        wick_color=None,
+    )
+
+
+def _add_ohlc(
+    self: "Figure",
+    kind: str,
+    x: ArrayLike,
+    open: ArrayLike,  # noqa: A002 - OHLC domain naming
+    high: ArrayLike,
+    low: ArrayLike,
+    close: ArrayLike,
+    *,
+    name: Optional[str],
+    up_color: str,
+    down_color: str,
+    width_frac: float,
+    opacity: float,
+    hollow: bool,
+    wick_color: Optional[str],
+) -> "Figure":
+    name = self._optional_text(name, f"{kind} name")
+    up_color = self._optional_css_color(up_color, f"{kind} up_color") or "#26a69a"
+    down_color = self._optional_css_color(down_color, f"{kind} down_color") or "#ef5350"
+    wick_color = self._optional_css_color(wick_color, f"{kind} wick_color")
+    width_frac = self._positive_scalar(width_frac, f"{kind} width_frac")
+    opacity = self._opacity(opacity, f"{kind} opacity")
+    hollow = _validate.bool_param(hollow, f"{kind} hollow")
+    checkpoint = self._checkpoint()
+    try:
+        cols = [self.store.ingest(v) for v in (x, open, high, low, close)]
+        lengths = [len(column) for column in cols]
+        if any(length != lengths[0] for length in lengths):
+            raise ValueError(f"{kind} x/open/high/low/close must have equal length, got {lengths}")
+        if self.coords != "polar" and not kernels.is_sorted(cols[0].values):
+            order = np.argsort(cols[0].values, kind="stable")
+            cols = [self.store.ingest(column.values[order]) for column in cols]
+        xc, oc, hc, lc, cc = cols
+        self.traces.append(
+            Trace(
+                id=len(self.traces),
+                kind=kind,
+                x=xc,
+                y=cc,
+                name=name,
+                style={
+                    "up_color": up_color,
+                    "down_color": down_color,
+                    "width_frac": width_frac,
+                    "opacity": opacity,
+                    "hollow": hollow,
+                    "wick_color": wick_color,
+                },
+                open_=oc,
+                high=hc,
+                low=lc,
+                close=cc,
+            )
+        )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
 def error_band(
     self: "Figure",
     x: ArrayLike,

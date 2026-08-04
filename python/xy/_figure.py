@@ -584,6 +584,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
     # — one body, one signature, one set of defaults for both dialects.
     line = _marks.line
     area = _marks.area
+    candlestick = _marks.candlestick
+    ohlc = _marks.ohlc
     scatter = _marks.scatter
     histogram = _marks.histogram
     hist = _marks.hist
@@ -1725,6 +1727,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return []
         if axis == "y" and t.y_axis != axis_id:
             return []
+        if t.open_ is not None and t.high is not None and t.low is not None and t.close is not None:
+            return [t.x] if axis == "x" else [t.low, t.high]
         if t.kind in {"area", "error_band"} and t.base is not None:
             return [t.x] if axis == "x" else [t.y, t.base]
         if (

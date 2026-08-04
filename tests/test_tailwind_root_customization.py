@@ -399,6 +399,8 @@ def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> No
         "export:",
         "interaction:",
         "axes:",
+        "layers:",
+        "tools:",
     ):
         assert field in jsx
     # Trace buffers/columns and axis ranges stay outside the mounted-chrome
@@ -414,6 +416,16 @@ def test_live_wrapper_rebuilds_constructor_owned_chrome_only_when_needed() -> No
     assert jsx.index("const chromeChanged = Boolean(") < jsx.index(
         "if (!chromeChanged && view?.updatePayload?."
     )
+
+
+def test_live_wrapper_remounts_when_finance_layers_or_tools_change() -> None:
+    jsx = (ROOT / "python" / "reflex_xy" / "assets" / "XYChart.jsx").read_text(encoding="utf-8")
+
+    mounted = jsx.split("const mountedChromeSpec = (spec) => ({", 1)[1].split("});", 1)[0]
+    assert "layers: spec?.layers ?? null" in mounted
+    assert "tools: spec?.tools ?? null" in mounted
+    assert "const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));" in jsx
+    assert "if (!chromeChanged && view?.updatePayload?.(spec, nextBuffers)) {" in jsx
 
 
 def test_live_wrapper_silently_hydrates_durable_selection_and_all_axis_ranges() -> None:
