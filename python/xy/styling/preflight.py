@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..dom import validate_dom_slots
 from . import capabilities
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
@@ -140,19 +141,46 @@ def _resolve(target: str, engine: object, custom_css: Optional[str]) -> tuple[st
 
     Deferred import: `export` pulls in the browser-discovery machinery, and
     `capabilities` must stay importable from the docs generator without it.
+
+    Browser-resolved targets validate `custom_css` through the export path's
+    own `_custom_css_block` — the same type check and `</style>`/`<!--`
+    rejection the standalone document performs — in the same order the export
+    performs them (engine resolution first). A report may not say "lossless"
+    about an export that would refuse the stylesheet.
     """
     from .. import export
 
     fmt = export._normalize_format(target, allow_html=True)
     if fmt == "html":
-        return fmt, "browser", ""
-    try:
-        return fmt, export._resolve_image_engine(engine, fmt, custom_css), ""
-    except ValueError as exc:
-        return fmt, "unresolved", str(exc)
+        resolved = "browser"
+    else:
+        try:
+            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+        except ValueError as exc:
+            return fmt, "unresolved", str(exc)
+    if resolved == "browser" and custom_css is not None:
+        try:
+            export._custom_css_block(custom_css)
+        except (TypeError, ValueError) as exc:
+            return fmt, resolved, str(exc)
+    return fmt, resolved, ""
 
 
-def _honored_props(slot: str, fmt: str) -> tuple[frozenset[str], str]:
+def _slot_family(fmt: str) -> str:
+    """The writer family a format belongs to, refusing formats outside both.
+
+    Membership is explicit on both sides so a format added later to
+    `export._normalize_format` cannot silently be reported against the vector
+    subset — it fails here until someone classifies it.
+    """
+    if fmt in _RASTER_FORMATS:
+        return "native_raster"
+    if fmt in _VECTOR_FORMATS:
+        return "native_vector"
+    raise ValueError(f"preflight has no writer family for format {fmt!r}")
+
+
+def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     """(honored property names, qualifier) for a native-subset slot.
 
     The subsets are the writers' own constants. `legend` honors box properties
@@ -163,7 +191,7 @@ def _honored_props(slot: str, fmt: str) -> tuple[frozenset[str], str]:
     """
     from .. import _svg
 
-    text = frozenset(_svg.SLOT_RASTER_PROPS if fmt in _RASTER_FORMATS else _svg.SLOT_TEXT_PROPS)
+    text = frozenset(_svg.SLOT_RASTER_PROPS if family == "native_raster" else _svg.SLOT_TEXT_PROPS)
     if slot == "legend":
         return text, (
             "box properties (background, shadow, radius, padding) route through the "
@@ -206,7 +234,7 @@ def _class_finding(slot: str, fmt: str) -> SlotFinding:
 
 def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
     meta = _SLOTS_BY_ID[slot]
-    family = "native_raster" if fmt in _RASTER_FORMATS else "native_vector"
+    family = _slot_family(fmt)
     props = tuple(_css_prop(name) for name in decls)
     if meta.applicability != "static":
         return SlotFinding(
@@ -229,7 +257,7 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
             lost=props,
             detail=detail,
         )
-    honored, qualifier = _honored_props(slot, fmt)
+    honored, qualifier = _honored_props(slot, family)
     kept = tuple(p for p in props if p in honored)
     lost = tuple(p for p in props if p not in honored)
     if slot == "legend":
@@ -287,13 +315,22 @@ def route_resolved(
         # class or per-slot declarations there is nothing that can drop.
         return StyleCompatibilityReport(target=fmt, engine=resolved_engine, sources=sources)
 
+    # Mirror the spec build's own validation rather than skipping entries it
+    # would refuse: `Figure.class_names`/`chrome_styles` are assignable, so a
+    # report can be requested before `_dom_spec` validates them. A silently
+    # omitted entry would be a report claiming exhaustiveness while hiding a
+    # declaration — the exact §28 failure this module exists to end.
+    validate_dom_slots(figure.class_names, "class_names")
+    validate_dom_slots(figure.chrome_styles, "chrome_styles")
     findings: list[SlotFinding] = []
     for slot in figure.class_names:
-        if slot in _SLOTS_BY_ID:
-            findings.append(_class_finding(slot, fmt))
+        findings.append(_class_finding(slot, fmt))
     for slot, decls in figure.chrome_styles.items():
-        if slot in _SLOTS_BY_ID and isinstance(decls, dict):
-            findings.append(_styles_finding(slot, decls, fmt))
+        if not isinstance(decls, dict):
+            raise ValueError(
+                f"chrome_styles[{slot!r}] must be a mapping of declarations, got {decls!r}"
+            )
+        findings.append(_styles_finding(slot, decls, fmt))
 
     losses = tuple(
         f"{finding.source}[{finding.slot!r}] -> {', '.join(finding.lost)}"
@@ -377,24 +414,56 @@ def enforce(
     report = route_resolved(figure, fmt=fmt, resolved_engine=resolved_engine, custom_css=custom_css)
     if report.lossless:
         return
+    # SVG is native-only (a browser screenshot cannot emit vector SVG), so
+    # recommending engine=Engine.chromium there would recommend a refusal.
+    keeps = (
+        "to_html() keeps everything (SVG is native-only, so Engine.chromium "
+        "is not a route for this format)"
+        if fmt == "svg"
+        else "engine=Engine.chromium or to_html() keeps everything"
+    )
     if mode == "warn":
         warnings.warn(
             StyleCompatibilityWarning(
                 f"this {fmt} export drops declared styling — "
                 + "; ".join(report.losses)
                 + " — chart.style_compatibility_report() has the full routing; "
-                "engine=Engine.chromium or to_html() keeps everything"
+                + keeps
             ),
-            stacklevel=2,
+            stacklevel=_caller_stacklevel(),
         )
         return
     raise StyleCompatibilityError(
-        report.explain() + "\nstrict compatibility refuses to drop declared styling; keep it with "
-        "engine=Engine.chromium or to_html(), move it into chart/mark style= or a "
-        'supported styles= subset, or export with compatibility="warn" during '
-        "migration",
+        report.explain()
+        + "\nstrict compatibility refuses to drop declared styling; "
+        + keeps
+        + ", or move it into chart/mark style= or a supported styles= subset, "
+        'or export with compatibility="warn" during migration',
         report,
     )
+
+
+def _caller_stacklevel() -> int:
+    """The stacklevel that lands the warning on the caller's export line.
+
+    The distance from `enforce` to user code varies by entry point (module
+    function, Figure method, Chart method, batch plan), so it is measured:
+    walk outward from `enforce` until the first frame outside the xy
+    package. Counted so `warnings.warn(..., stacklevel=n)` inside `enforce`
+    attributes the warning to that frame.
+    """
+    import sys
+    from pathlib import Path
+
+    package_dir = str(Path(__file__).resolve().parents[1])
+    frame = sys._getframe(1)  # enforce's frame
+    level = 1
+    while frame.f_back is not None and str(Path(frame.f_code.co_filename).resolve()).startswith(
+        package_dir
+    ):
+        frame = frame.f_back
+        level += 1
+    return level
 
 
 __all__ = [

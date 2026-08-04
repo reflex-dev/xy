@@ -16,8 +16,11 @@ in the README).
   suite pins to the Python schema. Wire shape and reserved message names:
   `spec/design/wire-protocol.md` §8; nothing rides the wire yet, so
   `PROTOCOL_VERSION` is unchanged.
-- Every image-export API (`to_png`, `to_svg`, `to_image`, `write_image`,
-  `export.write_images`) accepts `compatibility=`: `"legacy"` (default —
+- Every chart-, figure-, and module-level image-export API (`to_png`,
+  `to_svg`, `to_image`, `write_image`, `export.write_images`) accepts
+  `compatibility=` — facet-grid exports deliberately do not yet (their
+  per-panel preflight is tracked in the migration document): `"legacy"`
+  (default —
   behavior unchanged), `"warn"` (one `StyleCompatibilityWarning` naming each
   declaration the export would drop), or `"strict"`
   (`StyleCompatibilityError` before emission, preflight report attached).

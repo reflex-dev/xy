@@ -682,7 +682,14 @@ def write_images(
     (native WebP stays lossless), so mixed batches stay ergonomic.
     `compatibility=` applies per figure while the plan is resolved, so a
     strict batch refuses whole — before any file is written — rather than
-    after a partial export."""
+    after a partial export. Its vocabulary is validated once up front, so an
+    invalid mode fails even an all-HTML batch; HTML entries themselves are
+    exempt from the mode, because a document that renders the full cascade
+    has nothing to check."""
+    if compatibility != "legacy":
+        from .styling.preflight import validate_compatibility
+
+        validate_compatibility(compatibility)
     if figures is not None:
         if figs is not None:
             raise ValueError("pass figs positionally or figures=, not both")
@@ -840,10 +847,13 @@ def to_png(
     optimize = _bool_option(optimize, "PNG optimize")
     sandbox = _bool_option(sandbox, "PNG sandbox")
     resolved_engine = _png_engine(engine)
+    # Resolution errors precede and outrank mode logic (the migration spec's
+    # contract): the custom_css/native refusal must stay a ValueError in
+    # every mode, so it fires before enforcement can warn or raise.
+    if resolved_engine == "native" and custom_css is not None:
+        raise ValueError("custom_css requires engine=Engine.chromium")
     _enforce_compatibility(fig, "png", resolved_engine, custom_css, compatibility)
     if resolved_engine == "native":
-        if custom_css is not None:
-            raise ValueError("custom_css requires engine=Engine.chromium")
         from . import _raster
 
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
