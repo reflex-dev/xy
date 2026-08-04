@@ -53,6 +53,15 @@ class ChromeBox:
     radius: float = 0.0
     shadow: Optional[tuple[float, float, str]] = None  # (dx, dy, color)
     opacity: float = 1.0
+    #: Pyplot text-bbox compatibility: the pre-parity SVG emitter serialized
+    #: `stroke=... stroke-width=...` on every bbox rect, including the inert
+    #: `stroke="none" stroke-width="0"` of a borderless box, and existing
+    #: pyplot output is byte-pinned (§0.5). An adapter folding that emitter
+    #: onto this model sets `(paint, width)` here so the SVG writer keeps
+    #: those exact attributes when no active border exists; the raster twin
+    #: ignores it, because the raster writer never painted a zero-width
+    #: border. New chrome boxes leave it None.
+    explicit_stroke: Optional[tuple[str, float]] = None
     unrepresentable: tuple[str, ...] = field(default_factory=tuple)
 
     @property

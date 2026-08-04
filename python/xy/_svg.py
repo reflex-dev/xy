@@ -1826,8 +1826,14 @@ def _slot_box_svg(box: Any) -> str:
     would inherit the text paint otherwise), radius as symmetric `rx` only
     (PDF rejects `ry`). Emits nothing for a box that paints nothing, so the
     unstyled document stays byte-identical.
+
+    `explicit_stroke` is the one legacy accommodation: the pyplot text-bbox
+    emitter always wrote a stroke pair, even the inert `stroke="none"
+    stroke-width="0"` of a borderless box, and that output is byte-pinned —
+    a box carrying it is serialized (never skipped) with exactly that pair
+    when no active border exists.
     """
-    if not box.paints_anything and box.shadow is None:
+    if not box.paints_anything and box.shadow is None and box.explicit_stroke is None:
         return ""
     parts: list[str] = []
     common_opacity = f' opacity="{_num(box.opacity)}"' if box.opacity < 1.0 else ""
@@ -1848,6 +1854,9 @@ def _slot_box_svg(box: Any) -> str:
         if box.border_dash:
             dashes = " ".join(_num(v) for v in box.border_dash)
             stroke += f' stroke-dasharray="{dashes}"'
+    elif box.explicit_stroke is not None:
+        paint, width = box.explicit_stroke
+        stroke = f' stroke="{_escape_attr(paint)}" stroke-width="{_num(width)}"'
     fill_opacity = f' fill-opacity="{_num(box.fill_opacity)}"' if box.fill_opacity < 1.0 else ""
     parts.append(
         f'<rect x="{_num(box.x)}" y="{_num(box.y)}" '

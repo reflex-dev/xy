@@ -783,8 +783,8 @@ def _emit_slot_box(cmd: "_Cmd", box: Any) -> None:
 
     def pts(x: float, y: float) -> list[tuple[float, float]]:
         if box.radius > 0:
-            return _round_rect_pts(x, y, box.w, box.h, box.radius)
-        return _rect_pts(x, y, box.w, box.h)
+            return _round_rect_pts(x, y, x + box.w, y + box.h, box.radius)
+        return _rect_pts(x, y, x + box.w, y + box.h)
 
     if box.shadow is not None:
         dx, dy, color = box.shadow
