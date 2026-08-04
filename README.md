@@ -152,7 +152,10 @@ stable (10 byte-identical frames), so progressive renderers are charged until
 their last chunk lands.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time-dark.png">
+    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  </picture>
 </p>
 
 XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of

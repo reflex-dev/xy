@@ -4,13 +4,23 @@
 
 function compile(gl, type, src) {
   const sh = gl.createShader(type);
-  gl.shaderSource(sh, src);
-  gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
+  if (!sh) throw new Error("shader allocation failed");
+  try {
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
+    }
+    return sh;
+  } catch (error) {
+    // A failed shader is never useful to a retry. Avoid leaking it on the
+    // native-per-chart path; context-loss invalidates every handle implicitly.
+    if (!gl.isContextLost()) gl.deleteShader(sh);
+    throw error;
   }
-  return sh;
 }
+
+export type ShaderResolver = (type: number, source: string) => WebGLShader;
 
 // Fixed vertex-attribute slots, bound before linking so every program sees the
 // same location for a given attribute name. This is what lets one VAO serve
@@ -42,25 +52,51 @@ export const ATTR_SLOTS = {
   a_rgba2: 13,
 };
 
-export function makeProgram(gl, vs, fs) {
+export function makeProgram(gl, vs, fs, resolveShader?: ShaderResolver) {
   const p = gl.createProgram();
-  const vsh = compile(gl, gl.VERTEX_SHADER, vs);
-  const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
-  gl.attachShader(p, vsh);
-  gl.attachShader(p, fsh);
-  for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
-    gl.bindAttribLocation(p, slot, name); // no-op for names a shader lacks
-  }
-  gl.linkProgram(p);
-  const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
-  const info = gl.getProgramInfoLog(p);
-  gl.detachShader(p, vsh);
-  gl.detachShader(p, fsh);
-  gl.deleteShader(vsh);
-  gl.deleteShader(fsh);
-  if (!ok) {
-    gl.deleteProgram(p);
-    throw new Error("program link: " + info);
+  if (!p) throw new Error("program allocation failed");
+  const borrowed = typeof resolveShader === "function";
+  let vsh = null;
+  let fsh = null;
+  let vertexAttached = false;
+  let fragmentAttached = false;
+  try {
+    vsh = borrowed ? resolveShader(gl.VERTEX_SHADER, vs) : compile(gl, gl.VERTEX_SHADER, vs);
+    fsh = borrowed ? resolveShader(gl.FRAGMENT_SHADER, fs) : compile(gl, gl.FRAGMENT_SHADER, fs);
+    if (!vsh || !fsh) throw new Error("shader allocation failed");
+    gl.attachShader(p, vsh);
+    vertexAttached = true;
+    gl.attachShader(p, fsh);
+    fragmentAttached = true;
+    for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
+      gl.bindAttribLocation(p, slot, name); // no-op for names a shader lacks
+    }
+    gl.linkProgram(p);
+    const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
+    const info = gl.getProgramInfoLog(p);
+    if (!ok) throw new Error("program link: " + info);
+
+    gl.detachShader(p, vsh);
+    vertexAttached = false;
+    gl.detachShader(p, fsh);
+    fragmentAttached = false;
+    // Host-resolved shaders are immutable shared objects retained for future
+    // client-owned links. The native path continues to release them eagerly.
+    if (!borrowed) {
+      gl.deleteShader(vsh);
+      gl.deleteShader(fsh);
+    }
+  } catch (error) {
+    if (!gl.isContextLost()) {
+      if (vertexAttached && vsh) gl.detachShader(p, vsh);
+      if (fragmentAttached && fsh) gl.detachShader(p, fsh);
+      if (!borrowed) {
+        if (vsh) gl.deleteShader(vsh);
+        if (fsh) gl.deleteShader(fsh);
+      }
+      gl.deleteProgram(p);
+    }
+    throw error;
   }
   // Uniform-location cache (renderer audit R1): draw paths look locations up
   // by name every frame; memoize per program so each name hits the driver once.

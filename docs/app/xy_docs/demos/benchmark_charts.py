@@ -6,6 +6,10 @@ import reflex as rx
 
 import reflex_xy
 import xy
+from xy._benchmark_theme import (
+    benchmark_chart_class,
+    benchmark_live_theme,
+)
 
 XY_COLOR = "#6E56CF"
 XY_EXACT_COLOR = "#A594E8"
@@ -19,13 +23,7 @@ SERIES = (
     ("Plotly", PLOTLY_COLOR),
 )
 
-_CHART_CLASS = (
-    "w-full [--benchmark-bg:#ffffff] [--benchmark-plot:#fcfcfd] "
-    "[--benchmark-grid:#e8e8ec] [--benchmark-axis:#d9d9e0] "
-    "[--benchmark-text:#60646c] dark:[--benchmark-bg:#09090b] "
-    "dark:[--benchmark-plot:#111113] dark:[--benchmark-grid:#27272a] "
-    "dark:[--benchmark-axis:#3f3f46] dark:[--benchmark-text:#d4d4d8]"
-)
+_CHART_CLASS = benchmark_chart_class()
 _CARD_CLASS = (
     "w-full overflow-hidden rounded-xl border border-secondary-4 bg-white "
     "shadow-[0_12px_32px_#1c20240f] dark:bg-black"
@@ -34,13 +32,7 @@ _CARD_CLASS = (
 
 def _theme() -> xy.Theme:
     """Return the neutral benchmark theme shared by the docs site."""
-    return xy.theme(
-        background="var(--benchmark-bg, #ffffff)",
-        plot_background="var(--benchmark-plot, #fcfcfd)",
-        grid_color="var(--benchmark-grid, #e8e8ec)",
-        axis_color="var(--benchmark-axis, #d9d9e0)",
-        text_color="var(--benchmark-text, #60646c)",
-    )
+    return xy.theme(**benchmark_live_theme())
 
 
 def _legend() -> rx.Component:

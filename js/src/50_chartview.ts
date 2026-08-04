@@ -3,6 +3,7 @@ import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
 import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { acquireGLHost } from "./42_glhost";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -562,7 +563,16 @@ export class ChartView {
     this._ctxLostPending = false;
     this._ctxRecoverRequested = false;
     this._ctxVisible = xyInitiallyVisible(el);
-    XY_CONTEXT_GOVERNOR.register(this);
+    // Top-level documents default to one shared WebGL2 host. Child frames keep
+    // the existing governed per-chart path unless explicitly opted in: the
+    // browser's context quota spans frames, while a WebGL context cannot cross
+    // their realm/document boundary.
+    this._glHost = null;
+    this._present2d = null;
+    this._sharedGlAttempted = false;
+    this._governorRegistered = false;
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
@@ -574,7 +584,12 @@ export class ChartView {
       // points intentionally let the exception surface. Leave a useful DOM
       // fallback behind for browsers without WebGL2; recovery attempts catch
       // the same error themselves and therefore never replace their canvas.
-      XY_CONTEXT_GOVERNOR.unregister(this);
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.unregister(this);
+        this._governorRegistered = false;
+      }
+      this._glHost?.release(this);
+      this._glHost = null;
       if (String(err && err.message || err) === "webgl2 unavailable") {
         this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       }
@@ -1749,6 +1764,22 @@ export class ChartView {
   // restoration; on restore every GPU object is recreated from the retained
   // spec + payload, then a fresh view request re-syncs live tiers (kernel
   // updates written into now-dead buffers are gone until it answers).
+  _onGlHostContextLost() {
+    if (this._destroyed) return;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
+    // Keep the visible canvas as the per-chart event surface. Existing hosts
+    // and telemetry listen here, while the real loss belongs to the detached
+    // shared canvas and is fanned out by GLHost.
+    this.canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+  }
+
+  _onGlHostContextRestored() {
+    if (this._destroyed) return;
+    this.canvas.dispatchEvent(new Event("webglcontextrestored"));
+  }
+
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
@@ -1766,7 +1797,7 @@ export class ChartView {
       // Either way a live context just went away; let peer frames know the
       // shared budget has room (a governed release already announced; this is
       // deduped, and it is what tells peers about a browser-side eviction).
-      XY_CONTEXT_GOVERNOR._announceLive();
+      if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.xyContextState = "lost";
@@ -1817,6 +1848,10 @@ export class ChartView {
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
       });
+      // The host owns restoration of the one real context and will fan the
+      // restored event back out to every surviving client. Rebuilding or
+      // replacing this 2D presentation canvas cannot restore that context.
+      if (this._glHost) return;
       // A governed release keeps a snapshot and deliberately waits until the
       // chart is requested again. A browser-side eviction is different: the
       // canvas has no stand-in, and IntersectionObserver may not deliver a
@@ -1886,10 +1921,20 @@ export class ChartView {
           String(err && err.message || err).startsWith("WebGL error ");
         if (transient) {
           this._contextRecoveryError = null;
-          this._scheduleContextRecovery();
+          if (this._glHost) {
+            if (this.gl && !this.gl.isContextLost()) {
+              try { this._destroyGlResources(); } catch (_cleanupError) {}
+            }
+            this._scheduleGlHostClientRecovery();
+          } else {
+            this._scheduleContextRecovery();
+          }
           return;
         }
         this._contextRecoveryError = err;
+        clearTimeout(this._glHostRecoveryTimer);
+        this._glHostRecoveryTimer = null;
+        this._glHostRecoveryDelay = 0;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
         this.gl = null;
@@ -1903,9 +1948,14 @@ export class ChartView {
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
       this._ctxRecoveryDelay = 0;
+      clearTimeout(this._glHostRecoveryTimer);
+      this._glHostRecoveryTimer = null;
+      this._glHostRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
-      XY_CONTEXT_GOVERNOR._announceLive(); // context recovered; peers rebalance
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR._announceLive(); // fallback context recovered; peers rebalance
+      }
       this._scheduleViewRequest(this.view, { delay: 0 });
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
@@ -1921,6 +1971,7 @@ export class ChartView {
   // spec + payload rebuild everything on re-entry (§18/§27), riding the same
   // lost/restored machinery the lifecycle gate already exercises.
   _releaseContext() {
+    if (this._glHost) return false;
     if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
     const ext = this.gl.getExtension("WEBGL_lose_context");
     if (!ext) return false;
@@ -2021,6 +2072,13 @@ export class ChartView {
   // fresh one and rebuilt from the retained spec + payload.
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
+    if (this._glHost) {
+      // Host-wide recovery fans out its own restored event. This path handles
+      // a client-only rebuild that was deferred while its view or document
+      // was hidden after a transient allocation failure.
+      this._scheduleGlHostClientRecovery();
+      return;
+    }
     // Governed release, but its webglcontextlost event has not dispatched yet
     // (scrolled back into view in the same task it was released). Chromium
     // drops a restoreContext() issued before the loss event, stranding the
@@ -2079,6 +2137,46 @@ export class ChartView {
     this._ctxRecoveryTimer = setTimeout(() => {
       this._ctxRecoveryTimer = null;
       if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
+  // A host can be healthy while one client fails transiently during its own
+  // shader/buffer rebuild. Retry that client without letting a hidden or
+  // off-screen chart spin at frame rate under persistent GPU pressure.
+  _scheduleGlHostClientRecovery() {
+    if (
+      this._glHostRecoveryTimer ||
+      this._destroyed ||
+      !this._glHost ||
+      !this._glLost ||
+      !this._ctxVisible
+    ) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._glHostRecoveryDelay || 50;
+    this._glHostRecoveryDelay = Math.min(1000, delay * 2);
+    const host = this._glHost;
+    this._glHostRecoveryTimer = setTimeout(() => {
+      this._glHostRecoveryTimer = null;
+      if (
+        this._destroyed ||
+        this._glHost !== host ||
+        !this._glLost ||
+        !this._ctxVisible ||
+        !host.ready ||
+        host.lost ||
+        !host.gl ||
+        host.gl.isContextLost() ||
+        (
+          typeof document !== "undefined" &&
+          document.visibilityState &&
+          document.visibilityState !== "visible"
+        )
+      ) return;
+      this._onGlHostContextRestored();
     }, delay);
   }
 
@@ -3603,18 +3701,47 @@ export class ChartView {
     this.overlay.style.width = this.size.w + "px";
     this.overlay.style.height = this.size.h + "px";
 
-    // Stay inside the page's context budget before acquiring (governor above):
-    // at budget, the least-recently-visible off-screen view releases first.
-    XY_CONTEXT_GOVERNOR.reserve(this);
-    const gl = this.canvas.getContext("webgl2", {
-      antialias: false, premultipliedAlpha: true, alpha: true,
-    });
-    if (!gl) {
-      XY_CONTEXT_GOVERNOR.cancel(this);
-      throw new Error("webgl2 unavailable");
+    // A visible chart canvas is a normal 2D DOM surface; a detached GLHost
+    // owns the one WebGL2 context for every ChartView in this document. Keep a
+    // guarded native path for child frames, explicit rollback, and host
+    // allocation failure — that path retains the proven context governor.
+    if (!this._sharedGlAttempted) {
+      this._sharedGlAttempted = true;
+      const host = acquireGLHost(document, this);
+      if (host) {
+        const present = this.canvas.getContext("2d", { alpha: true });
+        if (present) {
+          this._glHost = host;
+          this._present2d = present;
+          this.canvas.dataset.xyGlHost = "shared";
+        } else {
+          host.release(this);
+        }
+      }
+    }
+
+    let gl;
+    if (this._glHost) {
+      gl = this._glHost.gl;
+      if (!gl || gl.isContextLost()) throw new Error("webgl2 unavailable");
+    } else {
+      if (!this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.register(this);
+        this._governorRegistered = true;
+      }
+      // Stay inside the page's context budget before acquiring (governor
+      // fallback): at budget, the least-recently-visible view releases first.
+      XY_CONTEXT_GOVERNOR.reserve(this);
+      gl = this.canvas.getContext("webgl2", {
+        antialias: false, premultipliedAlpha: true, alpha: true,
+      });
+      if (!gl) {
+        XY_CONTEXT_GOVERNOR.cancel(this);
+        throw new Error("webgl2 unavailable");
+      }
+      XY_CONTEXT_GOVERNOR.acquired(this);
     }
     this.gl = gl;
-    XY_CONTEXT_GOVERNOR.acquired(this);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -3624,19 +3751,36 @@ export class ChartView {
     this._progCache = new Map();
     this._glPrograms = this._progCache; // deletion iterates the cache values
 
-    // Fullscreen quad for density/heatmap, plus its VAO (a_corner at slot 0).
-    this.quad = gl.createBuffer();
-    this.quad._fcId = ++this._bufSeq;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-    this.quadVao = gl.createVertexArray();
-    gl.bindVertexArray(this.quadVao);
-    gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
-    gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
-    gl.bindVertexArray(null);
+    // Density/heatmap use one immutable fullscreen quad. It is safe to pool at
+    // host scope because fixed attribute slots make its VAO program-agnostic.
+    if (this._glHost) {
+      this.quad = this._glHost.sharedQuad;
+      this.quadVao = this._glHost.sharedQuadVao;
+    } else {
+      this.quad = gl.createBuffer();
+      this.quad._fcId = ++this._bufSeq;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+      this.quadVao = gl.createVertexArray();
+      gl.bindVertexArray(this.quadVao);
+      gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
+      gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
+      gl.bindVertexArray(null);
+    }
 
-    this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    // Build transactionally. A lost context or allocation failure midway
+    // through a trace list must not strand the buffers/programs already made
+    // for its prefix — shared-host recovery may retry this client in place.
+    this.gpuTraces = [];
+    try {
+      for (const trace of this.spec.traces) {
+        this.gpuTraces.push(this._buildTrace(buffer, trace));
+      }
+    } catch (error) {
+      try { this._destroyGlResources(); } catch (_cleanupError) {}
+      throw error;
+    }
     this._reapplyLegendVisibility();
     this._updatePickable();
   }
@@ -3655,7 +3799,17 @@ export class ChartView {
   _prog(key, vs, fs) {
     let p = this._progCache.get(key);
     if (!p) {
-      p = makeProgram(this.gl, vs, fs);
+      // Uniforms are mutable program state. Keep programs client-owned until
+      // every mark pass is independently state-complete; sharing them would
+      // let one chart's transition/style uniforms leak into another chart.
+      const host = this._glHost;
+      // The resolver is an additive host capability. A singleton installed by
+      // an older duplicate bundle does not expose it, so mixed-version pages
+      // safely retain the native per-program shader lifecycle.
+      const resolveShader = host && typeof host.getOrCreateShader === "function"
+        ? host.getOrCreateShader.bind(host)
+        : undefined;
+      p = makeProgram(this.gl, vs, fs, resolveShader);
       this._progCache.set(key, p);
     }
     return p;
@@ -5357,8 +5511,7 @@ export class ChartView {
   }
 
 
-  _drawNow() {
-    if (this._destroyed || !this.gl || this._glLost) return;
+  _renderGlFrame() {
     this._healStaleTheme();
     // `_drawPoints` records authored-marker draws here so the Canvas overlay
     // paints the exact direct/sample/drill entries and LOD alpha chosen by
@@ -5409,6 +5562,24 @@ export class ChartView {
       drawTrace(g);
     }
     this._drawHoverState();
+  }
+
+  _drawNow() {
+    if (this._destroyed || !this.gl || this._glLost) return;
+    let rendered;
+    if (this._glHost) {
+      rendered = this._glHost.render(
+        this,
+        this._present2d,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderGlFrame(),
+      );
+    } else {
+      rendered = this._renderGlFrame();
+    }
+    // Presentation now owns the GL pixels. Do DOM/2D overlay work afterward
+    // so the shared default framebuffer is copied immediately after GPU work.
     // Keep a visible tooltip anchored through pan, zoom, and linked views.
     this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
@@ -5418,6 +5589,7 @@ export class ChartView {
     this._drawChrome();
     this._renderLassoSelection?.();
     this._renderBoxSelection?.();
+    return rendered;
   }
 
   // Centralized clock seam for animation state machines. Production uses the
@@ -7389,11 +7561,8 @@ export class ChartView {
 
   // -- picking (§17) --------------------------------------------------------
 
-  _renderPick() {
+  _renderPickPass() {
     const gl = this.gl;
-    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
-      this._allocPickTex(); // deferred resize catch-up
-    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.BLEND);
@@ -7469,6 +7638,23 @@ export class ChartView {
     gl.enable(gl.BLEND);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this._pickDirty = false;
+    return true;
+  }
+
+  _renderPick() {
+    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
+      this._allocPickTex(); // deferred resize catch-up
+    }
+    if (this._glHost) {
+      return this._glHost.pick(
+        this,
+        this.pickFbo,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderPickPass(),
+      ) === true;
+    }
+    return this._renderPickPass();
   }
 
   _pickAt(cssX, cssY) {
@@ -7480,7 +7666,7 @@ export class ChartView {
     ) return null;
     if (this._pickDirty) {
       try {
-        this._renderPick();
+        if (!this._renderPick()) return null;
       } catch (err) {
         // Native eviction can race pointer movement before the asynchronous
         // webglcontextlost event updates `_glLost`. Suppress only that lost-
@@ -7495,6 +7681,7 @@ export class ChartView {
     if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
     const buf = new Uint8Array(4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    if (this._glHost) gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // Reassemble the global 32-bit id; zero is the background sentinel.
@@ -7949,11 +8136,16 @@ export class ChartView {
     if (this._dataAnim) {
       this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
     }
-    XY_CONTEXT_GOVERNOR.unregister(this);
+    if (this._governorRegistered) {
+      XY_CONTEXT_GOVERNOR.unregister(this);
+      this._governorRegistered = false;
+    }
     this._ctxIo?.disconnect();
     this._ctxIo = null;
     clearTimeout(this._ctxRecoveryTimer);
     this._ctxRecoveryTimer = null;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();
@@ -8003,8 +8195,14 @@ export class ChartView {
     // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
     // "too many active WebGL contexts" eviction. Listeners are already removed
     // above and _destroyed is set, so the resulting event starts no recovery.
-    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
-    if (loseExt) loseExt.loseContext();
+    if (this._glHost) {
+      const host = this._glHost;
+      this._glHost = null;
+      host.release(this);
+    } else {
+      const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+      if (loseExt) loseExt.loseContext();
+    }
     this.gl = null;
     this.root.remove();
   }
@@ -8083,9 +8281,9 @@ export class ChartView {
     if (this.pickTex && !texSeen.has(this.pickTex)) gl.deleteTexture(this.pickTex);
     this.pickFbo = null;
     this.pickTex = null;
-    if (this.quad) gl.deleteBuffer(this.quad);
+    if (this.quad && !this._glHost) gl.deleteBuffer(this.quad);
     this.quad = null;
-    if (this.quadVao) gl.deleteVertexArray(this.quadVao);
+    if (this.quadVao && !this._glHost) gl.deleteVertexArray(this.quadVao);
     this.quadVao = null;
     for (const p of this._progCache ? this._progCache.values() : []) {
       if (p) gl.deleteProgram(p);

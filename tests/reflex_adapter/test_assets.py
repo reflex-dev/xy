@@ -3,29 +3,16 @@
 from __future__ import annotations
 
 import pathlib
-import re
+
+from scripts.js_exports import missing_esm_exports
 
 import reflex_xy
 import xy
 from reflex_xy.assets import _client_source, _link_client
 
 ADAPTER_ASSETS = pathlib.Path(reflex_xy.__file__).parent / "assets"
-
-
-def _bundle_export_names(text: str) -> set[str]:
-    """Public export names of an ESM bundle, from its `export{...}` clause.
-
-    Parsed rather than substring-matched: the export list is minified to
-    `export{$ as ChartView,m as decodeFrame,...}`, so a naive `"as render" in
-    text` would also be satisfied by `as renderStandalone`.
-    """
-    names: set[str] = set()
-    for clause in re.findall(r"\bexport\s*\{([^}]*)\}", text):
-        for entry in clause.split(","):
-            entry = entry.strip()
-            if entry:
-                names.add(entry.rsplit(" as ", 1)[-1].strip())
-    return names
+# What XYChart.jsx imports from ./xy_client.js.
+WRAPPER_IMPORTS = ("ChartView", "decodeFrame", "renderStandalone")
 
 
 def test_client_is_not_packaged():
@@ -35,30 +22,14 @@ def test_client_is_not_packaged():
 
 
 def test_client_source_is_the_installed_bundle():
-    """`_client_source()` resolves to the installed xy widget bundle, and that
-    bundle exports everything the wrapper imports from it.
-
-    Checked through the ESM export clause rather than source-level names.
-    `node js/build.mjs` minifies (§33), so every internal identifier is mangled
-    and only the export aliases survive — the earlier markers
-    (`class ChartView`, `function decodeFrame(`) could only ever match an
-    unminified build. The export surface is also the *right* thing for this test
-    to assert, because it is precisely what the wrapper's
-    `import { ... } from "./xy_client.js"` binds to, so the two cannot drift
-    apart silently.
-    """
     source = _client_source()
     assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
-    exported = _bundle_export_names(source.read_text(encoding="utf-8"))
-
-    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
-    clause = re.search(r"import\s*\{([^}]*)\}\s*from\s*[\"']\./xy_client\.js[\"']", jsx)
-    assert clause is not None, "XYChart.jsx no longer imports from ./xy_client.js"
-    imported = {name.strip() for name in clause.group(1).split(",") if name.strip()}
-    assert imported, "XYChart.jsx imports no names from the client bundle"
-
-    missing = sorted(imported - exported)
-    assert not missing, f"client bundle does not export {missing}, which XYChart.jsx imports"
+    text = source.read_text(encoding="utf-8")
+    # The bundle is minified, so verify the ESM export surface rather than
+    # implementation spellings the minifier rewrites. Exactly what the wrapper
+    # imports from ./xy_client.js — if one disappears, XYChart.jsx breaks.
+    missing = missing_esm_exports(text, WRAPPER_IMPORTS)
+    assert not missing, f"installed bundle stopped exporting: {missing}"
 
 
 def test_link_client_creates_and_repairs(tmp_path):

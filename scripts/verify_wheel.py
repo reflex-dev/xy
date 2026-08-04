@@ -23,8 +23,10 @@ from typing import Optional
 
 try:
     from artifact_metadata import dependency_metadata_errors
+    from js_exports import missing_esm_exports
 except ModuleNotFoundError:  # imported by tests from the repository root
     from scripts.artifact_metadata import dependency_metadata_errors
+    from scripts.js_exports import missing_esm_exports
 
 # Mirrors verify_sdist's root-directory shape: a release version (`0.0.2`) plus
 # whatever PEP 440 suffix a between-tags build appends (`0.0.3.dev4+g63c0697`).
@@ -191,13 +193,25 @@ def _filename_version(path: Path) -> str:
     return version
 
 
-def _require_static_bundle(name: str, data: bytes, needles: set[str]) -> None:
+def _decode_substantial_bundle(name: str, data: bytes) -> str:
     text = data.decode("utf-8")
     if len(text) < 1000:
         raise AssertionError(f"{name} is suspiciously small")
+    return text
+
+
+def _require_static_bundle(name: str, data: bytes, needles: set[str]) -> None:
+    text = _decode_substantial_bundle(name, data)
     missing = sorted(needle for needle in needles if needle not in text)
     if missing:
         raise AssertionError(f"{name} missing expected JS markers: {missing}")
+
+
+def _require_static_esm_exports(name: str, data: bytes, required: set[str]) -> None:
+    text = _decode_substantial_bundle(name, data)
+    missing = missing_esm_exports(text, required)
+    if missing:
+        raise AssertionError(f"{name} missing expected exports: {missing}")
 
 
 def _require_text_markers(name: str, data: bytes, needles: set[str]) -> None:
@@ -347,11 +361,11 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         )
         _require_py_typed_marker(zf.read("xy/py.typed"))
         _require_py_typed_marker(zf.read("reflex_xy/py.typed"), "reflex_xy/py.typed")
-        _require_static_bundle(
+        _require_static_esm_exports(
             "xy/static/index.js",
             zf.read("xy/static/index.js"),
-            # Minified bundle: assert the export aliases, not source lines.
-            {"as render", "as renderStandalone", "as decodeFrame", "as ChartView"},
+            # Minified bundle: assert the exported public surface, not source lines.
+            {"render", "renderStandalone", "decodeFrame", "ChartView"},
         )
         _require_static_bundle(
             "xy/static/standalone.js",

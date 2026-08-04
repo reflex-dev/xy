@@ -260,7 +260,7 @@ try{{
   v._sampleRebinDisabled = true; // probes below hand-feed kernel msgs
   setTimeout(()=>{{try{{
     v._drawNow();
-    const gl=v.gl,w=gl.drawingBufferWidth,h=gl.drawingBufferHeight,px=new Uint8Array(w*h*4);
+    const gl=v.gl,w=v.canvas.width,h=v.canvas.height,px=new Uint8Array(w*h*4);
     gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
     let lit=0;for(let i=3;i<px.length;i+=4)if(px[i]>8)lit++;
     const labels=document.querySelectorAll(".xy div").length;
@@ -543,7 +543,7 @@ try{{
     v.gpuTraces=[gd];
     v.view={{x0:0,x1:spec.x_axis.range[1],y0:-3,y1:8}};
     v._drawNow();
-    const dg=v.gl,dw=dg.drawingBufferWidth,dh=dg.drawingBufferHeight,dpx=new Uint8Array(dw*dh*4);
+    const dg=v.gl,dw=v.canvas.width,dh=v.canvas.height,dpx=new Uint8Array(dw*dh*4);
     dg.readPixels(0,0,dw,dh,dg.RGBA,dg.UNSIGNED_BYTE,dpx);
     let dlit=0;for(let i=3;i<dpx.length;i+=4)if(dpx[i]>8)dlit++;
     const densityLit=(dlit>100)?1:0;
@@ -794,10 +794,10 @@ try{{
     // must be CONTINUOUS across window-boundary crossings, dying-drill
     // revives, and kernel replies landing mid-transition. Runs on a virtual
     // clock so the fades advance deterministically per synthetic frame.
-    const realNowT=performance.now.bind(performance);
+    const clockBaseT=performance.now();
     let clockOfsT=0;
     const chartNowT=v._now.bind(v);
-    v._now=()=>realNowT()+clockOfsT;
+    v._now=()=>clockBaseT+clockOfsT;
     gd._lodPendingView=null; gd._lodPendingSeq=null; gd._lodPendingAt=null;
     const gridT=new Float32Array(64).fill(2);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:500000,
@@ -859,7 +859,7 @@ try{{
       view._drawNow();
       const gl=view.gl;
       const rows=Math.max(1,Math.ceil(view.dpr||1));
-      const x=Math.max(0,Math.min(gl.drawingBufferWidth-1,Math.round(cssX*(view.dpr||1))));
+      const x=Math.max(0,Math.min(view.canvas.width-1,Math.round(cssX*(view.dpr||1))));
       const px=new Uint8Array(rows*4);
       gl.readPixels(x,0,1,rows,gl.RGBA,gl.UNSIGNED_BYTE,px);
       let maxA=0;for(let i=3;i<px.length;i+=4)maxA=Math.max(maxA,px[i]);
@@ -935,7 +935,7 @@ try{{
     // (the anti-shimmer guarantee — no RNG/time may reach the render path).
     const pixhash = (view) => {{
       view._drawNow();
-      const g2 = view.gl, W = g2.drawingBufferWidth, H = g2.drawingBufferHeight;
+      const g2 = view.gl, W = view.canvas.width, H = view.canvas.height;
       const p2 = new Uint8Array(W * H * 4);
       g2.readPixels(0, 0, W, H, g2.RGBA, g2.UNSIGNED_BYTE, p2);
       let hsh = 0x811c9dc5;
@@ -1059,7 +1059,7 @@ try{{
     vMs._drawNow();
     const vstyle=(msSimpleCalls===0 && !!vMs.gpuTraces[3].styleBuf)?1:0;
     const msRead=(dx,dy)=>{{
-      const g3=vMs.gl,W3=g3.drawingBufferWidth,H3=g3.drawingBufferHeight;
+      const g3=vMs.gl,W3=vMs.canvas.width,H3=vMs.canvas.height;
       const x=Math.max(0,Math.min(W3-1,Math.round(dx/4*W3)));
       const y=Math.max(0,Math.min(H3-1,Math.round(dy/8*H3)));
       const px=new Uint8Array(4);g3.readPixels(x,y,1,1,g3.RGBA,g3.UNSIGNED_BYTE,px);
@@ -1104,7 +1104,7 @@ try{{
     const vOcc=xy.renderStandalone(holderOcc,occSpec,occBuf);
     vOcc._drawNow();
     // Marks canvas: transparent where no mark is drawn (upper plot region).
-    const gO=vOcc.gl,WO=gO.drawingBufferWidth,HO=gO.drawingBufferHeight;
+    const gO=vOcc.gl,WO=vOcc.canvas.width,HO=vOcc.canvas.height;
     const oPx=new Uint8Array(4);
     gO.readPixels(Math.round(WO/2),Math.round(HO*0.9),1,1,gO.RGBA,gO.UNSIGNED_BYTE,oPx);
     // Chrome canvas below it: plot background fill plus white grid lines.
@@ -1164,7 +1164,7 @@ try{{
     const holderMc=document.createElement("div");document.body.appendChild(holderMc);
     const vMc=xy.renderStandalone(holderMc,mcSpec,mcBuf);
     vMc._drawNow();
-    const gMc=vMc.gl,WM=gMc.drawingBufferWidth,HM=gMc.drawingBufferHeight;
+    const gMc=vMc.gl,WM=vMc.canvas.width,HM=vMc.canvas.height;
     const lpx=new Uint8Array(4), rpx=new Uint8Array(4);
     gMc.readPixels(Math.round(WM*0.35),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,lpx);
     gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
@@ -1227,6 +1227,12 @@ try{{
         // R4: force repeated loss/restore cycles. Each cycle queues draw,
         // animation, and re-bin work first so the loss handler must quiesce
         // every deferred GPU path and invalidate pre-loss replies.
+        // Keep this broad legacy resource probe on an isolated fallback
+        // context: losing the default page host here would rebuild every
+        // earlier mark-family fixture three times. Host-wide fan-out itself is
+        // covered by tests/test_shared_glhost.py with four live clients.
+        const sharedOverride=window.XY_SHARED_WEBGL;
+        window.XY_SHARED_WEBGL=false;
         const holder4=document.createElement("div");
         document.body.appendChild(holder4);
         const v4=xy.renderStandalone(holder4,spec,bytes.buffer);
@@ -1249,7 +1255,7 @@ try{{
           poll();
         }});
         const litcount=(view)=>{{
-          const gl=view.gl,w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+          const gl=view.gl,w=view.canvas.width,h=view.canvas.height;
           const px=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
           let n=0;for(let i=0;i<px.length;i+=4)if(px[i]||px[i+1]||px[i+2]||px[i+3])n++;
           return n;
@@ -1293,6 +1299,8 @@ try{{
           && rootLost===3 && rootRestored===3 && v4._contextLossCount===3
           && v4._contextRestoreCount===3 && pixhash(v4)===ctxHashBefore)?1:0;
         v4.destroy(); holder4.remove();
+        if(sharedOverride===undefined) delete window.XY_SHARED_WEBGL;
+        else window.XY_SHARED_WEBGL=sharedOverride;
         // R7: a pure devicePixelRatio change (browser zoom) must re-derive
         // backing stores even though the CSS size never changed.
         const holder5=document.createElement("div");

@@ -305,6 +305,26 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
 
 
+def test_benchmark_demo_uses_the_shared_theme() -> None:
+    from xy_docs.demos import benchmark_charts
+
+    from xy._benchmark_theme import (
+        benchmark_chart_class,
+        benchmark_live_theme,
+    )
+
+    assert benchmark_chart_class() == benchmark_charts._CHART_CLASS
+
+    live_theme = benchmark_live_theme()
+    assert benchmark_charts._theme().style == {
+        "background": live_theme["background"],
+        "--chart-bg": live_theme["plot_background"],
+        "--chart-grid": live_theme["grid_color"],
+        "--chart-axis": live_theme["axis_color"],
+        "--chart-text": live_theme["text_color"],
+    }
+
+
 def test_docs_app_does_not_override_the_builtin_toolbar_palette() -> None:
     assert not any(key.startswith("--chart-modebar-") for key in _CHART_STYLE)
 

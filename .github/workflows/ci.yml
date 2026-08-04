@@ -233,7 +233,7 @@ jobs:
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_dashboard.py \
-            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json
+            --chart-counts 10,20,50,60 --chromium "$CHROME" --json dashboard-smoke.json
           .venv/bin/python scripts/verify_benchmark_report.py \
             dashboard-smoke.json --kind dashboard-browser
 
@@ -520,11 +520,11 @@ jobs:
           .venv/bin/python benchmarks/bench_interaction.py \
             --sizes 1e4,2.5e5 --reps 24 --chromium "$CHROME" --retries 2 \
             --json interaction.json | tee -a docs/benchmark_ci.md
-      - name: Many-chart dashboard startup (methodology dashboard_20)
+      - name: Many-chart dashboard startup (methodology dashboard_scale)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_dashboard.py \
-            --chart-counts 10,20,50 --chromium "$CHROME" \
+            --chart-counts 10,20,50,60 --chromium "$CHROME" \
             --json dashboard.json | tee -a docs/benchmark_ci.md
       - name: Verify benchmark JSON artifacts
         run: |
