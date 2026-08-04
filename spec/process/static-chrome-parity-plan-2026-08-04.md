@@ -65,7 +65,7 @@ The three existing duplicated box sites, converted per phase (not up front): leg
 
 ---
 
-## 2. Phase 0 — cross-cutting prerequisites (blocking)
+## 2. Phase 0 — cross-cutting prerequisites (blocking) — LANDED
 
 **0.1 PDF text-subset extension (live-bug fix).** All four surveys independently probe-verified: `_pdf._ALLOWED_ATTRS['text']` (`_pdf.py:204-206`) rejects `font-style`, `font-family`, `letter-spacing`, `opacity`, so `to_image(format='pdf')` RAISES today for an italic title, a letter-spaced legend_label, an italic tick_label/colorbar_tick, and mathtext annotations (nested tspan, `_pdf.py:1099-1100`). The `SLOT_TEXT_PROPS` docstring claim that PDF honors the vector subset (`_svg.py:1331-1332`) is false; the capability-matrix tick_label PDF note is also wrong.
 Edits: `_ALLOWED_ATTRS['text']` + `_render_text` (`_pdf.py:1062-1141`); Helvetica-Oblique/BoldOblique into `_font()` (`_pdf.py:681-691`, today regular/bold only, bold cutoff weight>=600 at `1065`); letter-spacing via `Tc`; text opacity multiplied into `ca` ExtGState; nested-tspan mathtext either supported or explicitly fenced. `font-family` beyond base-14 is policy-refused, not guessed.
@@ -83,9 +83,24 @@ Acceptance: unit tests on the lowering (border shorthand, per-side padding, radi
 
 ---
 
-## 3. Phase 1 — root / title / chrome / canvas
+## 3. Phase 1 — root / title / chrome / canvas — LANDED
 
 Geometry is free: root = chrome = (0,0,width,height); canvas = plot rect from `layout()` (`_svg.py:2665-2678`). Only the title needs a new helper.
+
+Landing notes (deltas from the letter of the plan, none from its intent):
+the shared title helper is `title_placement`/`legacy_title_placement` +
+`title_box` (the writers need the text anchor as well as the box, so the
+hoist returns both); the P0.3 shorthand expansion (`border`, `padding`) that
+had not landed with the primitive ships here (`_chromebox.expand_box_shorthands`,
+consumed by `lower_box` and the declared resolver's snapshot path, em residue
+untouched); `SlotInstance.geometry` is populated for `root`/`chrome` from the
+snapshot environment (spec dims, never host padding — flag J's normalization
+rule), while `title`/`canvas` geometry needs the layout pass the resolver
+cannot re-enter (`layout()` → `slot_styles` → `resolve_declared`) and lands
+with the capture producers; a raster-emitter coordinate bug from P0.3
+(`_rect_pts` fed (w, h) as the far corner) was fixed and pinned; contracts:
+`spec/api/export.md` §9, `spec/api/styling.md` § Per-slot styles in a file,
+tests in `tests/test_chrome_parity_p1.py`.
 
 **Edits, in order:**
 

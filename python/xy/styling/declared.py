@@ -69,12 +69,18 @@ def resolve_declared(
     `writer_domain` instead, so nothing declared is dropped in either
     direction and the not-yet-IR remainder is exactly enumerable.
     """
+    from .._chromebox import expand_box_shorthands
+
     dom = spec.get("dom") or {}
     raw = dom.get("styles") or {}
     style = dom.get("style") or {}
     builder = SnapshotBuilder()
     view: dict[str, dict[str, Any]] = {}
     writer_domain: dict[str, dict[str, Any]] = {}
+    environment = SnapshotEnvironment(
+        width=_dimension(width, spec.get("width"), 800.0),
+        height=_dimension(height, spec.get("height"), 500.0),
+    )
     for slot, decls in raw.items():
         if not isinstance(decls, dict):
             continue
@@ -86,23 +92,52 @@ def resolve_declared(
             continue
         legal: dict[str, Any] = {}
         residue: dict[str, Any] = {}
+        # Schema v1 carries only longhands, so the box shorthands (`border`,
+        # `padding`) intern expanded. The expansion is per shorthand and
+        # all-or-nothing: if any expanded longhand is still writer-domain (an
+        # em legend padding), the *authored* spelling lands in the residue —
+        # the pinned residue enumeration stays in authored terms (§28).
         for name, value in normalized.items():
+            expanded = {
+                part: part_value
+                for part, part_value in expand_box_shorthands({name: value}).items()
+                # An explicit longhand beside the shorthand wins whatever the
+                # authored order was; the shorthand fills only what is unsaid.
+                if part == name or part not in normalized
+            }
             try:
-                assert_resolved(name, value)
+                resolved = {
+                    part: assert_resolved(part, part_value) for part, part_value in expanded.items()
+                }
             except ValueError:
                 residue[name] = value
             else:
-                legal[name] = value
+                legal.update(resolved)
         if legal:
-            builder.add(slot_name, legal)
+            builder.add(slot_name, legal, geometry=_environment_geometry(slot_name, environment))
         if residue:
             writer_domain[slot_name] = residue
-    environment = SnapshotEnvironment(
-        width=_dimension(width, spec.get("width"), 800.0),
-        height=_dimension(height, spec.get("height"), 500.0),
-    )
     snapshot = builder.build(environment, tokens=_concrete_tokens(style))
     return DeclaredStyling(snapshot=snapshot, writer_domain=writer_domain, _view=view)
+
+
+def _environment_geometry(
+    slot: str, environment: SnapshotEnvironment
+) -> Optional[tuple[float, float, float, float]]:
+    """The slot geometry the declared resolver can know without a layout pass.
+
+    `root` and `chrome` are the full canvas — (0, 0, width, height) in CSS px
+    against the spec's own dimensions, never the host page's padding (the
+    normalization rule for capture diffs: a browser capture must subtract host
+    box offsets before comparing, plan §8 flag J). Slots whose box needs the
+    layout pass (`title` wants measured text, `canvas` wants the plot rect)
+    stay None here: the resolver cannot run `layout()` without re-entering
+    itself through `slot_styles`, so their geometry is populated by the
+    capture producers that already have the layout in hand.
+    """
+    if slot in ("root", "chrome"):
+        return (0.0, 0.0, environment.width, environment.height)
+    return None
 
 
 def _dimension(override: Optional[float], declared: Any, fallback: float) -> float:

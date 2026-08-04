@@ -22,6 +22,7 @@ import numpy as np
 
 from . import _paint, _png, _scene, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
+from ._chromebox import lower_box
 from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
@@ -62,13 +63,13 @@ from ._svg import (
     _step_arrays,
     _tick_label_anchor,
     _title_entries,
-    _title_metrics,
     affine_fast_path,
     annotation_label_placement,
     apply_export_background,
     axis_ticks,
     hexbin_ring,
     layout,
+    legacy_title_placement,
     legend_clip_rect,
     legend_items,
     legend_options_with_slot,
@@ -76,9 +77,12 @@ from ._svg import (
     polar_heatmap_rgba,
     polar_tick_label_layout,
     polar_wedge_points,
+    slot_box_declaration,
     slot_font_size,
     slot_styles,
     slot_text_color,
+    title_box,
+    title_placement,
     warp_grid_rgba,
 )
 
@@ -782,9 +786,11 @@ def _emit_slot_box(cmd: "_Cmd", box: Any) -> None:
         return
 
     def pts(x: float, y: float) -> list[tuple[float, float]]:
+        # (x0, y0, x1, y1) corners, like every other _rect_pts caller — the
+        # box carries a width/height pair, not a far corner.
         if box.radius > 0:
-            return _round_rect_pts(x, y, box.w, box.h, box.radius)
-        return _rect_pts(x, y, box.w, box.h)
+            return _round_rect_pts(x, y, x + box.w, y + box.h, box.radius)
+        return _rect_pts(x, y, x + box.w, y + box.h)
 
     if box.shadow is not None:
         dx, dy, color = box.shadow
@@ -981,23 +987,53 @@ def render_raster(
     cmd = _Cmd(scale)
 
     dom_style = (spec.get("dom") or {}).get("style") or {}
+    slots = slot_styles(spec)
 
     # Figure patch (mpl figure.facecolor): `theme(background=)` lands on the
     # root element's CSS background, painted over the whole canvas so the
     # margins match the browser. Gradients stay browser-only (skipped).
     figure_background = _solid_color(dom_style.get("background"))
 
+    # The root slot's box (parity plan §3.4), mirroring the SVG writer:
+    # declaration-gated, and when declared it IS the figure patch (one DOM
+    # element, one `background` property), so the theme paint becomes the box
+    # fill when the slot declares chrome but no fill of its own.
+    # `apply_export_background` already silenced the slot fill under an
+    # export `background=` override — the single precedence definition.
+    root_declaration = slot_box_declaration(slots.get("root") or {}, "root")
+    root_box = None
+    if root_declaration:
+        figure_css = _solid_paint(dom_style.get("background"))
+        if figure_css is not None and not any(
+            prop in root_declaration for prop in ("background", "background-color")
+        ):
+            root_declaration = {"background": figure_css, **root_declaration}
+        root_box = lower_box("root", root_declaration, x=0.0, y=0.0, w=width, h=height)
+
     # The fused PNG path initializes its native canvas white, avoiding a second
     # full-frame memory pass. Raw RGBA callers still receive an explicit fill —
-    # skipped when an opaque figure background would fully cover it anyway
+    # skipped when an opaque full-bleed paint would fully cover it anyway
     # (a translucent one keeps the white underlay to composite over, matching
-    # the browser's white host page).
-    if not fast_png and (figure_background is None or figure_background[3] < 255):
+    # the browser's white host page). A ROUNDED root box breaks full-bleed
+    # coverage — its corners must show the underlay, never uninitialized
+    # pixels — so the skip only fires for a square, fully-opaque patch.
+    if root_box is not None:
+        root_fill = (
+            _parse_color(root_box.fill, opacity=root_box.opacity * root_box.fill_opacity)
+            if root_box.fill is not None
+            else None
+        )
+        covers = root_fill is not None and root_fill[3] >= 255 and root_box.radius == 0.0
+    else:
+        covers = figure_background is not None and figure_background[3] >= 255
+    if not fast_png and not covers:
         cmd.fill(
             _rect_pts(0, 0, width, height),
             _parse_color(spec.get("canvas_background", "#ffffff")),
         )
-    if figure_background is not None:
+    if root_box is not None:
+        _emit_slot_box(cmd, root_box)
+    elif figure_background is not None:
         cmd.fill(_rect_pts(0, 0, width, height), figure_background)
 
     # Static exports honor the same axes background token as HTML/SVG.  This
@@ -1005,11 +1041,13 @@ def render_raster(
     # is the Figure patch, composed above (or by pyplot's grid exporter). An
     # unset token keeps the plot rect transparent when a figure background is
     # present — matching the browser, where the root shows through — and
-    # falls back to the classic white fill otherwise.
+    # falls back to the classic white fill otherwise. A painted root box
+    # counts as a figure background here: the browser shows it through the
+    # transparent plot rect, so the white fallback must not bury it.
     plot_css = _css(dom_style.get("--chart-bg"), "")
     if plot_css:
         plot_background = _parse_color(plot_css)
-    elif figure_background is None:
+    elif figure_background is None and (root_box is None or root_box.fill is None):
         plot_background = _parse_color("#ffffff")
     else:
         plot_background = None
@@ -1017,6 +1055,17 @@ def render_raster(
         cmd.fill(
             _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
             plot_background,
+        )
+
+    # The chrome slot (parity plan §3.5, background/opacity only): above the
+    # root and plot backgrounds, below the grid — before the plot clip so it
+    # covers the full canvas exactly like the browser's inset:0 chrome
+    # canvas. Its stacking against the title divs diverges by design and is
+    # recorded in `KNOWN_RENDERER_DIVERGENCES` (`chrome_slot_title_stacking`).
+    chrome_declaration = slot_box_declaration(slots.get("chrome") or {}, "chrome")
+    if chrome_declaration:
+        _emit_slot_box(
+            cmd, lower_box("chrome", chrome_declaration, x=0.0, y=0.0, w=width, h=height)
         )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
@@ -1085,6 +1134,36 @@ def render_raster(
                 float(ystyle.get("grid_opacity", 1.0)),
             ),
             dash=_AXIS_GRID_DASHES.get(str(ystyle.get("grid_dash", "solid"))),
+        )
+
+    # The canvas slot (parity plan §3.6) paints at the ABOVE-grid seam,
+    # inside the plot clip and before every trace: the browser's marks canvas
+    # is a separate element over the chrome canvas, so a declared canvas
+    # background HIDES the grid — deliberately NOT the below-grid --chart-bg
+    # anchor, the paint-order trap this family exists to avoid. The display
+    # list clips rectangles only and has no group compositing, so a declared
+    # `border-radius` (rounded content clip) and `opacity` (fading marks
+    # already drawn by later commands) are raster losses the preflight names
+    # (`_svg.SLOT_BOX_RASTER_UNSUPPORTED`) — stripped here rather than
+    # half-approximated on the box alone.
+    canvas_declaration = slot_box_declaration(slots.get("canvas") or {}, "canvas")
+    if canvas_declaration:
+        canvas_declaration = {
+            prop: value
+            for prop, value in canvas_declaration.items()
+            if prop not in ("border-radius", "opacity")
+        }
+    if canvas_declaration:
+        _emit_slot_box(
+            cmd,
+            lower_box(
+                "canvas",
+                canvas_declaration,
+                x=plot["x"],
+                y=plot["y"],
+                w=plot["w"],
+                h=plot["h"],
+            ),
         )
 
     # Grid/frame chrome is drawn before the shaped clip. Marks then share one
@@ -1346,8 +1425,6 @@ def render_raster(
                     _parse_color(_css(axis_style.get("tick_color"), default_axis)),
                 )
 
-    slots = slot_styles(spec)
-
     def slot_paint(slot: str, fallback: str) -> tuple:
         """A slot's text paint, or the writer's own default."""
         resolved = slot_text_color(slots.get(slot) or {}, "")
@@ -1469,62 +1546,54 @@ def render_raster(
     # draw more lines than `title_room` reserved (see _svg._title_wrap_width).
     title_wrap_width = plot.get("title_wrap_width")
     if legacy_title:
-        title_slot = slots.get("title") or {}
+        # Anchor math shared with the SVG writer (`_svg.legacy_title_placement`):
+        # the last line keeps the historical single-line baseline, extra lines
+        # fill the reserved band above it — byte-identical when unstyled.
+        placement = legacy_title_placement(spec, plot, compact, width, title_wrap_width)
         title_italic, title_bold = _native_font_emphasis(
             {
-                "font_style": title_slot.get("font-style"),
-                "font_weight": title_slot.get("font-weight", 400),
+                "font_style": placement.style.get("font-style"),
+                "font_weight": placement.style.get("font-weight", 400),
             }
         )
-        legacy_size = slot_font_size(title_slot, 14.0)
-        legacy_block = _textblock.measure(legacy_title, legacy_size, max_width=title_wrap_width)
-        # Lines run downward from the baseline, so lift the block by its trailing
-        # lines: the last line keeps the historical single-line baseline. A
-        # one-line title has no trailing lines and emits exactly as before.
-        legacy_trailing = (legacy_block.line_count - 1) * legacy_block.line_step
+        legacy_box = title_box(placement)
+        if legacy_box is not None:
+            _emit_slot_box(cmd, legacy_box)
         _emit_text_block(
             cmd,
-            width / 2,
-            plot["y"] - plot["top_axis_room"] - (10 if compact else 12) - legacy_trailing,
+            placement.x,
+            placement.baseline,
             1,
-            legacy_size,
+            placement.size,
             slot_paint("title", default_text),
-            "\n".join(legacy_block.lines),
+            "\n".join(placement.block.lines),
             italic=title_italic,
             bold=title_bold,
         )
     for title_entry in [] if legacy_title else _title_entries(spec):
-        title_style, title_size, title_block = _title_metrics(spec, title_entry, title_wrap_width)
+        placement = title_placement(spec, title_entry, plot, title_wrap_width)
         title_italic, title_bold = _native_font_emphasis(
             {
-                "font_style": title_style.get("font-style"),
+                "font_style": placement.style.get("font-style"),
                 # 400 = Matplotlib's `axes.titleweight: normal`; the baked
                 # atlas only has a bold face, so anything >= 600 rounds up to
                 # it. Mirrors the SVG/browser title default.
-                "font_weight": title_style.get("font-weight", 400),
+                "font_weight": placement.style.get("font-weight", 400),
             }
         )
-        trailing = (title_block.line_count - 1) * title_block.line_step
-        if title_entry.get("automatic_y", True):
-            title_anchor_y = plot["y"] - plot["top_axis_room"]
-        else:
-            title_anchor_y = plot["y"] + (1.0 - float(title_entry.get("y", 1.0))) * plot["h"]
-        loc = str(title_entry.get("loc", "center"))
-        title_x = {
-            "left": plot["x"],
-            "center": plot["x"] + plot["w"] / 2.0,
-            "right": plot["x"] + plot["w"],
-        }.get(loc, plot["x"] + plot["w"] / 2.0)
+        entry_box = title_box(placement)
+        if entry_box is not None:
+            _emit_slot_box(cmd, entry_box)
         _emit_text_block(
             cmd,
-            title_x,
-            title_anchor_y - float(title_entry.get("pad", 8.0)) - title_block.descent - trailing,
-            {"left": 0, "center": 1, "right": 2}.get(loc, 1),
-            title_size,
-            _parse_color(slot_text_color(title_style, default_text)),
+            placement.x,
+            placement.baseline,
+            {"start": 0, "middle": 1, "end": 2}[placement.anchor],
+            placement.size,
+            _parse_color(slot_text_color(placement.style, default_text)),
             # The wrapped lines, not the raw string: one long line inside a
             # two-line band is the clipping bug this reservation exists to stop.
-            "\n".join(title_block.lines),
+            "\n".join(placement.block.lines),
             italic=title_italic,
             bold=title_bold,
         )

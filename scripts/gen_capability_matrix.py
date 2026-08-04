@@ -65,15 +65,16 @@ def render() -> str:
         f"- **{counts['chart_slots']}** stable chrome slots, CSS- and Tailwind-addressable "
         "in the browser. "
         f"**{counts['chart_slots_static']}** of them name chrome a clean static export "
-        f"contains; **{counts['slots_styleable_natively']}** reach the native writers — "
-        f"**{counts['slots_via_styles']}** through `styles={{slot: ...}}` itself, and "
-        "`root` through the chart-level `style=` token bag. The other "
+        f"contains; **{counts['slots_styleable_natively']}** reach the native writers "
+        f"through `styles={{slot: ...}}` (the chart-level `style=` token bag "
+        "additionally reaches every renderer). The other "
         f"**{counts['chart_slots_state_gated']}** are interaction/view chrome "
         "(tooltip, modebar, crosshair, selection, reduction badges) that a clean "
         "static file does not contain, so they are gated by an export state "
         "rather than missing.",
         f"- **{counts['extension_points_shipped']}** shipped extension point.",
-        f"- **{counts['known_renderer_divergences']}** known default divergence between "
+        f"- **{counts['known_renderer_divergences']}** known default "
+        f"divergence{'s' if counts['known_renderer_divergences'] != 1 else ''} between "
         "renderers, listed below rather than left to be discovered.",
         "",
         "## Mark style properties",

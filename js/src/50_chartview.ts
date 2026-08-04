@@ -706,6 +706,13 @@ export class ChartView {
     // `_positionTitles` caps the element at this same width, so what the DOM
     // wraps is exactly what is reserved here.
     this._titleWrapWidth = Math.max(40, this.size.w - authoredLeft - baseRight);
+    // A declared title box (padding/border on the title slot) grows the DOM
+    // element, so the band must reserve the extra height or the box pokes
+    // above the canvas. Mirrors `_title_box_extent` in python/xy/_svg.py —
+    // the two must agree or native and browser disagree on plot.y. Slot-level
+    // only: per-entry box declarations are native-only by the entry-style
+    // allowlist below (a recorded divergence, KNOWN_RENDERER_DIVERGENCES).
+    const titleBoxExtent = this._titleBoxExtent();
     const titleRoom = this._titleEntries().reduce((room, entry) => {
       const authoredSize = Number.parseFloat(entry.style?.["font-size"]);
       const titleFontSize = Number.isFinite(authoredSize)
@@ -716,8 +723,8 @@ export class ChartView {
       ).h;
       const pad = Number.isFinite(Number(entry.pad)) ? Number(entry.pad) : 8;
       const candidate = entry.automatic_y !== false
-        ? Math.max(compact ? 26 : 30, measured + pad)
-        : (Number(entry.y ?? 1) >= 1 ? measured + pad : 0);
+        ? Math.max(compact ? 26 : 30, measured + titleBoxExtent + pad)
+        : (Number(entry.y ?? 1) >= 1 ? measured + titleBoxExtent + pad : 0);
       return Math.max(room, candidate);
     }, 0);
     this._titleRoom = titleRoom;
@@ -1030,6 +1037,60 @@ export class ChartView {
     const value = styles && styles[slot] && styles[slot]["font-size"];
     const parsed = parseFloat(String(value ?? ""));
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  // Vertical px the title slot's declared box adds around its text block:
+  // padding plus a paintable border, above and below. Mirrors
+  // `_title_box_extent` in python/xy/_svg.py (same rules, including the
+  // native model's "border counts only with an explicit border-color, which
+  // implies the 1px chrome border" — an out-of-model spelling like a
+  // colorless `border-style` reserves nothing in either renderer's layout).
+  // Zero whenever the slot declares no box, so unstyled layout cannot move.
+  _titleBoxExtent() {
+    const styles = this.spec.dom?.styles;
+    const raw = styles && typeof styles === "object" ? styles.title : null;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+    const decl: Record<string, any> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (typeof key !== "string") continue;
+      if (typeof value !== "string" && typeof value !== "number") continue;
+      decl[this._stylePropertyName(key)] = value;
+    }
+    const px = (value) => {
+      if (typeof value === "number") return Number.isFinite(value) ? value : null;
+      const m = /^\s*(-?\d+(?:\.\d+)?)(?:px)?\s*$/.exec(String(value ?? ""));
+      return m ? Number.parseFloat(m[1]) : null;
+    };
+    let top = px(decl["padding-top"]);
+    let bottom = px(decl["padding-bottom"]);
+    if ((top == null || bottom == null) && decl.padding != null) {
+      const parts = String(decl.padding).trim().split(/\s+/).map(px);
+      if (parts.length >= 1 && parts.length <= 4 && parts.every((p) => p != null)) {
+        if (top == null) top = parts[0];
+        if (bottom == null) bottom = parts.length > 2 ? parts[2] : parts[0];
+      }
+    }
+    let width = px(decl["border-width"]);
+    let hasColor = decl["border-color"] != null;
+    let style = decl["border-style"] != null ? String(decl["border-style"]).toLowerCase() : null;
+    if (typeof decl.border === "string") {
+      const styles_ = ["solid", "dashed", "dotted", "none", "hidden", "double",
+        "groove", "ridge", "inset", "outset"];
+      for (const token of decl.border.split(/\s+/).filter(Boolean)) {
+        const tokenPx = px(token);
+        if (tokenPx != null && width == null) width = tokenPx;
+        else if (styles_.includes(token.toLowerCase()) && style == null) style = token.toLowerCase();
+        else hasColor = true;
+      }
+    }
+    let border = 0;
+    if (hasColor && style !== "none" && style !== "hidden") {
+      // An absent or zero width with a declared color is the implied 1px
+      // chrome border (lower_box's rule); a negative width paints nothing.
+      if (width == null || width === 0) border = 1;
+      else if (width > 0) border = width;
+    }
+    return (top ?? 0) + (bottom ?? 0) + 2 * border;
   }
 
   _xAxisRoom(side, plotWidth) {

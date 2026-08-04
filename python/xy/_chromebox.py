@@ -31,9 +31,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-__all__ = ["ChromeBox", "lower_box"]
+__all__ = ["ChromeBox", "box_padding", "expand_box_shorthands", "lower_box"]
 
 _LENGTH_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)(?:px)?\s*$")
+
+_BORDER_STYLES = frozenset(
+    {"solid", "dashed", "dotted", "none", "hidden", "double", "groove", "ridge", "inset", "outset"}
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,10 @@ class ChromeBox:
     radius: float = 0.0
     shadow: Optional[tuple[float, float, str]] = None  # (dx, dy, color)
     opacity: float = 1.0
+    # (top, right, bottom, left) px. Consumed by the layout/room functions
+    # that size the box around its content — never by the emitters, which
+    # draw exactly the (x, y, w, h) they are given.
+    padding: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     unrepresentable: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -141,6 +149,85 @@ def _parse_shadow(value: str) -> tuple[Optional[tuple[float, float, str]], Optio
     return (lengths[0], lengths[1], color or "rgba(0, 0, 0, 0.22)"), None
 
 
+def _padding_sides(value: Any) -> Optional[tuple[float, float, float, float]]:
+    """A CSS `padding` shorthand as (top, right, bottom, left), or None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        px = float(value)
+        return (px, px, px, px)
+    if not isinstance(value, str):
+        return None
+    parts = [_px(token) for token in value.split()]
+    if not 1 <= len(parts) <= 4 or any(px is None for px in parts):
+        return None
+    sides = [float(px) for px in parts if px is not None]
+    top = sides[0]
+    right = sides[1] if len(sides) > 1 else top
+    bottom = sides[2] if len(sides) > 2 else top
+    left = sides[3] if len(sides) > 3 else right
+    return (top, right, bottom, left)
+
+
+def expand_box_shorthands(declaration: dict[str, Any]) -> dict[str, Any]:
+    """Split the box shorthands (`border`, `padding`) into their longhands.
+
+    Same policy as the cascade extension's `_expand_shorthands`: an explicit
+    longhand beside the shorthand wins (it is the narrower author intent).
+    A shorthand this parser cannot split — an em `padding`, a `border` with
+    no recognizable parts — is passed through untouched so nothing declared
+    disappears; the consumer decides what an unexpanded value means.
+    """
+    out: dict[str, Any] = {}
+    for prop, value in declaration.items():
+        if prop == "padding":
+            sides = _padding_sides(value)
+            if sides is not None:
+                for name, side in zip(
+                    ("padding-top", "padding-right", "padding-bottom", "padding-left"),
+                    sides,
+                    strict=True,
+                ):
+                    if name not in declaration:
+                        out.setdefault(name, side)
+                continue
+        if prop == "border" and isinstance(value, str):
+            width: Optional[float] = None
+            style: Optional[str] = None
+            color_parts: list[str] = []
+            for token in value.split():
+                token_px = _px(token)
+                if token_px is not None and width is None:
+                    width = token_px
+                elif token.lower() in _BORDER_STYLES and style is None:
+                    style = token.lower()
+                else:
+                    color_parts.append(token)
+            if width is not None or style is not None or color_parts:
+                if width is not None and "border-width" not in declaration:
+                    out.setdefault("border-width", width)
+                if style is not None and "border-style" not in declaration:
+                    out.setdefault("border-style", style)
+                if color_parts and "border-color" not in declaration:
+                    out.setdefault("border-color", " ".join(color_parts))
+                continue
+        out[prop] = value
+    return out
+
+
+def box_padding(declaration: dict[str, Any]) -> tuple[float, float, float, float]:
+    """A declaration's resolved padding as (top, right, bottom, left) px.
+
+    Longhands win over the shorthand; anything unparsable (em values stay
+    the legend writers' domain until P4) contributes zero rather than a
+    guess.
+    """
+    expanded = expand_box_shorthands(declaration)
+    top, right, bottom, left = (
+        float(_px(expanded.get(name)) or 0.0)
+        for name in ("padding-top", "padding-right", "padding-bottom", "padding-left")
+    )
+    return (top, right, bottom, left)
+
+
 def lower_box(
     slot: str,
     declaration: dict[str, Any],
@@ -158,6 +245,7 @@ def lower_box(
     that list, so nothing rounds to silence.
     """
     unrepresentable: list[str] = []
+    declaration = expand_box_shorthands(declaration)
 
     fill = declaration.get("background")
     if fill is None:
@@ -218,5 +306,6 @@ def lower_box(
         radius=radius,
         shadow=shadow,
         opacity=_opacity(declaration.get("opacity"), 1.0),
+        padding=box_padding(declaration),
         unrepresentable=tuple(unrepresentable),
     )
