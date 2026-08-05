@@ -46,6 +46,16 @@ streaming (§3), and ``reflex_xy.inline`` for shared fixed data (§5–§7).
    one compile-validated plan, one mount per handle, column names checked
    inside the loop (fact R7), and both cond branches validated at
    ``reflex run``.
+10. **Conditional data source.** ``data=rx.cond(Demo.ds == "full",
+    Demo.cloud, Demo.cond_summary)`` — the cond is at the *data var* level,
+    so one fixed plan swaps between two column sets from state; both
+    branches share the schema and stay compile-checked.
+
+A second page, ``/kinds``, renders **every chart kind**: all 19 standalone
+mark kinds as data-bound flat factories fed by one ``@reflex_xy.data`` var
+(mixed column lengths and a 2-D grid in a single var), and the composite
+kinds (pie, radar, sankey, polar, polar bars, wind rose, facet) on the
+static tier.
 
 Run from ``examples/reflex``::
 
@@ -511,6 +521,25 @@ class Demo(rx.State):
     def toggle_split(self):
         self.split = not self.split
 
+    # §10 conditional data source: data= is an rx.cond picking between two
+    # data vars. `cloud` (§1's 1M-point var) is the full branch; this var is
+    # the summary branch — binned means of the same cloud.
+    ds: str = "full"
+
+    @reflex_xy.data
+    def cond_summary(self) -> CloudCols:
+        x, y, _ = _cloud(POINTS)
+        edges = np.linspace(x.min(), x.max(), 121)
+        idx = np.clip(np.digitize(x, edges) - 1, 0, 119)
+        counts = np.maximum(np.bincount(idx, minlength=120), 1)
+        mean_y = np.bincount(idx, weights=y, minlength=120) / counts
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        return {"x": centers, "y": mean_y, "mag": np.hypot(centers, mean_y)}
+
+    @rx.event
+    def toggle_ds(self):
+        self.ds = "summary" if self.ds == "full" else "full"
+
     @rx.event(background=True)
     async def stream(self):
         async with self:
@@ -811,6 +840,39 @@ def cond_foreach_view() -> rx.Component:
     )
 
 
+# §10 wiring — one chart, two data sources: data= is an rx.cond that picks
+# which @reflex_xy.data var feeds the fixed plan. Both branch vars share the
+# CloudCols schema, so the column names stay compile-checked; toggling flips
+# the handle client-side and the chart re-subscribes to the other columns.
+def cond_data_view() -> rx.Component:
+    return rx.vstack(
+        reflex_xy.scatter_chart(
+            data=rx.cond(Demo.ds == "full", Demo.cloud, Demo.cond_summary),
+            x="x",
+            y="y",
+            color="mag",
+            colormap="viridis",
+            mark_opacity=0.75,
+            density=True,
+            title="data= is an rx.cond between two data vars",
+            height="300px",
+            id="cond-data",
+        ),
+        rx.hstack(
+            rx.button(
+                rx.cond(Demo.ds == "full", "switch to summary", "switch to full"),
+                on_click=Demo.toggle_ds,
+                id="ds-btn",
+            ),
+            kv("source", Demo.ds),
+            spacing="3",
+            align="center",
+        ),
+        width="100%",
+        spacing="2",
+    )
+
+
 # §7 wiring — legend interactivity ships with the charts; no handlers needed
 def legend_view() -> rx.Component:
     return rx.grid(
@@ -819,6 +881,285 @@ def legend_view() -> rx.Component:
         columns="2",
         gap="1rem",
         width="100%",
+    )
+
+
+# --- /kinds: every chart kind on one page -----------------------------------
+
+
+class KindCols(TypedDict):
+    """Schema of the /kinds data var: one var, every column every mark kind
+    needs — mixed lengths and a 2-D grid side by side (coupled-shape
+    contracts belong to each mark's validator at bind, not the var)."""
+
+    x: np.ndarray
+    wave: np.ndarray
+    band_lo: np.ndarray
+    band_hi: np.ndarray
+    walk: np.ndarray
+    sx: np.ndarray
+    sy: np.ndarray
+    smag: np.ndarray
+    stem_x: np.ndarray
+    stem_y: np.ndarray
+    bar_x: np.ndarray
+    bar_y: np.ndarray
+    col_y: np.ndarray
+    hv: np.ndarray
+    ex: np.ndarray
+    ey: np.ndarray
+    err: np.ndarray
+    seg_x0: np.ndarray
+    seg_y0: np.ndarray
+    seg_x1: np.ndarray
+    seg_y1: np.ndarray
+    bv: np.ndarray
+    bg: np.ndarray
+    grid: np.ndarray
+    counts: np.ndarray
+    edges: np.ndarray
+    tx0: np.ndarray
+    ty0: np.ndarray
+    tx1: np.ndarray
+    ty1: np.ndarray
+    tx2: np.ndarray
+    ty2: np.ndarray
+
+
+@lru_cache(maxsize=1)
+def _kind_columns() -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(29)
+    x = np.linspace(0.0, 12.0, 240)
+    wave = np.sin(x) * np.exp(-x / 9.0)
+    band = 0.25 + 0.12 * np.cos(x / 2.0)
+    sx = rng.normal(0.0, 1.0, 1200)
+    sy = sx * 0.5 + rng.normal(0.0, 0.6, 1200)
+    hv = rng.normal(0.0, 1.0, 2000)
+    ex = np.linspace(0.5, 11.5, 24)
+    bv = np.concatenate([rng.normal(mu, 0.6, 300) for mu in (0.0, 1.2, 2.6)])
+    counts, edges = np.histogram(hv, bins=24)
+    gy, gx = np.mgrid[-2.2:2.2:40j, -3.0:3.0:48j]
+    grid = np.exp(-(gx**2 + gy**2)) - 0.6 * np.exp(-((gx - 1.2) ** 2 + (gy + 0.6) ** 2))
+    spokes = np.linspace(0.0, 2.0 * np.pi, 36, endpoint=False)
+    radius = 1.0 + 0.3 * np.sin(spokes * 3.0)
+    step = 2.0 * np.pi / 36
+    return {
+        "x": x,
+        "wave": wave,
+        "band_lo": wave - band,
+        "band_hi": wave + band,
+        "walk": np.cumsum(rng.normal(0.0, 0.25, 240)),
+        "sx": sx,
+        "sy": sy,
+        "smag": np.hypot(sx, sy),
+        "stem_x": x[::5],
+        "stem_y": wave[::5],
+        "bar_x": np.arange(1.0, 13.0),
+        "bar_y": rng.uniform(2.0, 9.0, 12),
+        "col_y": rng.uniform(2.0, 9.0, 12),
+        "hv": hv,
+        "ex": ex,
+        "ey": np.sin(ex / 2.0) * 3.0 + 5.0,
+        "err": rng.uniform(0.3, 0.9, 24),
+        "seg_x0": rng.uniform(0.0, 10.0, 36),
+        "seg_y0": rng.uniform(0.0, 10.0, 36),
+        "seg_x1": rng.uniform(0.0, 10.0, 36),
+        "seg_y1": rng.uniform(0.0, 10.0, 36),
+        "bv": bv,
+        "bg": np.repeat([1.0, 2.0, 3.0], 300),
+        "grid": grid,
+        "counts": counts.astype(np.float64),
+        "edges": edges,
+        "tx0": np.zeros(36),
+        "ty0": np.zeros(36),
+        "tx1": radius * np.cos(spokes),
+        "ty1": radius * np.sin(spokes),
+        "tx2": radius * np.cos(spokes + step),
+        "ty2": radius * np.sin(spokes + step),
+    }
+
+
+class Kinds(rx.State):
+    """One data var feeds all 19 data-bound kind charts on /kinds."""
+
+    @reflex_xy.data
+    def table(self) -> KindCols:
+        return dict(_kind_columns())
+
+
+@lru_cache(maxsize=1)
+def _composite_kind_charts() -> dict[str, xy.Chart]:
+    """The composite kinds — eager numeric work at call time, so they ride
+    the static tier as concrete xy Charts (reflex_xy.chart(chart))."""
+    rng = np.random.default_rng(31)
+    angle = np.linspace(0.0, 360.0, 121)
+    gain = 6.0 + 4.0 * np.abs(np.cos(np.radians(angle))) ** 3
+    fx = rng.normal(0.0, 1.0, 600)
+    fy = fx * 0.4 + rng.normal(0.0, 0.7, 600)
+    panel = np.repeat(["alpha", "beta", "gamma"], 200)
+    return {
+        "pie": xy.pie_chart(["Skyline", "Datawell", "Cloudpeak", "Union"], [27.0, 21.0, 13.0, 9.0]),
+        "radar": xy.radar_chart(
+            ["speed", "power", "range", "agility", "cost"],
+            xy.area([0.9, 0.7, 0.55, 0.85, 0.6], name="model A"),
+            xy.area([0.6, 0.8, 0.7, 0.5, 0.9], name="model B"),
+            xy.legend(),
+        ),
+        "sankey": xy.sankey_chart(
+            [
+                ("Inflow", "Equities", 78000),
+                ("Inflow", "Bonds", 46000),
+                ("Equities", "Growth", 61000),
+                ("Equities", "Value", 17000),
+                ("Bonds", "Credit", 30000),
+                ("Bonds", "Rates", 16000),
+            ]
+        ),
+        "polar": xy.polar_chart(
+            xy.line(angle, gain, name="gain"),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+            xy.r_axis(label="dBi"),
+        ),
+        "polar_bar": xy.polar_bar_chart(
+            xy.bar(np.arange(0.0, 360.0, 30.0), rng.uniform(2.0, 9.0, 12), width=24.0),
+            xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+        ),
+        "wind_rose": xy.wind_rose(
+            rng.uniform(0.0, 360.0, 500), rng.rayleigh(4.0, 500), xy.legend()
+        ),
+        "facet": xy.facet_chart(
+            xy.scatter("fx", "fy", opacity=0.7),
+            by="panel",
+            data={"fx": fx, "fy": fy, "panel": panel},
+            cols=3,
+            height=170,
+        ),
+    }
+
+
+def _kind_cell(title: str, chart: rx.Component) -> rx.Component:
+    return rx.box(
+        rx.text(title, font_family="monospace", size="2", margin_bottom="0.4rem"),
+        chart,
+        border="1px solid var(--gray-5)",
+        border_radius="10px",
+        background="var(--gray-1)",
+        padding="0.75rem",
+        width="100%",
+    )
+
+
+def kinds() -> rx.Component:
+    """Every chart kind on one page: the data-bound tier for all standalone
+    marks (one plan each, columns from Kinds.table), then the composite
+    kinds on the static tier."""
+    height = "230px"
+    bound: list[tuple[str, rx.Component]] = [
+        (
+            "scatter",
+            reflex_xy.scatter_chart(data=Kinds.table, x="sx", y="sy", color="smag", height=height),
+        ),
+        ("line", reflex_xy.line_chart(data=Kinds.table, x="x", y="wave", height=height)),
+        (
+            "area",
+            reflex_xy.area_chart(
+                data=Kinds.table, x="x", y="band_hi", mark_opacity=0.6, height=height
+            ),
+        ),
+        ("step", reflex_xy.step_chart(data=Kinds.table, x="x", y="walk", height=height)),
+        ("stem", reflex_xy.stem_chart(data=Kinds.table, x="stem_x", y="stem_y", height=height)),
+        ("bar", reflex_xy.bar_chart(data=Kinds.table, x="bar_x", y="bar_y", height=height)),
+        ("column", reflex_xy.column_chart(data=Kinds.table, x="bar_x", y="col_y", height=height)),
+        (
+            "histogram",
+            reflex_xy.histogram_chart(data=Kinds.table, values="hv", bins=40, height=height),
+        ),
+        (
+            "errorbar",
+            reflex_xy.errorbar_chart(data=Kinds.table, x="ex", y="ey", yerr="err", height=height),
+        ),
+        (
+            "error_band",
+            reflex_xy.error_band_chart(
+                data=Kinds.table, x="x", lower="band_lo", upper="band_hi", height=height
+            ),
+        ),
+        (
+            "segments",
+            reflex_xy.segments_chart(
+                data=Kinds.table, x0="seg_x0", y0="seg_y0", x1="seg_x1", y1="seg_y1", height=height
+            ),
+        ),
+        ("box", reflex_xy.box_chart(data=Kinds.table, values="bv", group="bg", height=height)),
+        (
+            "violin",
+            reflex_xy.violin_chart(data=Kinds.table, values="bv", group="bg", height=height),
+        ),
+        ("ecdf", reflex_xy.ecdf_chart(data=Kinds.table, values="hv", height=height)),
+        ("hexbin", reflex_xy.hexbin_chart(data=Kinds.table, x="sx", y="sy", height=height)),
+        ("heatmap", reflex_xy.heatmap_chart(data=Kinds.table, z="grid", height=height)),
+        (
+            "contour",
+            reflex_xy.contour_chart(data=Kinds.table, z="grid", filled=True, height=height),
+        ),
+        (
+            "stairs",
+            reflex_xy.stairs_chart(data=Kinds.table, values="counts", edges="edges", height=height),
+        ),
+        (
+            "triangle_mesh",
+            reflex_xy.triangle_mesh_chart(
+                data=Kinds.table,
+                x0="tx0",
+                y0="ty0",
+                x1="tx1",
+                y1="ty1",
+                x2="tx2",
+                y2="ty2",
+                height=height,
+            ),
+        ),
+    ]
+    composites = [
+        (name, reflex_xy.chart(chart, height=height, id=f"kind-{name}"))
+        for name, chart in _composite_kind_charts().items()
+    ]
+    return rx.container(
+        rx.vstack(
+            rx.heading("Every chart kind", size="8"),
+            rx.text(
+                "19 standalone mark kinds, data-bound: one @reflex_xy.data var "
+                "supplies every column (mixed lengths and a 2-D grid in one "
+                "var); each chart is a compile-validated plan.",
+                color_scheme="gray",
+                size="3",
+            ),
+            rx.grid(
+                *[_kind_cell(name, chart) for name, chart in bound],
+                columns="3",
+                gap="1rem",
+                width="100%",
+            ),
+            rx.heading("Composite kinds — static tier", size="6", margin_top="1rem"),
+            rx.text(
+                "pie, radar, sankey, polar, polar bars, wind rose, and a facet "
+                "grid do eager numeric work at build time, so they ride as "
+                "concrete xy charts.",
+                color_scheme="gray",
+                size="3",
+            ),
+            rx.grid(
+                *[_kind_cell(name, chart) for name, chart in composites],
+                columns="3",
+                gap="1rem",
+                width="100%",
+            ),
+            rx.link("← the linking showcase", href="/"),
+            spacing="5",
+            width="100%",
+        ),
+        size="4",
+        padding_y="28px",
     )
 
 
@@ -832,6 +1173,7 @@ def index() -> rx.Component:
                 color_scheme="gray",
                 size="3",
             ),
+            rx.link("all chart kinds on one page →", href="/kinds"),
             section(
                 "1 · The flagship, data-bound",
                 "A 1M-point drillable scatter declared in the page: composed xy "
@@ -961,6 +1303,16 @@ def index() -> rx.Component:
                     Demo.sensor_alpha, Demo.sensor_handles, Demo.toggle_split, cond_foreach_view
                 ),
             ),
+            section(
+                "10 · Conditional data source",
+                "One chart, two @reflex_xy.data vars: data= is an rx.cond "
+                "that picks the source from state — the full 1M-point cloud "
+                "or its 120-bin summary. The plan is fixed and both branches "
+                "share the schema (column names stay compile-checked); the "
+                "toggle flips the handle and the chart re-subscribes.",
+                cond_data_view(),
+                code_accordion(Demo.cond_summary, Demo.toggle_ds, cond_data_view),
+            ),
             spacing="5",
             width="100%",
         ),
@@ -971,3 +1323,4 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index, title="XY Reflex showcase")
+app.add_page(kinds, route="/kinds", title="XY chart kinds")

@@ -150,6 +150,7 @@ def test_reflex_app_shows_every_linking_method_and_event() -> None:
         "reflex_xy.scatter_chart(",  # flat data-bound factory (§8)
         "rx.cond(Demo.split",  # conditional chart rendering (§9)
         "rx.foreach(",  # chart-per-handle rendering (§9)
+        "data=rx.cond(",  # conditional data source under one fixed plan (§10)
         "list[DataHandle[SensorCols]]",  # the typed handle collection (R7)
         "@reflex_xy.figure",  # escape hatch: chart structure from state (§2)
         "reflex_xy.chart(",  # the component / composed factory
@@ -208,6 +209,13 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert module.DRILLDOWN.token.startswith("xyin-")
     assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
+    # The /kinds page: all 19 data-bound kind plans compile (shaped synthetic
+    # probes included), the composite kinds build on the static tier, and one
+    # data var legally carries mixed-length plus 2-D columns.
+    assert module.kinds() is not None
+    columns = module._kind_columns()
+    assert columns["grid"].ndim == 2
+    assert len(columns["edges"]) == len(columns["counts"]) + 1
 
 
 # --- retargeted browser smokes: import cleanly, pure helpers unit-tested -----
