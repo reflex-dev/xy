@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,7 +19,7 @@ EXPECTED_LOCKFILES = frozenset(
         "benchmarks/requirements-ci.lock",
     }
 )
-EXCLUDED_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "target", "launch_baselines"})
+EXCLUDED_PATH_PARTS = frozenset({"launch_baselines"})
 
 
 def _is_lockfile(path: Path) -> bool:
@@ -28,15 +29,20 @@ def _is_lockfile(path: Path) -> bool:
 
 
 def find_dependency_lockfiles(root: Path = ROOT) -> frozenset[str]:
-    """Return tracked dependency lockfiles, excluding generated environments."""
-    paths = {
-        path.relative_to(root).as_posix()
-        for path in root.rglob("*")
-        if path.is_file()
-        and _is_lockfile(path)
-        and not any(part in EXCLUDED_DIRECTORIES for part in path.relative_to(root).parts)
-    }
-    return frozenset(paths)
+    """Return committed dependency lockfiles, excluding local generated files."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+    )
+    return frozenset(
+        path
+        for raw_path in result.stdout.split(b"\0")
+        if raw_path
+        for path in (raw_path.decode("utf-8"),)
+        if not any(part in EXCLUDED_PATH_PARTS for part in Path(path).parts)
+        if _is_lockfile(Path(path))
+    )
 
 
 def main() -> int:
