@@ -194,9 +194,9 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert "@reflex_xy.figure" in module._source(module.Demo.cloud)
     assert "def cloud" in module._source(module.Demo.cloud)
     assert "def on_view" in module._source(module.Demo.on_view)
-    # The page composes without error and mints inline() tokens at import.
-    assert module.ORBITS_TOKEN.startswith("xyin-")
-    assert module.DRILLDOWN_TOKEN.startswith("xyin-")
+    # The page composes without error and mints inline() handles at import.
+    assert module.ORBITS_TOKEN.token.startswith("xyin-")
+    assert module.DRILLDOWN_TOKEN.token.startswith("xyin-")
     assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
 

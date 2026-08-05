@@ -110,43 +110,53 @@ def test_chart_component_accepts_figure_directly(app_cwd, _fresh_registry):
 
 
 def test_chart_component_rejects_junk(app_cwd):
-    with pytest.raises(TypeError, match=r"figure token .* or a"):
+    with pytest.raises(TypeError, match=r"figure=.*or a positional"):
         reflex_xy.chart(42)
 
 
-def test_inline_token_is_stable_and_pinned(_fresh_registry):
-    token = reflex_xy.inline(make_chart(seed=3.0))
-    assert token.startswith("xyin-")
-    assert parse_token(token) is None  # opaque: no session affinity, shared
+def test_inline_handle_is_stable_and_pinned(_fresh_registry):
+    handle = reflex_xy.inline(make_chart(seed=3.0))
+    assert isinstance(handle, reflex_xy.FigureHandle)
+    assert handle.token.startswith("xyin-")
+    assert parse_token(handle.token) is None  # opaque: no session affinity, shared
     # same content, e.g. another worker importing the module -> same token
-    assert reflex_xy.inline(make_chart(seed=3.0)) == token
-    assert reflex_xy.inline(make_chart(seed=4.0)) != token
+    assert reflex_xy.inline(make_chart(seed=3.0)) == handle
+    assert reflex_xy.inline(make_chart(seed=4.0)) != handle
 
-    entry = _fresh_registry.get(token)
+    entry = _fresh_registry.get(handle.token)
     assert entry is not None and entry.pinned
     # pinned entries survive the TTL sweep (no rebuild recipe exists)
     assert _fresh_registry.sweep(now=entry.last_access + 10**9) == []
-    assert _fresh_registry.get(token) is not None
+    assert _fresh_registry.get(handle.token) is not None
 
 
 def test_unpinned_entries_still_sweep(_fresh_registry):
-    token = reflex_xy.register(make_chart())
-    entry = _fresh_registry.get(token)
+    handle = reflex_xy.register(make_chart())
+    entry = _fresh_registry.get(handle.token)
     dropped = _fresh_registry.sweep(now=entry.last_access + 10**9)
-    assert dropped == [token]
+    assert dropped == [handle.token]
 
 
-def test_inline_chart_component_uses_token(app_cwd, _fresh_registry):
-    token = reflex_xy.inline(make_chart())
-    comp = reflex_xy.chart(token)
+def test_inline_chart_component_uses_figure_prop(app_cwd, _fresh_registry):
+    handle = reflex_xy.inline(make_chart())
+    comp = reflex_xy.chart(figure=handle)
     rendered = str(comp)
-    assert f'token:"{token}"' in rendered
+    assert f'"{handle.token}"' in rendered
+    assert "figure" in rendered
     assert "src" not in rendered
 
 
-def test_component_var_still_routes_to_token(app_cwd):
+def test_positional_handle_routes_to_figure_prop_with_warning(app_cwd, _fresh_registry):
+    handle = reflex_xy.inline(make_chart())
+    with pytest.warns(DeprecationWarning, match="figure="):
+        comp = reflex_xy.chart(handle)
+    assert f'"{handle.token}"' in str(comp)
+
+
+def test_component_str_var_still_routes_to_token(app_cwd):
     class SrcTokState(rx.State):
         tok: str = ""
 
-    comp = reflex_xy.chart(SrcTokState.tok)
+    with pytest.warns(DeprecationWarning, match="figure="):
+        comp = reflex_xy.chart(SrcTokState.tok)
     assert "token:" in str(comp)

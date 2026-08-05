@@ -1,11 +1,12 @@
 """`@reflex_xy.figure`: a computed var that *is* the chart registration.
 
 The pattern (spec/design/reflex-integration.md): the state method builds the
-chart from state, the computed var's value is only the figure *token*, and
+chart from state, the computed var's value is only a typed
+:class:`~reflex_xy.handles.FigureHandle` wrapping the figure *token*, and
 evaluating the var is what (re)registers the figure in the per-process
 registry. Reflex's own dependency tracking decides when that happens:
 
-- first render: var evaluates -> figure built -> token into state.
+- first render: var evaluates -> figure built -> handle into state.
 - a dependency changes: reflex marks the var dirty, the next delta
   evaluation rebuilds the figure and re-publishes it; subscribers get the
   fresh payload pushed over the data plane. The token itself is stable, so
@@ -37,6 +38,7 @@ from typing import Any, Optional, overload
 
 from reflex_base.vars.base import AsyncComputedVar, ComputedVar
 
+from .handles import FigureHandle
 from .registry import _figure_of, registry
 from .tokens import BUILDER_ATTR, build_state_token
 
@@ -53,14 +55,14 @@ def _builder_target(var: Any, obj: Any) -> Any:
 
 
 class FigureVar(ComputedVar):
-    """ComputedVar whose value is a figure token (sync builder)."""
+    """ComputedVar whose value is a FigureHandle (sync builder)."""
 
     def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
         return ComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
 
 
 class AsyncFigureVar(AsyncComputedVar):
-    """AsyncComputedVar whose value is a figure token (async builder)."""
+    """AsyncComputedVar whose value is a FigureHandle (async builder)."""
 
     def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
         return AsyncComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
@@ -69,19 +71,20 @@ class AsyncFigureVar(AsyncComputedVar):
 def _mint_token(state: Any, builder_name: str) -> Optional[str]:
     """Deterministic token for this (session, state, var) — or None
     pre-hydration (no session yet, so no figure to serve; the component
-    treats "" as "not ready" and waits for the hydrated value)."""
+    treats the empty-token handle as "not ready" and waits for the
+    hydrated value)."""
     client_token = state.router.session.client_token
     if not client_token:
         return None
     return build_state_token(client_token, type(state).get_full_name(), builder_name)
 
 
-def _publish(token: str, chart: Any) -> str:
+def _publish(token: str, chart: Any) -> FigureHandle:
     if chart is None:
         registry.release(token)
-        return ""
+        return FigureHandle("")
     registry.publish(token, _figure_of(chart))
-    return token
+    return FigureHandle(token)
 
 
 def _adopt_identity(fget: Any, builder: Callable[..., Any], name: str) -> None:
@@ -92,13 +95,13 @@ def _adopt_identity(fget: Any, builder: Callable[..., Any], name: str) -> None:
     setattr(fget, BUILDER_ATTR, builder)
 
 
-def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], str]:
+def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], FigureHandle]:
     builder_name = _fn_name(builder)
 
-    def fget(self: Any) -> str:
+    def fget(self: Any) -> FigureHandle:
         token = _mint_token(self, builder_name)
         if token is None:
-            return ""
+            return FigureHandle("")
         return _publish(token, builder(self))
 
     _adopt_identity(fget, builder, builder_name)
@@ -108,10 +111,10 @@ def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], str]:
 def _make_async_fget(builder: Callable[[Any], Any]) -> Callable[[Any], Any]:
     builder_name = _fn_name(builder)
 
-    async def fget(self: Any) -> str:
+    async def fget(self: Any) -> FigureHandle:
         token = _mint_token(self, builder_name)
         if token is None:
-            return ""
+            return FigureHandle("")
         return _publish(token, await builder(self))
 
     _adopt_identity(fget, builder, builder_name)
@@ -156,7 +159,7 @@ def figure(
                 rows = await fetch_rows(self.query)     # db / http / store
                 return xy.line_chart(xy.line(rows.t, rows.value))
 
-        # in the page:  reflex_xy.chart(Dash.chart, height="480px")
+        # in the page:  reflex_xy.chart(figure=Dash.chart, height="480px")
 
     The method must return a public ``xy`` chart (or an internal
     Figure), or ``None`` for "no chart right now". ``async def`` builders
@@ -177,8 +180,8 @@ def figure(
             raise ValueError(msg)
         var_kwargs.setdefault("cache", True)
         if inspect.iscoroutinefunction(fn):
-            return AsyncFigureVar(fget=_make_async_fget(fn), return_type=str, **var_kwargs)
-        return FigureVar(fget=_make_fget(fn), return_type=str, **var_kwargs)
+            return AsyncFigureVar(fget=_make_async_fget(fn), return_type=FigureHandle, **var_kwargs)
+        return FigureVar(fget=_make_fget(fn), return_type=FigureHandle, **var_kwargs)
 
     if builder is None:
         return _decorate

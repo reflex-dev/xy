@@ -309,8 +309,8 @@ def test_figure_accepts_chart_or_figure(_fresh_registry):
 
     import reflex_xy
 
-    token = reflex_xy.register(chart)  # public API accepts the composed Chart
-    assert reflex_xy.registry.get(token) is not None
+    handle = reflex_xy.register(chart)  # public API accepts the composed Chart
+    assert reflex_xy.registry.get(handle.token) is not None
 
 
 def test_entry_lock_serializes(_fresh_registry):

@@ -447,6 +447,9 @@ class Demo(rx.State):
 def _source(obj: Any) -> str:
     """Source of a plain function, an ``@reflex_xy.figure`` var, or an
     ``@rx.event`` handler."""
+    # Class-level access to an object-valued computed var hands back reflex's
+    # casted wrapper; the declared var (with its fget) sits behind _original.
+    obj = getattr(obj, "_original", obj)
     fget = getattr(obj, "_fget", None)
     if fget is not None:  # a @reflex_xy.figure / computed var
         builder = getattr(fget, BUILDER_ATTR, None)
@@ -517,7 +520,7 @@ def kv(label: str, value: Any) -> rx.Component:
 # §1 wiring — the live figure var and its semantic events
 def cloud_view() -> rx.Component:
     return reflex_xy.chart(
-        Demo.cloud,
+        figure=Demo.cloud,
         on_point_hover=Demo.on_hover,
         on_point_click=Demo.on_click,
         on_select_end=Demo.on_select,
@@ -529,7 +532,7 @@ def cloud_view() -> rx.Component:
 # §2 wiring — a chart driven by a slider and another chart's selection
 def histogram_view() -> rx.Component:
     return rx.vstack(
-        reflex_xy.chart(Demo.histogram, height="240px", id="hist"),
+        reflex_xy.chart(figure=Demo.histogram, height="240px", id="hist"),
         rx.hstack(
             rx.text("bins", size="2", color_scheme="gray"),
             rx.slider(
@@ -549,7 +552,7 @@ def histogram_view() -> rx.Component:
 # §3 wiring — a chart that grows from a background task
 def live_view() -> rx.Component:
     return rx.vstack(
-        reflex_xy.chart(Demo.live, height="240px", id="live"),
+        reflex_xy.chart(figure=Demo.live, height="240px", id="live"),
         rx.button(
             rx.cond(Demo.streaming, "stop stream", "go live"),
             on_click=Demo.stream,
@@ -563,8 +566,10 @@ def live_view() -> rx.Component:
 # §4 wiring — a detail chart computed from the overview's view-change events
 def viewport_view() -> rx.Component:
     return rx.grid(
-        reflex_xy.chart(Demo.overview, on_view_change=Demo.on_view, height="240px", id="overview"),
-        reflex_xy.chart(Demo.detail, height="240px", id="detail"),
+        reflex_xy.chart(
+            figure=Demo.overview, on_view_change=Demo.on_view, height="240px", id="overview"
+        ),
+        reflex_xy.chart(figure=Demo.detail, height="240px", id="detail"),
         columns="2",
         gap="1rem",
         width="100%",
@@ -575,7 +580,7 @@ def viewport_view() -> rx.Component:
 def fixed_view() -> rx.Component:
     return rx.grid(
         reflex_xy.chart(sparkline_chart(), height="240px", id="inline"),
-        reflex_xy.chart(ORBITS_TOKEN, height="240px", id="orbits"),
+        reflex_xy.chart(figure=ORBITS_TOKEN, height="240px", id="orbits"),
         columns="2",
         gap="1rem",
         width="100%",
@@ -584,14 +589,14 @@ def fixed_view() -> rx.Component:
 
 # §6 wiring — the whole drilldown integration is this one line
 def drilldown_view() -> rx.Component:
-    return reflex_xy.chart(DRILLDOWN_TOKEN, height="430px", id="drilldown")
+    return reflex_xy.chart(figure=DRILLDOWN_TOKEN, height="430px", id="drilldown")
 
 
 # §7 wiring — legend interactivity ships with the charts; no handlers needed
 def legend_view() -> rx.Component:
     return rx.grid(
         reflex_xy.chart(legend_series_chart(), height="300px", id="legend-series"),
-        reflex_xy.chart(LEGEND_CATS_TOKEN, height="300px", id="legend-cats"),
+        reflex_xy.chart(figure=LEGEND_CATS_TOKEN, height="300px", id="legend-cats"),
         columns="2",
         gap="1rem",
         width="100%",

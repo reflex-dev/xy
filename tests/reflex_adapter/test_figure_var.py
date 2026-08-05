@@ -45,26 +45,27 @@ def test_deps_track_the_builder_not_the_wrapper():
     assert deps == {VarDemo.get_full_name(): {"n", "_scale"}}
 
 
-def test_evaluation_registers_and_token_parses(_fresh_registry, client_token):
+def test_evaluation_registers_and_returns_a_parsing_handle(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
-    token = state.chart
-    parsed = parse_token(token)
+    handle = state.chart
+    assert isinstance(handle, reflex_xy.FigureHandle)
+    parsed = parse_token(handle.token)
     assert parsed is not None
     assert parsed.client_token == client_token
     assert parsed.state_full_name == VarDemo.get_full_name()
     assert parsed.var_name == "chart"
-    entry = _fresh_registry.get(token)
+    entry = _fresh_registry.get(handle.token)
     assert entry is not None
     assert entry.figure.traces[0].n_points == 100
 
 
-def test_dep_change_keeps_token_bumps_version(_fresh_registry, client_token):
+def test_dep_change_keeps_handle_bumps_version(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
-    token = state.chart
+    handle = state.chart
     state.n = 250
     VarDemo.computed_vars["chart"].mark_dirty(state)
-    assert state.chart == token  # stable identity: frontend never re-renders
-    entry = _fresh_registry.get(token)
+    assert state.chart == handle  # stable identity: frontend never re-renders
+    entry = _fresh_registry.get(handle.token)
     assert entry.version == 2
     assert entry.figure.traces[0].n_points == 250
 
@@ -79,31 +80,33 @@ def test_recompute_broadcasts_to_publish_hook(_fresh_registry, client_token):
         _fresh_registry.attach_loop(asyncio.get_running_loop())
         _fresh_registry.on_publish(hook)
         state = hydrated_substate(client_token)
-        token = state.chart  # first registration: new entry, no fan-out needed yet
+        handle = state.chart  # first registration: new entry, no fan-out needed yet
         state.n = 300
         VarDemo.computed_vars["chart"].mark_dirty(state)
-        assert state.chart == token
+        assert state.chart == handle
         await asyncio.sleep(0.02)
-        return token
+        return handle.token
 
     token = asyncio.run(main())
     assert published == [(token, 2)]
 
 
-def test_pre_hydration_returns_empty(_fresh_registry):
+def test_pre_hydration_returns_empty_handle(_fresh_registry):
     root = rx.State(_reflex_internal_init=True)
     state = root.get_substate(tuple(VarDemo.get_full_name().split("."))[1:])
-    assert state.chart == ""  # no client token yet -> no figure, no crash
+    # no client token yet -> the empty-token "not ready" sentinel, no crash
+    assert state.chart == reflex_xy.FigureHandle("")
+    assert not state.chart
     assert len(_fresh_registry) == 0
 
 
 def test_none_chart_unregisters(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
-    token = state.maybe_chart
+    token = state.maybe_chart.token
     assert _fresh_registry.get(token) is not None
     state.n = -1
     VarDemo.computed_vars["maybe_chart"].mark_dirty(state)
-    assert state.maybe_chart == ""
+    assert state.maybe_chart == reflex_xy.FigureHandle("")
     assert _fresh_registry.get(token) is None
 
 
@@ -125,16 +128,16 @@ def test_underscore_var_rejected():
 
 
 def test_var_value_survives_state_serialization(_fresh_registry, client_token):
-    """Simulates the reconnect-on-another-node handoff: the token rides the
+    """Simulates the reconnect-on-another-node handoff: the handle rides the
     state serializer (as it would through redis); the figure does not."""
     state = hydrated_substate(client_token)
-    token = state.chart
+    handle = state.chart
     payload = state._serialize()
     assert payload  # pickles fine with a registered figure in play
 
-    _fresh_registry.release(token)  # "another node": no local figure
+    _fresh_registry.release(handle.token)  # "another node": no local figure
     restored = VarDemo._deserialize(payload)
     # The cached var value comes back verbatim WITHOUT re-running the
     # builder — exactly why the namespace needs the rebuild-from-state path.
-    assert restored.chart == token
-    assert _fresh_registry.get(token) is None
+    assert restored.chart == handle
+    assert _fresh_registry.get(handle.token) is None

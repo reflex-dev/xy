@@ -233,27 +233,34 @@ class Dash(rx.State):
         return xy.line_chart(xy.line(rows.t, rows.value), width="100%", height=220)
 ```
 
-`@reflex_xy.figure` is a computed var whose **value is only the token
-string** — `xyv1|<client_token>|<state_full_name>|<var_name>` — and whose
-evaluation is what (re)registers the figure in the per-process registry.
+`@reflex_xy.figure` is a computed var whose **value is only a typed
+`FigureHandle`** — a frozen dataclass wrapping the token string
+`xyv1|<client_token>|<state_full_name>|<var_name>` (serialized to
+`{"token": …}` on the delta path by a registered `@rx.serializer`) — and
+whose evaluation is what (re)registers the figure in the per-process
+registry. The handle type is what makes the component seam compile-checked:
+the component's `figure` prop is `Var[FigureHandle]`, so the wrong var or a
+raw string fails at `create()` with the framework's own `TypeError`
+(design fact R1, pinned in `tests/reflex_adapter/test_framework_contracts.py`).
 Reflex's own dependency tracker watches the *builder's* body (the var
 subclass points dependency analysis at it), so:
 
-- First render: var evaluates → figure built and registered → token into
+- First render: var evaluates → figure built and registered → handle into
   state.
 - A dependency changes: Reflex marks the var dirty; the next delta
   evaluation rebuilds the figure and re-publishes; every subscriber gets a
   fresh payload pushed over the data plane. The token is deterministic, so
   the frontend sees **no prop change at all** — pixels move, DOM doesn't.
-- Reconnect (same node or another): the cached token comes back with the
+- Reconnect (same node or another): the cached handle comes back with the
   state; the component re-`sub`s; hit → serve, miss → §3.2.
 
-Two values are not tokens. Before session hydration there is no client
-token to mint from, so the var evaluates to `""`; and a builder may return
-`None` for "no chart right now", which **releases** any existing registry
-entry and likewise yields `""`. The wrapper treats `""` as "not ready / no
-chart" and mounts nothing, so both cases are a blank mount rather than an
-error.
+Two values carry no token. Before session hydration there is no client
+token to mint from, so the var evaluates to `FigureHandle("")`; and a
+builder may return `None` for "no chart right now", which **releases** any
+existing registry entry and likewise yields the empty handle. The wrapper
+treats the empty token as "not ready / no chart" and mounts nothing, so
+both cases are a blank mount rather than an error — and the var type stays
+non-optional.
 
 Async builders are first-class, mirroring reflex's own
 `ComputedVar`/`AsyncComputedVar` split with the same
@@ -459,7 +466,7 @@ publishes and always ships the latest payload.
 
 ```python
 reflex_xy.chart(
-    Dash.cloud,                      # a figure var / inline() / register() token…
+    figure=Dash.cloud,               # a figure var, or an inline()/register() handle
     on_point_hover=Dash.on_hover,    # semantic events -> normal handlers
     on_select_end=Dash.on_select,
     tailwind_classes="rounded-xl dark:bg-slate-950",  # build-time scan inventory
@@ -469,12 +476,31 @@ reflex_xy.chart(
 reflex_xy.chart(xy.line_chart(...))  # …or a Chart directly: static tier (§3.4)
 ```
 
-One factory, dispatched on the source: tokens (state vars or strings)
-compile to the `token` prop and ride the socket data plane; a Chart/Figure
-passed directly compiles to a payload asset and lands in the `src` prop,
-which the wrapper fetches and renders kernel-less. Semantic-event props
-apply to live sources; a static chart resolves hover tooltips client-side
-but dispatches no backend events.
+One factory, dispatched on the source. `figure=` takes the live tier: a
+`@reflex_xy.figure` state var or the `FigureHandle` returned by
+`register()`/`inline()`, landing in the typed `figure` prop
+(`Var[FigureHandle]`) and riding the socket data plane. Because the prop is
+`Var`-typed, `chart(figure=Dash.points)` and `chart(figure="raw string")`
+fail at compile with the framework's `TypeError` (R1). A Chart/Figure
+passed positionally compiles to a payload asset and lands in the `src`
+prop, which the wrapper fetches and renders kernel-less — the static tier
+stays positional (it is the only route for arbitrary Charts, e.g. facet
+grids) and is not deprecated.
+
+**Deprecation (one release cycle).** The pre-handle positional spellings —
+`chart(Dash.cloud)` and `chart(token_string)` — remain as a shim and warn:
+handle-typed sources (vars or `FigureHandle`s) are routed to `figure=`;
+legacy `str`-typed vars and raw token strings keep the old `Var[str]`
+`token` prop, which the wrapper still accepts alongside `figure`
+(`figure` wins when both are set). Public APIs that take "a figure"
+(`append`, `set_view`, `reset_view`, `select`, `clear_selection`,
+`release`) accept both a `FigureHandle` and its bare `.token` string.
+
+Kernel-backed event props (`on_point_hover`, `on_point_click`,
+`on_select_end`) on a static `src` source are refused at `create()` with a
+`ValueError` naming the live alternatives — previously they compiled and
+silently never fired. Client-resolved events (`on_hover`,
+`on_view_change`, animation events) stay valid on every tier.
 
 Static Chart/Figure sources mirror every class string from
 `Figure.dom_class_strings()` into the scan-only `tailwindClassTokens` JSX prop,
@@ -550,7 +576,7 @@ def inspect_point(self, event: dict):
     self.last_id = event["canonical_row_id"]
     self.last_xy = event["data"]
 
-reflex_xy.chart(Dash.cloud, on_point_click=Dash.inspect_point)
+reflex_xy.chart(figure=Dash.cloud, on_point_click=Dash.inspect_point)
 ```
 
 Selection events use the following shape. P0 supports deterministic `replace`
@@ -649,7 +675,7 @@ def remember_view(self, event: dict):
     self.x_domain = event["x_domain"]
     self.y_domain = event["y_domain"]
 
-reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
+reflex_xy.chart(figure=Dash.cloud, on_view_change=Dash.remember_view)
 ```
 
 Every kernel request echoes the last payload version as `v`; the namespace
@@ -687,13 +713,15 @@ python/reflex_xy/
   registry.py                token -> FigureEntry(figure, version, lock); TTL;
                              publish/push fan-out seams; append
   tokens.py                  xyv1 token grammar; builder discovery on vars
+  handles.py                 FigureHandle / DataHandle[S] (+ serializers):
+                             the typed values chart state vars carry
   vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
   state_bridge.py            token -> state_manager -> builder rebuild hook
   namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
                              affinity, rebuild-on-miss, binary attachments
   app.py                     setup(app), XYPlugin (post_compile), lifespan
-  component.py               chart() -> rx.Component (local-JSX library);
-                             dispatches token (live) vs Chart (static tier)
+  component.py               chart(figure=...) -> rx.Component (local-JSX
+                             library); typed figure prop; static tier
   payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   assets/                    XYChart.jsx; links xy's installed render client
@@ -712,7 +740,8 @@ examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        token/registry/var/bridge/payload-asset units,
-                             component compile, and a real-websocket
+                             component compile, framework contract pins
+                             (R1/R7/R8), and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
                              publish-broadcast/append/unsub

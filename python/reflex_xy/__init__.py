@@ -4,11 +4,11 @@ The integration in one paragraph (full design:
 spec/design/reflex-integration.md in the xy repo): chart data rides
 the app's *existing* websocket as a second socket.io namespace — binary
 columns, no JSON numbers, no extra endpoints to proxy. Figures live in a
-per-process registry keyed by tokens; the tokens live in Reflex state. A
-`@reflex_xy.figure` state method is both the chart definition and the
-recovery recipe: any worker can rebuild the figure from state when a
-reconnect lands somewhere new, so there is no central figure store to
-operate.
+per-process registry keyed by tokens; Reflex state holds only a small typed
+handle wrapping the token. A `@reflex_xy.figure` state method is both the
+chart definition and the recovery recipe: any worker can rebuild the figure
+from state when a reconnect lands somewhere new, so there is no central
+figure store to operate.
 
 Quickstart::
 
@@ -32,7 +32,7 @@ Quickstart::
             return xy.scatter_chart(xy.scatter(xs, ys), width="100%", height=460)
 
     def index() -> rx.Component:
-        return reflex_xy.chart(Dash.chart, height="460px")
+        return reflex_xy.chart(figure=Dash.chart, height="460px")
 
     app = rx.App()
 """
@@ -54,6 +54,8 @@ _EXPORTS = {
     "set_view": ".app",
     "setup": ".app",
     "chart": ".component",
+    "DataHandle": ".handles",
+    "FigureHandle": ".handles",
     "CanonicalRowIdGroup": ".events",
     "DataBounds": ".events",
     "Modifiers": ".events",
@@ -79,6 +81,8 @@ __all__ = [
     "AsyncFigureVar",
     "CanonicalRowIdGroup",
     "DataBounds",
+    "DataHandle",
+    "FigureHandle",
     "FigureRegistry",
     "FigureVar",
     "Modifiers",
@@ -154,22 +158,25 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
 
 
-def register(chart_or_figure: Any) -> str:
-    """Imperatively register a chart; returns an opaque token for state.
+def register(chart_or_figure: Any) -> "FigureHandle":
+    """Imperatively register a chart; returns a typed handle for state.
 
-    Dev-tier API: the figure lives only in this process and cannot be
-    rebuilt after a worker restart or on another node — prefer
-    `@reflex_xy.figure` for anything long-lived (see the module doc).
+    The handle's ``.token`` is the registry key; pass the handle itself to
+    ``chart(figure=...)`` (or store it in state). Dev-tier API: the figure
+    lives only in this process and cannot be rebuilt after a worker restart
+    or on another node — prefer `@reflex_xy.figure` for anything long-lived
+    (see the module doc).
     """
+    from .handles import FigureHandle
     from .registry import _figure_of, registry
 
     globals()["registry"] = registry
 
-    return registry.register(_figure_of(chart_or_figure))
+    return FigureHandle(registry.register(_figure_of(chart_or_figure)))
 
 
-def inline(chart_or_figure: Any) -> str:
-    """Register a fixed, kernel-backed chart at module scope; returns its token.
+def inline(chart_or_figure: Any) -> "FigureHandle":
+    """Register a fixed, kernel-backed chart at module scope; returns its handle.
 
     For charts whose data never changes but which still want server-side
     drilldown/picks on the shared websocket. Call at **module scope** so the
@@ -179,12 +186,13 @@ def inline(chart_or_figure: Any) -> str:
         cloud = reflex_xy.inline(xy.scatter_chart(xy.scatter(x, y)))
 
         def index():
-            return reflex_xy.chart(cloud, height="460px")
+            return reflex_xy.chart(figure=cloud, height="460px")
 
-    The token is content-addressed — every worker independently derives the
-    same one, so the frontend's baked-in token resolves everywhere without
-    state or rebuild hooks. The entry is pinned (exempt from the TTL sweep):
-    there is no recipe to rebuild it from, so it lives with the process.
+    The handle's token is content-addressed — every worker independently
+    derives the same one, so the frontend's baked-in token resolves
+    everywhere without state or rebuild hooks. The entry is pinned (exempt
+    from the TTL sweep): there is no recipe to rebuild it from, so it lives
+    with the process.
 
     Shared by design: one figure object serves every viewer, so kernel-side
     drill state is shared too (like N notebook views of one widget). Data
@@ -192,6 +200,7 @@ def inline(chart_or_figure: Any) -> str:
     no kernel at all can be passed straight to `reflex_xy.chart()` (static
     payload tier).
     """
+    from .handles import FigureHandle
     from .registry import _figure_of, registry
 
     globals()["registry"] = registry
@@ -202,16 +211,17 @@ def inline(chart_or_figure: Any) -> str:
     digest = hashlib.sha256(canonical + blob).hexdigest()[:20]
     token = f"xyin-{digest}"
     registry.publish(token, fig, broadcast=False, pinned=True)
-    return token
+    return FigureHandle(token)
 
 
-def release(token: str) -> None:
-    """Drop a registered figure (idempotent)."""
+def release(token: "str | FigureHandle") -> None:
+    """Drop a registered figure (idempotent). Takes a handle or its token."""
+    from .handles import token_of
     from .registry import registry
 
     globals()["registry"] = registry
 
-    registry.release(token)
+    registry.release(token_of(token) or "")
 
 
 if TYPE_CHECKING:
@@ -229,6 +239,7 @@ if TYPE_CHECKING:
         SelectionPayload,
         ViewChangeEvent,
     )
+    from .handles import DataHandle, FigureHandle
     from .namespace import XY_NAMESPACE, XYNamespace
     from .registry import FigureRegistry, registry
     from .selections import resolve_selection

@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 from reflex.plugins import Plugin
 
+from .handles import FigureHandle, token_of
 from .namespace import XYNamespace
 from .registry import registry
 from .state_bridge import make_rebuild_hook
@@ -89,8 +90,17 @@ class XYPlugin(Plugin):
             setup(app)
 
 
+def _token(source: "str | FigureHandle") -> str:
+    """Normalize a public figure argument (handle or bare token string)."""
+    token = token_of(source)
+    if token is None:
+        msg = f"expected a FigureHandle or figure token string, got {type(source).__name__}"
+        raise TypeError(msg)
+    return token
+
+
 def append(
-    token: str,
+    token: "str | FigureHandle",
     x: Any,
     y: Any,
     *,
@@ -103,26 +113,28 @@ def append(
     Thin alias for `registry.append` — see its docstring for the threading
     contract.
     """
-    registry.append(token, x, y, color=color, size=size, trace=trace)
+    registry.append(_token(token), x, y, color=color, size=size, trace=trace)
 
 
-def set_view(token: str, ranges: Any, *, animate: bool = True, history: bool = True) -> None:
+def set_view(
+    token: "str | FigureHandle", ranges: Any, *, animate: bool = True, history: bool = True
+) -> None:
     """Out-of-band programmatic view patch (view-state.md §5.2).
 
     Mirrors `append`: callable from any event handler, background task, or
     thread; one wire message pushed room-wide, applied by every client
     through the same clamped mutation path as a gesture, `source: "api"`.
     """
-    registry.set_view(token, ranges, animate=animate, history=history)
+    registry.set_view(_token(token), ranges, animate=animate, history=history)
 
 
-def reset_view(token: str, axes: Any = None) -> None:
+def reset_view(token: "str | FigureHandle", axes: Any = None) -> None:
     """Out-of-band navigation to the home ranges (room-wide)."""
-    registry.reset_view(token, axes)
+    registry.reset_view(_token(token), axes)
 
 
 def select(
-    token: str,
+    token: "str | FigureHandle",
     *,
     range: Any = None,
     polygon: Any = None,
@@ -132,12 +144,12 @@ def select(
     """Out-of-band programmatic selection (room-wide). Geometric forms
     resolve client-side like a gesture; `rows=` resolves kernel-side and is
     non-durable (see view-state.md §5.1)."""
-    registry.select(token, range=range, polygon=polygon, rows=rows, history=history)
+    registry.select(_token(token), range=range, polygon=polygon, rows=rows, history=history)
 
 
-def clear_selection(token: str) -> None:
+def clear_selection(token: "str | FigureHandle") -> None:
     """Out-of-band selection clear (room-wide)."""
-    registry.clear_selection(token)
+    registry.clear_selection(_token(token))
 
 
 def reset_setup_for_tests() -> None:
