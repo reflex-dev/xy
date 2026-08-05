@@ -14,6 +14,9 @@ design:
    point closes the semantic loop: kernel pick -> reflex event -> state
    delta -> DOM readout.
 4. Streaming: clicking "go live" grows the live trace via `append` pushes.
+5. Composition: toggling the §9 cond swaps the composed board for
+   `rx.foreach` small multiples over a `list[DataHandle]` var — new plan
+   charts mount and subscribe live.
 
 Usage:
     python3 scripts/reflex_ws_smoke.py [--frontend http://localhost:3100]
@@ -242,9 +245,11 @@ def main() -> None:
     with ChromiumSession(chromium, gl="software", sandbox=False) as session:
         probe = Probe(session, args.frontend)
 
-        # 1) every chart mounts a view (seven live sources + one static Chart)
+        # 1) every chart mounts a view (ten live sources + two static charts;
+        #    composite plan views mount as their data handles hydrate; the §9
+        #    foreach multiples mount only after the cond toggle, step 6)
         probe.wait_for(
-            "window.__xy_views && window.__xy_views.size >= 7",
+            "window.__xy_views && window.__xy_views.size >= 10",
             timeout_s=120.0,
             label="mounted chart views",
         )
@@ -257,13 +262,16 @@ def main() -> None:
         if len(ws) != 1:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
-        # 2b) the direct-Chart mount is truly static: it never subscribes. The
-        #     seven live sources (five figure vars + two inline() tokens: the
-        #     orbits and the §6 drilldown) each sub.
+        # 2b) the static mounts (the §5 payload-asset chart and the §7 direct
+        #     Chart) never subscribe. The ten live sources — two figure vars
+        #     (§2 histogram, §3 live), three inline() tokens (orbits, §6
+        #     drilldown, legend-cats), and five data-bound plan charts (§1
+        #     cloud, §4 overview + detail, §8 bound, §9 board), whose composed
+        #     xyp1 tokens sub once their data handles hydrate — each sub.
         subs = probe.sent_ws_frames('"sub"')
         print(f"sub frames sent: {len(subs)}")
-        if len(subs) < 7:
-            failures.append(f"expected >= 7 sub frames (live sources), got {len(subs)}")
+        if len(subs) < 10:
+            failures.append(f"expected >= 10 sub frames (live sources), got {len(subs)}")
 
         # 3) pixels: every chart paints ink inside its rect (full-page shot,
         #    rects in page coordinates so below-the-fold charts count too).
@@ -283,6 +291,7 @@ def main() -> None:
             ("live", 0.005),
             ("inline", 0.005),
             ("drilldown", 0.02),
+            ("bound", 0.02),
         )
         for chart_id, min_ink in checks:
             frac = ink_fraction(png, probe.rect(chart_id, page_coords=True), 1.0)
@@ -353,6 +362,28 @@ def main() -> None:
         )
         n_after = probe.eval("window.__xy_views.get('live').gpuTraces[0].n")
         print(f"live stream: {n_before} -> {n_after} vertices (append pushes)")
+
+        # 6) §9 cond/foreach: toggling the split swaps the cond branch from
+        #    the composed board to an rx.foreach grid of plan charts bound to
+        #    a list[DataHandle] var — the board unmounts, three multiples
+        #    mount and sub (net +2 views).
+        views_before = probe.eval("window.__xy_views.size")
+        probe.scroll_to("split-btn")
+        split = probe.eval(
+            "(() => { const b = document.getElementById('split-btn');"
+            " const r = b.getBoundingClientRect();"
+            " return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()"
+        )
+        probe.mouse("mouseMoved", split["x"], split["y"])
+        probe.mouse("mousePressed", split["x"], split["y"], button="left", buttons=1, clickCount=1)
+        probe.mouse("mouseReleased", split["x"], split["y"], button="left", buttons=0, clickCount=1)
+        probe.wait_for(
+            f"window.__xy_views.size >= {views_before} + 2",
+            timeout_s=30.0,
+            label="foreach small multiples mounting after the cond toggle",
+        )
+        views_after = probe.eval("window.__xy_views.size")
+        print(f"cond/foreach: {views_before} -> {views_after} mounted views after split toggle")
 
         if args.screenshot:
             Path(args.screenshot).write_bytes(probe.screenshot())

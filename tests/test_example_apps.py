@@ -145,11 +145,18 @@ def test_fastapi_app_serves_live_charts_and_code() -> None:
 def test_reflex_app_shows_every_linking_method_and_event() -> None:
     src = REFLEX_APP.read_text(encoding="utf-8")
     required = [
-        "@reflex_xy.figure",  # live figure var
-        "reflex_xy.chart(",  # the component
+        "@reflex_xy.data",  # data-bound columns (§1/§4/§8/§9)
+        "data=Demo.cloud",  # composed chart bound to a data var (§1)
+        "reflex_xy.scatter_chart(",  # flat data-bound factory (§8)
+        "rx.cond(Demo.split",  # conditional chart rendering (§9)
+        "rx.foreach(",  # chart-per-handle rendering (§9)
+        "list[DataHandle[SensorCols]]",  # the typed handle collection (R7)
+        "@reflex_xy.figure",  # escape hatch: chart structure from state (§2)
+        "reflex_xy.chart(",  # the component / composed factory
         "reflex_xy.append(",  # streaming
         "reflex_xy.inline(",  # inline() token tier
-        "sparkline_chart()",  # static Chart tier passed directly
+        'data={"t": t',  # static tier: concrete columns -> payload asset (§5)
+        "legend_series_chart()",  # static Chart tier passed directly (§7)
         # the FastAPI 100M drilldown, served adapter-natively (§6); both apps
         # honor the same point-count override for side-by-side comparison.
         "def drilldown_chart",
@@ -189,14 +196,16 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     sys.path.insert(0, str(REFLEX_DIR))
     module = _load(REFLEX_APP, "xy_reflex_demo_under_test")
 
-    # The Code accordion reads live source: figure vars unwrap to their builder,
-    # event handlers to their function — both include the decorator line.
-    assert "@reflex_xy.figure" in module._source(module.Demo.cloud)
+    # The Code accordion reads live source: figure/data vars unwrap to their
+    # builder, event handlers to their function — both include the decorator.
+    assert "@reflex_xy.data" in module._source(module.Demo.cloud)
     assert "def cloud" in module._source(module.Demo.cloud)
+    assert "@reflex_xy.figure" in module._source(module.Demo.histogram)
     assert "def on_view" in module._source(module.Demo.on_view)
+    assert "@reflex_xy.data" in module._source(module.Demo.bound_cloud)
     # The page composes without error and mints inline() handles at import.
-    assert module.ORBITS_TOKEN.token.startswith("xyin-")
-    assert module.DRILLDOWN_TOKEN.token.startswith("xyin-")
+    assert module.ORBITS.token.startswith("xyin-")
+    assert module.DRILLDOWN.token.startswith("xyin-")
     assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
 

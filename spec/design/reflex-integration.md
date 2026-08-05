@@ -602,7 +602,10 @@ and an error seam (`on_error`) for room-wide failures that answer no
 request.
 
 **Composite tokens.** The two halves compose into one figure identity —
-`xyp1|<digest>|<xyd1 token>` — subscribed as a unit. Rooms, versions, `mid`
+`xyp1|<digest>|<xyd1 token>` — assembled by the wrapper client-side from
+the `plan` and `data` props, and subscribed once the data handle hydrates
+(an empty handle token means "not ready", exactly as for figure handles).
+Rooms, versions, `mid`
 addressing, the attachment cap, and every message below the subscribe path
 treat it as an ordinary `fig` string; the envelope grew no fields. Serving
 it = `plan_of(digest)` + columns (registry hit, else `rebuild_data` re-runs
@@ -629,7 +632,10 @@ depends on that same session republishing later. Pinned by
 stays loud: a bind that stops matching
 (possible only for untyped data vars) logs server-side, releases the
 composite entry, and answers the room `err {resync}`; a stale digest
-(hot-reload drift) answers `err {resync}` naming the digest.
+(hot-reload drift) answers `err {resync}` naming the digest. The client
+bounds consecutive err-triggered resyncs (5 without an intervening
+payload), so a permanently failing identity settles into a visible console
+error instead of a subscribe loop.
 
 **Republish ordering.** Dependent rebuilds run outside the registry mutex
 (they execute user-scale figure builds), so two republishes of one data
@@ -1024,18 +1030,27 @@ python/reflex_xy/
   payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   assets/                    XYChart.jsx; links xy's installed render client
-examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
-                             hover/click/select events, a slider-driven +
-                             cross-filtered histogram, a streaming line, an
-                             on_view_change-computed detail chart, both
-                             fixed-data tiers (direct Chart + inline() token),
-                             and the fastapi live drilldown served adapter-
-                             natively from an inline() token (same data and
-                             XY_LIVE_POINTS override, zero transport code —
-                             the cross-host A/B for that chart), plus legend
-                             hover-highlight and click-to-toggle (named series
-                             client-side; a categorical density inline() token
-                             whose category toggles re-bin kernel-side, §34)
+examples/reflex/  (repo root) Reflex showcase on the §3.6 data-bound API: a
+                             composed 1M drillable scatter with hover/click/
+                             select events, an on_view_change data var
+                             republishing in-view columns into a fixed
+                             histogram plan, a flat scatter whose slider
+                             republishes columns under a stable handle, and
+                             an rx.cond toggle between a composed board and
+                             rx.foreach small multiples over a
+                             list[DataHandle] var; the
+                             @reflex_xy.figure escape hatch where structure
+                             reads state (slider-driven + cross-filtered
+                             histogram), a streaming line (append), both
+                             fixed-data tiers (concrete data= columns ->
+                             payload asset; inline() token), the fastapi live
+                             drilldown served adapter-natively from an
+                             inline() token (same data and XY_LIVE_POINTS
+                             override, zero transport code — the cross-host
+                             A/B for that chart), plus legend hover-highlight
+                             and click-to-toggle (named series client-side; a
+                             categorical density inline() token whose category
+                             toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        token/registry/var/data-var/plan/factory/bridge/
