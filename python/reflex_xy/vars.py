@@ -1,11 +1,12 @@
 """`@reflex_xy.figure`: a computed var that *is* the chart registration.
 
 The pattern (spec/design/reflex-integration.md): the state method builds the
-chart from state, the computed var's value is only the figure *token*, and
+chart from state, the computed var's value is only a typed
+:class:`~reflex_xy.handles.FigureHandle` wrapping the figure *token*, and
 evaluating the var is what (re)registers the figure in the per-process
 registry. Reflex's own dependency tracking decides when that happens:
 
-- first render: var evaluates -> figure built -> token into state.
+- first render: var evaluates -> figure built -> handle into state.
 - a dependency changes: reflex marks the var dirty, the next delta
   evaluation rebuilds the figure and re-publishes it; subscribers get the
   fresh payload pushed over the data plane. The token itself is stable, so
@@ -37,10 +38,13 @@ from typing import Any, Optional, overload
 
 from reflex_base.vars.base import AsyncComputedVar, ComputedVar
 
+from .handles import FigureHandle
 from .registry import _figure_of, registry
-from .tokens import BUILDER_ATTR, build_state_token
+from .tokens import BUILDER_ATTR, PROBE_ATTR, build_state_token
 
 __all__ = ["AsyncFigureVar", "FigureVar", "figure"]
+
+_PROBE_LEVELS = ("build", "figure", False)
 
 
 def _builder_target(var: Any, obj: Any) -> Any:
@@ -53,14 +57,14 @@ def _builder_target(var: Any, obj: Any) -> Any:
 
 
 class FigureVar(ComputedVar):
-    """ComputedVar whose value is a figure token (sync builder)."""
+    """ComputedVar whose value is a FigureHandle (sync builder)."""
 
     def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
         return ComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
 
 
 class AsyncFigureVar(AsyncComputedVar):
-    """AsyncComputedVar whose value is a figure token (async builder)."""
+    """AsyncComputedVar whose value is a FigureHandle (async builder)."""
 
     def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
         return AsyncComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
@@ -69,19 +73,20 @@ class AsyncFigureVar(AsyncComputedVar):
 def _mint_token(state: Any, builder_name: str) -> Optional[str]:
     """Deterministic token for this (session, state, var) — or None
     pre-hydration (no session yet, so no figure to serve; the component
-    treats "" as "not ready" and waits for the hydrated value)."""
+    treats the empty-token handle as "not ready" and waits for the
+    hydrated value)."""
     client_token = state.router.session.client_token
     if not client_token:
         return None
     return build_state_token(client_token, type(state).get_full_name(), builder_name)
 
 
-def _publish(token: str, chart: Any) -> str:
+def _publish(token: str, chart: Any) -> FigureHandle:
     if chart is None:
         registry.release(token)
-        return ""
+        return FigureHandle("")
     registry.publish(token, _figure_of(chart))
-    return token
+    return FigureHandle(token)
 
 
 def _adopt_identity(fget: Any, builder: Callable[..., Any], name: str) -> None:
@@ -92,13 +97,13 @@ def _adopt_identity(fget: Any, builder: Callable[..., Any], name: str) -> None:
     setattr(fget, BUILDER_ATTR, builder)
 
 
-def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], str]:
+def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], FigureHandle]:
     builder_name = _fn_name(builder)
 
-    def fget(self: Any) -> str:
+    def fget(self: Any) -> FigureHandle:
         token = _mint_token(self, builder_name)
         if token is None:
-            return ""
+            return FigureHandle("")
         return _publish(token, builder(self))
 
     _adopt_identity(fget, builder, builder_name)
@@ -108,10 +113,10 @@ def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], str]:
 def _make_async_fget(builder: Callable[[Any], Any]) -> Callable[[Any], Any]:
     builder_name = _fn_name(builder)
 
-    async def fget(self: Any) -> str:
+    async def fget(self: Any) -> FigureHandle:
         token = _mint_token(self, builder_name)
         if token is None:
-            return ""
+            return FigureHandle("")
         return _publish(token, await builder(self))
 
     _adopt_identity(fget, builder, builder_name)
@@ -132,12 +137,15 @@ def figure(builder: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar": ...
 
 @overload
 def figure(
-    builder: None = None, **var_kwargs: Any
+    builder: None = None, *, probe: "str | bool | None" = None, **var_kwargs: Any
 ) -> Callable[[Callable[[Any], Any]], "FigureVar | AsyncFigureVar"]: ...
 
 
 def figure(
-    builder: Optional[Callable[[Any], Any]] = None, **var_kwargs: Any
+    builder: Optional[Callable[[Any], Any]] = None,
+    *,
+    probe: "str | bool | None" = None,
+    **var_kwargs: Any,
 ) -> "FigureVar | AsyncFigureVar | Callable[[Callable[[Any], Any]], FigureVar | AsyncFigureVar]":
     """Declare a chart on a Reflex state class.
 
@@ -164,7 +172,20 @@ def figure(
     Keyword arguments pass through to reflex's computed var (``deps=``,
     ``auto_deps=``, ``interval=``, ...); dependencies are auto-tracked from
     the builder's body by default, exactly like a normal ``@rx.var``.
+
+    ``probe=`` sets the compile-time probe level (spec
+    reflex-integration.md §3.1): at app compile the plugin runs the builder
+    once against default state, so hallucinated chart APIs and bad kwargs
+    fail ``reflex run`` instead of a silent blank mount at hydrate.
+    ``"build"`` (the sync default) runs the body only; ``"figure"``
+    additionally compiles the result (full config/shape validation at the
+    price of one real figure); ``False`` opts out — the default for
+    ``async def`` builders, whose data sources should not be awaited at
+    compile.
     """
+    if probe not in (*_PROBE_LEVELS, None):
+        msg = f"@reflex_xy.figure probe= must be 'build', 'figure', or False, got {probe!r}"
+        raise ValueError(msg)
 
     def _decorate(fn: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar":
         if _fn_name(fn).startswith("_"):
@@ -176,9 +197,14 @@ def figure(
             )
             raise ValueError(msg)
         var_kwargs.setdefault("cache", True)
-        if inspect.iscoroutinefunction(fn):
-            return AsyncFigureVar(fget=_make_async_fget(fn), return_type=str, **var_kwargs)
-        return FigureVar(fget=_make_fget(fn), return_type=str, **var_kwargs)
+        is_async = inspect.iscoroutinefunction(fn)
+        if is_async:
+            var = AsyncFigureVar(fget=_make_async_fget(fn), return_type=FigureHandle, **var_kwargs)
+        else:
+            var = FigureVar(fget=_make_fget(fn), return_type=FigureHandle, **var_kwargs)
+        level = probe if probe is not None else (False if is_async else "build")
+        setattr(var._fget, PROBE_ATTR, level)
+        return var
 
     if builder is None:
         return _decorate

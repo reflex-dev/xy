@@ -233,27 +233,34 @@ class Dash(rx.State):
         return xy.line_chart(xy.line(rows.t, rows.value), width="100%", height=220)
 ```
 
-`@reflex_xy.figure` is a computed var whose **value is only the token
-string** — `xyv1|<client_token>|<state_full_name>|<var_name>` — and whose
-evaluation is what (re)registers the figure in the per-process registry.
+`@reflex_xy.figure` is a computed var whose **value is only a typed
+`FigureHandle`** — a frozen dataclass wrapping the token string
+`xyv1|<client_token>|<state_full_name>|<var_name>` (serialized to
+`{"token": …}` on the delta path by a registered `@rx.serializer`) — and
+whose evaluation is what (re)registers the figure in the per-process
+registry. The handle type is what makes the component seam compile-checked:
+the component's `figure` prop is `Var[FigureHandle]`, so the wrong var or a
+raw string fails at `create()` with the framework's own `TypeError`
+(design fact R1, pinned in `tests/reflex_adapter/test_framework_contracts.py`).
 Reflex's own dependency tracker watches the *builder's* body (the var
 subclass points dependency analysis at it), so:
 
-- First render: var evaluates → figure built and registered → token into
+- First render: var evaluates → figure built and registered → handle into
   state.
 - A dependency changes: Reflex marks the var dirty; the next delta
   evaluation rebuilds the figure and re-publishes; every subscriber gets a
   fresh payload pushed over the data plane. The token is deterministic, so
   the frontend sees **no prop change at all** — pixels move, DOM doesn't.
-- Reconnect (same node or another): the cached token comes back with the
+- Reconnect (same node or another): the cached handle comes back with the
   state; the component re-`sub`s; hit → serve, miss → §3.2.
 
-Two values are not tokens. Before session hydration there is no client
-token to mint from, so the var evaluates to `""`; and a builder may return
-`None` for "no chart right now", which **releases** any existing registry
-entry and likewise yields `""`. The wrapper treats `""` as "not ready / no
-chart" and mounts nothing, so both cases are a blank mount rather than an
-error.
+Two values carry no token. Before session hydration there is no client
+token to mint from, so the var evaluates to `FigureHandle("")`; and a
+builder may return `None` for "no chart right now", which **releases** any
+existing registry entry and likewise yields the empty handle. The wrapper
+treats the empty token as "not ready / no chart" and mounts nothing, so
+both cases are a blank mount rather than an error — and the var type stays
+non-optional.
 
 Async builders are first-class, mirroring reflex's own
 `ComputedVar`/`AsyncComputedVar` split with the same
@@ -277,6 +284,32 @@ async builders: deterministic given state — refetching the rows state
 points at is exactly the recovery contract). This is §27 applied to
 processes: canonical data is Reflex state; every registered figure is a
 derived buffer.
+
+**Compile probe.** With the data-bound tier (§3.6) validating everything at
+page evaluation, the figure var is the one place chart-building user code
+still defers to hydrate — so it gets a compile gate of its own.
+`XYPlugin.post_compile` walks the state tree, and for every figure var runs
+the builder once against a default state instance
+(`@reflex_xy.figure(probe=...)` sets the level):
+
+- `probe="build"` — the default for sync builders: run the body only.
+  Hallucinated `xy.*` names, wrong kwargs, and eager chrome errors fail
+  `reflex run` with the state class, var name, and source location
+  (`FigureProbeError` wrapping the original), instead of an `err` frame
+  and a silently blank mount at hydrate.
+- `probe="figure"` — additionally compile the result: full config/shape
+  validation at the price of building one real figure per var at startup.
+- `probe=False` — opt out; the default for `async def` builders (compile
+  is sync, and awaiting a data source at compile is what constraint 2
+  forbids). An async builder may opt in explicitly and runs under
+  `asyncio.run`.
+
+The escape valve for constraint 2: a builder whose source reads
+`self.router` is session-dependent by declaration — its probe failure
+degrades to a `RuntimeWarning` instead of failing the compile, because only
+a live session can validate it. The probe's cost is the builder's own cost
+against *default* state, once per backend worker start — the same order of
+work Reflex already accepts evaluating ordinary computed vars at compile.
 
 ### 3.2 Registry miss: rebuild from state
 
@@ -418,6 +451,126 @@ generations are leased; the sweep skips them until the mutation and version
 bump finish. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
 publishes and always ships the latest payload.
 
+### 3.6 The data-bound tier: `@reflex_xy.data`, plans, composite tokens
+
+The primary component API (adopted design: Option 6 of
+[`reflex-component-api-options.md`](reflex-component-api-options.md); work
+plan in [`reflex-component-api-implementation.md`](reflex-component-api-implementation.md))
+splits the figure var's job in two: **structure is declared in the page**,
+**state supplies only columns**.
+
+```python
+class CloudData(TypedDict):
+    x: np.ndarray; y: np.ndarray; mag: np.ndarray
+
+class Dash(rx.State):
+    points: int = 200_000
+
+    @reflex_xy.data                     # columns only — no chart API inside
+    def cloud(self) -> CloudData: ...
+
+def index():
+    return reflex_xy.scatter_chart(     # flat form; reflex_xy.chart(*nodes)
+        data=Dash.cloud,                # is the composed multi-mark form
+        x="x", y="y", color="mag", colormap="viridis",
+        height="460px", on_select_end=Dash.select,
+    )
+```
+
+**`@reflex_xy.data`** (`data_vars.py` — the module is named `data_vars`
+because a `data.py` submodule would shadow the `reflex_xy.data` export) is
+the exact sibling of `@reflex_xy.figure`: a computed var whose value is a
+typed `DataHandle` wrapping `xyd1|<client>|<state>|<var>` (same grammar,
+charset, purity contract, pre-session short-circuit, underscore refusal,
+async dispatch, and `None`-releases semantics as figure vars). Evaluating
+it validates the returned mapping — string keys, array-likes, one shared
+length; the only checks that need real data — and publishes the **columns**
+into the registry. The method's return annotation is the compile-time
+schema channel (fact R7): a `TypedDict` parametrizes the handle
+(`DataHandle[CloudData]`), and the factories read the column names from the
+class-level var without executing anything; a plain `dict` annotation
+degrades to first-execution validation.
+
+**Plans** (`plan.py`). A chart factory call at page evaluation compiles its
+xy nodes (string channels only) into a `ChartPlan`: the real tree is built,
+zero-row placeholder columns are bound for every referenced channel through
+the production resolution path (a recording table — the column list cannot
+drift from what binding will look up), and `.figure()` runs once — the full
+mark/config validation gate (X1/X2) at compile time, in milliseconds, with
+no data ingestion (constraint 2). The canonical JSON of the tree
+(`plan_version: 1`) is content-addressed into a sha256-prefix `digest` and
+registered in a process-local `{digest: plan}` map. Fact X4 ("page bodies
+run in every worker") turned out to hold only for processes that run the
+frontend compile — **backend-only workers (dev backend subprocesses and
+prod workers) import the app module but leave pages unevaluated**, which
+would leave their plan maps empty and every plan subscription answering
+`err {resync}`. The integration therefore makes X4 true by construction:
+`setup(app)`'s lifespan evaluates the app's unevaluated page component
+functions once at worker startup (`_ensure_page_plans`), before serving —
+factories register their plans as a side effect and the built trees are
+discarded (plans and payload assets are content-addressed and idempotent;
+a failing page degrades to a warning rather than taking down the data
+plane). Errors this
+tier catches at `reflex run`: hallucinated factory names (import), unknown
+kwargs with a did-you-mean (partition), bad colormaps/enums/axis refs
+(zero-row probe), unknown column names against a typed data var (schema
+channel), and the wrong var or a raw string in `data=` (typed prop, R1).
+Plans refuse concrete arrays, per-mark `data=`, and `render=` components —
+data-free structure only. The probe figure also yields
+`dom_class_strings()`, so **live data-bound charts get automatic Tailwind
+discovery** (previously live sources needed the manual inventory).
+
+**Composite tokens.** The wrapper composes the two halves client-side into
+one figure identity — `xyp1|<digest>|<xyd1 token>` — and subscribes once
+the data handle hydrates. Rooms, versions, `mid` addressing, the
+attachment cap, and every message below the subscribe path treat it as an
+ordinary `fig` string; the envelope grew no fields. Serving it =
+`plan_of(digest)` + columns (registry hit, else `rebuild_data` re-runs the
+data method against session state) + bind into a **fresh** `Chart` (X3) →
+`figure()` → cached under the composite token as a normal, TTL-sweepable
+`FigureEntry`. The rebuild recipe is (plan map, data method): both halves
+independently recoverable on any worker.
+
+**Republish fan-out.** The registry keeps a `data token → {digests}` index,
+added when a composite figure binds and dropped when a republish finds the
+plan unmounted (bounded by mounted plans). A data var recompute publishes
+new columns and re-binds every mounted dependent — fresh figures, bumped
+versions, coalesced room broadcasts, exactly the figure-var republish
+machinery. Failure stays loud: a bind that stops matching (possible only
+for untyped data vars) logs server-side, releases the composite entry, and
+answers the room `err {resync}`; a stale digest (hot-reload drift) answers
+`err {resync}` naming the digest. The client bounds consecutive
+err-triggered resyncs (5 without an intervening payload), so a permanently
+failing identity settles into a visible console error instead of a loop.
+
+**Static tier symmetry.** `data=` given a concrete mapping (not a Var)
+binds immediately and routes to the §3.4 payload-asset path — same
+validation, same spec-aware bind errors, works under `reflex export`,
+never touches the registry.
+
+**Kind coverage (the Phase 3 decision, recorded).** Flat factories exist
+for every mark kind whose validators compile zero-row — scatter, line,
+histogram, bar, area, step, stem, column, errorbar, error_band, segments —
+each derived from the mark's signature, and the composed
+`reflex_xy.chart(*nodes, data=...)` accepts any mix of those marks plus
+annotations and chrome. Aggregating kinds whose validators require at
+least one finite value (box, violin, hexbin, contour, heatmap, stairs,
+ecdf) and the data-taking composite factories (pie, radar, wind_rose,
+sankey — eager numeric work at call time) are **excluded from the plan
+tier**: the probe refuses them with an error naming the two supported
+routes (`@reflex_xy.figure`, or a concrete xy Chart on the static tier).
+Extending them would need value-independent validation or a synthetic-row
+probe whose failures could depend on made-up values — rejected as a silent
+decimation of the compile guarantee (§28 spirit).
+
+**Plan format stability.** `plan_version: 1` is part of the canonical
+serialization and a golden digest is pinned in
+`tests/reflex_adapter/test_plan.py`. Digests are content addresses, not a
+migration surface: after a format (or grammar) change, old subscribers'
+digests simply miss and resync against the recompiled page — the golden
+exists to catch *accidental* churn, and an intentional change bumps
+`PLAN_VERSION` and re-records it.
+
 ## 4. Updates and streaming
 
 - **State-driven rebuild** (filter changed): the figure var recomputes,
@@ -459,7 +612,7 @@ publishes and always ships the latest payload.
 
 ```python
 reflex_xy.chart(
-    Dash.cloud,                      # a figure var / inline() / register() token…
+    figure=Dash.cloud,               # a figure var, or an inline()/register() handle
     on_point_hover=Dash.on_hover,    # semantic events -> normal handlers
     on_select_end=Dash.on_select,
     tailwind_classes="rounded-xl dark:bg-slate-950",  # build-time scan inventory
@@ -469,12 +622,31 @@ reflex_xy.chart(
 reflex_xy.chart(xy.line_chart(...))  # …or a Chart directly: static tier (§3.4)
 ```
 
-One factory, dispatched on the source: tokens (state vars or strings)
-compile to the `token` prop and ride the socket data plane; a Chart/Figure
-passed directly compiles to a payload asset and lands in the `src` prop,
-which the wrapper fetches and renders kernel-less. Semantic-event props
-apply to live sources; a static chart resolves hover tooltips client-side
-but dispatches no backend events.
+One factory, dispatched on the source. `figure=` takes the live tier: a
+`@reflex_xy.figure` state var or the `FigureHandle` returned by
+`register()`/`inline()`, landing in the typed `figure` prop
+(`Var[FigureHandle]`) and riding the socket data plane. Because the prop is
+`Var`-typed, `chart(figure=Dash.points)` and `chart(figure="raw string")`
+fail at compile with the framework's `TypeError` (R1). A Chart/Figure
+passed positionally compiles to a payload asset and lands in the `src`
+prop, which the wrapper fetches and renders kernel-less — the static tier
+stays positional (it is the only route for arbitrary Charts, e.g. facet
+grids) and is not deprecated.
+
+**Deprecation (one release cycle).** The pre-handle positional spellings —
+`chart(Dash.cloud)` and `chart(token_string)` — remain as a shim and warn:
+handle-typed sources (vars or `FigureHandle`s) are routed to `figure=`;
+legacy `str`-typed vars and raw token strings keep the old `Var[str]`
+`token` prop, which the wrapper still accepts alongside `figure`
+(`figure` wins when both are set). Public APIs that take "a figure"
+(`append`, `set_view`, `reset_view`, `select`, `clear_selection`,
+`release`) accept both a `FigureHandle` and its bare `.token` string.
+
+Kernel-backed event props (`on_point_hover`, `on_point_click`,
+`on_select_end`) on a static `src` source are refused at `create()` with a
+`ValueError` naming the live alternatives — previously they compiled and
+silently never fired. Client-resolved events (`on_hover`,
+`on_view_change`, animation events) stay valid on every tier.
 
 Static Chart/Figure sources mirror every class string from
 `Figure.dom_class_strings()` into the scan-only `tailwindClassTokens` JSX prop,
@@ -550,7 +722,7 @@ def inspect_point(self, event: dict):
     self.last_id = event["canonical_row_id"]
     self.last_xy = event["data"]
 
-reflex_xy.chart(Dash.cloud, on_point_click=Dash.inspect_point)
+reflex_xy.chart(figure=Dash.cloud, on_point_click=Dash.inspect_point)
 ```
 
 Selection events use the following shape. P0 supports deterministic `replace`
@@ -649,7 +821,7 @@ def remember_view(self, event: dict):
     self.x_domain = event["x_domain"]
     self.y_domain = event["y_domain"]
 
-reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
+reflex_xy.chart(figure=Dash.cloud, on_view_change=Dash.remember_view)
 ```
 
 Every kernel request echoes the last payload version as `v`; the namespace
@@ -685,37 +857,59 @@ demo app models.
 ```
 python/reflex_xy/
   registry.py                token -> FigureEntry(figure, version, lock); TTL;
-                             publish/push fan-out seams; append
-  tokens.py                  xyv1 token grammar; builder discovery on vars
+                             publish/push/error fan-out seams; append; column
+                             entries + data-token -> digest index (§3.6)
+  tokens.py                  xyv1/xyd1/xyp1 token grammar; builder discovery
+  handles.py                 FigureHandle / DataHandle[S] (+ serializers):
+                             the typed values chart state vars carry
   vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
-  state_bridge.py            token -> state_manager -> builder rebuild hook
+  data_vars.py               @reflex_xy.data (DataVar: columns in, handle out)
+  plan.py                    ChartPlan: zero-row probe, canonical digest,
+                             process-local plan map, bind (§3.6)
+  factories.py               scatter/line/histogram/bar_chart flat factories +
+                             composed chart(*nodes): signature-derived kwarg
+                             partition, schema checks, plan/data/static mount
+  state_bridge.py            token -> state_manager -> builder/data/plan
+                             rebuild hooks
   namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
-                             affinity, rebuild-on-miss, binary attachments
+                             affinity (incl. composite), rebuild-on-miss,
+                             binary attachments
   app.py                     setup(app), XYPlugin (post_compile), lifespan
-  component.py               chart() -> rx.Component (local-JSX library);
-                             dispatches token (live) vs Chart (static tier)
+  component.py               chart(figure=...) -> rx.Component (local-JSX
+                             library); typed figure/data props; static tier
   payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   assets/                    XYChart.jsx; links xy's installed render client
-examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
-                             hover/click/select events, a slider-driven +
-                             cross-filtered histogram, a streaming line, an
-                             on_view_change-computed detail chart, both
-                             fixed-data tiers (direct Chart + inline() token),
-                             and the fastapi live drilldown served adapter-
-                             natively from an inline() token (same data and
-                             XY_LIVE_POINTS override, zero transport code —
-                             the cross-host A/B for that chart), plus legend
-                             hover-highlight and click-to-toggle (named series
-                             client-side; a categorical density inline() token
-                             whose category toggles re-bin kernel-side, §34)
+examples/reflex/  (repo root) Reflex showcase on the §3.6 data-bound API: a
+                             composed 1M drillable scatter with hover/click/
+                             select events, an on_view_change data var
+                             republishing in-view columns into a fixed
+                             histogram plan, a flat scatter whose slider
+                             republishes columns under a stable handle, and
+                             an rx.cond toggle between a composed board and
+                             rx.foreach small multiples over a
+                             list[DataHandle] var; the
+                             @reflex_xy.figure escape hatch where structure
+                             reads state (slider-driven + cross-filtered
+                             histogram), a streaming line (append), both
+                             fixed-data tiers (concrete data= columns ->
+                             payload asset; inline() token), the fastapi live
+                             drilldown served adapter-natively from an
+                             inline() token (same data and XY_LIVE_POINTS
+                             override, zero transport code — the cross-host
+                             A/B for that chart), plus legend hover-highlight
+                             and click-to-toggle (named series client-side; a
+                             categorical density inline() token whose category
+                             toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        token/registry/var/bridge/payload-asset units,
-                             component compile, and a real-websocket
+tests/reflex_adapter/        token/registry/var/data-var/plan/factory/bridge/
+                             payload-asset units, component compile, framework
+                             contract pins (R1/R7/R8), and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
-                             publish-broadcast/append/unsub
+                             publish-broadcast/append/unsub + the composite
+                             plan tier (fan-out, plan-miss resync, bind errs)
 ```
 
 `inline()` (content-addressed pinned tokens, §3.4) lives in the package

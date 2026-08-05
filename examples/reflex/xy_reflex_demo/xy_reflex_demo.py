@@ -1,22 +1,31 @@
 """XY Reflex showcase: ways to link chart data into a Reflex app.
 
-One page of six sections; each has a "Code" accordion showing its own source
-via `inspect.getsource`.
+One page of eight sections; each has a "Code" accordion showing its own source
+via `inspect.getsource`. Charts use the data-bound component API — structure
+declared in the page, compiled to a validated plan at ``reflex run``, columns
+supplied by ``@reflex_xy.data`` state methods — except where a section
+demonstrates the tier that behavior genuinely needs: ``@reflex_xy.figure``
+when the chart *structure* depends on state (§2), ``reflex_xy.append``
+streaming (§3), and ``reflex_xy.inline`` for shared fixed data (§5–§7).
 
-1. **Live figure var + events.** A 1M-point drillable scatter from an
-   ``@reflex_xy.figure`` state method; its data rides the app websocket while
-   Reflex state holds only the token. Hover, click, and box-select arrive as
+1. **The flagship, data-bound.** A 1M-point drillable scatter composed in the
+   page (``reflex_xy.chart(xy.scatter("x", "y", ...), data=Demo.cloud)``);
+   ``@reflex_xy.data`` supplies the columns over the app websocket while
+   Reflex state holds only a handle. Hover, click, and box-select arrive as
    ordinary Reflex events.
-2. **A chart driven by state vars.** A histogram whose bin count is a slider var
-   and whose data is cross-filtered by §1's box-selection; changing either
-   recomputes the figure and re-publishes it under a stable token.
+2. **The escape hatch: structure from state.** A histogram whose bin count is
+   a slider var — bins are chart *structure*, not columns, so this is an
+   ``@reflex_xy.figure`` method; its data is also cross-filtered by §1's
+   box-selection, and changing either re-publishes the figure under a stable
+   token.
 3. **A dynamically updating chart.** A line grown from a background task via
    ``reflex_xy.append``.
-4. **Data computed from ``on_view_change``.** Pan/zoom an overview scatter; a
-   detail figure recomputes from the window the view-change event reports.
-5. **Fixed data, two ways.** A ``xy.Chart`` passed straight to
-   ``reflex_xy.chart`` (static payload tier) and a ``reflex_xy.inline`` token
-   (fixed data served through the kernel).
+4. **Data computed from ``on_view_change``.** Pan/zoom a data-bound overview;
+   a second data var reads the reported window from state and republishes
+   only the in-view columns — the detail histogram's plan never changes.
+5. **Fixed data, two ways.** Concrete columns passed as ``data=`` to a
+   composed chart (compiled to a static payload asset) and a
+   ``reflex_xy.inline`` token (fixed data served through the kernel).
 6. **The drilldown, adapter-native.** The 100M-point live drilldown
    scatter from ``examples/fastapi`` — identical data and mark config — as one
    ``reflex_xy.inline`` token with zero transport code, for A/B-ing the two
@@ -27,6 +36,16 @@ via `inspect.getsource`.
    density scatter behind an ``inline()`` token — clicking a category row
    sends ``legend_toggle`` over the app websocket and the kernel re-bins the
    surface with that category masked out (§34).
+8. **Column republish under a stable handle.** The §8 scatter's slider
+   republishes only the columns (``reflex_xy.scatter_chart(data=..., x="x",
+   ...)``); the compile-validated plan stays put, and viewport and selection
+   survive every republish.
+9. **``rx.cond`` + ``rx.foreach``.** Charts are ordinary Reflex components:
+   a toggle conditionally swaps a composed three-series board for
+   ``rx.foreach`` small multiples over a ``list[DataHandle[...]]`` var —
+   one compile-validated plan, one mount per handle, column names checked
+   inside the loop (fact R7), and both cond branches validated at
+   ``reflex run``.
 
 Run from ``examples/reflex``::
 
@@ -40,14 +59,55 @@ import inspect
 import os
 import warnings
 from functools import lru_cache
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 import reflex as rx
 
 import reflex_xy
 import xy
+from reflex_xy import DataHandle
 from reflex_xy.tokens import BUILDER_ATTR
+
+
+class CloudCols(TypedDict):
+    """Schema of the §1 and §8 data vars — the factories compile-check the
+    column names in the page against these keys (design fact R7)."""
+
+    x: np.ndarray
+    y: np.ndarray
+    mag: np.ndarray
+
+
+class ScanCols(TypedDict):
+    """Schema of the §4 overview data var."""
+
+    t: np.ndarray
+    value: np.ndarray
+
+
+class InViewCols(TypedDict):
+    """Schema of the §4 detail data var (the windowed values)."""
+
+    value: np.ndarray
+
+
+class SensorCols(TypedDict):
+    """Schema of one §9 sensor — the rx.foreach element var keeps this
+    parametrization, so column names are compile-checked inside the loop."""
+
+    t: np.ndarray
+    reading: np.ndarray
+
+
+class SensorBoard(TypedDict):
+    """Schema of the §9 combined board (all sensors in one table)."""
+
+    t: np.ndarray
+    alpha: np.ndarray
+    beta: np.ndarray
+    gamma: np.ndarray
+
 
 POINTS = 1_000_000
 RNG_SEED = 11
@@ -84,22 +144,19 @@ async def _magnitudes() -> tuple[np.ndarray, np.ndarray]:
     return x, mag
 
 
+@lru_cache(maxsize=1)
+def _sensors() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Three correlated sensor traces for §9 (t, alpha, beta, gamma)."""
+    rng = np.random.default_rng(17)
+    t = np.linspace(0.0, 48.0, 2400)
+    base = 20.0 + 6.0 * np.sin(t / 5.0)
+    alpha = base + rng.normal(0.0, 0.7, t.size)
+    beta = base * 0.8 + 4.0 * np.sin(t / 3.0 + 1.2) + rng.normal(0.0, 0.7, t.size)
+    gamma = base * 1.15 - 3.0 * np.cos(t / 7.0) + rng.normal(0.0, 0.7, t.size)
+    return t, alpha, beta, gamma
+
+
 # --- fixed-data charts (module scope) ---------------------------------------
-
-
-def sparkline_chart() -> xy.Chart:
-    """A fixed chart passed directly to ``reflex_xy.chart``, which compiles it
-    to a static payload asset."""
-    t = np.linspace(0.0, 6.0 * np.pi, 4000)
-    decay = np.exp(-t / 9.0)
-    return xy.line_chart(
-        xy.line(t, np.sin(t) * decay, name="signal"),
-        xy.line(t, decay, name="envelope"),
-        xy.x_axis(label="t"),
-        title="static payload tier",
-        width="100%",
-        height=240,
-    )
 
 
 def orbits_chart() -> xy.Chart:
@@ -121,7 +178,7 @@ def orbits_chart() -> xy.Chart:
 
 # Registered at import; the content-addressed token resolves on any backend
 # worker.
-ORBITS_TOKEN = reflex_xy.inline(orbits_chart())
+ORBITS = reflex_xy.inline(orbits_chart())
 
 
 # --- legend interactivity (§7) ----------------------------------------------
@@ -183,7 +240,7 @@ def legend_category_chart() -> xy.Chart:
 
 # Kernel-served so category toggles reach `legend_toggle` and the masked
 # re-bin path; a static payload would only filter the local sample overlay.
-LEGEND_CATS_TOKEN = reflex_xy.inline(legend_category_chart())
+LEGEND_CATS = reflex_xy.inline(legend_category_chart())
 
 
 # --- the live drilldown, adapter-native (§6) --------------------------
@@ -256,26 +313,22 @@ def drilldown_chart(n: int = DRILLDOWN_POINTS) -> xy.Chart:
 
 # One shared kernel-backed figure for every viewer, expressed as a single
 # inline() token; the registry keeps it process-global.
-DRILLDOWN_TOKEN = reflex_xy.inline(drilldown_chart())
+DRILLDOWN = reflex_xy.inline(drilldown_chart())
 
 
 # --- state ------------------------------------------------------------------
 
 
 class Demo(rx.State):
-    """Charts are figure vars; everything else is ordinary app state."""
+    """Data-bound charts read columns from ``@reflex_xy.data`` vars; the §2
+    histogram is an ``@reflex_xy.figure`` var (its structure reads state);
+    everything else is ordinary app state."""
 
     # §1 semantic events
     hovered: dict = {}
     clicked: dict = {}
     click_events: int = 0
     select_events: int = 0
-    # Click/select handlers bump this and the cloud's title reads it, so every
-    # event deliberately republishes the source figure behind its stable
-    # token. The wrapper must keep the viewport and selection across that
-    # republish without re-dispatching events (no feedback loop) — the
-    # counters above make a violation visible as a runaway count.
-    interaction_revision: int = 0
     # §2 state-driven + cross-filter
     bins: int = 60
     sel_active: bool = False
@@ -291,23 +344,12 @@ class Demo(rx.State):
     view_x1: float = 0.0
     visible: int = 0
 
-    @reflex_xy.figure
-    def cloud(self) -> xy.Chart:
+    @reflex_xy.data
+    def cloud(self) -> CloudCols:
+        # Columns only — the chart structure lives in the page (cloud_view)
+        # as a compile-validated plan; this method never runs at compile.
         x, y, mag = _cloud(POINTS)
-        return xy.scatter_chart(
-            xy.scatter(x, y, color=mag, colormap="viridis", opacity=0.8, density=True),
-            # hover and click are off by default; enable them so the point
-            # events reach the handlers below (select/pan/zoom are on already).
-            xy.interaction_config(hover=True, click=True),
-            xy.x_axis(label="feature A"),
-            xy.y_axis(label="feature B"),
-            title=(
-                f"{POINTS // 1_000_000}M points, drillable · "
-                f"handler revision {self.interaction_revision}"
-            ),
-            width="100%",
-            height=460,
-        )
+        return {"x": x, "y": y, "mag": mag}
 
     @reflex_xy.figure
     async def histogram(self) -> xy.Chart:
@@ -334,38 +376,20 @@ class Demo(rx.State):
             height=240,
         )
 
-    @reflex_xy.figure
-    def overview(self) -> xy.Chart:
-        x, y = _scan(120_000)
-        return xy.scatter_chart(
-            xy.scatter(x, y, opacity=0.5, density=True),
-            xy.interaction_config(zoom_axes=("x",)),
-            xy.x_axis(label="t"),
-            xy.y_axis(label="value"),
-            title="overview — zoom the x range",
-            width="100%",
-            height=240,
-        )
+    @reflex_xy.data
+    def scan_points(self) -> ScanCols:
+        t, value = _scan(120_000)
+        return {"t": t, "value": value}
 
-    @reflex_xy.figure
-    def detail(self) -> xy.Chart:
-        # Recomputed from the window the overview last reported through
-        # `on_view_change`: a histogram of only the y-values currently in view.
-        x, y = _scan(120_000)
+    @reflex_xy.data
+    def in_view(self) -> InViewCols:
+        # Republished from the window the overview last reported through
+        # `on_view_change`: only the values currently in view. The detail
+        # histogram's plan is fixed; this data var is what changes.
+        t, value = _scan(120_000)
         if self.view_ready and self.view_x1 > self.view_x0:
-            y = y[(x >= self.view_x0) & (x <= self.view_x1)]
-        title = (
-            f"detail — {y.size:,} points in view"
-            if self.view_ready
-            else "detail — pan/zoom the overview"
-        )
-        return xy.histogram_chart(
-            xy.histogram(y, bins=48, color="#7c3aed"),
-            xy.x_axis(label="value in view"),
-            title=title,
-            width="100%",
-            height=240,
-        )
+            value = value[(t >= self.view_x0) & (t <= self.view_x1)]
+        return {"value": value}
 
     @rx.event
     def on_hover(self, event: reflex_xy.PointHoverEvent):
@@ -375,7 +399,6 @@ class Demo(rx.State):
     @rx.event
     def on_click(self, event: reflex_xy.PointClickEvent):
         self.click_events += 1
-        self.interaction_revision += 1
         modifiers = event.get("modifiers", {})
         self.clicked = {
             "row": event.get("canonical_row_id"),
@@ -386,7 +409,6 @@ class Demo(rx.State):
     @rx.event
     def on_select(self, event: reflex_xy.SelectEndEvent):
         self.select_events += 1
-        self.interaction_revision += 1
         selection = event.get("selection", {})
         total = int(selection.get("total_count") or 0)
         bounds = selection.get("data_bounds") or {}
@@ -419,6 +441,54 @@ class Demo(rx.State):
         x, _ = _scan(120_000)
         self.visible = int(((x >= self.view_x0) & (x <= self.view_x1)).sum())
 
+    # §8 data-bound component: state supplies columns, the page declares the
+    # chart. The slider republishes only the columns; the chart structure is
+    # a compile-validated plan baked into the JSX.
+    bound_points: int = 150_000
+
+    @reflex_xy.data
+    def bound_cloud(self) -> CloudCols:
+        rng = np.random.default_rng(23)
+        x = rng.normal(size=self.bound_points)
+        y = x * 0.6 + rng.normal(scale=0.6, size=self.bound_points)
+        return {"x": x, "y": y, "mag": np.hypot(x, y)}
+
+    @rx.event
+    def set_bound_points(self, value: list[int | float]):
+        self.bound_points = int(value[0])
+
+    # §9 cond + foreach: one combined board or per-sensor small multiples.
+    split: bool = False
+
+    @reflex_xy.data
+    def board(self) -> SensorBoard:
+        t, alpha, beta, gamma = _sensors()
+        return {"t": t, "alpha": alpha, "beta": beta, "gamma": gamma}
+
+    @reflex_xy.data
+    def sensor_alpha(self) -> SensorCols:
+        t, alpha, _, _ = _sensors()
+        return {"t": t, "reading": alpha}
+
+    @reflex_xy.data
+    def sensor_beta(self) -> SensorCols:
+        t, _, beta, _ = _sensors()
+        return {"t": t, "reading": beta}
+
+    @reflex_xy.data
+    def sensor_gamma(self) -> SensorCols:
+        t, _, _, gamma = _sensors()
+        return {"t": t, "reading": gamma}
+
+    @rx.var
+    def sensor_handles(self) -> list[DataHandle[SensorCols]]:
+        """A typed handle list: rx.foreach charts stay schema-checked (R7)."""
+        return [self.sensor_alpha, self.sensor_beta, self.sensor_gamma]
+
+    @rx.event
+    def toggle_split(self):
+        self.split = not self.split
+
     @rx.event(background=True)
     async def stream(self):
         async with self:
@@ -447,6 +517,9 @@ class Demo(rx.State):
 def _source(obj: Any) -> str:
     """Source of a plain function, an ``@reflex_xy.figure`` var, or an
     ``@rx.event`` handler."""
+    # Class-level access to an object-valued computed var hands back reflex's
+    # casted wrapper; the declared var (with its fget) sits behind _original.
+    obj = getattr(obj, "_original", obj)
     fget = getattr(obj, "_fget", None)
     if fget is not None:  # a @reflex_xy.figure / computed var
         builder = getattr(fget, BUILDER_ATTR, None)
@@ -514,10 +587,19 @@ def kv(label: str, value: Any) -> rx.Component:
     )
 
 
-# §1 wiring — the live figure var and its semantic events
+# §1 wiring — the chart composed in the page, bound to the cloud data var.
+# Marks and chrome are plain xy nodes compiled to a validated plan at
+# `reflex run`; a wrong column, colormap, or kwarg fails the compile.
 def cloud_view() -> rx.Component:
     return reflex_xy.chart(
-        Demo.cloud,
+        xy.scatter("x", "y", color="mag", colormap="viridis", opacity=0.8, density=True),
+        # hover and click are off by default; enable them so the point
+        # events reach the state handlers (select/pan/zoom are on already).
+        xy.interaction_config(hover=True, click=True),
+        xy.x_axis(label="feature A"),
+        xy.y_axis(label="feature B"),
+        data=Demo.cloud,
+        title=f"{POINTS // 1_000_000}M points, drillable — declared in the page",
         on_point_hover=Demo.on_hover,
         on_point_click=Demo.on_click,
         on_select_end=Demo.on_select,
@@ -529,7 +611,7 @@ def cloud_view() -> rx.Component:
 # §2 wiring — a chart driven by a slider and another chart's selection
 def histogram_view() -> rx.Component:
     return rx.vstack(
-        reflex_xy.chart(Demo.histogram, height="240px", id="hist"),
+        reflex_xy.chart(figure=Demo.histogram, height="240px", id="hist"),
         rx.hstack(
             rx.text("bins", size="2", color_scheme="gray"),
             rx.slider(
@@ -549,7 +631,7 @@ def histogram_view() -> rx.Component:
 # §3 wiring — a chart that grows from a background task
 def live_view() -> rx.Component:
     return rx.vstack(
-        reflex_xy.chart(Demo.live, height="240px", id="live"),
+        reflex_xy.chart(figure=Demo.live, height="240px", id="live"),
         rx.button(
             rx.cond(Demo.streaming, "stop stream", "go live"),
             on_click=Demo.stream,
@@ -560,22 +642,59 @@ def live_view() -> rx.Component:
     )
 
 
-# §4 wiring — a detail chart computed from the overview's view-change events
+# §4 wiring — two data-bound charts: the overview reports its window through
+# on_view_change; the in_view data var reads that window from state and
+# republishes the filtered column into the detail histogram's fixed plan.
 def viewport_view() -> rx.Component:
     return rx.grid(
-        reflex_xy.chart(Demo.overview, on_view_change=Demo.on_view, height="240px", id="overview"),
-        reflex_xy.chart(Demo.detail, height="240px", id="detail"),
+        reflex_xy.chart(
+            xy.scatter("t", "value", opacity=0.5, density=True),
+            xy.interaction_config(zoom_axes=("x",)),
+            xy.x_axis(label="t"),
+            xy.y_axis(label="value"),
+            data=Demo.scan_points,
+            title="overview — zoom the x range",
+            on_view_change=Demo.on_view,
+            height="240px",
+            id="overview",
+        ),
+        reflex_xy.histogram_chart(
+            data=Demo.in_view,
+            values="value",
+            bins=48,
+            color="#7c3aed",
+            x_axis=xy.x_axis(label="value in view"),
+            title="detail — the points in view",
+            height="240px",
+            id="detail",
+        ),
         columns="2",
         gap="1rem",
         width="100%",
     )
 
 
-# §5 wiring — the two fixed-data tiers
+# §5 wiring — the two fixed-data tiers. Concrete columns as data= compile the
+# composed chart to a static payload asset (renders kernel-less, works under
+# `reflex export`); the inline() token serves fixed data through the kernel.
+def sparkline_view() -> rx.Component:
+    t = np.linspace(0.0, 6.0 * np.pi, 4000)
+    decay = np.exp(-t / 9.0)
+    return reflex_xy.chart(
+        xy.line("t", "signal", name="signal"),
+        xy.line("t", "envelope", name="envelope"),
+        xy.x_axis(label="t"),
+        data={"t": t, "signal": np.sin(t) * decay, "envelope": decay},
+        title="static payload tier",
+        height="240px",
+        id="inline",
+    )
+
+
 def fixed_view() -> rx.Component:
     return rx.grid(
-        reflex_xy.chart(sparkline_chart(), height="240px", id="inline"),
-        reflex_xy.chart(ORBITS_TOKEN, height="240px", id="orbits"),
+        sparkline_view(),
+        reflex_xy.chart(figure=ORBITS, height="240px", id="orbits"),
         columns="2",
         gap="1rem",
         width="100%",
@@ -584,14 +703,97 @@ def fixed_view() -> rx.Component:
 
 # §6 wiring — the whole drilldown integration is this one line
 def drilldown_view() -> rx.Component:
-    return reflex_xy.chart(DRILLDOWN_TOKEN, height="430px", id="drilldown")
+    return reflex_xy.chart(figure=DRILLDOWN, height="430px", id="drilldown")
+
+
+# §8 wiring — the data-bound component: chart declared where it renders,
+# state supplies only columns. Channels, colormap, and column names are all
+# validated at compile (`reflex run` fails on a typo, not the browser).
+def bound_view() -> rx.Component:
+    return rx.vstack(
+        reflex_xy.scatter_chart(
+            data=Demo.bound_cloud,
+            x="x",
+            y="y",
+            color="mag",
+            colormap="viridis",
+            mark_opacity=0.75,
+            density=True,
+            x_axis=xy.x_axis(label="feature A"),
+            y_axis=xy.y_axis(label="feature B"),
+            title="declared in the page, fed by @reflex_xy.data",
+            height="300px",
+            id="bound",
+        ),
+        rx.hstack(
+            rx.text("points", size="2", color_scheme="gray"),
+            rx.slider(
+                default_value=[150_000],
+                min=10_000,
+                max=1_000_000,
+                step=10_000,
+                on_change=Demo.set_bound_points,
+                id="bound-points",
+            ),
+            rx.text(Demo.bound_points, font_family="monospace", size="2", width="5.5rem"),
+            width="100%",
+            align="center",
+            spacing="3",
+        ),
+        width="100%",
+        spacing="2",
+    )
+
+
+# §9 wiring — charts are ordinary components, so rx.cond and rx.foreach just
+# work. Both cond branches are built at page evaluation (both plans compile-
+# validate); the foreach lambda runs once against the element var, producing
+# ONE plan that mounts once per handle in the list.
+def cond_foreach_view() -> rx.Component:
+    combined = reflex_xy.chart(
+        xy.line("t", "alpha", name="alpha"),
+        xy.line("t", "beta", name="beta"),
+        xy.line("t", "gamma", name="gamma"),
+        xy.legend(),
+        xy.x_axis(label="hours"),
+        data=Demo.board,
+        title="all sensors — one composed board",
+        height="260px",
+        id="board",
+    )
+    multiples = rx.grid(
+        rx.foreach(
+            Demo.sensor_handles,
+            lambda handle: reflex_xy.area_chart(
+                data=handle,
+                x="t",
+                y="reading",
+                color="#0284c7",
+                mark_opacity=0.5,
+                height="180px",
+            ),
+        ),
+        columns="3",
+        gap="1rem",
+        width="100%",
+    )
+    return rx.vstack(
+        rx.cond(Demo.split, multiples, combined),
+        rx.button(
+            rx.cond(Demo.split, "one combined board", "small multiples"),
+            on_click=Demo.toggle_split,
+            id="split-btn",
+        ),
+        width="100%",
+        spacing="2",
+    )
 
 
 # §7 wiring — legend interactivity ships with the charts; no handlers needed
 def legend_view() -> rx.Component:
     return rx.grid(
         reflex_xy.chart(legend_series_chart(), height="300px", id="legend-series"),
-        reflex_xy.chart(LEGEND_CATS_TOKEN, height="300px", id="legend-cats"),
+        reflex_xy.chart(figure=LEGEND_CATS, height="300px", id="legend-cats"),
         columns="2",
         gap="1rem",
         width="100%",
@@ -609,11 +811,12 @@ def index() -> rx.Component:
                 size="3",
             ),
             section(
-                "1 · Live figure var + events",
-                "A 1M-point drillable scatter from an @reflex_xy.figure method. "
-                "Zoom to drill density into exact points; hover, click, and box-select. "
-                "Click and select handlers republish the chart itself (the title's "
-                "revision) — viewport and selection must survive each republish.",
+                "1 · The flagship, data-bound",
+                "A 1M-point drillable scatter declared in the page: composed xy "
+                "marks compile to a validated plan at reflex run, and "
+                "@reflex_xy.data supplies only the columns. Zoom to drill "
+                "density into exact points; hover, click, and box-select "
+                "arrive as ordinary Reflex events.",
                 rx.vstack(
                     cloud_view(),
                     kv(
@@ -635,8 +838,7 @@ def index() -> rx.Component:
                     ),
                     kv(
                         "events",
-                        f"{Demo.click_events} clicks · {Demo.select_events} selections · "
-                        f"republish revision {Demo.interaction_revision}",
+                        f"{Demo.click_events} clicks · {Demo.select_events} selections",
                     ),
                     width="100%",
                     spacing="3",
@@ -646,10 +848,12 @@ def index() -> rx.Component:
                 ),
             ),
             section(
-                "2 · A chart driven by state vars",
-                "The histogram's bin count is a slider var, and its data is "
-                "cross-filtered by the box-selection above. Changing either "
-                "re-publishes the figure under a stable token.",
+                "2 · The escape hatch: structure from state",
+                "The histogram's bin count is a slider var — bins are chart "
+                "structure, not columns, so this chart is an @reflex_xy.figure "
+                "method rather than a plan. Its data is also cross-filtered by "
+                "the box-selection above; changing either re-publishes the "
+                "figure under a stable token.",
                 histogram_view(),
                 code_accordion(Demo.histogram, Demo.set_bins, histogram_view),
             ),
@@ -662,8 +866,10 @@ def index() -> rx.Component:
             ),
             section(
                 "4 · Data computed from on_view_change",
-                "Zoom the overview's x range; the detail histogram recomputes from "
-                "only the points in view, driven by the view-change event.",
+                "Zoom the overview's x range; the in_view data var reads the "
+                "reported window from state and republishes only the in-view "
+                "column — the detail histogram's plan never changes, its data "
+                "does.",
                 rx.vstack(
                     viewport_view(),
                     kv(
@@ -677,15 +883,16 @@ def index() -> rx.Component:
                     width="100%",
                     spacing="3",
                 ),
-                code_accordion(Demo.overview, Demo.detail, Demo.on_view, viewport_view),
+                code_accordion(Demo.scan_points, Demo.in_view, Demo.on_view, viewport_view),
             ),
             section(
                 "5 · Fixed data, two ways",
-                "Left: a xy.Chart passed straight to reflex_xy.chart, compiled to "
-                "a static payload asset. Right: a reflex_xy.inline token, whose "
-                "fixed data answers hover/pick from the kernel.",
+                "Left: concrete columns passed as data= to a composed chart, "
+                "compiled to a static payload asset (no kernel, works under "
+                "reflex export). Right: a reflex_xy.inline token, whose fixed "
+                "data answers hover/pick from the kernel.",
                 fixed_view(),
-                code_accordion(sparkline_chart, orbits_chart, fixed_view),
+                code_accordion(sparkline_view, orbits_chart, fixed_view),
             ),
             section(
                 f"6 · The {_point_label(DRILLDOWN_POINTS)} drilldown, adapter-native",
@@ -709,6 +916,28 @@ def index() -> rx.Component:
                 "opt out.",
                 legend_view(),
                 code_accordion(legend_series_chart, legend_category_chart, legend_view),
+            ),
+            section(
+                "8 · Column republish under a stable handle",
+                "The flat single-mark form of the same API as §1: "
+                "reflex_xy.scatter_chart(data=Demo.bound_cloud, x='x', y='y', ...). "
+                "The slider republishes only the columns under a stable handle; "
+                "the compile-validated plan stays put, and viewport and "
+                "selection survive every republish.",
+                bound_view(),
+                code_accordion(Demo.bound_cloud, Demo.set_bound_points, bound_view),
+            ),
+            section(
+                "9 · rx.cond + rx.foreach",
+                "Charts are ordinary Reflex components. The toggle swaps a "
+                "composed three-series board for rx.foreach small multiples "
+                "over a list[DataHandle[SensorCols]] var: one compile-validated "
+                "plan, mounted once per handle, column names checked inside "
+                "the loop — and both cond branches validate at reflex run.",
+                cond_foreach_view(),
+                code_accordion(
+                    Demo.sensor_alpha, Demo.sensor_handles, Demo.toggle_split, cond_foreach_view
+                ),
             ),
             spacing="5",
             width="100%",

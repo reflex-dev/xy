@@ -1,12 +1,15 @@
 """The Reflex component: `reflex_xy.chart(...)`.
 
-One factory, three chart sources (spec/design/reflex-integration.md §5):
+One factory, two chart sources (spec/design/reflex-integration.md §5):
 
-    reflex_xy.chart(Dash.chart)            # @reflex_xy.figure state var (live)
-    reflex_xy.chart(some_token_string)     # register()/inline() token (live)
+    reflex_xy.chart(figure=Dash.chart)     # @reflex_xy.figure var / handle (live)
     reflex_xy.chart(xy.scatter_chart(...)) # a Chart directly (static tier)
 
-A live source compiles to the `token` prop and rides the shared-websocket
+The pre-handle positional forms — `chart(Dash.chart)` and
+`chart(token_string)` — remain as a deprecation shim for one release cycle.
+
+A live source compiles to the typed `figure` prop (`Var[FigureHandle]` —
+wrong vars and raw strings fail at compile) and rides the shared-websocket
 data plane. A `xy` Chart (or internal Figure) passed directly is
 compiled to a static payload asset (payload_asset.py) and lands in the
 `src` prop: the wrapper fetches the binary frame and runs the render client
@@ -37,6 +40,7 @@ chart renders, pans/zooms, and resolves hover tooltips client-side; its small
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Mapping, Set
 from typing import Annotated, Any, Optional
 
@@ -45,10 +49,17 @@ import reflex as rx
 from xy.facets import FacetGrid
 
 from .assets import WRAPPER_TAG, register
+from .handles import DataHandle, FigureHandle
 from .payload_asset import payload_asset
 from .registry import _figure_of
 
 __all__ = ["chart"]
+
+#: Event props that need the interaction kernel: they only ever fire for
+#: live (token/figure) sources. A static payload (``src``) renders and
+#: navigates client-side, so these would be silent no-ops — refused at
+#: create() instead (see _validate_source_events).
+_KERNEL_EVENT_PROPS = ("on_point_hover", "on_point_click", "on_select_end")
 
 # Lazily-built component class (see module doc); Any because reflex Component
 # metaclasses defeat static typing of the create() classmethod.
@@ -66,9 +77,19 @@ def _build_component_cls() -> Any:
         library = wrapper_library
         tag = WRAPPER_TAG
 
-        # Live mode: the figure token minted by @reflex_xy.figure /
-        # register() / inline(). Exactly one of token/src is ever set.
+        # Live mode: the typed figure handle minted by @reflex_xy.figure /
+        # register() / inline(). ``Var[FigureHandle]`` makes a wrong var
+        # (``Dash.points``) or a raw string fail at create() — compile time
+        # (fact R1). Exactly one of figure/token/src is ever set.
+        figure: rx.Var[FigureHandle]
+        # Deprecated live mode: the bare token string. Kept for one release
+        # cycle; the wrapper accepts both (figure wins).
         token: rx.Var[str]
+        # Data-bound mode (plan tier): a compile-validated chart plan digest
+        # plus the DataHandle var whose columns it binds. The wrapper
+        # composes the ``xyp1|<digest>|<data token>`` subscription itself.
+        plan: rx.Var[str]
+        data: rx.Var[DataHandle]
         # Static mode: URL of a payload asset (XYBF frame) to render
         # kernel-less.
         src: rx.Var[str]
@@ -101,6 +122,26 @@ def _build_component_cls() -> Any:
         # works on static charts too. `on_point_hover` stays the narrow
         # legacy row form; new code uses this.
         on_hover: Annotated[rx.EventHandler, lambda payload: [payload]]
+
+        @classmethod
+        def create(cls, *children: Any, **props: Any) -> Any:
+            # Compile-time validation the framework can't do for us
+            # (recharts pattern, fact R5): kernel-backed events on a static
+            # source would be silent no-ops at runtime — fail the compile
+            # with the reason instead.
+            if props.get("src") is not None:
+                offenders = [name for name in _KERNEL_EVENT_PROPS if name in props]
+                if offenders:
+                    msg = (
+                        f"{', '.join(offenders)} need the interaction kernel and never "
+                        "fire on a static chart source (a Chart/Figure compiled to a "
+                        "payload asset). Serve the figure live instead — a "
+                        "@reflex_xy.figure state var, a data-bound factory chart, or "
+                        "register()/inline() — or drop the handler(s). Client-side "
+                        "events (on_hover, on_view_change) work on static charts."
+                    )
+                    raise ValueError(msg)
+            return super().create(*children, **props)
 
     # The class is created lazily inside this function; reflex derives JS
     # identifiers from __qualname__, and "<locals>" would leak an illegal
@@ -267,19 +308,41 @@ def _facet_grid(
     )
 
 
+def _is_handle_var(source: Any) -> bool:
+    """A Reflex Var whose declared value type is FigureHandle."""
+    var_type = getattr(source, "_var_type", None)
+    return isinstance(var_type, type) and issubclass(var_type, FigureHandle)
+
+
+def _warn_positional(replacement: str) -> None:
+    warnings.warn(
+        f"positional reflex_xy.chart(source) is deprecated for live sources; use {replacement}",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 def chart(
-    source: Any,
+    source: Any = None,
     *,
+    figure: Any = None,
     tooltip: Any = None,
     tailwind_classes: Optional[str | Iterable[str]] = None,
     **props: Any,
 ) -> Any:
     """Place a xy chart.
 
-    `source` is a figure token (a `@reflex_xy.figure` state var, or a
-    `register()`/`inline()` token string) for a live, kernel-backed chart —
-    or a `xy` Chart/Figure directly, which renders as a static
-    payload asset with client-side interactivity only (see module doc).
+    ``figure=`` is the live, kernel-backed form: a ``@reflex_xy.figure``
+    state var, or the :class:`~reflex_xy.handles.FigureHandle` returned by
+    ``register()``/``inline()``. The prop is typed ``Var[FigureHandle]``, so
+    the wrong var or a raw string fails at compile with the framework's own
+    ``TypeError``.
+
+    A positional `source` remains supported: an ``xy`` Chart/Figure renders
+    as a static payload asset with client-side interactivity only (see
+    module doc; this is the static tier and stays positional), while
+    var/handle/token-string sources are the deprecated pre-handle spelling
+    of ``figure=`` and warn.
 
     `tooltip=` mounts a Reflex component as the chart tooltip: the render
     client positions it with the built-in tooltip's placement logic (the
@@ -299,7 +362,31 @@ def chart(
     """
     component_cls = _component()
     tailwind_manifest = _tailwind_class_tokens(tailwind_classes)
-    if isinstance(source, (str, rx.Var)):
+    if figure is not None and source is not None:
+        msg = "reflex_xy.chart() takes a positional source or figure=, not both"
+        raise TypeError(msg)
+    if figure is None and source is None:
+        msg = "reflex_xy.chart() needs a chart source: figure=, or a positional Chart/Figure"
+        raise TypeError(msg)
+    if figure is None and (
+        isinstance(source, FigureHandle) or (isinstance(source, rx.Var) and _is_handle_var(source))
+    ):
+        # Pre-handle spelling: the var/handle used to land in the str `token`
+        # prop. Handles ride the typed prop now; legacy str-typed vars keep
+        # the old wire path below.
+        _warn_positional("chart(figure=...)")
+        figure, source = source, None
+    if figure is not None:
+        props.setdefault("width", "100%")
+        props.setdefault("height", "420px")
+        props["figure"] = figure
+        if tailwind_manifest:
+            props["tailwind_class_tokens"] = _tailwind_scan_literal(tailwind_manifest)
+    elif isinstance(source, (str, rx.Var)):
+        _warn_positional(
+            "chart(figure=...) — register()/inline() return a FigureHandle, and "
+            "@reflex_xy.figure vars are FigureHandle-valued"
+        )
         props.setdefault("width", "100%")
         props.setdefault("height", "420px")
         props["token"] = source
@@ -310,8 +397,9 @@ def chart(
         # payload and its Tailwind scan manifest.  In particular, do not call
         # build_payload() just to discover classes: that would duplicate the
         # largest part of static-chart compilation.
-        if tooltip is None and callable(getattr(source, "chrome_components", None)):
-            tooltip = source.chrome_components().get("tooltip")
+        chrome_components = getattr(source, "chrome_components", None)
+        if tooltip is None and callable(chrome_components):
+            tooltip = chrome_components().get("tooltip")
         figure = _figure_of(source)
         if isinstance(figure, FacetGrid):
             return _facet_grid(
@@ -331,8 +419,9 @@ def chart(
             props["tailwind_class_tokens"] = _tailwind_scan_literal(class_manifest)
     else:
         msg = (
-            "reflex_xy.chart() takes a figure token (state var or string) or a "
-            f"xy Chart/Figure, got {type(source).__name__}"
+            "reflex_xy.chart() takes figure= (a @reflex_xy.figure var or "
+            "FigureHandle) or a positional xy Chart/Figure, got "
+            f"{type(source).__name__}"
         )
         raise TypeError(msg)
     if tooltip is not None:

@@ -14,16 +14,19 @@ reflex = pytest.importorskip("reflex")
 pytest.importorskip("reflex_xy")
 
 import reflex_xy.app as adapter_app  # noqa: E402
+from reflex_xy.plan import reset_plans_for_tests  # noqa: E402
 from reflex_xy.registry import reset_registry_for_tests  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _fresh_registry():
-    """Isolate registry + wiring between tests."""
+    """Isolate registry + plan map + wiring between tests."""
     registry = reset_registry_for_tests()
+    reset_plans_for_tests()
     adapter_app.reset_setup_for_tests()
     yield registry
     reset_registry_for_tests()
+    reset_plans_for_tests()
     adapter_app.reset_setup_for_tests()
 
 
