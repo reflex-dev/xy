@@ -405,6 +405,14 @@ def validate_declarative_api_contract(
             errors,
         )
     )
+    if errors:
+        return errors
+
+    chart_class = getattr(components_module, "Chart", None)
+    if chart_class is None:
+        errors.append(f"{components_module.__name__}.Chart is missing")
+        return errors
+
     inventory = build_public_api_inventory(pkg, components_module)
     errors.extend(validate_public_api_inventory(inventory, components_module))
 
@@ -426,10 +434,6 @@ def validate_declarative_api_contract(
                 f"declarative API export {name!r} is undefined in {components_module.__name__}"
             )
 
-    chart_class = getattr(components_module, "Chart", None)
-    if chart_class is None:
-        errors.append(f"{components_module.__name__}.Chart is missing")
-        return errors
     for method in inventory.chart_methods:
         value = getattr(chart_class, method, None)
         if not callable(value):

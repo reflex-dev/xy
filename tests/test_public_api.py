@@ -350,6 +350,24 @@ def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
     )
 
 
+def test_declarative_api_checker_reports_missing_chart_before_inventory() -> None:
+    fake, fake_components = _fake_declarative_modules()
+    del fake_components.Chart
+
+    errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
+
+    assert errors == ["xy.components.Chart is missing"]
+
+
+def test_declarative_api_checker_reports_non_string_component_export() -> None:
+    fake, fake_components = _fake_declarative_modules()
+    fake_components.__all__.append(42)
+
+    errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
+
+    assert any("xy.components.__all__" in error and "42" in error for error in errors)
+
+
 def test_public_api_checker_rejects_missing_method_docs(tmp_path: Path) -> None:
     chart_doc = tmp_path / "figure-methods.md"
     selection_doc = tmp_path / "events-and-callbacks.md"
