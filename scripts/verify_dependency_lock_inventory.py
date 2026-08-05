@@ -30,23 +30,30 @@ def _is_lockfile(path: Path) -> bool:
 
 def find_dependency_lockfiles(root: Path = ROOT) -> frozenset[str]:
     """Return committed dependency lockfiles, excluding local generated files."""
-    result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("dependency lock inventory requires a git checkout and git") from exc
     return frozenset(
         path
         for raw_path in result.stdout.split(b"\0")
         if raw_path
-        for path in (raw_path.decode("utf-8"),)
+        for path in (raw_path.decode("utf-8", "surrogateescape"),)
         if not any(part in EXCLUDED_PATH_PARTS for part in Path(path).parts)
         if _is_lockfile(Path(path))
     )
 
 
 def main() -> int:
-    actual = find_dependency_lockfiles()
+    try:
+        actual = find_dependency_lockfiles()
+    except RuntimeError as exc:
+        print(f"dependency lockfile inventory failed: {exc}", file=sys.stderr)
+        return 1
     missing = sorted(EXPECTED_LOCKFILES - actual)
     unexpected = sorted(actual - EXPECTED_LOCKFILES)
     if missing or unexpected:
