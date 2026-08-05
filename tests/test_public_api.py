@@ -5,6 +5,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -13,11 +14,19 @@ import pytest
 
 def _load_public_api_module():
     path = Path(__file__).resolve().parents[1] / "scripts" / "check_public_api.py"
-    spec = importlib.util.spec_from_file_location("check_public_api", path)
+    module_name = "_xy_test_public_api_checker"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
     return module
 
 
@@ -396,6 +405,21 @@ def test_public_api_checker_rejects_missing_method_docs(tmp_path: Path) -> None:
     assert any("missing_selection_method" in error for error in errors)
     assert not any("visible_method" in error for error in errors)
     assert not any("'rows'" in error for error in errors)
+
+
+def test_public_api_manifest_rejects_removed_supported_method() -> None:
+    inventory = replace(
+        check_public_api.PUBLIC_API_MANIFEST,
+        chart_methods=tuple(
+            method
+            for method in check_public_api.PUBLIC_API_MANIFEST.chart_methods
+            if method != "select"
+        ),
+    )
+
+    errors = check_public_api.validate_public_api_manifest(inventory)
+
+    assert any("chart_methods" in error and "select" in error for error in errors)
 
 
 def test_public_api_checker_rejects_stale_component_module_all() -> None:

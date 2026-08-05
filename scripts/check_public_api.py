@@ -19,6 +19,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -105,6 +106,121 @@ class PublicApiInventory:
             *self.deprecated_exports,
             *self.private_exports,
         )
+
+
+PUBLIC_API_MANIFEST = PublicApiInventory(
+    component_reexports=("CHART_DOM_SLOTS",),
+    component_types=(
+        "Animation",
+        "Annotation",
+        "Axis",
+        "Chart",
+        "Colorbar",
+        "Component",
+        "ExportConfig",
+        "FacetChart",
+        "Interaction",
+        "Legend",
+        "Mark",
+        "Modebar",
+        "Spring",
+        "Theme",
+        "Tooltip",
+    ),
+    mark_factories=(
+        "area",
+        "bar",
+        "box",
+        "column",
+        "contour",
+        "ecdf",
+        "error_band",
+        "errorbar",
+        "heatmap",
+        "hexbin",
+        "hist",
+        "histogram",
+        "line",
+        "mark",
+        "ribbon",
+        "sankey",
+        "scatter",
+        "segments",
+        "stairs",
+        "stem",
+        "step",
+        "triangle_mesh",
+        "violin",
+    ),
+    annotation_factories=(
+        "arrow",
+        "callout",
+        "hline",
+        "label",
+        "marker",
+        "text",
+        "threshold",
+        "threshold_zone",
+        "vline",
+        "x_band",
+        "y_band",
+    ),
+    axis_factories=("r_axis", "theta_axis", "x_axis", "y_axis"),
+    chrome_factories=("colorbar", "interaction_config", "legend", "modebar", "theme", "tooltip"),
+    chart_factories=(
+        "area_chart",
+        "bar_chart",
+        "box_chart",
+        "chart",
+        "column_chart",
+        "contour_chart",
+        "ecdf_chart",
+        "error_band_chart",
+        "errorbar_chart",
+        "heatmap_chart",
+        "hexbin_chart",
+        "histogram_chart",
+        "line_chart",
+        "pie_chart",
+        "polar_bar_chart",
+        "polar_chart",
+        "radar_chart",
+        "sankey_chart",
+        "scatter_chart",
+        "segments_chart",
+        "stairs_chart",
+        "stem_chart",
+        "step_chart",
+        "triangle_mesh_chart",
+        "violin_chart",
+        "wind_rose",
+    ),
+    support_factories=("animation", "export_config", "facet_chart", "spring"),
+    chart_methods=(
+        "figure",
+        "chrome_components",
+        "reflex_components",
+        "widget",
+        "show",
+        "set_view",
+        "reset_view",
+        "select",
+        "clear_selection",
+        "view_state",
+        "to_html",
+        "html",
+        "_repr_html_",
+        "to_svg",
+        "to_png",
+        "to_image",
+        "write_image",
+        "memory_report",
+        "append",
+        "pick",
+        "select_range",
+    ),
+    selection_methods=("index", "__len__", "xy", "rows"),
+)
 
 
 def _string_list(value: Any, label: str, errors: list[str]) -> list[str]:
@@ -337,8 +453,38 @@ def validate_public_api_inventory(
     return errors
 
 
+def validate_public_api_manifest(
+    inventory: PublicApiInventory,
+    manifest: PublicApiInventory = PUBLIC_API_MANIFEST,
+) -> list[str]:
+    """Ensure discovery neither adds nor silently removes supported names."""
+    errors: list[str] = []
+    fields = (
+        "component_reexports",
+        "component_types",
+        "mark_factories",
+        "annotation_factories",
+        "axis_factories",
+        "chrome_factories",
+        "chart_factories",
+        "support_factories",
+        "chart_methods",
+        "selection_methods",
+    )
+    for field_name in fields:
+        expected = set(getattr(manifest, field_name))
+        actual = set(getattr(inventory, field_name))
+        missing = sorted(expected - actual)
+        added = sorted(actual - expected)
+        if missing:
+            errors.append(f"public API manifest names missing from discovery ({field_name}): {missing}")
+        if added:
+            errors.append(f"public API discovery contains unmanifested names ({field_name}): {added}")
+    return errors
+
+
 def _has_doc_reference(text: str, name: str, *, receiver: str | None = None) -> bool:
-    tokens = [f"`{name}`", f"`{name}()`", f"`{name}(`", f"{name}("]
+    tokens = [f"`{name}`", f"`{name}()`", f"`{name}(`"]
     if receiver is not None:
         tokens.extend(
             (
@@ -347,7 +493,9 @@ def _has_doc_reference(text: str, name: str, *, receiver: str | None = None) -> 
                 f"{receiver}.{name}(",
             )
         )
-    return any(token in text for token in tokens)
+    return any(token in text for token in tokens) or re.search(
+        rf"(?<![A-Za-z0-9_]){re.escape(name)}\s*\(", text
+    ) is not None
 
 
 def validate_docs_inventory(
@@ -382,7 +530,10 @@ def validate_docs_inventory(
 
 
 def validate_declarative_api_contract(
-    pkg: ModuleType, components_module: ModuleType | None = None
+    pkg: ModuleType,
+    components_module: ModuleType | None = None,
+    *,
+    manifest: PublicApiInventory | None = None,
 ) -> list[str]:
     """Ensure the Reflex-shaped composition API remains a named public contract."""
     errors: list[str] = []
@@ -415,6 +566,8 @@ def validate_declarative_api_contract(
 
     inventory = build_public_api_inventory(pkg, components_module)
     errors.extend(validate_public_api_inventory(inventory, components_module))
+    if manifest is not None:
+        errors.extend(validate_public_api_manifest(inventory, manifest))
 
     for name in inventory.declarative_exports:
         if name not in public_names:
@@ -688,7 +841,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     errors.extend(validate_static_typing_surface(pkg))
     errors.extend(validate_public_api(pkg))
     errors.extend(validate_component_public_api(pkg))
-    errors.extend(validate_declarative_api_contract(pkg))
+    errors.extend(validate_declarative_api_contract(pkg, manifest=PUBLIC_API_MANIFEST))
     if check_lazy_import:
         eager = sorted(after_import - before)
         errors[:0] = _format_eager_import_findings("in-process", eager)
