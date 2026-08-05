@@ -54,6 +54,9 @@ _EXPORTS = {
     "set_view": ".app",
     "setup": ".app",
     "chart": ".component",
+    "AsyncDataVar": ".data_vars",
+    "DataVar": ".data_vars",
+    "data": ".data_vars",
     "DataHandle": ".handles",
     "FigureHandle": ".handles",
     "CanonicalRowIdGroup": ".events",
@@ -78,10 +81,12 @@ _EXPORTS = {
 
 __all__ = [
     "XY_NAMESPACE",
+    "AsyncDataVar",
     "AsyncFigureVar",
     "CanonicalRowIdGroup",
     "DataBounds",
     "DataHandle",
+    "DataVar",
     "FigureHandle",
     "FigureRegistry",
     "FigureVar",
@@ -98,6 +103,7 @@ __all__ = [
     "append",
     "chart",
     "clear_selection",
+    "data",
     "figure",
     "inline",
     "register",
@@ -231,6 +237,7 @@ def release(token: "str | FigureHandle") -> None:
 if TYPE_CHECKING:
     from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
     from .component import chart
+    from .data_vars import AsyncDataVar, DataVar, data
     from .events import (
         CanonicalRowIdGroup,
         DataBounds,

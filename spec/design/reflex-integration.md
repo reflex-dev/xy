@@ -425,6 +425,82 @@ generations are leased; the sweep skips them until the mutation and version
 bump finish. Rapid re-publishes coalesce: an un-started broadcast absorbs newer
 publishes and always ships the latest payload.
 
+### 3.6 The data-bound tier: `@reflex_xy.data`, plans, composite tokens
+
+The primary component API (adopted design: Option 6 of
+[`reflex-component-api-options.md`](reflex-component-api-options.md); work
+plan in [`reflex-component-api-implementation.md`](reflex-component-api-implementation.md))
+splits the figure var's job in two: **structure is declared in the page**,
+**state supplies only columns**.
+
+```python
+class CloudData(TypedDict):
+    x: np.ndarray; y: np.ndarray; mag: np.ndarray
+
+class Dash(rx.State):
+    points: int = 200_000
+
+    @reflex_xy.data                     # columns only — no chart API inside
+    def cloud(self) -> CloudData: ...
+
+def index():
+    return reflex_xy.scatter_chart(     # flat form; reflex_xy.chart(*nodes)
+        data=Dash.cloud,                # is the composed multi-mark form
+        x="x", y="y", color="mag", colormap="viridis",
+        height="460px", on_select_end=Dash.select,
+    )
+```
+
+**`@reflex_xy.data`** (`data_vars.py` — the module is named `data_vars`
+because a `data.py` submodule would shadow the `reflex_xy.data` export) is
+the exact sibling of `@reflex_xy.figure`: a computed var whose value is a
+typed `DataHandle` wrapping `xyd1|<client>|<state>|<var>` (same grammar,
+charset, purity contract, pre-session short-circuit, underscore refusal,
+async dispatch, and `None`-releases semantics as figure vars). Evaluating
+it validates the returned mapping — string keys, array-likes, one shared
+length; the only checks that need real data — and publishes the **columns**
+into the registry. The method's return annotation is the compile-time
+schema channel (fact R7): a `TypedDict` parametrizes the handle
+(`DataHandle[CloudData]`), and the factories read the column names from the
+class-level var without executing anything; a plain `dict` annotation
+degrades to first-execution validation.
+
+**Plans** (`plan.py`). A chart factory call at page evaluation compiles its
+xy nodes (string channels only) into a `ChartPlan`: the real tree is built,
+zero-row placeholder columns are bound for every referenced channel through
+the production resolution path (a recording table — the column list cannot
+drift from what binding will look up), and `.figure()` runs once — the full
+mark/config validation gate (X1/X2) at compile time, in milliseconds, with
+no data ingestion (constraint 2). The canonical JSON of the tree
+(`plan_version: 1`) is content-addressed into a sha256-prefix `digest` and
+registered in a process-local `{digest: plan}` map. Binding is the reverse:
+columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
+Column-mismatch errors name both sides (*"plan binds column 'mag';
+Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark
+`data=`, and `render=` components — data-free structure only. The probe
+figure also yields `dom_class_strings()`, so **live data-bound charts get
+automatic Tailwind discovery** (previously live sources needed the manual
+inventory). The factories that build plans, and the errors they catch at
+`reflex run`, are §5.
+
+**Column entries.** Published columns are registry entries in their own
+right, keyed by the data token: pure rebuildable caches of Reflex state
+(the `@reflex_xy.data` method is the recipe), so they carry none of the
+figure entry's kernel machinery — no locks (a republish replaces the whole
+immutable generation and bumps its version), no pins, always sweepable
+under the same TTL. The registry also keeps the `data token → {digests}`
+index that lets a column republish rebuild every mounted dependent plan,
+and an error seam (`on_error`) for room-wide failures that answer no
+request; §4 covers the fan-out those two enable.
+
+**Plan format stability.** `plan_version: 1` is part of the canonical
+serialization and a golden digest is pinned in
+`tests/reflex_adapter/test_plan.py`. Digests are content addresses, not a
+migration surface: after a format (or grammar) change, old subscribers'
+digests simply miss and resync against the recompiled page — the golden
+exists to catch *accidental* churn, and an intentional change bumps
+`PLAN_VERSION` and re-records it.
+
 ## 4. Updates and streaming
 
 - **State-driven rebuild** (filter changed): the figure var recomputes,
@@ -718,11 +794,15 @@ demo app models.
 ```
 python/reflex_xy/
   registry.py                token -> FigureEntry(figure, version, lock); TTL;
-                             publish/push fan-out seams; append
-  tokens.py                  xyv1 token grammar; builder discovery on vars
+                             publish/push/error fan-out seams; append; column
+                             entries + data-token -> digest index (§3.6)
+  tokens.py                  xyv1/xyd1/xyp1 token grammar; builder discovery
   handles.py                 FigureHandle / DataHandle[S] (+ serializers):
                              the typed values chart state vars carry
   vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
+  data_vars.py               @reflex_xy.data (DataVar: columns in, handle out)
+  plan.py                    ChartPlan: zero-row probe, canonical digest,
+                             process-local plan map, bind (§3.6)
   state_bridge.py            token -> state_manager -> builder rebuild hook
   namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
                              affinity, rebuild-on-miss, binary attachments
@@ -746,9 +826,9 @@ examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
                              whose category toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        token/registry/var/bridge/payload-asset units,
-                             component compile, framework contract pins
-                             (R1/R7/R8), and a real-websocket
+tests/reflex_adapter/        token/registry/var/data-var/plan/bridge/
+                             payload-asset units, component compile, framework
+                             contract pins (R1/R7/R8), and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
                              publish-broadcast/append/unsub
