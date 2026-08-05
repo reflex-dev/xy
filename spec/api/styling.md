@@ -723,7 +723,7 @@ raises before it reaches the client.
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
-| `axis_band` | Invisible axis-only pan/zoom gesture band |
+| `axis_band` | Invisible axis-only pan/zoom gesture band (exists only while its axis is navigable — navigation-gated for export, like the badge) |
 | `axis_line` | One Cartesian axis baseline |
 | `tick_mark` | One Cartesian major or minor tick mark |
 
@@ -1324,7 +1324,7 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `root`, `chrome`, `canvas`, `title`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
+| Slots | `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
 | Vector text — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
 | Raster text — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
 | Box slots | `background`, `border` (color/width/style, dashed/dotted as dash arrays), symmetric `border-radius`, `padding` (title only), `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS_BY_SLOT`), drawn through the shared `xy._chromebox` lowering in both writers |

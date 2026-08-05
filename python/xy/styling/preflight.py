@@ -73,6 +73,12 @@ _VECTOR_FORMATS = frozenset({"svg", "pdf"})
 
 _SLOTS_BY_ID = {slot.id: slot for slot in capabilities.CHART_SLOTS}
 
+#: Slots whose channel carries a condition the report cannot resolve from a
+#: declaration alone, so a lossless declaration still routes as a subset:
+#: `legend`'s merged declaration may or may not carry an unlisted property,
+#: and `tick_mark` boxes exist only where the axis authored a tick_length.
+_CONDITIONAL_CHANNEL_SLOTS: frozenset[str] = frozenset({"legend", "tick_mark"})
+
 
 @dataclass(frozen=True)
 class SlotFinding:
@@ -186,13 +192,11 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     """(honored property names, qualifier) for a native-subset slot.
 
     The subsets are the writers' own constants — the text properties per
-    family, the legend frame's merged-declaration box vocabulary
-    (`_svg.LEGEND_BOX_PROPS`), and the chrome-box vocabulary per box-capable
-    slot (`_svg.SLOT_BOX_PROPS_BY_SLOT`, all owned by the writer module so
-    this report cannot drift from what actually draws). A property in none
-    of a slot's sets has no channel into a static file and is a provable
-    loss: the earlier declaration-level qualification rounded exactly those
-    to silence, which let warn stay quiet and strict permit a drop.
+    family, the shared chrome-box vocabulary per box-capable slot
+    (`_svg.SLOT_BOX_PROPS_BY_SLOT`, `_svg.SLOT_BOX_PROPS`), and the legend
+    frame's merged-declaration box vocabulary (`_svg.LEGEND_BOX_PROPS`) —
+    all owned by the writer module so the report cannot drift from what the
+    writers actually draw.
     """
     from .. import _svg
 
@@ -202,6 +206,23 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
             "box properties route through the merged legend declaration; see the "
             "capability matrix legend note"
         )
+    if slot in ("axis_line", "tick_mark"):
+        # Pure box slots: no text of their own, so the text subsets do not
+        # apply; the box vocabulary is honored by both writers.
+        qualifier = ""
+        if slot == "tick_mark":
+            qualifier = (
+                "tick marks exist only where an axis authors tick_length > 0; a "
+                "zero-length tick draws no box (no length is invented for a "
+                "styled slot)"
+            )
+        return frozenset(_svg.SLOT_BOX_PROPS), qualifier
+    if slot in ("tick_label", "axis_title"):
+        # Text slots that also draw a box: the union of the family's text
+        # subset and the box vocabulary. On the raster family a declared
+        # `opacity` reaches the box but not the glyphs (the atlas blit has
+        # no alpha channel) — recorded in the capability-matrix note.
+        return text | _svg.SLOT_BOX_PROPS, ""
     if slot == "annotation_label":
         return text | _svg.SLOT_BOX_PROPS, (
             "box properties route through the shared chrome-box lowering; the "
@@ -302,7 +323,15 @@ def _styles_finding(slot: str, decls: dict[str, Any], fmt: str) -> SlotFinding:
     honored, qualifier = _honored_props(slot, family)
     kept = tuple(p for p in props if p in honored)
     lost = tuple(p for p in props if p not in honored)
-    if slot == "legend" and not lost:
+    if qualifier and not lost and slot in _CONDITIONAL_CHANNEL_SLOTS:
+        # Nothing drops, but this slot's channel carries a CONDITION the
+        # report cannot resolve: the legend's merged declaration may or may
+        # not carry an unlisted property, and a tick mark exists only where
+        # the axis authored a tick_length. That uncertainty is the subset
+        # route — qualified, never silent (§28). Every other qualifier is
+        # explanatory prose about a channel that does carry what it was
+        # given, so it rides a `survives` route as detail rather than
+        # downgrading a lossless export.
         return SlotFinding(
             slot=slot,
             source="styles",

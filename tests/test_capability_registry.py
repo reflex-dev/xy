@@ -67,12 +67,16 @@ def test_every_slot_has_exactly_one_applicability() -> None:
 def test_state_gated_families_cannot_be_misfiled() -> None:
     # A new `modebar_*` (or tooltip/crosshair/badge) slot must carry its
     # family's state; defaulting to "static" would overstate the clean-static
-    # surface — the direction that is easy to miss.
+    # surface — the direction that is easy to miss. `axis_band` is a
+    # one-slot family: the browser creates it only while its axis is
+    # navigable (flag-F resolution, static-chrome-parity plan §8), so it is
+    # interaction-gated exactly like the badge, not structural chrome.
     families = {
         "tooltip": "hover",
         "modebar": "modebar",
         "crosshair_": "crosshair",
         "badge": "view",
+        "axis_band": "navigation",
     }
     for slot in caps.CHART_SLOTS:
         expected = next(

@@ -52,12 +52,20 @@ VOCABULARIES: frozenset[str] = frozenset({"css", "svg", "xy"})
 #: Interaction/view states that gate live-only chrome. A slot tagged with one
 #: of these exists in the document only while its state is active — a tooltip
 #: under hover, the modebar under a pointer, a reduction badge under the view
-#: that triggered it — so a clean static export does not *contain* it. Styling
-#: such a slot is therefore not "dropped" by a clean static export: there is
-#: nothing in the file to style. Counting those slots against static parity
-#: overstated the gap; tagging them records the distinction instead of leaving
-#: it silent (§28).
-EXPORT_STATES: tuple[str, ...] = ("hover", "selection", "crosshair", "modebar", "view")
+#: that triggered it, an axis gesture band only while its axis is navigable —
+#: so a clean static export does not *contain* it. Styling such a slot is
+#: therefore not "dropped" by a clean static export: there is nothing in the
+#: file to style. Counting those slots against static parity overstated the
+#: gap; tagging them records the distinction instead of leaving it silent
+#: (§28).
+EXPORT_STATES: tuple[str, ...] = (
+    "hover",
+    "selection",
+    "crosshair",
+    "modebar",
+    "view",
+    "navigation",
+)
 
 #: Every slot is either present in a clean static export ("static") or gated
 #: by exactly one export state.
@@ -326,6 +334,19 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         visible_when="the slot declares opacity below 1 over overlapping annotation shapes",
         tracked_by="tests/test_chrome_parity_p3.py documents the double-blend delta",
     ),
+    RendererDivergence(
+        id="axis_line_edge_geometry",
+        what="Where an axis spine's box sits relative to the plot edge",
+        webgl="right/bottom spines inset by their own width (DIVs laid inside the box)",
+        svg="centered on the plot edge, where the unstyled stroke has always run",
+        native="centered on the plot edge (same shared box producer as SVG)",
+        visible_when="axis_width above ~2px, or a styled axis_line box under a magnifier",
+        tracked_by=(
+            "matching the browser would move every unstyled spine and break the "
+            "byte pin; the writers' centered geometry is pinned by golden in "
+            "tests/test_chrome_parity_p2.py"
+        ),
+    ),
 )
 
 
@@ -453,6 +474,61 @@ _SLOT_EXCEPTIONS["annotation_label"] = (
     "a pre-existing limit of the rotated text path.",
 )
 
+#: The shared chrome-box vocabulary note, referenced by the axis-chrome slots
+#: below. The vocabulary itself is `xy._svg.SLOT_BOX_PROPS` (writer-owned, the
+#: preflight reads the same constant).
+_BOX_VOCAB_NOTE = (
+    "background, border (color/width/style, dashed/dotted as dash arrays), "
+    "symmetric border-radius, offset box-shadow (blur/spread recorded "
+    "unrepresentable), opacity and fill-opacity"
+)
+_SLOT_EXCEPTIONS["axis_line"] = (
+    "partial",
+    "styles={'axis_line': ...}",
+    "Spines as boxes when box properties are declared: " + _BOX_VOCAB_NOTE + ". "
+    "The spine keeps its axis_color ink unless the slot declares a background "
+    "(an explicit transparent erases it, as in the browser). Writers center "
+    "the box on the plot edge where the unstyled stroke ran; the browser "
+    "insets right/bottom spines (see KNOWN_RENDERER_DIVERGENCES). Polar "
+    "spines stay strokes — the browser shares the limit (DIV spines cannot "
+    "express a circle).",
+)
+_SLOT_EXCEPTIONS["tick_mark"] = (
+    "partial",
+    "styles={'tick_mark': ...}",
+    "Tick marks as boxes when box properties are declared: " + _BOX_VOCAB_NOTE + ". "
+    "Geometry is the centered stroke's own coverage — the same pixels as the "
+    "browser's rect. Marks exist only where an axis authors tick_length > 0; "
+    "a zero-length tick draws nothing (and casts no shadow) — the preflight "
+    "carries the note rather than a length being invented. tick_color stays "
+    "the narrower paint selector; polar has no cartesian tick marks "
+    "(recorded).",
+)
+_SLOT_EXCEPTIONS["tick_label"] = (
+    "partial",
+    "styles={'tick_label': ...}",
+    _SLOT_SUBSET_NOTE + " Additionally a per-label box: " + _BOX_VOCAB_NOTE + ", "
+    "with padding growing the axis gutters so the box stays on the canvas "
+    "(cartesian; the polar label ring keeps its flat 30px allowance). Box "
+    "geometry is measured with the writers' DejaVu metrics, so an authored "
+    "font-family renders its own glyphs inside a DejaVu-measured box "
+    "(recorded misfit); letter-spacing is likewise outside the gutter "
+    "measurement. On the raster writer a declared opacity reaches the box, "
+    "not the glyphs (the atlas blit has no alpha channel).",
+)
+_SLOT_EXCEPTIONS["axis_title"] = (
+    "partial",
+    "styles={'axis_title': ...}",
+    _SLOT_SUBSET_NOTE + " Additionally a per-title box: " + _BOX_VOCAB_NOTE + "; "
+    "a rotated y-title box is pre-rotated to a polygon (radius 0) or an "
+    "arc path (radius > 0), staying inside the PDF closed subset. The axis's "
+    "own label_* keys win per property over the slot (label_color, "
+    "label_font_family/style/weight); font-size runs the other way — the "
+    "slot's font-size wins over label_size (pre-existing, documented in "
+    "spec/api/styling.md). DejaVu-measured box vs authored-family text and "
+    "raster box-not-glyph opacity are recorded exactly as for tick_label.",
+)
+
 
 #: The state that gates each live-only slot. Listed explicitly, one entry per
 #: slot rather than by prefix, so `tests/test_capability_registry.py` can
@@ -484,6 +560,14 @@ _STATE_GATED_SLOTS: dict[str, str] = {
     "crosshair_y": "crosshair",
     "badge": "view",
     "badge_item": "view",
+    # Flag-F resolution (static-chrome-parity plan §8): the browser creates
+    # the band only when its axis is navigable (`57_viewstate.ts
+    # _axisBandNavigable`) — pan/zoom chrome, not structure — and a static
+    # file has no gesture for it to serve, so it follows the badge precedent
+    # (interaction-gated, no writer emission) rather than the earlier
+    # capability-matrix "clean static" row. Deemed structural again only by
+    # a spec decision, never by a writer quietly drawing it.
+    "axis_band": "navigation",
 }
 
 

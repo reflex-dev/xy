@@ -11,7 +11,18 @@ from __future__ import annotations
 import struct
 
 from xy import _raster, _svg
-from xy._chromebox import ChromeBox, box_padding, expand_box_shorthands, lower_box
+from xy._chromebox import (
+    ChromeBox,
+    box_at,
+    box_padding,
+    box_room,
+    box_template,
+    expand_box_shorthands,
+    lower_box,
+    padding_sides,
+    parse_padding,
+    text_box,
+)
 from xy._pdf import svg_to_pdf
 
 
@@ -275,3 +286,78 @@ def test_explicit_stroke_keeps_the_pinned_pyplot_bbox_serialization() -> None:
     cmd = _raster._Cmd(1.0)
     _raster._emit_slot_box(cmd, invisible)
     assert bytes(cmd.buf) == b""
+
+
+# -- the phase-2 additions: padding, templates, poses --------------------------
+
+
+def test_padding_shorthand_expands_all_four_css_forms() -> None:
+    # The one correct expansion — the annotation parsers' [0]/[1]-only
+    # reading silently misread the 3- and 4-value forms.
+    assert parse_padding("6px") == (6.0, 6.0, 6.0, 6.0)
+    assert parse_padding("6px 10px") == (6.0, 10.0, 6.0, 10.0)
+    assert parse_padding("1px 2px 3px") == (1.0, 2.0, 3.0, 2.0)
+    assert parse_padding("1px 2px 3px 4px") == (1.0, 2.0, 3.0, 4.0)
+    assert parse_padding(8) == (8.0, 8.0, 8.0, 8.0)
+    assert parse_padding("1em") is None  # relative units stay writer-domain
+
+
+def test_padding_longhands_override_the_shorthand_per_side() -> None:
+    sides = padding_sides({"padding": "6px", "padding-left": "20px"})
+    assert sides == (6.0, 6.0, 6.0, 20.0)
+
+
+def test_box_room_is_padding_plus_border_per_side() -> None:
+    room = box_room({"padding": "1px 2px 3px 4px", "border-color": "#ccc"})
+    assert room == (2.0, 3.0, 4.0, 5.0)  # the 1px implied chrome border
+    assert box_room(None) == (0.0, 0.0, 0.0, 0.0)
+    assert box_room({"padding": "2px", "border-style": "none", "border-width": "3px"}) == (
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+    )
+
+
+def test_template_and_box_at_intern_the_parse_and_clamp_per_instance() -> None:
+    template = box_template("tick_mark", {"background": "#123", "border-radius": "8px"})
+    assert template.radius == 8.0  # unclamped in the template
+    stamped = box_at(template, 5, 5, 4, 20, qualifiers=("x", "major", "bottom", "0"))
+    assert stamped.radius == 2.0  # clamped to min(w, h) / 2 per instance
+    assert stamped.qualifiers == ("x", "major", "bottom", "0")
+
+
+def test_box_at_fallback_fill_respects_an_explicit_transparent() -> None:
+    # An absent background falls back to the slot's default ink; an explicit
+    # transparent must NOT — the browser distinction fill_declared exists for.
+    absent = box_at(
+        box_template("axis_line", {"border-color": "#ccc"}), 0, 0, 10, 10, fallback_fill="#ff0000"
+    )
+    assert absent.fill == "#ff0000"
+    erased = box_at(
+        box_template("axis_line", {"background": "transparent", "border-color": "#ccc"}),
+        0,
+        0,
+        10,
+        10,
+        fallback_fill="#ff0000",
+    )
+    assert erased.fill is None
+
+
+def test_text_box_wraps_the_block_with_padding_in_anchor_space() -> None:
+    class Block:
+        width, ascent, descent, line_count, line_step = 40.0, 8.0, 2.0, 2, 12.0
+
+    box = text_box(
+        box_template("tick_label", {"background": "#123"}),
+        (1.0, 2.0, 3.0, 4.0),
+        x=100.0,
+        y=50.0,
+        anchor="middle",
+        block=Block(),
+        angle=-45.0,
+    )
+    assert (box.x, box.y) == (100.0 - 20.0 - 4.0, 50.0 - 8.0 - 1.0)
+    assert (box.w, box.h) == (40.0 + 4.0 + 2.0, 8.0 + 2.0 + 12.0 + 1.0 + 3.0)
+    assert (box.angle, box.cx, box.cy) == (-45.0, 100.0, 50.0)

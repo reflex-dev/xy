@@ -59,10 +59,20 @@ def test_native_writers_read_a_property_subset_not_the_whole_cascade() -> None:
 
 #: The paint property each static slot answers to. The box slots take
 #: `background` — `legend`'s frame, the P1 family (`root`, `chrome`,
-#: `canvas`) and `annotation_layer`'s shape overlay; every other static slot
-#: is text, so it takes the SVG text paint.
+#: `canvas`), `annotation_layer`'s overlay, and the pure box slots
+#: `axis_line`/`tick_mark`; every other static slot is text, so it takes
+#: the SVG text paint.
 _SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
-    slot: "background" for slot in ("legend", "root", "chrome", "canvas", "annotation_layer")
+    slot: "background"
+    for slot in (
+        "legend",
+        "root",
+        "chrome",
+        "canvas",
+        "annotation_layer",
+        "axis_line",
+        "tick_mark",
+    )
 }
 
 
@@ -72,11 +82,14 @@ def test_every_static_slot_carries_its_paint_into_svg(slot: str) -> None:
     # file contains must carry that chrome's paint into the file. The chart
     # carries one of everything a slot can address, including an annotation
     # label for the annotation chrome family.
+    # file contains must carry that chrome's paint into the file. The x axis
+    # authors tick_length so the chart actually contains tick marks —
+    # tick_length defaults to 0 and a styled tick_mark slot invents no length.
     chart = xy.scatter_chart(
         xy.scatter(x=[0.0, 1.0], y=[1.0, 2.0], name="series", color=[0.0, 1.0], colormap="viridis"),
         xy.legend(title="Legend title"),
         xy.colorbar(title="Colorbar title"),
-        xy.x_axis(label="x label"),
+        xy.x_axis(label="x label", style={"tick_length": 4}),
         xy.text(0.5, 1.5, "annotation"),
         title="chart title",
         styles={slot: {_SLOT_PAINT_PROPERTY[slot]: "#123456"}},

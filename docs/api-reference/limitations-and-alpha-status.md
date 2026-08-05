@@ -85,7 +85,7 @@ implementation. The bullets below are the boundaries that page's rows imply.
 - **Styling does not survive every export path equally, and the boundary is
   published rather than left to be discovered.** Mark, axis, and chart-level
   `style=` reach all three renderers. Per-slot `styles={slot: {...}}` reaches
-  them for the fifteen slots that name chrome a static file contains — the box
+  them for the seventeen slots that name chrome a static file contains — the box
   slots `root`, `chrome`, `canvas` and `title` (background, border, radius,
   opacity; `chrome` is background/opacity only), `annotation_label` with the
   same box subset under its own `style=`, `annotation_layer` (opacity +
