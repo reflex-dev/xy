@@ -1,8 +1,10 @@
 // XYChart: mount a xy figure inside a Reflex app.
 //
-// Two modes (spec/design/reflex-integration.md). A live subscription has
-// two spellings that reduce to one token: `figure` ({token} — the typed
-// FigureHandle) and the deprecated bare `token` string.
+// Two modes (spec/design/reflex-integration.md). Live subscriptions have
+// three spellings that reduce to one token: `figure` ({token} — the typed
+// FigureHandle), the deprecated bare `token` string, and the plan tier's
+// `plan` digest + `data` ({token} DataHandle), composed client-side as
+// `xyp1|<plan>|<data.token>` once the data handle hydrates.
 //
 // Live — this component does NOT open its own connection.
 // socket.io multiplexing reuses the app's engine.io websocket when the
@@ -262,6 +264,8 @@ export function XYChart(props) {
   const {
     token,
     figure,
+    plan,
+    data,
     src,
     onPointHover,
     onPointClick,
@@ -279,11 +283,16 @@ export function XYChart(props) {
     ...divProps
   } = props;
   void _tailwindClassTokens;
-  // One subscription token from the two live spellings. `figure` is the
+  // One subscription token from the three live spellings. `figure` is the
   // typed handle ({token}); the bare `token` string is the deprecated wire.
   // A present handle always wins — its empty token means "not ready" (no
-  // subscription yet), never a fallback to the legacy spelling.
-  const liveToken = figure != null ? figure.token || null : token || null;
+  // subscription yet), never a fallback to the legacy spelling. A plan
+  // digest + data handle compose the plan-tier token client-side, again
+  // only once the data handle is hydrated.
+  const figureToken = figure != null ? figure.token || null : token || null;
+  const liveToken = (plan && data && data.token)
+    ? `xyp1|${plan}|${data.token}`
+    : figureToken;
   const elRef = useRef(null); // inner chart mount (wiped on payload swaps)
   const outerRef = useRef(null); // stable wrapper: events, tooltip slot
   const tooltipSlotRef = useRef(null);
@@ -428,6 +437,11 @@ export function XYChart(props) {
     const viewCallbacks = [];
     const pendingStatePushes = [];
     let awaitingPayload = true;
+    // Consecutive server-initiated resyncs without an intervening payload.
+    // Bounds the retry loop when a resync can never succeed (e.g. a stale
+    // plan digest after hot-reload drift; the remount with the new digest
+    // resubscribes on its own).
+    let errResyncs = 0;
 
     const resetEpoch = () => {
       // Timer callbacks capture row/domain data from the preceding figure
@@ -706,6 +720,7 @@ export function XYChart(props) {
         && payloadVersion !== null
         && data.version < payloadVersion
       ) return;
+      errResyncs = 0; // an applied payload proves resubscription works again
       const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
       const sameGenerationAddressedReplacement =
         data.mid != null &&
@@ -900,7 +915,10 @@ export function XYChart(props) {
     const onErr = (data) => {
       if (destroyed || !data || data.fig !== liveToken) return;
       console.warn(`xy: ${data.error} (fig ${data.fig})`);
-      if (data.resync === true && socket.connected) subscribe();
+      if (data.resync === true && socket.connected && errResyncs < 5) {
+        errResyncs += 1;
+        subscribe();
+      }
     };
 
     const onDisconnect = () => {

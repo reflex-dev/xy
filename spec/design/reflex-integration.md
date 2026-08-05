@@ -473,15 +473,61 @@ drift from what binding will look up), and `.figure()` runs once — the full
 mark/config validation gate (X1/X2) at compile time, in milliseconds, with
 no data ingestion (constraint 2). The canonical JSON of the tree
 (`plan_version: 1`) is content-addressed into a sha256-prefix `digest` and
-registered in a process-local `{digest: plan}` map. Binding is the reverse:
+registered in a process-local `{digest: plan}` map. Fact X4 ("page bodies
+run in every worker") turned out to hold only for processes that run the
+frontend compile — **backend-only workers (dev backend subprocesses and
+prod workers) import the app module but leave pages unevaluated**, which
+would leave their plan maps empty and every plan subscription answering
+`err {resync}`. The integration therefore makes X4 true by construction:
+`setup(app)`'s lifespan evaluates the app's unevaluated page component
+functions once at worker startup (`_ensure_page_plans`), before serving —
+factories register their plans as a side effect and the built trees are
+discarded (plans and payload assets are content-addressed and idempotent;
+a failing page degrades to a warning rather than taking down the data
+plane). Binding is the reverse:
 columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
 Column-mismatch errors name both sides (*"plan binds column 'mag';
 Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark
 `data=`, and `render=` components — data-free structure only. The probe
 figure also yields `dom_class_strings()`, so **live data-bound charts get
 automatic Tailwind discovery** (previously live sources needed the manual
-inventory). The factories that build plans, and the errors they catch at
-`reflex run`, are §5.
+inventory).
+
+**Factories.** `factories.py` provides the flat per-kind forms
+(`reflex_xy.scatter_chart(data=…, x="x", y="y", …)`) and the composed
+`reflex_xy.chart(*nodes, data=…)` for multi-mark charts, plus curated
+re-exports of the xy node constructors (`reflex_xy.scatter` *is*
+`xy.scatter`, so a hallucinated constructor dies at import instead of
+surviving to hydrate). The kwarg partition between mark options, chrome,
+component props, and event handlers is derived from `inspect.signature` at
+import — not hand-listed — so it cannot drift from xy's own signatures;
+collisions get generated aliases (`mark_<name>`, with `width` becoming
+`stroke_width` where the mark hasn't claimed it), pinned by test. Errors
+this tier catches at `reflex run`: hallucinated factory names (import),
+unknown kwargs with a did-you-mean (partition), bad colormaps/enums/axis
+refs (zero-row probe), unknown column names against a typed data var
+(schema channel), and the wrong var or a raw string in `data=` (typed
+prop, R1).
+
+**Static tier symmetry.** `data=` given a concrete mapping (not a Var)
+binds immediately and routes to the §3.4 payload-asset path — same
+validation, same spec-aware bind errors, works under `reflex export`,
+never touches the registry.
+
+**Kind coverage (recorded decision).** Flat factories exist for every mark
+kind whose validators compile zero-row — scatter, line, histogram, bar,
+area, step, stem, column, errorbar, error_band, segments — each derived
+from the mark's signature, and the composed `reflex_xy.chart(*nodes,
+data=...)` accepts any mix of those marks plus annotations and chrome.
+Aggregating kinds whose validators require at least one finite value (box,
+violin, hexbin, contour, heatmap, stairs, ecdf) and the data-taking
+composite factories (pie, radar, wind_rose, sankey — eager numeric work at
+call time) are **excluded from the plan tier**: the probe refuses them with
+an error naming the two supported routes (`@reflex_xy.figure`, or a
+concrete xy Chart on the static tier). Extending them would need
+value-independent validation or a synthetic-row probe whose failures could
+depend on made-up values — rejected as a silent decimation of the compile
+guarantee (§28 spirit).
 
 **Column entries.** Published columns are registry entries in their own
 right, keyed by the data token: pure rebuildable caches of Reflex state
@@ -851,6 +897,9 @@ python/reflex_xy/
   data_vars.py               @reflex_xy.data (DataVar: columns in, handle out)
   plan.py                    ChartPlan: zero-row probe, canonical digest,
                              process-local plan map, bind (§3.6)
+  factories.py               scatter/line/histogram/bar_chart flat factories +
+                             composed chart(*nodes): signature-derived kwarg
+                             partition, schema checks, plan/data/static mount
   state_bridge.py            token -> state_manager -> builder/data/plan
                              rebuild hooks
   namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
@@ -858,7 +907,7 @@ python/reflex_xy/
                              binary attachments
   app.py                     setup(app), XYPlugin (post_compile), lifespan
   component.py               chart(figure=...) -> rx.Component (local-JSX
-                             library); typed figure prop; static tier
+                             library); typed figure/data props; static tier
   payload_asset.py           static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   assets/                    XYChart.jsx; links xy's installed render client
@@ -876,7 +925,7 @@ examples/reflex/  (repo root) Reflex showcase: figure-var drilldown with
                              whose category toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
-tests/reflex_adapter/        token/registry/var/data-var/plan/bridge/
+tests/reflex_adapter/        token/registry/var/data-var/plan/factory/bridge/
                              payload-asset units, component compile, framework
                              contract pins (R1/R7/R8), and a real-websocket
                              integration suite (uvicorn + socketio client)

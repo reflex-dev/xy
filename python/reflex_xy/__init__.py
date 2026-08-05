@@ -3,38 +3,55 @@
 The integration in one paragraph (full design:
 spec/design/reflex-integration.md in the xy repo): chart data rides
 the app's *existing* websocket as a second socket.io namespace — binary
-columns, no JSON numbers, no extra endpoints to proxy. Figures live in a
-per-process registry keyed by tokens; Reflex state holds only a small typed
-handle wrapping the token. A `@reflex_xy.figure` state method is both the
-chart definition and the recovery recipe: any worker can rebuild the figure
-from state when a reconnect lands somewhere new, so there is no central
-figure store to operate.
+columns, no JSON numbers, no extra endpoints to proxy. Figures and columns
+live in a per-process registry keyed by tokens; Reflex state holds only
+small typed handles. State methods are both the definition and the
+recovery recipe: any worker can rebuild what it serves from state when a
+reconnect lands somewhere new, so there is no central figure store to
+operate.
 
-Quickstart::
+Quickstart (the data-bound component API — structure is declared in the
+page and validated at ``reflex run``; state supplies only columns)::
 
     # rxconfig.py
     config = rx.Config(app_name="dash", plugins=[reflex_xy.XYPlugin()])
 
     # dash/dash.py
+    from typing import TypedDict
     import numpy as np
     import reflex as rx
-    import xy
     import reflex_xy
+
+    class CloudData(TypedDict):
+        x: np.ndarray
+        y: np.ndarray
+        mag: np.ndarray
 
     class Dash(rx.State):
         points: int = 200_000
 
-        @reflex_xy.figure
-        def chart(self) -> xy.Chart:
+        @reflex_xy.data
+        def cloud(self) -> CloudData:
             rng = np.random.default_rng(7)
-            xs = rng.normal(size=self.points)
-            ys = xs * 0.6 + rng.normal(scale=0.6, size=self.points)
-            return xy.scatter_chart(xy.scatter(xs, ys), width="100%", height=460)
+            x = rng.normal(size=self.points)
+            y = x * 0.6 + rng.normal(scale=0.6, size=self.points)
+            return {"x": x, "y": y, "mag": np.hypot(x, y)}
 
     def index() -> rx.Component:
-        return reflex_xy.chart(figure=Dash.chart, height="460px")
+        return reflex_xy.scatter_chart(
+            data=Dash.cloud,
+            x="x", y="y", color="mag", colormap="viridis",
+            height="460px",
+        )
 
     app = rx.App()
+
+Multi-mark charts compose xy nodes around the same data var
+(``reflex_xy.chart(reflex_xy.scatter("x", "y"), reflex_xy.line("x", "t"),
+data=Dash.cloud)``), and charts whose *structure* depends on state keep the
+escape hatch: an ``@reflex_xy.figure`` method returning an ``xy.Chart``,
+rendered with ``reflex_xy.chart(figure=Dash.built)`` and probed at compile
+(§3.1 of the design).
 """
 
 from __future__ import annotations
@@ -53,7 +70,18 @@ _EXPORTS = {
     "select": ".app",
     "set_view": ".app",
     "setup": ".app",
-    "chart": ".component",
+    "chart": ".factories",
+    "area_chart": ".factories",
+    "bar_chart": ".factories",
+    "column_chart": ".factories",
+    "error_band_chart": ".factories",
+    "errorbar_chart": ".factories",
+    "histogram_chart": ".factories",
+    "line_chart": ".factories",
+    "scatter_chart": ".factories",
+    "segments_chart": ".factories",
+    "stem_chart": ".factories",
+    "step_chart": ".factories",
     "AsyncDataVar": ".data_vars",
     "DataVar": ".data_vars",
     "data": ".data_vars",
@@ -79,6 +107,65 @@ _EXPORTS = {
     "figure": ".vars",
 }
 
+#: Curated re-exports of xy node constructors: `reflex_xy.scatter` *is*
+#: `xy.scatter`, so composed data-bound charts read uniformly
+#: (`reflex_xy.chart(reflex_xy.scatter("x", "y"), data=...)`) and a
+#: hallucinated constructor dies at import against this explicit map
+#: instead of surviving to hydrate. Marks whose validators need data
+#: (box, violin, hexbin, …) are still listed — the plan probe refuses them
+#: with the recorded Phase 3 guidance rather than a misleading
+#: AttributeError. Chart factories are deliberately absent: the flat
+#: `*_chart` names above are reflex-native factories, not xy's.
+_XY_REEXPORTS = frozenset(
+    {
+        # marks
+        "scatter",
+        "line",
+        "area",
+        "step",
+        "stairs",
+        "stem",
+        "column",
+        "bar",
+        "histogram",
+        "errorbar",
+        "error_band",
+        "segments",
+        "ecdf",
+        "box",
+        "violin",
+        "hexbin",
+        "contour",
+        "heatmap",
+        # annotations
+        "vline",
+        "hline",
+        "x_band",
+        "y_band",
+        "text",
+        "label",
+        "marker",
+        "arrow",
+        "threshold",
+        "threshold_zone",
+        "callout",
+        # chrome + config constructors
+        "x_axis",
+        "y_axis",
+        "theta_axis",
+        "r_axis",
+        "legend",
+        "tooltip",
+        "colorbar",
+        "modebar",
+        "export_config",
+        "theme",
+        "interaction_config",
+        "animation",
+        "spring",
+    }
+)
+
 __all__ = [
     "XY_NAMESPACE",
     "AsyncDataVar",
@@ -100,26 +187,85 @@ __all__ = [
     "ViewChangeEvent",
     "XYNamespace",
     "XYPlugin",
+    "animation",
     "append",
+    "area",
+    "area_chart",
+    "arrow",
+    "bar",
+    "bar_chart",
+    "box",
+    "callout",
     "chart",
     "clear_selection",
+    "colorbar",
+    "column",
+    "column_chart",
+    "contour",
     "data",
+    "ecdf",
+    "error_band",
+    "error_band_chart",
+    "errorbar",
+    "errorbar_chart",
+    "export_config",
     "figure",
+    "heatmap",
+    "hexbin",
+    "histogram",
+    "histogram_chart",
+    "hline",
     "inline",
+    "interaction_config",
+    "label",
+    "legend",
+    "line",
+    "line_chart",
+    "marker",
+    "modebar",
+    "r_axis",
     "register",
     "registry",
     "release",
     "reset_view",
     "resolve_selection",
+    "scatter",
+    "scatter_chart",
+    "segments",
+    "segments_chart",
     "select",
     "set_view",
     "setup",
+    "spring",
+    "stairs",
+    "stem",
+    "stem_chart",
+    "step",
+    "step_chart",
+    "text",
+    "theme",
+    "theta_axis",
+    "threshold",
+    "threshold_zone",
+    "tooltip",
+    "violin",
+    "vline",
+    "x_axis",
+    "x_band",
+    "y_axis",
+    "y_band",
 ]
 
 
 def _load_export(name: str) -> Any:
     module_name = _EXPORTS.get(name)
     if module_name is None:
+        if name in _XY_REEXPORTS:
+            import xy
+
+            value = getattr(xy, name)
+            globals()[name] = value
+            return value
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(import_module(module_name, __name__), name)
 
@@ -236,7 +382,6 @@ def release(token: "str | FigureHandle") -> None:
 
 if TYPE_CHECKING:
     from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
-    from .component import chart
     from .data_vars import AsyncDataVar, DataVar, data
     from .events import (
         CanonicalRowIdGroup,
@@ -250,6 +395,7 @@ if TYPE_CHECKING:
         SelectionPayload,
         ViewChangeEvent,
     )
+    from .factories import bar_chart, chart, histogram_chart, line_chart, scatter_chart
     from .handles import DataHandle, FigureHandle
     from .namespace import XY_NAMESPACE, XYNamespace
     from .registry import FigureRegistry, registry

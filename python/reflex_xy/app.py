@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import warnings
 from typing import Any, Optional
 
 from reflex.plugins import Plugin
@@ -58,9 +59,50 @@ def setup(app: Any) -> XYNamespace:
     namespace = XYNamespace(registry, rebuild=make_rebuild_hook(app))
     sio.register_namespace(namespace)
     wire(namespace)
-    app.register_lifespan_task(_xy_lifespan)
+
+    async def _lifespan() -> None:
+        # The lifespan runs at server startup: every page has been added and
+        # the serving loop exists, in *every* worker — including backend-only
+        # workers that never ran the frontend compile. Register the plans
+        # there before serving (see _ensure_page_plans), then run the sweep.
+        _ensure_page_plans(app)
+        await _xy_lifespan()
+
+    app.register_lifespan_task(_lifespan)
     _namespace = namespace
     return namespace
+
+
+def _ensure_page_plans(app: Any) -> None:
+    """Evaluate the app's page component functions so chart plans register.
+
+    The data-bound tier's plan map is process-local and populated by the
+    chart factories *as page bodies run* (reflex-integration.md §3.6). A
+    backend-only worker — dev backend subprocesses and prod workers alike —
+    imports the app module but skips the frontend compile, so its pages sit
+    unevaluated and every plan subscription would answer `err {resync}`
+    forever. Running the page functions here makes "the plan map is
+    populated in every worker" true by construction; the built component
+    trees are discarded (plans and payload assets are content-addressed and
+    idempotent). A failing page degrades to a warning: it would have failed
+    the real compile in the compile process, and one broken page must not
+    take down the data plane for the others.
+    """
+    pages = getattr(app, "_unevaluated_pages", None) or {}
+    for route, page in dict(pages).items():
+        component = getattr(page, "component", None)
+        if not callable(component):
+            continue  # already-built component instances registered at add_page
+        try:
+            component()
+        except Exception as exc:  # noqa: BLE001 - user page code is an input boundary
+            warnings.warn(
+                f"reflex_xy: evaluating page {route!r} for chart-plan "
+                f"registration failed: {exc!r}. Data-bound charts declared on "
+                "this page cannot be served by this worker.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
 
 def wire(namespace: XYNamespace) -> None:

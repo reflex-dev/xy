@@ -49,7 +49,7 @@ import reflex as rx
 from xy.facets import FacetGrid
 
 from .assets import WRAPPER_TAG, register
-from .handles import FigureHandle
+from .handles import DataHandle, FigureHandle
 from .payload_asset import payload_asset
 from .registry import _figure_of
 
@@ -85,6 +85,11 @@ def _build_component_cls() -> Any:
         # Deprecated live mode: the bare token string. Kept for one release
         # cycle; the wrapper accepts both (figure wins).
         token: rx.Var[str]
+        # Data-bound mode (plan tier): a compile-validated chart plan digest
+        # plus the DataHandle var whose columns it binds. The wrapper
+        # composes the ``xyp1|<digest>|<data token>`` subscription itself.
+        plan: rx.Var[str]
+        data: rx.Var[DataHandle]
         # Static mode: URL of a payload asset (XYBF frame) to render
         # kernel-less.
         src: rx.Var[str]
@@ -139,8 +144,8 @@ def _build_component_cls() -> Any:
                         f"{', '.join(offenders)} need the interaction kernel and never "
                         "fire on a static chart source (a Chart/Figure compiled to a "
                         "payload asset). Serve the figure live instead — a "
-                        "@reflex_xy.figure state var or register()/inline() — "
-                        "or drop the handler(s). Client-side "
+                        "@reflex_xy.figure state var, a data-bound factory chart, or "
+                        "register()/inline() — or drop the handler(s). Client-side "
                         "events (on_hover, on_view_change) work on static charts."
                     )
                     raise ValueError(msg)
