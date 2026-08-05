@@ -8,11 +8,10 @@ from typing import Any, get_args, get_origin, get_type_hints
 import numpy as np
 import pytest
 
-from _public_api_test_utils import load_public_api_module
-
 import xy
 import xy._figure as figure_module
 import xy.components as components
+from _public_api_test_utils import load_public_api_module
 from xy.export import Engine
 
 ROOT = Path(__file__).resolve().parents[1]
