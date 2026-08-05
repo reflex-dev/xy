@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
 import inspect
-import sys
 from os import PathLike
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
 import numpy as np
 import pytest
+
+from _public_api_test_utils import load_public_api_module
 
 import xy
 import xy._figure as figure_module
@@ -17,25 +17,9 @@ from xy.export import Engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def _load_public_api_module():
-    path = ROOT / "scripts" / "check_public_api.py"
-    module_name = "_xy_test_check_public_api"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    previous = sys.modules.get(module_name)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if previous is None:
-            sys.modules.pop(module_name, None)
-        else:
-            sys.modules[module_name] = previous
-    return module
-
-
-PUBLIC_API_INVENTORY = _load_public_api_module().build_public_api_inventory(xy, components)
+PUBLIC_API_INVENTORY = load_public_api_module(
+    "_xy_test_check_public_api"
+).build_public_api_inventory(xy, components)
 MARK_FACTORIES = PUBLIC_API_INVENTORY.mark_factories
 ANNOTATION_FACTORIES = PUBLIC_API_INVENTORY.annotation_factories
 AXIS_FACTORIES = PUBLIC_API_INVENTORY.axis_factories
