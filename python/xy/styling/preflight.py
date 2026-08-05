@@ -75,9 +75,17 @@ _SLOTS_BY_ID = {slot.id: slot for slot in capabilities.CHART_SLOTS}
 
 #: Slots whose channel carries a condition the report cannot resolve from a
 #: declaration alone, so a lossless declaration still routes as a subset:
-#: `legend`'s merged declaration may or may not carry an unlisted property,
-#: and `tick_mark` boxes exist only where the axis authored a tick_length.
-_CONDITIONAL_CHANNEL_SLOTS: frozenset[str] = frozenset({"legend", "tick_mark"})
+#: `tick_mark` boxes exist only where the axis authored a tick_length.
+#:
+#: `legend` left this set in P4. It was here because the merged legend
+#: declaration honored only some spellings of its own vocabulary — kebab
+#: `border-color` was folded and then silently dropped, and `padding`/
+#: `row-gap` were honored in `em` but not in the px an author would write —
+#: so a declaration the report called lossless could still lose a property.
+#: Both spellings and both unit domains are now honored by the writers and
+#: named in `_svg.LEGEND_BOX_PROPS`, so every property the report can see
+#: routes provably and the qualifier is explanatory prose, not uncertainty.
+_CONDITIONAL_CHANNEL_SLOTS: frozenset[str] = frozenset({"tick_mark"})
 
 
 @dataclass(frozen=True)
@@ -203,8 +211,21 @@ def _honored_props(slot: str, family: str) -> tuple[frozenset[str], str]:
     text = frozenset(_svg.SLOT_RASTER_PROPS if family == "native_raster" else _svg.SLOT_TEXT_PROPS)
     if slot == "legend":
         return text | _svg.LEGEND_BOX_PROPS, (
-            "box properties route through the merged legend declaration; see the "
-            "capability matrix legend note"
+            "box properties route through the merged legend declaration, in the "
+            "CSS and the camelCase spelling alike; see the capability matrix "
+            "legend note"
+        )
+    if slot in ("legend_item", "legend_swatch"):
+        # Pure box slots: the legend's row and swatch cells have no text of
+        # their own (the label is `legend_label`).
+        return frozenset(_svg.SLOT_BOX_PROPS_BY_SLOT[slot]), (
+            "box properties only; the cell's size comes from the legend layout, "
+            "so padding is not accepted rather than accepted and ignored"
+        )
+    if slot in ("legend_title", "legend_label"):
+        return text | _svg.SLOT_BOX_PROPS, (
+            "the row box under the text; an authored font-size and letter-spacing "
+            "also feed the legend measurement, so the frame grows to contain them"
         )
     if slot in ("axis_line", "tick_mark"):
         # Pure box slots: no text of their own, so the text subsets do not

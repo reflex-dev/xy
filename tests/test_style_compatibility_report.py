@@ -108,9 +108,12 @@ def test_pdf_inherits_the_vector_subset() -> None:
 
 
 def test_styles_on_a_slot_with_no_native_path_are_named_lost() -> None:
-    report = _chart(styles={"legend_swatch": {"border-radius": "2px"}})
+    # `legend_swatch` used to be the example here; P4 gave it a writer, so the
+    # example moved to a slot that still has none. `colorbar_bar` is static
+    # chrome whose writers arrive with the colorbar family (plan §7).
+    report = _chart(styles={"colorbar_bar": {"border-radius": "2px"}})
     report = report.style_compatibility_report("png")
-    finding = _finding(report, "legend_swatch", "styles")
+    finding = _finding(report, "colorbar_bar", "styles")
     assert finding.route == pf.ROUTE_BROWSER_ONLY
     assert finding.lost == ("border-radius",)
     assert not report.lossless
@@ -174,11 +177,21 @@ def test_legend_styles_route_at_property_level() -> None:
     boxed = _chart(styles={"legend": {"background": "black", "border-radius": "6px"}})
     report = boxed.style_compatibility_report("png")
     finding = _finding(report, "legend", "styles")
-    assert finding.route == pf.ROUTE_SUBSET
+    # P4: the legend's channel became exact, so a declaration that loses
+    # nothing routes as `survives` rather than being qualified into the
+    # subset route. It left `preflight._CONDITIONAL_CHANNEL_SLOTS` with the
+    # last spelling the writers honored only halfway.
+    assert finding.route == pf.ROUTE_SURVIVES
     assert finding.lost == ()
     assert set(finding.kept) == {"background", "border-radius"}
     assert "merged legend declaration" in finding.detail
     assert report.lossless
+
+    # The kebab spelling of a border is honored now, not silently dropped.
+    kebab = _chart(styles={"legend": {"border_color": "#00ff00", "border_width": "2px"}})
+    kebab_finding = _finding(kebab.style_compatibility_report("png"), "legend", "styles")
+    assert kebab_finding.lost == ()
+    assert set(kebab_finding.kept) == {"border-color", "border-width"}
 
     # letter-spacing on the raster path is in neither the raster text subset
     # nor the box vocabulary: named lost, not qualified away.

@@ -1324,12 +1324,13 @@ carry a defined subset of their declarations into SVG, PNG and PDF:
 
 | | |
 | --- | --- |
-| Slots | `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
+| Slots | `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `legend_item`, `legend_swatch`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels` (`_svg.STATIC_STYLED_SLOTS`) |
 | Vector text — SVG, PDF | `font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`, `opacity`, and the text paint — `fill`, or `color` (`_svg.SLOT_TEXT_PROPS`) |
 | Raster text — PNG, JPEG, WebP | `font-size`, `font-weight`, `font-style`, and the text paint (`_svg.SLOT_RASTER_PROPS`) |
-| Box slots | `background`, `border` (color/width/style, dashed/dotted as dash arrays), symmetric `border-radius`, `padding` (title only), `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS_BY_SLOT`), drawn through the shared `xy._chromebox` lowering in both writers |
+| Box slots | `background`, `border` (color/width/style, dashed/dotted as dash arrays), symmetric `border-radius`, `padding` (title and legend only), `opacity`, `fill-opacity` (`_svg.SLOT_BOX_PROPS_BY_SLOT`), drawn through the shared `xy._chromebox` lowering in both writers |
 | `annotation_label` box | the same chrome-box subset (`_svg.SLOT_BOX_PROPS`), folded UNDER the annotation's own `style=` per property group |
 | `annotation_layer` / `labels` | group opacity + plot-clipped background on the overlay; container text defaults + background on `labels` |
+| Legend family | frame box on `legend`; a row box per visible entry on `legend_item`; the handle cell on `legend_swatch` (on a patch entry it IS the patch, so a declared paint or radius wins over the trace's); row boxes plus `text-align` on `legend_title`/`legend_label` |
 
 ```python
 xy.chart(
@@ -1356,8 +1357,23 @@ wins — an axis's own `label_color` over `styles={"axis_title": ...}`.
 The legend's three spellings — `styles={"legend": ...}`,
 `xy.legend(style=...)`, and the `--chart-legend-bg` theme token — merge into one
 declaration block before either native writer reads it, so what agrees in the
-browser agrees in a PNG. An explicit `background` paints opaque;
-`--xy-legend-frame-alpha` stays the knob for the default grey frame.
+browser agrees in a PNG. Both the CSS and the camelCase spelling of every box
+property in that block are honored (`border-color` and `borderColor` alike). An
+explicit `background` paints opaque, `background: "transparent"` drops the frame
+entirely (Matplotlib `frameon=False`), and `--xy-legend-frame-alpha` stays the
+knob for the default grey frame — whose alpha dims its border with it, as the
+single translucent element the browser paints.
+
+Legend geometry — `padding` (1–4 value shorthand and the `padding-*`
+longhands), `row-gap`/`gap`, and `font-size` — is spelled in **resolved px** or
+in the legend's historical `em` multipliers; both resolve to the same frame at
+the same size. There is exactly one legend geometry in the repo
+(`_svg._legend_layout`), and four consumers read it: the SVG writer, the raster
+writer, pyplot's anchored-legend room reservation, and pyplot's `loc="best"`
+scoring. A padding change therefore moves the drawn frame and the room reserved
+for it together. An authored `legend_title`/`legend_label` `font-size` and
+`letter-spacing` feed that measurement too, so a large legend font grows the
+frame instead of overflowing it.
 
 Full contract and enforcement: [export.md](export.md) § 9 and
 `tests/test_export_style_survival.py`.

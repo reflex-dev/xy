@@ -169,6 +169,57 @@ tests in `tests/test_chrome_parity_p1.py`.
 
 ## 6. Phase 4 — legend
 
+**Status: LANDED** (branch alek/style-compat; `tests/test_chrome_parity_legend.py`
+is the executable acceptance). Decisions taken while landing, each recorded
+where its consumers read it:
+
+- **The em residue is retired.** `_legend_length`/`_legend_padding` resolve px
+  and em alike, so px legend geometry interns into the snapshot like any other
+  resolved length and only a genuinely relative value stays writer-domain — for
+  the same reason every other slot's does. `tests/test_declared_snapshot.py`
+  now enumerates exactly one residue entry (`tick_label`'s `0.08em`
+  letter-spacing, the axis family's qualified-not-folded ruling from §4 item 5).
+  One wrinkle is recorded rather than smuggled: schema v1's layout vocabulary
+  carries `gap` but not `row-gap` (`resolved.LAYOUT_PROPERTIES_V1`), so a px
+  `row-gap` is still writer-domain while the equivalent px `gap` interns. That
+  is a schema-vocabulary question, not a legend one.
+- **Flags A and H resolved, not copied.** One shadow constant
+  (`_LEGEND_SHADOW_OFFSET`/`_LEGEND_SHADOW_COLOR`) and one shape: the shadow
+  takes the frame's own radius, so the SVG side's unconditional `rx="4"` on a
+  square frame is gone, and the raster's 55/255 ≈ 0.2157 became the SVG's 0.22.
+- **Flag B resolved in favor of the coupling.** The frame's alpha dims its
+  border, because the live frame is one translucent element. `ChromeBox` grew
+  `border_opacity` to carry it (`stroke-opacity` in SVG, folded into the border
+  RGBA in raster) — a widening of the shared model, not a legend special case.
+- **A blurred `box-shadow` keeps the offset-rect and records the blur.**
+  Honoring the blur literally means `_parse_shadow` returns None, which would
+  have silently deleted the shadow pyplot authors for `legend(shadow=True)`
+  (`2px 2px 4px rgba(0,0,0,0.3)`). The historical offset-rect is the fallback;
+  the blur lands in `ChromeBox.unrepresentable` (§28).
+- **`legend` left `preflight._CONDITIONAL_CHANNEL_SLOTS`.** It was there
+  because the merged declaration honored only *some* spellings of its own
+  vocabulary, so a "lossless" declaration could still lose a property. Both
+  spellings and both unit domains are honored now and named in
+  `LEGEND_BOX_PROPS`, so every property the report can see routes provably.
+- **Serialization delta, deliberate and measured.** Folding the frame onto the
+  one shared emitter necessarily re-serializes it: the one-off
+  `fill="rgba(128,128,128,0.08)"` literal became the repo's
+  `fill="rgb(128, 128, 128)" fill-opacity="0.08"`, an opacity of 1 is spelled
+  by omission, and `rx="0"` is no longer written. Raster output is **pixel-
+  identical** across the unstyled corpus (line/bar/scatter/titled/multi-series,
+  verified before and after), and the four tests that pinned the old spelling
+  now assert the paint instead. §9.1's "unstyled bytes identical" is satisfied
+  in rendering; the spelling change is the cost of item 3 and is recorded here
+  rather than left for a reader to discover.
+- **Repaired en route, outside the letter of the plan:** `_svg.SLOT_BOX_PROPS`
+  was bound TWICE, and the second binding — the one `_has_box_declaration` and
+  `slot_box_declaration` actually resolved — omitted the `border` shorthand, so
+  a slot declaring only `border: 2px solid red` drew no box at all. Deduplicated
+  onto the fuller vocabulary. Separately, `dominant-baseline` and the text
+  `stroke` pair were outside the PDF closed subset, so any chart carrying a
+  glyph or mathtext marker — including its legend entry — raised instead of
+  exporting; both are now lowered (baseline shift, text render mode 2).
+
 **Edits, in order:**
 
 1. **`_legend_layout` returns per-slot ChromeBoxes** (frame, title row, item[i], swatch[i], label[i] — formulas in the survey, all terms already in the return dict `_svg.py:6542-6568`); signature widened to accept title_slot/label_slot font sizes + letter-spacing (`6377`; callers `_svg.py:6583`, `_raster.py:3074`, `pyplot/_axes.py:8486`); `_legendfit.legend_footprint` (`74-79`) tracks any size change.
@@ -209,14 +260,18 @@ tests in `tests/test_chrome_parity_p1.py`.
 
 Three I verified against the code in this pass; the rest need a look before the affected phase.
 
-- **A. Legend shadow radius (RESOLVED BY CODE — family-2 correct, family-1 wrong).** Family-1 says both writers hard-code radius 4 for the legend shadow+frame. Code: SVG shadow is `rx="4"` unconditional (`_svg.py:6600-6601`), while the raster shadow radius is `4.0 if borderRadius else 0.0` (`_raster.py:3089-3092`) — conditional. The frame is 4-or-0 in both. P4.3 must unify the shadow rule.
-- **B. Legend border "hard-coded 1px #cccccc" (RESOLVED BY CODE — family-1 overstates).** Family-1 calls the frame border hard-coded; family-2 says camelCase `borderColor` IS honored with #cccccc default. Code confirms family-2: `_svg.py:6618`, `_raster.py:3108`. Only width (1px) and style (solid) are hard-coded. Additional nuance neither survey states: the SVG frame stroke rides `stroke-opacity=alpha` from the frame-alpha logic (`_svg.py:6622`) and the raster folds the same alpha into the border RGBA (`3108`) — the border dims with the frame; the new lowering must decide whether that coupling survives.
+- **A. Legend shadow radius (RESOLVED IN P4).** The unified rule: one offset
+  constant, one alpha (0.22), and the shadow takes the frame's own radius.
+  Original finding, preserved — Family-1 says both writers hard-code radius 4 for the legend shadow+frame. Code: SVG shadow is `rx="4"` unconditional (`_svg.py:6600-6601`), while the raster shadow radius is `4.0 if borderRadius else 0.0` (`_raster.py:3089-3092`) — conditional. The frame is 4-or-0 in both. P4.3 must unify the shadow rule.
+- **B. Legend border (RESOLVED IN P4: the alpha coupling survives; both
+  spellings of `border-color` are honored; width and style are authorable).**
+  Original finding, preserved — Family-1 calls the frame border hard-coded; family-2 says camelCase `borderColor` IS honored with #cccccc default. Code confirms family-2: `_svg.py:6618`, `_raster.py:3108`. Only width (1px) and style (solid) are hard-coded. Additional nuance neither survey states: the SVG frame stroke rides `stroke-opacity=alpha` from the frame-alpha logic (`_svg.py:6622`) and the raster folds the same alpha into the border RGBA (`3108`) — the border dims with the frame; the new lowering must decide whether that coupling survives.
 - **C. What the annotation box pair shares (RESOLVED BY CODE — family-1 undercounts).** Family-1: they share "only `_box_corner_radius`". Family-4: `_estimated_text_width` is also shared. Code: `_raster.py:52` imports `_estimated_text_width`. Family-4 correct.
 - **D. Labels/baselines stacking (REAL CONFLICT, both surveys partially right — must be resolved before P3.5).** The axis family asserts the writers' order (baselines above marks, below the labels group) "matches the browser" (`50_chartview.ts:6948-6952`). The annotation family asserts the browser keeps spine/rule DIVs INSIDE the labels container so a labels-slot background cannot sit under baselines and above marks without reordering. Code (verified): `rule()` appends spine/tick DIVs to `this.labels` (`50_chartview.ts:6988-6989`). Both claims describe the same DOM: relative z of rules-vs-marks matches, but a labels-container BACKGROUND paints under the rules live and above them in the writers. The axis family's "matches the browser" is true only for slot ink, not for the container box. Decide and record before implementing the labels background.
 - **E. Rotated-box PDF lowering (RESOLVED IN P2, as recommended).** Pinned repo-wide: pre-rotated polygon when radius==0, path-with-circular-arcs when radius>0, shadow offset applied in element space before rotation. Implemented once in the shared primitives (`_chromebox.rotate_points`, `_svg._rotated_box_shape`, raster corner pre-rotation); P5's colorbar title must consume it, not re-lower.
 - **F. axis_band applicability policy (RESOLVED IN P2: interaction chrome, view-gated).** The band exists live ONLY while its axis is navigable (`57_viewstate.ts _axisBandNavigable`) and a static file has no gesture for it to serve; the badge rationale won. `_STATE_GATED_SLOTS["axis_band"] = "navigation"` (new export state), preflight reports state-gated, no writer emission, matrix regenerated off the stale "clean static" row. Deeming it structural again is a spec decision, never a writer quietly drawing it.
 - **G. chrome-slot scope (SELF-HEDGED, needs a call).** Family-1 lists full box-model gaps for `chrome`, then recommends background/opacity-only with the rest unrepresentable. Its proposed static anchor (below grid) matches live compositing per its own analysis but contradicts DOM order for titles (chrome canvas appended after title divs). The plan adopts the hedge (P1.5) — that adoption is a decision, not a survey consensus.
-- **H. Shadow alpha constants (framing conflict).** Family-1 presents SVG 0.22 / raster 55/255 as one policy ("alpha 0.22/55"); family-2 flags them as a divergence to resolve, not copy (0.22 vs ≈0.2157). The plan follows family-2 (P0.3/P4.3 unify).
+- **H. Shadow alpha constants (RESOLVED IN P4: unified on 0.22).** Family-1 presented SVG 0.22 / raster 55/255 as one policy ("alpha 0.22/55"); family-2 flagged them as a divergence to resolve, not copy (0.22 vs ≈0.2157). Family-2 was right, and `_LEGEND_SHADOW_COLOR` is now the single constant both writers read.
 - **I. Raster `_raster.py` import-line citations vary across surveys** (25-45, 28-83, 38-80, 52, 54, 65, 71) — not contradictory (different subsets of the same import block), no action.
 - **J. Root geometry producers (recorded risk, not a survey conflict, but only family-1 raises it):** browser capture reports root geometry including host padding; native snapshot uses spec width/height (`declared.py:100-103`). Two producers must agree or capture-diff tooling flags every chart — needs a stated normalization rule when snapshot geometry starts being populated (P1.3+).
 

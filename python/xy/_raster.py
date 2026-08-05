@@ -22,7 +22,7 @@ import numpy as np
 
 from . import _paint, _png, _scene, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
-from ._chromebox import box_template, lower_box, padding_sides, text_box
+from ._chromebox import box_at, box_template, lower_box, padding_sides, text_box
 from ._chromebox import rotate_points as _chromebox_rotate
 from ._svg import (
     _AXIS,
@@ -54,6 +54,8 @@ from ._svg import (
     _heatmap_rgba_grid,
     _layer_opacity,
     _legend_layout,
+    _legend_patch_box,
+    _legend_text_slot_box,
     _lut,
     _physical_density_alpha,
     _PolarProjection,
@@ -75,8 +77,10 @@ from ._svg import (
     layout,
     legacy_title_placement,
     legend_clip_rect,
+    legend_frame_box,
     legend_items,
     legend_options_with_slot,
+    legend_text_align,
     minor_axis_ticks,
     polar_heatmap_rgba,
     polar_tick_label_layout,
@@ -820,7 +824,7 @@ def _emit_slot_box(cmd: "_Cmd", box: Any) -> None:
         cmd.stroke(
             pts(box.x, box.y),
             box.border_width,
-            _parse_color(box.border_color, opacity=box.opacity),
+            _parse_color(box.border_color, opacity=box.opacity * box.border_opacity),
             closed=True,
             dash=list(box.border_dash) if box.border_dash else None,
         )
@@ -1812,6 +1816,8 @@ def render_raster(
             spec_palette,
             slots.get("legend_label") or {},
             slots.get("legend_title") or {},
+            slots.get("legend_item") or {},
+            slots.get("legend_swatch") or {},
         )
     if clipped_to_plot:
         cmd.clip(0, 0, width, height)
@@ -3313,6 +3319,13 @@ def _emit_grid(
     cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=kind == "heatmap")
 
 
+#: SVG `text-anchor` to the display list's anchor byte (`src/raster.rs`
+#: `text`: 0 = start, 1 = middle, 2 = end). Named so the legend's
+#: `text-align` support cannot spell the mapping differently from the
+#: writer it has to agree with.
+_TEXT_ANCHORS: dict[str, int] = {"start": 0, "middle": 1, "end": 2}
+
+
 # Trace kinds whose legend entry is a short line sample (with dash) rather
 # than a marker glyph or a filled patch.
 _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
@@ -3327,64 +3340,69 @@ def _emit_legend(
     palette: Sequence[str] = DEFAULT_PALETTE,
     label_slot: Optional[dict[str, Any]] = None,
     title_slot: Optional[dict[str, Any]] = None,
+    item_slot: Optional[dict[str, Any]] = None,
+    swatch_slot: Optional[dict[str, Any]] = None,
 ) -> None:
     label_slot = label_slot or {}
     title_slot = title_slot or {}
-    legend = _legend_layout(named, plot, options)
+    item_slot = item_slot or {}
+    swatch_slot = swatch_slot or {}
+    legend = _legend_layout(named, plot, options, title_slot, label_slot)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
         return
-    style_opts = legend["style"]
-    pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
-    line_h, ncols = legend["line_h"], legend["ncols"]
+    handle, gap = legend["handle"], legend["gap"]
     swatch_h = legend["swatch_h"]
-    title, title_h = legend["title"], legend["title_h"]
-    font_size, text_h = legend["font_size"], legend["text_h"]
-    column_offsets = legend["column_offsets"]
-    box_w, box_h = legend["box_w"], legend["box_h"]
-    x, y = legend["x"], legend["y"]
-    # frameon=False (background transparent) drops the box entirely (§ mpl parity).
-    if style_opts.get("background") != "transparent":
-        radius = 4.0 if style_opts.get("borderRadius") else 0.0
-        frame_points = _round_rect_pts(x, y, x + box_w, y + box_h, radius)
-        if style_opts.get("boxShadow"):
-            shadow_points = _round_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2, radius)
-            cmd.fill(shadow_points, (0, 0, 0, 55))
-        # An explicit background is a paint, not a tint — see the matching note
-        # in `_svg._legend`; the two writers must agree.
-        frame_alpha = style_opts.get("--xy-legend-frame-alpha")
-        if frame_alpha is not None:
-            alpha = float(frame_alpha)
-        else:
-            alpha = 0.08 if style_opts.get("background") is None else 1.0
-        background = style_opts.get("background")
-        frame = (
-            _rgba(background, "#808080", alpha)
-            if background
-            else (128, 128, 128, round(255 * alpha))
-        )
-        cmd.fill(frame_points, frame)
-        border = _rgba(style_opts.get("borderColor"), "#cccccc", alpha)
-        # closed=True: the point list omits a repeated start point. Without it,
-        # the final edge is silently dropped for both square and rounded frames.
-        cmd.stroke(frame_points, 1.0, border, closed=True)
+    title = legend["title"]
+    text_h = legend["text_h"]
+    box_w = legend["box_w"]
+    x = legend["x"]
+    entries = legend["rows"]
+    # frameon=False (background transparent) drops the box entirely (§ mpl
+    # parity) — `legend_frame_box` returns None and is the one place that
+    # decision, the radius, the border and the shadow now live for both
+    # writers.
+    frame = legend_frame_box(legend)
+    if frame is not None:
+        _emit_slot_box(cmd, frame)
     if title:
+        title_box = _legend_text_slot_box(
+            "legend_title",
+            title_slot,
+            x,
+            legend["y"] + legend["pad_top"],
+            box_w,
+            legend["title_h"],
+        )
+        if title_box is not None:
+            _emit_slot_box(cmd, title_box)
         title_italic, title_bold = _native_font_emphasis(
             {
                 "font_style": title_slot.get("font-style"),
                 "font_weight": title_slot.get("font-weight", 400),
             }
         )
-        cmd.text(
+        title_anchor, title_x = legend_text_align(
+            title_slot,
+            x + legend["pad_left"],
+            max(0.0, box_w - legend["pad_left"] - legend["pad_right"]),
+            "middle",
             x + box_w / 2,
-            y + pad / 2 + font_size * 0.82,
-            1,
-            slot_font_size(title_slot, font_size),
+        )
+        cmd.text(
+            title_x,
+            legend["title_baseline"],
+            _TEXT_ANCHORS[title_anchor],
+            slot_font_size(title_slot, legend["font_size"]),
             _parse_color(slot_text_color(title_slot, text_color)),
             str(title),
             italic=title_italic,
             bold=title_bold,
         )
+    item_tmpl = box_template("legend_item", item_slot) if _has_box_declaration(item_slot) else None
+    swatch_tmpl = (
+        box_template("legend_swatch", swatch_slot) if _has_box_declaration(swatch_slot) else None
+    )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
@@ -3392,10 +3410,29 @@ def _emit_legend(
             palette[i % len(palette)],
         )
         c = _parse_color(color_str)
-        col, row = i % ncols, i // ncols
-        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
+        entry = entries[i]
+        ry = entry["y"]
+        hx0, hx1, cy = entry["swatch_x"], entry["swatch_x"] + handle, entry["handle_cy"]
         kind = t.get("kind")
+        qualifiers = (str(int(entry["row"])), str(int(entry["col"])))
+        if item_tmpl is not None:
+            _emit_slot_box(
+                cmd,
+                box_at(item_tmpl, entry["x"], ry, entry["w"], entry["h"], qualifiers=qualifiers),
+            )
+        patch_kind = kind != "scatter" and kind not in _LEGEND_LINE_KINDS
+        if swatch_tmpl is not None and not patch_kind:
+            _emit_slot_box(
+                cmd,
+                box_at(
+                    swatch_tmpl,
+                    entry["swatch_x"],
+                    entry["swatch_y"],
+                    handle,
+                    swatch_h,
+                    qualifiers=qualifiers,
+                ),
+            )
         if kind == "scatter":
             _emit_legend_marker(cmd, style, (hx0 + hx1) / 2, cy, color_str)
         elif kind in _LEGEND_LINE_KINDS:
@@ -3417,16 +3454,25 @@ def _emit_legend(
             if isinstance(marker, dict):
                 _emit_legend_marker(cmd, marker, (hx0 + hx1) / 2, cy, color_str)
         else:
-            swatch_points = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
-            cmd.fill(swatch_points, c)
-            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
-            if style.get("stroke") is not None and stroke_width > 0.0:
-                cmd.stroke(
-                    swatch_points,
-                    stroke_width,
-                    _rgba(style.get("stroke"), color_str),
-                    closed=True,
+            if swatch_tmpl is not None:
+                # The patch IS the swatch — same lowering as the SVG twin, so
+                # the slot's paint and radius win over the trace's the same
+                # way in both writers.
+                _emit_slot_box(
+                    cmd,
+                    _legend_patch_box(swatch_tmpl, entry, handle, swatch_h, style, color_str),
                 )
+            else:
+                swatch_points = _rect_pts(hx0, cy - swatch_h / 2, hx1, cy + swatch_h / 2)
+                cmd.fill(swatch_points, c)
+                stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+                if style.get("stroke") is not None and stroke_width > 0.0:
+                    cmd.stroke(
+                        swatch_points,
+                        stroke_width,
+                        _rgba(style.get("stroke"), color_str),
+                        closed=True,
+                    )
             hatch = style.get("hatch")
             if hatch:
                 _emit_legend_hatch(
@@ -3444,11 +3490,25 @@ def _emit_legend(
                 "font_weight": label_slot.get("font-weight", 400),
             }
         )
+        label_box = _legend_text_slot_box(
+            "legend_label",
+            label_slot,
+            entry["label_x"],
+            ry,
+            entry["label_w"],
+            text_h,
+            qualifiers=qualifiers,
+        )
+        if label_box is not None:
+            _emit_slot_box(cmd, label_box)
+        label_anchor, label_x = legend_text_align(
+            label_slot, entry["label_x"], entry["label_w"], "start", hx1 + gap
+        )
         cmd.text(
-            hx1 + gap,
-            ry + font_size * 0.82,
-            0,
-            slot_font_size(label_slot, font_size),
+            label_x,
+            entry["label_baseline"],
+            _TEXT_ANCHORS[label_anchor],
+            slot_font_size(label_slot, legend["font_size"]),
             _parse_color(slot_text_color(label_slot, text_color)),
             legend["names"][i],
             italic=label_italic,

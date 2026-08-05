@@ -248,10 +248,10 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
-| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text/box subset, 17 slots | text/box subset, 17 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text/box subset, 19 slots | text/box subset, 19 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
 | `class_names={slot: "..."}` | yes, all 48 slots | **dropped** (or resolved via `style_source="native_cascade"` / a captured `style_snapshot=`) | same | silent by default during migration; both opt-in routes are lossless for the published profile |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
-| `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
+| `xy.legend(style=...)` | yes | box vocabulary | box vocabulary | merged with the slot and the theme token before the writers see it (`_svg.LEGEND_BOX_PROPS`, both spellings) |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
 
 ### Exporting what the browser resolved: `style_snapshot=`
@@ -323,7 +323,7 @@ and an exported file has no stylesheet to select from.
 ### Which per-slot styles reach a file, and why only those
 
 A slot reaches the native writers when it names chrome a static file actually
-contains. `_svg.STATIC_STYLED_SLOTS` is that list: `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels`.
+contains. `_svg.STATIC_STYLED_SLOTS` is that list: `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `legend_item`, `legend_swatch`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels`.
 `root`, `chrome`, `canvas` and `title` additionally carry the chrome-box
 subset (`_svg.SLOT_BOX_PROPS_BY_SLOT`); `annotation_label` carries it under
 the annotation's own `style=`; `annotation_layer` takes background/opacity
@@ -362,4 +362,16 @@ block — token, then slot, then component, narrowest last — before either nat
 writer sees it (`_svg.legend_options_with_slot`), so spellings that agree in the
 browser agree in a PNG. An explicit `background` paints **opaque**, matching the
 browser's `background:var(--chart-legend-bg, …)`; `--xy-legend-frame-alpha`
-remains the separate knob for the default grey frame.
+remains the separate knob for the default grey frame, whose alpha dims its
+border with it. Every box property in the merged block is honored in BOTH
+spellings — `border-color` and `borderColor`, `border-radius` and
+`borderRadius` — because both reach the same block; honoring only one was how
+the preflight came to promise a channel the writers did not have.
+
+Legend geometry (`padding` and its longhands, `row-gap`/`gap`, `font-size`) is
+accepted in resolved px and in the legend's historical `em` multipliers alike.
+The px spellings are what let legend declarations leave
+`DeclaredStyling.writer_domain` for the snapshot; `em` keeps working through
+the writer view. One geometry (`_svg._legend_layout`) serves four consumers —
+both writers plus pyplot's anchored-legend reservation and its `loc="best"`
+scoring — so the drawn frame and the room reserved for it move together.

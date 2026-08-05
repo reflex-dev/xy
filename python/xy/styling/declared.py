@@ -15,15 +15,26 @@ Two outputs, one construction, deliberately separate:
   interned (numbers as floats, per the wire contract). New consumers — the
   snapshot export path, capability tooling, the capture diff — read this.
 
-The divergence between the two is presentational number formatting plus one
-named residue (§28, recorded not smuggled): the legend's geometry runs in em
-multipliers (`_svg._legend_em` — `padding`/`row-gap`/`font-size` em strings
-are the legend's own unit domain, not CSS lengths to pre-resolve), and
-schema v1 rightly refuses relative units, so those values appear in
-`writer_domain` and the view but not the snapshot. The chrome-parity phase
-moves legend geometry to resolved px and retires both divergences;
+The divergence between the two is presentational number formatting plus the
+values schema v1 refuses outright — today, exactly the relative-unit
+lengths (`0.08em`), which are a document dependency the snapshot may not
+carry (`resolved._RELATIVE_UNITS`). Those land in `writer_domain`, so
+nothing declared is dropped in either direction and the gap is enumerable.
+
+The legend used to add a second, slot-specific residue on top of that: its
+geometry ran in em multipliers ONLY (`padding`/`row-gap`/`font-size`), so an
+author who wanted a legend measured in pixels had no spelling that worked
+and every legend geometry declaration was writer-domain by construction.
+The static-chrome-parity P4 family retired it — `_svg._legend_length` and
+`_svg._legend_padding` resolve px and em alike, so the px spelling interns
+into the snapshot like any other resolved length and only a genuinely
+relative value stays writer-domain, for the same reason every other slot's
+does. `row-gap` is the one remaining wrinkle and it is a vocabulary
+question, not a legend one: schema v1 carries `gap` but not `row-gap`
+(`resolved.LAYOUT_PROPERTIES_V1`), so a px `row-gap` is writer-domain until
+the schema grows one, while the equivalent px `gap` interns.
 `tests/test_declared_snapshot.py` pins the view equivalence and enumerates
-the residue until then.
+whatever residue is genuinely left.
 """
 
 from __future__ import annotations
