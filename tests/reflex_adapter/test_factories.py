@@ -54,15 +54,23 @@ def test_partition_table_is_the_public_contract():
     assert aliases == {
         "area_chart": keyed,
         "bar_chart": {**keyed, "mark_width": "width"},  # stroke_width is native
+        "box_chart": {**base, "stroke_width": "width"},
         "column_chart": {**keyed, "mark_width": "width"},  # stroke_width is native
+        "contour_chart": {**base, "stroke_width": "width"},
+        "ecdf_chart": {**base, "stroke_width": "width"},
         "error_band_chart": keyed,
         "errorbar_chart": {**keyed, "stroke_width": "width"},
+        "heatmap_chart": base,
+        "hexbin_chart": base,
         "histogram_chart": base,
         "line_chart": {**keyed, "stroke_width": "width"},
         "scatter_chart": keyed,
         "segments_chart": {**base, "stroke_width": "width"},
+        "stairs_chart": {**base, "stroke_width": "width"},
         "stem_chart": {**base, "stroke_width": "width"},
         "step_chart": {**base, "stroke_width": "width"},
+        "triangle_mesh_chart": base,
+        "violin_chart": {**base, "stroke_width": "width"},
     }
 
 
@@ -301,7 +309,8 @@ def test_curated_reexports_are_the_xy_constructors():
 
 
 def test_every_flat_kind_compiles_a_plan(app_cwd):
-    """The signature-derived factories cover every zero-row-safe mark kind."""
+    """The signature-derived factories cover every standalone mark kind —
+    zero-row-safe ones and the aggregating ones (shaped synthetic probe)."""
     from reflex_xy.factories import FLAT_KINDS
 
     calls = {
@@ -316,6 +325,14 @@ def test_every_flat_kind_compiles_a_plan(app_cwd):
         "errorbar_chart": dict(x="x", y="y", yerr="mag"),
         "error_band_chart": dict(x="x", lower="y", upper="mag"),
         "segments_chart": dict(x0="x", y0="y", x1="x", y1="mag"),
+        "box_chart": dict(values="mag"),
+        "violin_chart": dict(values="mag"),
+        "ecdf_chart": dict(values="mag"),
+        "hexbin_chart": dict(x="x", y="y"),
+        "contour_chart": dict(z="mag"),
+        "heatmap_chart": dict(z="mag"),
+        "stairs_chart": dict(values="x", edges="y"),
+        "triangle_mesh_chart": dict(x0="x", y0="y", x1="mag", y1="x", x2="y", y2="mag"),
     }
     assert set(calls) == set(FLAT_KINDS)
     for kind, channels in calls.items():
@@ -323,10 +340,14 @@ def test_every_flat_kind_compiles_a_plan(app_cwd):
         assert "plan:" in str(comp), kind
 
 
-def test_needs_data_marks_are_refused_with_guidance(app_cwd):
-    """The Phase 3 decision: aggregating marks whose validators need at
-    least one row are excluded from the plan tier, with the escape hatch
-    and static tier named in the error."""
-    with pytest.raises(ValueError, match=r"box.*@reflex_xy\.figure"):
-        reflex_xy.chart(xy.box("mag"), data=FactoryDash.cloud)
-    assert not hasattr(reflex_xy, "box_chart")
+def test_aggregating_marks_compile_through_the_shaped_probe(app_cwd):
+    """The revised Phase 3 decision: aggregating marks probe with the shaped
+    synthetic columns recorded in plan._SYNTHETIC_CHANNELS, so they are
+    first-class in the plan tier (flat and composed) — while their config
+    validation still fires at compile like every other kind's."""
+    comp = reflex_xy.chart(xy.box("mag"), xy.ecdf("mag"), data=FactoryDash.cloud)
+    assert "plan:" in str(comp)
+    with pytest.raises(ValueError, match="colormap"):
+        reflex_xy.heatmap_chart(data=FactoryDash.cloud, z="mag", colormap="virids")
+    with pytest.raises(ValueError, match="unknown column 'reading'"):
+        reflex_xy.violin_chart(data=FactoryDash.cloud, values="reading")

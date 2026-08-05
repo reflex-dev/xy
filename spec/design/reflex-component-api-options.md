@@ -903,3 +903,16 @@ and small):
   unevaluated pages in its startup lifespan, making the plan-distribution
   property a guarantee of the integration rather than an observed Reflex
   behavior.
+- **The aggregating-kind exclusion was revised (2026-08).** The plan tier
+  originally refused box, violin, hexbin, contour, heatmap, stairs, and
+  ecdf because their validators need at least one finite value and a
+  synthetic probe "would validate against made-up data". The revision
+  keeps the compile guarantee honest by *recording* the synthetic shapes
+  instead of refusing: fixed placeholder columns per (kind, channel) —
+  `plan._SYNTHETIC_CHANNELS`, pinned by tests at both the adapter and xy
+  levels — chosen to satisfy every value-domain precondition, so probe
+  failures still indict structure. Every standalone mark kind now has a
+  flat factory and composes; only the data-taking composite factories
+  (pie, radar, wind_rose, sankey) stay on the static/escape-hatch routes.
+  Details: reflex-integration.md §3.6 "Kind coverage" and the
+  implementation doc's post-landing revision record.

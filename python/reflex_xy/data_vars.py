@@ -53,16 +53,18 @@ class AsyncDataVar(AsyncComputedVar):
 
 
 def validate_columns(columns: Any, *, source: str) -> dict[str, Any]:
-    """The only checks that need real data: a mapping of named, equal-length
-    array-like columns. Everything structural was validated at compile by the
-    plan's zero-row probe; dtype/shape details stay with figure compilation."""
+    """The only check that needs real data: a mapping of named array-like
+    columns. Columns may differ in length and dimensionality — one var can
+    carry a scatter's rows next to a stairs mark's ``len+1`` edges or a
+    heatmap's 2-D grid. Coupled-length and shape contracts (x vs y, edges
+    vs values, z's 2-D-ness) belong to the mark validators when a plan
+    binds, where the errors name the mark and channels involved."""
     if not isinstance(columns, Mapping):
         raise TypeError(
             f"{source} must return a mapping of column name -> values "
             f"(e.g. a TypedDict of arrays), got {type(columns).__name__}"
         )
     validated: dict[str, Any] = {}
-    lengths: dict[str, int] = {}
     for key, values in columns.items():
         if not isinstance(key, str):
             raise TypeError(f"{source} column names must be strings, got {key!r}")
@@ -72,16 +74,13 @@ def validate_columns(columns: Any, *, source: str) -> dict[str, Any]:
                 f"got {type(values).__name__}"
             )
         try:
-            lengths[key] = len(values)
+            len(values)
         except TypeError as exc:
             raise TypeError(
                 f"{source} column {key!r} must be an array-like with a length, "
                 f"got {type(values).__name__}"
             ) from exc
         validated[key] = values
-    if len(set(lengths.values())) > 1:
-        detail = ", ".join(f"{key}={length}" for key, length in lengths.items())
-        raise ValueError(f"{source} columns must share one length, got {detail}")
     return validated
 
 

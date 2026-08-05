@@ -488,9 +488,12 @@ the exact sibling of `@reflex_xy.figure`: a computed var whose value is a
 typed `DataHandle` wrapping `xyd1|<client>|<state>|<var>` (same grammar,
 charset, purity contract, pre-session short-circuit, underscore refusal,
 async dispatch, and `None`-releases semantics as figure vars). Evaluating
-it validates the returned mapping — string keys, array-likes, one shared
-length; the only checks that need real data — and publishes the **columns**
-into the registry. The method's return annotation is the compile-time
+it validates the returned mapping — string keys, array-likes; the only
+check that needs real data — and publishes the **columns** into the
+registry. Columns may differ in length and dimensionality (a stairs mark's
+`len+1` edges or a heatmap's 2-D grid beside ordinary row columns):
+coupled-length and shape contracts belong to the mark validators when a
+plan binds, where the errors name the mark and channels involved. The method's return annotation is the compile-time
 schema channel (fact R7): a `TypedDict` parametrizes the handle
 (`DataHandle[CloudData]`), and the factories read the column names from the
 class-level var without executing anything; a plain `dict` annotation
@@ -498,11 +501,13 @@ degrades to first-execution validation.
 
 **Plans** (`plan.py`). A chart factory call at page evaluation compiles its
 xy nodes (string channels only) into a `ChartPlan`: the real tree is built,
-zero-row placeholder columns are bound for every referenced channel through
+placeholder columns are bound for every referenced channel through
 the production resolution path (a recording table — the column list cannot
 drift from what binding will look up), and `.figure()` runs once — the full
 mark/config validation gate (X1/X2) at compile time, in milliseconds, with
-no data ingestion (constraint 2). The canonical JSON of the tree
+no data ingestion (constraint 2). Placeholders are zero-row except for the
+aggregating kinds' channels, which bind the tiny shaped synthetic columns
+recorded in `plan._SYNTHETIC_CHANNELS` (see "Kind coverage" below). The canonical JSON of the tree
 (`plan_version: 1`) is content-addressed into a sha256-prefix `digest` and
 registered in a process-local `{digest: plan}` map. Fact X4 ("page bodies
 run in every worker") turned out to hold only for processes that run the
@@ -540,7 +545,14 @@ the check that catches it. Binding is the reverse:
 columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
 Column-mismatch errors name both sides (*"plan binds column 'mag';
 Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark
-`data=`, and `render=` components — data-free structure only. The probe
+`data=`, and `render=` components — data-free structure only. One node
+field is addressed by *name* rather than by value: a module-level named
+callable (hexbin's `reduce_C_function`, `np.mean` by default) serializes
+as its import path, which is a stable content address; lambdas and
+closures have none and are refused toward a module-level function or the
+escape hatch. Re-registration under a digest is last-write-wins, so a
+hot-reloaded page replaces stale node objects (the body behind a callable
+path may have changed). The probe
 figure also yields `dom_class_strings()`, so **live data-bound charts get
 automatic Tailwind discovery** (previously live sources needed the manual
 inventory).
@@ -567,7 +579,7 @@ compensated for by a distance threshold); CSS goes through the explicit
 `style={...}` prop, which reaches the DOM unchanged. Errors
 this tier catches at `reflex run`: hallucinated factory names (import),
 unknown kwargs (partition), bad colormaps/enums/axis
-refs (zero-row probe), unknown column names against a typed data var
+refs (plan probe), unknown column names against a typed data var
 (schema channel), and the wrong var or a raw string in `data=` (typed
 prop, R1).
 
@@ -576,20 +588,33 @@ binds immediately and routes to the §3.4 payload-asset path — same
 validation, same spec-aware bind errors, works under `reflex export`,
 never touches the registry.
 
-**Kind coverage (recorded decision).** Flat factories exist for every mark
-kind whose validators compile zero-row — scatter, line, histogram, bar,
-area, step, stem, column, errorbar, error_band, segments — each derived
-from the mark's signature, and the composed `reflex_xy.chart(*nodes,
-data=...)` accepts any mix of those marks plus annotations and chrome.
-Aggregating kinds whose validators require at least one finite value (box,
-violin, hexbin, contour, heatmap, stairs, ecdf) and the data-taking
-composite factories (pie, radar, wind_rose, sankey — eager numeric work at
-call time) are **excluded from the plan tier**: the probe refuses them with
-an error naming the two supported routes (`@reflex_xy.figure`, or a
-concrete xy Chart on the static tier). Extending them would need
-value-independent validation or a synthetic-row probe whose failures could
-depend on made-up values — rejected as a silent decimation of the compile
-guarantee (§28 spirit).
+**Kind coverage (recorded decision, revised 2026-08).** Flat factories
+exist for **every standalone mark kind**: scatter, line, histogram, bar,
+area, step, stem, column, errorbar, error_band, segments, triangle_mesh
+(zero-row probe) and box, violin, ecdf, hexbin, contour, heatmap, stairs
+(shaped synthetic probe) — each derived from the mark's signature, and the
+composed `reflex_xy.chart(*nodes, data=...)` accepts any mix of those
+marks plus annotations and chrome. The aggregating kinds were previously
+excluded on the argument that a synthetic-row probe's failures could
+depend on made-up values; that objection is answered by discipline rather
+than exclusion. Each such kind's channels probe with **fixed, recorded**
+placeholder columns (`plan._SYNTHETIC_CHANNELS`, pinned by
+`tests/reflex_adapter/test_plan.py` and, at the xy level, by
+`tests/test_validation_timing.py`) whose values satisfy every value-domain
+precondition a validator imposes: finite, positive, strictly increasing
+(log-scale-safe); one group for grouped kinds; a square z grid with
+matching side coordinates; `len+1` bin edges. A probe failure therefore
+still indicts the chart's structure, never the synthetic values, and the
+compile guarantee is unchanged in kind — config and channel structure at
+compile, real-data shapes at bind, exactly where the zero-row probe
+already left them (§28 spirit: the shapes are recorded, not guessed).
+Known edge, recorded: a column shared between an aggregating channel and
+a zero-row mark's channel in one composed chart cannot probe (the
+placeholder lengths disagree); such charts take `@reflex_xy.figure`. The
+data-taking composite factories (pie, radar, wind_rose, sankey — eager
+numeric work at call time) remain outside the plan tier: they don't
+produce data-free nodes, and keep the two recorded routes
+(`@reflex_xy.figure`, or a concrete xy Chart on the static tier).
 
 **Column entries.** Published columns are registry entries in their own
 right, keyed by the data token: pure rebuildable caches of Reflex state
@@ -1014,7 +1039,7 @@ python/reflex_xy/
                              the typed values chart state vars carry
   vars.py                    @reflex_xy.figure (FigureVar: builder-tracked deps)
   data_vars.py               @reflex_xy.data (DataVar: columns in, handle out)
-  plan.py                    ChartPlan: zero-row probe, canonical digest,
+  plan.py                    ChartPlan: placeholder probe, canonical digest,
                              process-local plan map, bind (§3.6)
   factories.py               scatter/line/histogram/bar_chart flat factories +
                              composed chart(*nodes): signature-derived kwarg

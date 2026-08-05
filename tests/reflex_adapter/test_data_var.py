@@ -150,12 +150,25 @@ def test_method_resolvable_from_class(client_token):
         ({"x": "not-values"}, "array-like"),
         ({"x": {"nested": 1}}, "array-like"),
         ({"x": 3.5}, "with a length"),
-        ({"x": [1.0, 2.0], "y": [1.0]}, "share one length"),
     ],
 )
 def test_validate_columns_rejects_malformed(columns, match):
     with pytest.raises((TypeError, ValueError), match=match):
         validate_columns(columns, source="Demo.cloud")
+
+
+def test_validate_columns_allows_mixed_lengths_and_dims():
+    """One var may feed marks with different row counts — a stairs mark's
+    ``len+1`` edges, a heatmap's 2-D grid — beside ordinary columns.
+    Coupled-length contracts live with the mark validators at bind, where
+    the errors name the mark and channels involved."""
+    columns = {
+        "x": np.arange(5.0),
+        "counts": np.arange(4.0),
+        "edges": np.arange(5.0),
+        "grid": np.arange(12.0).reshape(3, 4),
+    }
+    assert validate_columns(columns, source="Demo.cloud") == columns
 
 
 def test_republish_rebuilds_and_bumps_mounted_dependents(_fresh_registry, client_token):

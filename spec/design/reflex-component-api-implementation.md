@@ -336,7 +336,8 @@ plan, all recorded in the options doc §8 decision record:
 
 - **Phase 0** — as written: `tests/reflex_adapter/test_framework_contracts.py`
   (R1/R7/R8) and `tests/test_validation_timing.py` (X1–X3, plus the exact
-  zero-row kind list the factories rely on). Verified against reflex 0.9.8.
+  zero-row and shaped-synthetic kind lists the factories rely on).
+  Verified against reflex 0.9.8.
 - **Phase 1** — as written, except the deprecation warning fires only for
   positional *live* sources; the positional static Chart/Figure form stays
   undeprecated (it is the only route for arbitrary Charts, e.g. facet
@@ -351,12 +352,13 @@ plan, all recorded in the options doc §8 decision record:
   step, stem, column, errorbar, error_band, segments). **Decision point
   resolved:** aggregating marks (box, violin, hexbin, contour, heatmap,
   stairs, ecdf) and the data-taking composite factories (pie, radar,
-  wind_rose, sankey) are excluded from the plan tier — options (a)+(b):
+  wind_rose, sankey) were excluded from the plan tier — options (a)+(b):
   static tier or `@reflex_xy.figure` — because their validators need real
-  values and a synthetic-row probe would validate against made-up data;
-  the probe refuses them with an error naming both routes
-  (reflex-integration.md §3.6 "Kind coverage"). Plan format frozen:
-  `PLAN_VERSION = 1`, golden digest pinned in `test_plan.py`.
+  values and a synthetic-row probe would validate against made-up data.
+  **The aggregating-marks half of this decision was revised post-landing —
+  see "Post-landing revision (kind coverage)" below**; the composite
+  factories remain excluded. Plan format frozen: `PLAN_VERSION = 1`,
+  golden digest pinned in `test_plan.py`.
 - **Phase 4** — as written (`probe="build"`/`"figure"`/`False`, async off
   by default with explicit opt-in via `asyncio.run`); the
   session-dependence downgrade uses a source-text heuristic
@@ -374,6 +376,33 @@ once per worker (`app.py _ensure_page_plans`, pinned by
 map is populated in every worker" a guarantee of the integration instead
 of an assumption about Reflex. Recorded in reflex-integration.md §3.6 and
 the options doc §8.
+
+**Post-landing revision (kind coverage, 2026-08).** The Phase 3 exclusion
+of the aggregating marks is lifted. The objection — synthetic-row probe
+failures could depend on made-up values — is answered by discipline
+instead of exclusion: each aggregating kind's channels probe with fixed,
+recorded placeholder columns (`plan._SYNTHETIC_CHANNELS`; values finite,
+positive, strictly increasing, one group for grouped kinds, a square z
+grid with matching side coordinates, `len+1` bin edges), so a probe
+failure indicts structure, never the synthetic values. Landed with it:
+
+- Flat factories for the newly probed kinds (`box_chart`, `violin_chart`,
+  `ecdf_chart`, `hexbin_chart`, `contour_chart`, `heatmap_chart`,
+  `stairs_chart`) plus `triangle_mesh_chart` (always zero-row-safe, just
+  never wired).
+- `validate_columns` no longer requires one shared length: a data var may
+  carry mixed-length and 2-D columns (stairs edges, heatmap grids);
+  coupled-shape contracts live with the mark validators at bind.
+- Module-level named callables in mark props (hexbin's
+  `reduce_C_function`) content-address as their import path; lambdas and
+  closures are refused. Plan registration is last-write-wins so a hot
+  reload replaces stale node objects behind an unchanged digest.
+- Pinned by `tests/reflex_adapter/test_plan.py` (the shape table, plan
+  builds per kind, callable addressing), `test_factories.py` (the full
+  19-kind flat table), and `tests/test_validation_timing.py`
+  (SHAPED_ROW_CHARTS — the xy-level half of the contract). Recorded in
+  reflex-integration.md §3.6 "Kind coverage (recorded decision, revised
+  2026-08)".
 
 Deferred items remain deferred and tracked (keyed dataset collections for
 `foreach`, per-mark `data=`, the core-xy metadata registry, both upstream

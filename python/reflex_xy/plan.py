@@ -5,10 +5,15 @@ A plan is the server-side half of the composite figure identity
 node tree with **string channels only**, compiled once at page evaluation.
 
 - **Build** (factory call = page evaluation = Reflex compile): construct the
-  real xy tree, bind a zero-row placeholder column for every referenced
-  channel name, and call ``.figure()`` once — the full mark/config
-  validation gate (facts X1/X2, pinned in tests/test_validation_timing.py)
-  runs in milliseconds with no real data. The probe figure is discarded;
+  real xy tree, bind a placeholder column for every referenced channel
+  name, and call ``.figure()`` once — the full mark/config validation gate
+  (facts X1/X2, pinned in tests/test_validation_timing.py) runs in
+  milliseconds with no real data. Placeholders are zero-row except for the
+  channels of the aggregating kinds (box, violin, hexbin, contour, heatmap,
+  stairs, ecdf), whose validators need at least one finite value: those
+  bind tiny fixed synthetic columns shaped per channel
+  (:data:`_SYNTHETIC_CHANNELS`, the recorded table — spec:
+  reflex-integration.md "Kind coverage"). The probe figure is discarded;
   what is kept is the digest, the recorded column names, and (for live
   charts) the probe's Tailwind class inventory.
 - **Serialize**: nodes → canonical JSON (sorted keys, ``plan_version``) →
@@ -53,11 +58,79 @@ __all__ = [
 PLAN_VERSION = 1
 _DIGEST_CHARS = 20  # sha256 hex prefix; content address for a process-local map
 
-#: Mark kinds whose figure-compile validators require at least one finite
-#: value (they aggregate: quantiles, bins, meshes). The zero-row probe
-#: cannot compile them, so they are excluded from the plan tier — the
-#: Phase 3 decision recorded in reflex-component-api-implementation.md.
-_NEEDS_DATA_MARKS = frozenset({"box", "violin", "hexbin", "contour", "heatmap", "stairs", "ecdf"})
+#: Synthetic probe columns. Aggregating kinds (quantiles, bins, meshes)
+#: refuse zero rows, so their channels probe with tiny *fixed* placeholder
+#: arrays instead — deterministic constants that satisfy every value-domain
+#: precondition a validator imposes (finite, positive, strictly increasing,
+#: log-scale-safe), so a probe failure still means the *structure* is
+#: invalid, never the made-up values. Real-data shape contracts (actual
+#: lengths, the user's z being 2-D) stay where they always were: at bind.
+_PROBE_LEN = 8
+_PROBE_GRID_SIDE = 4
+
+
+def _spread() -> np.ndarray:
+    return np.linspace(1.0, float(_PROBE_LEN), _PROBE_LEN)
+
+
+def _one_group() -> np.ndarray:
+    return np.ones(_PROBE_LEN, dtype=np.float64)
+
+
+def _grid() -> np.ndarray:
+    side = _PROBE_GRID_SIDE
+    return np.linspace(1.0, float(side * side), side * side).reshape(side, side)
+
+
+def _grid_side() -> np.ndarray:
+    return np.linspace(1.0, float(_PROBE_GRID_SIDE), _PROBE_GRID_SIDE)
+
+
+def _bin_edges() -> np.ndarray:
+    return np.linspace(1.0, float(_PROBE_LEN + 1), _PROBE_LEN + 1)
+
+
+#: The recorded shape table: mark kind -> {channel storage: builder}. Keys
+#: name where the factory stores each column-capable channel on the Mark
+#: node — its ``x``/``y`` fields or a ``props`` entry (``box(values=...)``
+#: lands on field ``x``; ``stairs(edges=...)`` on field ``y``;
+#: ``heatmap(z=...)`` in ``props["z"]``). Kinds absent here probe zero-row.
+#: Extending a kind means recording its minimal validator contract here —
+#: never a silent guess (§28 spirit); pinned by tests/reflex_adapter/
+#: test_plan.py and tests/test_validation_timing.py.
+_SYNTHETIC_CHANNELS: dict[str, dict[str, Any]] = {
+    "box": {"x": _spread, "props.x": _one_group, "props.group": _one_group},
+    "violin": {"x": _spread, "props.x": _one_group, "props.group": _one_group},
+    "hexbin": {"x": _spread, "y": _spread, "props.C": _spread},
+    "contour": {"props.z": _grid, "x": _grid_side, "y": _grid_side},
+    "heatmap": {"props.z": _grid, "x": _grid_side, "y": _grid_side},
+    "stairs": {"x": _spread, "y": _bin_edges},
+    "ecdf": {"x": _spread},
+}
+
+
+def _probe_shapes(children: tuple[Component, ...]) -> dict[str, np.ndarray]:
+    """Synthetic columns for every aggregating-kind channel bound by name.
+
+    Shared column names keep one shape (first mark wins) — the same column
+    genuinely is the same array at bind time. A column shared between an
+    aggregating channel and a zero-row mark's channel cannot probe (the
+    lengths disagree); the probe then fails with xy's ordinary length
+    message, which is also what real data would do in every case where the
+    aggregating channel's shape truly differs.
+    """
+    shapes: dict[str, np.ndarray] = {}
+    for child in children:
+        if not isinstance(child, Mark):
+            continue
+        for location, build in _SYNTHETIC_CHANNELS.get(child.kind, {}).items():
+            if location.startswith("props."):
+                name = child.props.get(location[len("props.") :])
+            else:
+                name = getattr(child, location, None)
+            if isinstance(name, str):
+                shapes.setdefault(name, build())
+    return shapes
 
 
 class PlanError(ValueError):
@@ -80,20 +153,26 @@ class PlanBindError(PlanError):
 
 
 class _ProbeTable(Mapping):
-    """Zero-row placeholder table that records every column it resolves.
+    """Placeholder table that records every column it resolves.
 
     ``Chart.figure()`` resolves string channels through ``data[name]``
     (the exact production code path), so the recorded names are *derived*
     from the real resolution logic — the plan's column list can never drift
-    from what binding will actually look up.
+    from what binding will actually look up. Columns are zero-row unless
+    ``shapes`` carries a synthetic array for the name (the aggregating
+    kinds' channels, from :data:`_SYNTHETIC_CHANNELS`).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, shapes: Optional[Mapping[str, np.ndarray]] = None) -> None:
         self.seen: list[str] = []
+        self._shapes = dict(shapes or {})
 
     def __getitem__(self, key: str) -> np.ndarray:
         if key not in self.seen:
             self.seen.append(key)
+        shaped = self._shapes.get(key)
+        if shaped is not None:
+            return shaped
         return np.empty(0, dtype=np.float64)
 
     def __iter__(self):  # pragma: no cover - Mapping protocol completeness
@@ -118,6 +197,21 @@ def _plain(value: Any, context: str) -> Any:
         return value.item()
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    if callable(value):
+        # A module-level named callable (hexbin's reduce_C_function is
+        # np.mean by default) has a stable import path — that path is its
+        # content address. Lambdas and closures don't, so they cannot keep
+        # digests faithful and are refused like any other opaque value.
+        module = getattr(value, "__module__", "") or ""
+        qualname = getattr(value, "__qualname__", "") or ""
+        if module and qualname and "<" not in module and "<" not in qualname:
+            return {"~callable": f"{module}.{qualname}"}
+        raise PlanError(
+            f"{context} holds a {type(value).__name__} without a stable "
+            "qualified name (a lambda or closure?), which cannot be "
+            "content-addressed into a chart plan. Use a module-level "
+            "function, or build the chart with @reflex_xy.figure."
+        )
     raise PlanError(
         f"{context} holds a {type(value).__name__}, which cannot be part of a "
         "data-bound chart plan. Plans are data-free structure: bind columns "
@@ -179,30 +273,12 @@ def build_plan(
     canonical = json.dumps(serialized, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).hexdigest()[:_DIGEST_CHARS]
 
-    # The compile-time validation gate: bind zero-row placeholders for every
-    # string channel and compile once. Errors surface here — at page
-    # evaluation — with the ordinary xy messages.
-    probe = _ProbeTable()
-    try:
-        probe_figure = Chart(kind, children, data=probe, **chart_props).figure()
-    except ValueError as exc:
-        needy = sorted(
-            {
-                child.kind
-                for child in children
-                if isinstance(child, Mark) and child.kind in _NEEDS_DATA_MARKS
-            }
-        )
-        if needy:
-            raise PlanError(
-                f"{', '.join(needy)} marks aggregate their values, so their "
-                "validators need at least one row — the zero-row plan probe "
-                "cannot compile them. Data-bound charts exclude these kinds "
-                "(recorded in reflex-component-api-implementation.md, Phase 3 "
-                "decision); build the chart with @reflex_xy.figure, or pass "
-                "a concrete xy Chart to reflex_xy.chart() for the static tier."
-            ) from exc
-        raise
+    # The compile-time validation gate: bind placeholders for every string
+    # channel (zero-row, or the shaped synthetic columns for aggregating
+    # kinds) and compile once. Errors surface here — at page evaluation —
+    # with the ordinary xy messages.
+    probe = _ProbeTable(_probe_shapes(children))
+    probe_figure = Chart(kind, children, data=probe, **chart_props).figure()
     tailwind_classes = " ".join(probe_figure.dom_class_strings())
 
     plan = ChartPlan(
@@ -224,8 +300,16 @@ _PLANS: dict[str, ChartPlan] = {}
 
 
 def register_plan(plan: ChartPlan) -> ChartPlan:
-    """Idempotently register a plan under its digest; returns the canonical one."""
-    return _PLANS.setdefault(plan.digest, plan)
+    """Register a plan under its digest; returns the registered one.
+
+    Last write wins (idempotent for identical content — the digest is the
+    content address): after a hot reload re-evaluates the page, the fresh
+    node objects replace the stale ones, which matters for the one node
+    field a digest addresses by *name* rather than by value (module-level
+    callables, e.g. a hexbin ``reduce_C_function`` whose body was edited).
+    """
+    _PLANS[plan.digest] = plan
+    return plan
 
 
 def plan_of(digest: str) -> Optional[ChartPlan]:

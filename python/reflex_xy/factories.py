@@ -22,8 +22,9 @@ and the composed, multi-mark form (Level 2)::
         height="460px",
     )
 
-Both compile the real xy tree at page evaluation, run the zero-row probe
-(`plan.py` — the full mark/config validation gate, X1/X2), check channel
+Both compile the real xy tree at page evaluation, run the plan probe
+(`plan.py` — the full mark/config validation gate, X1/X2; zero-row
+columns, shaped synthetic ones for the aggregating kinds), check channel
 names against the data var's TypedDict schema (R7), and mount the private
 component with a `plan` digest plus the `data` handle var. Marks and chrome
 are plain xy dataclass nodes — they never enter the Reflex tree
@@ -73,16 +74,24 @@ from .plan import ChartPlan, build_plan
 __all__ = [
     "area_chart",
     "bar_chart",
+    "box_chart",
     "chart",
     "column_chart",
+    "contour_chart",
+    "ecdf_chart",
     "error_band_chart",
     "errorbar_chart",
+    "heatmap_chart",
+    "hexbin_chart",
     "histogram_chart",
     "line_chart",
     "scatter_chart",
     "segments_chart",
+    "stairs_chart",
     "stem_chart",
     "step_chart",
+    "triangle_mesh_chart",
+    "violin_chart",
 ]
 
 #: Event triggers of the private XYChart component. Pinned against the
@@ -227,6 +236,16 @@ FLAT_KINDS: dict[str, _FlatKind] = {
         _flat_kind("errorbar_chart", _xy.errorbar),
         _flat_kind("error_band_chart", _xy.error_band),
         _flat_kind("segments_chart", _xy.segments),
+        # Aggregating kinds: their channels probe with the shaped synthetic
+        # columns recorded in plan._SYNTHETIC_CHANNELS instead of zero rows.
+        _flat_kind("box_chart", _xy.box),
+        _flat_kind("violin_chart", _xy.violin),
+        _flat_kind("ecdf_chart", _xy.ecdf),
+        _flat_kind("hexbin_chart", _xy.hexbin),
+        _flat_kind("contour_chart", _xy.contour),
+        _flat_kind("heatmap_chart", _xy.heatmap),
+        _flat_kind("stairs_chart", _xy.stairs),
+        _flat_kind("triangle_mesh_chart", _xy.triangle_mesh),
     )
 }
 
@@ -453,6 +472,46 @@ def error_band_chart(*, data: Any = None, **kwargs: Any) -> Any:
 def segments_chart(*, data: Any = None, **kwargs: Any) -> Any:
     """A data-bound segments chart (flat form; see module doc)."""
     return _flat_chart(FLAT_KINDS["segments_chart"], data, kwargs)
+
+
+def box_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound box plot (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["box_chart"], data, kwargs)
+
+
+def violin_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound violin plot (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["violin_chart"], data, kwargs)
+
+
+def ecdf_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound ECDF chart (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["ecdf_chart"], data, kwargs)
+
+
+def hexbin_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound hexbin chart (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["hexbin_chart"], data, kwargs)
+
+
+def contour_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound contour chart (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["contour_chart"], data, kwargs)
+
+
+def heatmap_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound heatmap (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["heatmap_chart"], data, kwargs)
+
+
+def stairs_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound stairs chart (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["stairs_chart"], data, kwargs)
+
+
+def triangle_mesh_chart(*, data: Any = None, **kwargs: Any) -> Any:
+    """A data-bound triangle-mesh chart (flat form; see module doc)."""
+    return _flat_chart(FLAT_KINDS["triangle_mesh_chart"], data, kwargs)
 
 
 def chart(*sources: Any, data: Any = None, **kwargs: Any) -> Any:

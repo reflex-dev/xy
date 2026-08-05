@@ -47,7 +47,7 @@ def test_digest_golden_pins_the_plan_format():
     assert plan.digest == "b7d0b4245b686130e37d"
 
 
-def test_zero_row_probe_fires_the_full_validation_gate():
+def test_probe_fires_the_full_validation_gate():
     with pytest.raises(ValueError, match="colormap"):
         scatter_plan(colormap="virids")
     with pytest.raises(ValueError, match="symbol"):
@@ -55,6 +55,67 @@ def test_zero_row_probe_fires_the_full_validation_gate():
     # unresolved axis-id references are figure-compile errors too (X2)
     with pytest.raises(ValueError, match="axis"):
         build_plan("scatter_chart", (xy.scatter("x", "y", y_axis="y2"),), {})
+
+
+def test_shaped_probe_table_is_the_recorded_contract():
+    """The synthetic-channel table (spec: reflex-integration.md "Kind
+    coverage") is a recorded decision, §28 spirit: extending a kind means
+    recording its validator's minimal shape here, never a silent guess.
+    Keys name the Mark storage each factory param lands on (x/y fields or
+    props entries)."""
+    from reflex_xy.plan import _SYNTHETIC_CHANNELS
+
+    assert {kind: sorted(channels) for kind, channels in _SYNTHETIC_CHANNELS.items()} == {
+        "box": ["props.group", "props.x", "x"],
+        "violin": ["props.group", "props.x", "x"],
+        "hexbin": ["props.C", "x", "y"],
+        "contour": ["props.z", "x", "y"],
+        "heatmap": ["props.z", "x", "y"],
+        "stairs": ["x", "y"],
+        "ecdf": ["x"],
+    }
+
+
+def test_aggregating_kinds_build_plans_with_shaped_probes():
+    """Every aggregating kind compiles a plan (the old exclusion is gone),
+    with grouped/coordinate/weight channels recorded like any other."""
+    cases = [
+        ("box_chart", (xy.box("v", group="g"),), {"v", "g"}),
+        ("violin_chart", (xy.violin("v"),), {"v"}),
+        ("hexbin_chart", (xy.hexbin("a", "b", C="w"),), {"a", "b", "w"}),
+        ("contour_chart", (xy.contour("grid", x="xs", y="ys"),), {"grid", "xs", "ys"}),
+        ("heatmap_chart", (xy.heatmap("grid"),), {"grid"}),
+        ("stairs_chart", (xy.stairs("counts", "edges"),), {"counts", "edges"}),
+        ("ecdf_chart", (xy.ecdf("v"),), {"v"}),
+    ]
+    for kind, children, expected in cases:
+        plan = build_plan(kind, children, {})
+        assert set(plan.columns) == expected, kind
+
+
+def test_shaped_and_zero_row_marks_compose_and_share_columns():
+    plan = build_plan("chart", (xy.histogram("v"), xy.ecdf("v")), {})
+    assert plan.columns == ("v",)
+
+
+def test_named_callables_digest_and_lambdas_are_refused():
+    """hexbin's reduce_C_function default (np.mean) has a stable import
+    path — that path is its content address, so identical trees still agree
+    across workers. A lambda has no stable name and cannot keep digests
+    faithful; it is refused toward a module-level function or the hatch."""
+    hexbin_plan = build_plan("hexbin_chart", (xy.hexbin("a", "b", C="w"),), {})
+    again = build_plan("hexbin_chart", (xy.hexbin("a", "b", C="w"),), {})
+    assert hexbin_plan.digest == again.digest
+    reduced = build_plan(
+        "hexbin_chart", (xy.hexbin("a", "b", C="w", reduce_C_function=np.median),), {}
+    )
+    assert reduced.digest != hexbin_plan.digest
+    with pytest.raises(PlanError, match="stable qualified name"):
+        build_plan(
+            "hexbin_chart",
+            (xy.hexbin("a", "b", C="w", reduce_C_function=lambda values: values.max()),),
+            {},
+        )
 
 
 def test_plans_refuse_concrete_arrays():

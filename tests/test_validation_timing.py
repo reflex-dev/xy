@@ -2,13 +2,16 @@
 
 The Reflex component API (spec/design/reflex-component-api-options.md §4,
 implementation plan in reflex-component-api-implementation.md) compiles
-chart *plans* by binding zero-row placeholder columns and calling
-``.figure()`` once at page evaluation. That only works while:
+chart *plans* by binding placeholder columns — zero-row, or the tiny
+shaped synthetic columns for aggregating kinds — and calling ``.figure()``
+once at page evaluation. That only works while:
 
 - X1: the tree is cheap to build without data; chrome nodes validate
   eagerly; mark config validates at ``.figure()``.
-- X2: zero-row columns compile — the probe exercises the full validation
-  gate with no real data.
+- X2: placeholder columns compile — zero-row for most kinds, and for the
+  aggregating kinds the recorded minimal shapes (SHAPED_ROW_CHARTS below,
+  mirroring reflex_xy.plan._SYNTHETIC_CHANNELS) — so the probe exercises
+  the full validation gate with no real data.
 - X3: ``Chart.figure()`` memoizes and is never invalidated — rebinding data
   means a fresh ``Chart``, never mutating one.
 
@@ -25,11 +28,11 @@ import xy
 
 EMPTY = np.empty(0, dtype=np.float64)
 
-# Every mark kind the flat/composed Reflex factories cover with the zero-row
-# probe (Phase 2 kinds first, then the Phase 3 signature-derived set). Kinds
-# whose validators require at least one finite value (stairs, ecdf, box,
-# violin, hexbin, heatmap, contour) are excluded from the plan/zero-row model
-# by the Phase 3 decision recorded in the implementation plan.
+# Every mark kind the flat/composed Reflex factories cover with the plain
+# zero-row probe (Phase 2 kinds first, then the Phase 3 signature-derived
+# set). Kinds whose validators require at least one finite value (stairs,
+# ecdf, box, violin, hexbin, heatmap, contour) probe with the shaped
+# synthetic columns pinned in SHAPED_ROW_CHARTS below instead.
 ZERO_ROW_CHARTS = {
     "scatter": lambda: xy.scatter_chart(xy.scatter(EMPTY, EMPTY)),
     "line": lambda: xy.line_chart(xy.line(EMPTY, EMPTY)),
@@ -50,6 +53,38 @@ def test_zero_row_construction_compiles(kind):
     """X2: binding empty columns and calling .figure() runs the full mark
     validation gate without any real data."""
     figure = ZERO_ROW_CHARTS[kind]().figure()
+    assert figure is not None
+
+
+# The aggregating kinds' minimal validator contracts: deterministic, positive,
+# finite, strictly increasing placeholder values (log-scale- and ratio-safe),
+# one group for grouped kinds, a square grid with matching side coordinates,
+# `len+1` bin edges. This is the xy-level half of the shaped-probe contract;
+# reflex_xy.plan._SYNTHETIC_CHANNELS mirrors these shapes and
+# tests/reflex_adapter/test_plan.py pins that table.
+SPREAD = np.linspace(1.0, 8.0, 8)
+ONE_GROUP = np.ones(8)
+GRID = np.linspace(1.0, 16.0, 16).reshape(4, 4)
+GRID_SIDE = np.linspace(1.0, 4.0, 4)
+BIN_EDGES = np.linspace(1.0, 9.0, 9)
+
+SHAPED_ROW_CHARTS = {
+    "box": lambda: xy.box_chart(xy.box(SPREAD, group=ONE_GROUP)),
+    "violin": lambda: xy.violin_chart(xy.violin(SPREAD, group=ONE_GROUP)),
+    "hexbin": lambda: xy.hexbin_chart(xy.hexbin(SPREAD, SPREAD)),
+    "contour": lambda: xy.contour_chart(xy.contour(GRID, x=GRID_SIDE, y=GRID_SIDE)),
+    "heatmap": lambda: xy.heatmap_chart(xy.heatmap(GRID, x=GRID_SIDE, y=GRID_SIDE)),
+    "stairs": lambda: xy.stairs_chart(xy.stairs(SPREAD, BIN_EDGES)),
+    "ecdf": lambda: xy.ecdf_chart(xy.ecdf(SPREAD)),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(SHAPED_ROW_CHARTS))
+def test_shaped_row_construction_compiles(kind):
+    """X2 for the aggregating kinds: the recorded minimal synthetic shapes
+    compile. If a validator starts demanding more (two groups, a bigger
+    grid), this fails first, named after the fact it broke."""
+    figure = SHAPED_ROW_CHARTS[kind]().figure()
     assert figure is not None
 
 
