@@ -335,6 +335,33 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
         tracked_by="tests/test_chrome_parity_p3.py documents the double-blend delta",
     ),
     RendererDivergence(
+        id="legend_slot_opacity_compositing",
+        what="How a legend slot's `opacity` composites its box",
+        webgl="group opacity: the element and its children fade once, together",
+        svg="`opacity` on the box element, PDF-legal, same as live",
+        native="premultiplied into the box's own RGBA (the display list has no "
+        "group-compositing opcode), so a translucent frame does not also fade "
+        "the swatches and labels drawn over it, and overlapping translucent "
+        "boxes double-blend",
+        visible_when="styles={'legend'|'legend_item'|'legend_swatch': {'opacity': <1}}",
+        tracked_by=(
+            "tests/test_chrome_parity_legend.py pins the premultiply; the raster "
+            "opcode that would fix it needs the dual ABI bump (plan §9.9)"
+        ),
+    ),
+    RendererDivergence(
+        id="legend_frame_border_alpha_coupling",
+        what="Whether the legend frame's alpha also dims its border (flag B)",
+        webgl="one translucent element: the border fades with the fill",
+        svg="`stroke-opacity` carries the frame alpha, matching live",
+        native="the same alpha folded into the border RGBA",
+        visible_when="the default grey frame, or --xy-legend-frame-alpha below 1",
+        tracked_by=(
+            "resolved in favor of the coupling when the frame folded onto the "
+            "shared chrome-box lowering; ChromeBox.border_opacity carries it"
+        ),
+    ),
+    RendererDivergence(
         id="axis_line_edge_geometry",
         what="Where an axis spine's box sits relative to the plot edge",
         webgl="right/bottom spines inset by their own width (DIVs laid inside the box)",
@@ -383,11 +410,42 @@ _SLOT_EXCEPTIONS: dict[str, tuple[str, str, str]] = {
 _SLOT_EXCEPTIONS["legend"] = (
     "partial",
     "styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg",
-    "The frame box. Both spellings and the theme token now converge on one "
-    "merged declaration block before the writers see it, so what agrees in the "
-    "browser agrees in a PNG. `background`, `boxShadow`, `borderRadius`, "
-    "`--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an "
-    "explicit background paints opaque, as it does in the browser.",
+    "The frame box, drawn through the shared chrome-box lowering "
+    "(`xy._chromebox.lower_box`) in both writers. All three sources converge "
+    "on one merged declaration before the writers see it, in the CSS and the "
+    "camelCase spelling alike, so what agrees in the browser agrees in a PNG: "
+    "`background`, `border-color`/`border-width`/`border-style`, "
+    "`border-radius` (the authored value, not a pinned 4), `box-shadow`, "
+    "`opacity`, `--xy-legend-frame-alpha`, and `padding`/`row-gap`/`gap` in "
+    "resolved px or the legend's historical `em`. Padding and row-gap resize "
+    "the frame in the exports, in pyplot's anchored-legend room reservation "
+    "and in its best-location scoring together — one geometry, four "
+    "consumers. An explicit background paints opaque, as it does in the "
+    "browser, and `background: transparent` drops the frame entirely "
+    "(Matplotlib `frameon=False`). A `box-shadow` carrying blur or spread "
+    "draws the writers' offset-rect approximation and records the blur as a "
+    "named loss (§28); the frame's alpha dims its border with it, matching "
+    "the single translucent element the browser paints.",
+)
+_SLOT_EXCEPTIONS["legend_item"] = (
+    "partial",
+    "styles={'legend_item': ...}",
+    "The per-row cell of the legend, one instance per visible entry, drawn "
+    "under that row's swatch and label and over the frame and title. Box "
+    "vocabulary only (`_svg.SLOT_BOX_PROPS`): the row has no text of its own, "
+    "and its size comes from the legend layout, so `padding` is refused "
+    "rather than accepted and ignored.",
+)
+_SLOT_EXCEPTIONS["legend_swatch"] = (
+    "partial",
+    "styles={'legend_swatch': ...}",
+    "The handle cell of a legend row. On a patch entry the swatch IS the "
+    "patch, so a declared background or border wins over the trace's own "
+    "paint (browser precedence: the slot rule is applied after the per-entry "
+    "paint variables) and a declared border-radius replaces the historical "
+    "`rx=2`; on a marker or line entry the box paints behind the handle, "
+    "which keeps its own ink. Box vocabulary only, padding excluded for the "
+    "same reason as `legend_item`.",
 )
 _SLOT_EXCEPTIONS["title"] = (
     "partial",

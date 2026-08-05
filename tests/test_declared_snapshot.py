@@ -37,7 +37,9 @@ def _legacy_slot_styles(spec):
 
 STYLES = {
     "tick_label": {"font_weight": 600, "letter_spacing": "0.08em", "color": "#94a3b8"},
-    "legend": {"background": "black", "padding": "1.2em", "row_gap": "0.4em"},
+    # Legend geometry in resolved px: before P4 this was expressible only in
+    # em, which schema v1 refuses, so it was writer-domain by construction.
+    "legend": {"background": "black", "padding": "12px", "gap": "6px"},
     "title": {"font-size": 18, "fill": "rgb(100% 0% 0%)"},
     "tooltip_title": {"color": "red"},
 }
@@ -67,18 +69,45 @@ def test_snapshot_carries_every_schema_legal_declaration() -> None:
 
 
 def test_the_residue_is_exactly_the_writer_domain_values() -> None:
-    # The gap between view and snapshot is enumerable and named: legend em
-    # multipliers (the legend's own unit domain) and nothing else here.
+    # The gap between view and snapshot is enumerable and named. Since the P4
+    # legend family it is exactly ONE thing: a relative-unit length, which
+    # schema v1 refuses for every slot alike because it depends on a font
+    # context the snapshot's consumer would have to re-derive.
+    #
+    # The legend contributes nothing now. Its geometry used to be expressible
+    # only as em multipliers, so `padding`/`row-gap` were writer-domain by
+    # construction; they resolve px today and intern like any other length.
     styling = resolve_declared(_spec(styles=STYLES))
-    assert styling.writer_domain == {
-        "tick_label": {"letter-spacing": "0.08em"},
-        "legend": {"padding": "1.2em", "row-gap": "0.4em"},
-    }
+    assert styling.writer_domain == {"tick_label": {"letter-spacing": "0.08em"}}
     # view = snapshot declarations ∪ residue, per slot.
     view = styling.slot_view()
     for slot, residue in styling.writer_domain.items():
         for prop in residue:
             assert prop in view[slot]
+
+
+def test_px_legend_geometry_interns_instead_of_riding_the_residue() -> None:
+    # The retirement, stated positively: the px spellings of the legend's
+    # geometry are schema-legal resolved lengths and reach the snapshot.
+    styling = resolve_declared(_spec(styles={"legend": {"padding": "12px", "gap": "6px"}}))
+    assert styling.writer_domain == {}
+    declaration = styling.snapshot.declarations[styling.snapshot.instances[0].declaration]
+    # `padding` interns expanded — schema v1 carries only the longhands — and
+    # the shorthand expansion resolves each side to a number on the way.
+    assert declaration["padding-top"] == 12.0
+    assert declaration["padding-left"] == 12.0
+    # `gap` has no shorthand to expand, so it interns as the authored string;
+    # a px length is a resolved value whether it is spelled 6 or "6px".
+    assert declaration["gap"] == "6px"
+
+
+def test_em_legend_geometry_still_reaches_the_writers_as_residue() -> None:
+    # Retiring the residue did not retire the em spelling: it keeps working
+    # through the writer view, it is simply no longer the ONLY spelling. An
+    # em value is writer-domain for the same reason any other slot's is.
+    styling = resolve_declared(_spec(styles={"legend": {"padding": "1.2em", "row_gap": "0.4em"}}))
+    assert styling.writer_domain == {"legend": {"padding": "1.2em", "row-gap": "0.4em"}}
+    assert styling.slot_view()["legend"]["padding"] == "1.2em"
 
 
 def test_identical_slot_declarations_intern_once() -> None:

@@ -90,18 +90,25 @@ def test_legend_scatter_entry_renders_marker_glyph():
 # -- defect 3: frameon=False drops the legend box ---------------------------
 
 
+#: The default legend frame's paint, since the frame folded onto the shared
+#: chrome-box lowering: the same grey at the same 8%, spelled the way every
+#: other chrome box in the repo spells a translucent fill (an `rgb()` plus a
+#: `fill-opacity`) rather than as a one-off `rgba()` literal.
+DEFAULT_FRAME_FILL = 'fill="rgb(128, 128, 128)" fill-opacity="0.08"'
+
+
 def test_legend_frameon_false_removes_frame_in_static_export():
     x = np.linspace(0, 10, 20)
     fig, ax = plt.subplots()
     ax.plot(x, np.sin(x), label="s")
     with_frame = _svg(fig)
-    assert "rgba(128,128,128,0.08)" in with_frame
+    assert DEFAULT_FRAME_FILL in with_frame
 
     fig2, ax2 = plt.subplots()
     ax2.plot(x, np.sin(x), label="s")
     ax2.legend(frameon=False)
     no_frame = _svg(fig2)
-    assert "rgba(128,128,128,0.08)" not in no_frame
+    assert DEFAULT_FRAME_FILL not in no_frame
     assert ">s</text>" in no_frame
 
 

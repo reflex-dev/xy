@@ -97,6 +97,13 @@ class ChromeBox:
     border_color: Optional[str] = None
     border_width: float = 0.0
     border_dash: Optional[tuple[float, ...]] = None
+    #: Stroke alpha, separate from `fill_opacity`, because the legend frame
+    #: has always dimmed its border with the frame's own alpha: the default
+    #: grey frame is a single translucent element, border included, and
+    #: matching the browser means the border fades with it rather than
+    #: staying opaque over a 0.08 fill (plan §8 flag B — the coupling was an
+    #: open question and this is the answer: it survives).
+    border_opacity: float = 1.0
     radius: float = 0.0
     shadow: Optional[tuple[float, float, str]] = None  # (dx, dy, color)
     opacity: float = 1.0

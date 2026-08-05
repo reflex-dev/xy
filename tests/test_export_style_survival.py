@@ -72,6 +72,10 @@ _SLOT_PAINT_PROPERTY = {slot: "fill" for slot in STATIC_STYLED_SLOTS} | {
         "annotation_layer",
         "axis_line",
         "tick_mark",
+        # The legend's row and swatch cells are pure box slots — no text of
+        # their own, so `fill` would not be their paint.
+        "legend_item",
+        "legend_swatch",
     )
 }
 
@@ -153,7 +157,11 @@ def test_an_explicit_legend_background_is_opaque_like_the_browser() -> None:
     frame = next(
         node for node in re.findall(r"<rect[^>]*/>", chart.figure().to_svg()) if "#ff00ff" in node
     )
-    assert 'fill-opacity="1"' in frame
+    # Opaque means *untinted*: the shared chrome-box emitter omits a
+    # `fill-opacity` of 1 rather than spelling the default out, so the
+    # assertion is that no tint was applied — in particular not the 0.08 the
+    # default grey frame carries.
+    assert "fill-opacity" not in frame
 
 
 def test_unstyled_output_is_untouched() -> None:

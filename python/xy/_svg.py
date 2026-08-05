@@ -41,6 +41,7 @@ from ._chromebox import (
     box_template,
     lower_box,
     padding_sides,
+    parse_padding,
     rotate_points,
 )
 from ._chromebox import text_box as _chrome_text_box
@@ -1392,6 +1393,8 @@ STATIC_STYLED_SLOTS: tuple[str, ...] = (
     "legend",
     "legend_title",
     "legend_label",
+    "legend_item",
+    "legend_swatch",
     "colorbar",
     "colorbar_title",
     "colorbar_tick",
@@ -1437,6 +1440,15 @@ _LEGEND_SLOT_ALIASES: dict[str, str] = {
 #: neither this set nor the text subsets has no channel to a static file
 #: and is a provable loss, not a qualified maybe. Owned by this module so
 #: the writers and the report cannot drift apart.
+#:
+#: Both spellings of every property are listed because both reach the same
+#: merged declaration: `styles={'legend': ...}` arrives kebab from the
+#: declared resolver and `xy.legend(style=...)` arrives camelCase from the
+#: browser's own vocabulary. Before P4 only the camelCase half of
+#: `border-color`/`border-width`/`border-style` was honored, so the report
+#: promised a channel the writers did not have — the set and the writers
+#: now agree, which is what let `legend` leave the preflight's
+#: `_CONDITIONAL_CHANNEL_SLOTS`.
 LEGEND_BOX_PROPS: frozenset[str] = frozenset(
     {
         "background",
@@ -1445,7 +1457,19 @@ LEGEND_BOX_PROPS: frozenset[str] = frozenset(
         "boxShadow",
         "border-radius",
         "borderRadius",
+        "border-color",
+        "borderColor",
+        "border-width",
+        "borderWidth",
+        "border-style",
+        "borderStyle",
+        "opacity",
         "padding",
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left",
+        "gap",
         "row-gap",
         "rowGap",
         "--xy-legend-frame-alpha",
@@ -1459,7 +1483,12 @@ LEGEND_BOX_PROPS: frozenset[str] = frozenset(
 #: `_honored_props` consumes `SLOT_BOX_PROPS_BY_SLOT` directly.
 #: Kebab spellings only — the declared resolver normalizes before any
 #: writer reads a declaration; `border`/`padding` are the CSS shorthands the
-#: writers split before `lower_box` reads the longhands.
+#: writers split before `lower_box` reads the longhands, and both must be
+#: named here or a chart declaring only a shorthand draws no box at all
+#: (a second, `border`-less binding of this name used to shadow this one and
+#: did exactly that to every slot gated on `_has_box_declaration`).
+#: `padding`/`padding-*` are consumed by the layout/room functions, never by
+#: the emitters — the geometry handed to a box already carries them.
 SLOT_BOX_PROPS: frozenset[str] = frozenset(
     {
         "background",
@@ -1498,6 +1527,11 @@ SLOT_BOX_PROPS_BY_SLOT: dict[str, frozenset[str]] = {
     "root": SLOT_BOX_PROPS - {"box-shadow"} - _SLOT_BOX_PADDING_PROPS,
     "canvas": SLOT_BOX_PROPS - {"box-shadow"} - _SLOT_BOX_PADDING_PROPS,
     "chrome": frozenset({"background", "background-color", "opacity"}),
+    # The legend's row and swatch cells are laid out by `_legend_layout`,
+    # which owns their pitch; padding on a cell would have to move that
+    # pitch, so it is not accepted rather than accepted and ignored.
+    "legend_item": SLOT_BOX_PROPS - _SLOT_BOX_PADDING_PROPS,
+    "legend_swatch": SLOT_BOX_PROPS - _SLOT_BOX_PADDING_PROPS,
 }
 
 #: Box requests a slot's RASTER path cannot draw while the vector path can:
@@ -1516,34 +1550,6 @@ def slot_box_declaration(style: dict[str, Any], slot: str) -> dict[str, Any]:
     box-capable slot shares, so unstyled output stays byte-identical."""
     honored = SLOT_BOX_PROPS_BY_SLOT.get(slot, SLOT_BOX_PROPS)
     return {prop: value for prop, value in style.items() if prop in honored}
-
-
-#: The shared chrome-box vocabulary (`_chromebox.lower_box` + the room
-#: functions): what a slot's declaration may say about its BOX, as opposed to
-#: its text. One constant consumed by the writers (emission gating), the
-#: capability registry, and the preflight's honored-props routing, so the
-#: three cannot drift (plan §2 item 0.4 — the `LEGEND_BOX_PROPS` pattern).
-#: `padding`/`padding-*` are consumed by the layout/room functions, never by
-#: the emitters (geometry already carries them). The legend keeps its own
-#: historical vocabulary (`LEGEND_BOX_PROPS`) until P4 retires the em residue.
-SLOT_BOX_PROPS: frozenset[str] = frozenset(
-    {
-        "background",
-        "background-color",
-        "border-color",
-        "border-width",
-        "border-style",
-        "border-radius",
-        "box-shadow",
-        "opacity",
-        "fill-opacity",
-        "padding",
-        "padding-top",
-        "padding-right",
-        "padding-bottom",
-        "padding-left",
-    }
-)
 
 
 def _has_box_declaration(style: Optional[dict[str, Any]]) -> bool:
@@ -1610,6 +1616,17 @@ def _slot_size_attr(style: dict[str, Any]) -> str:
 def slot_font_size(style: dict[str, Any], default: float) -> float:
     """A slot's resolved font size in px, or `default`."""
     return _px_size(style.get("font-size"), default) if "font-size" in style else default
+
+
+def _slot_letter_spacing(style: dict[str, Any]) -> float:
+    """A slot's `letter-spacing` in px, or 0.
+
+    Only a resolved px length counts: an `em` spelling is the writer view's
+    own domain and the measurement has no font context to resolve it
+    against, so it contributes nothing here rather than a guess (the axis
+    family's qualified-not-folded ruling, plan §4 item 5).
+    """
+    return _px_size(style.get("letter-spacing"), 0.0)
 
 
 def slot_text_attrs(style: dict[str, Any], **defaults: Any) -> str:
@@ -1967,6 +1984,8 @@ def _slot_box_paint_attrs(box: Any) -> str:
         stroke = (
             f' stroke="{_escape_attr(box.border_color)}" stroke-width="{_num(box.border_width)}"'
         )
+        if box.border_opacity < 1.0:
+            stroke += f' stroke-opacity="{_num(box.border_opacity)}"'
         if box.border_dash:
             dashes = " ".join(_num(v) for v in box.border_dash)
             stroke += f' stroke-dasharray="{dashes}"'
@@ -5209,6 +5228,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     named = legend_items(spec["traces"], spec_palette)
     legend_label_slot = slots.get("legend_label") or {}
     legend_title_slot = slots.get("legend_title") or {}
+    legend_item_slot = slots.get("legend_item") or {}
+    legend_swatch_slot = slots.get("legend_swatch") or {}
     main_legend = spec.get("legend") or {}
     main_items = main_legend.get("items") or named
     if spec.get("show_legend", True) and main_items:
@@ -5222,6 +5243,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 spec_palette,
                 legend_label_slot,
                 legend_title_slot,
+                legend_item_slot,
+                legend_swatch_slot,
             )
         )
     for extra in spec.get("extra_legends") or []:
@@ -5237,6 +5260,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     spec_palette,
                     legend_label_slot,
                     legend_title_slot,
+                    legend_item_slot,
+                    legend_swatch_slot,
                 )
             )
     if spec.get("colorbar"):
@@ -7576,29 +7601,148 @@ _LEGEND_FONT_PX = 11.0
 #: fits to the last subpixel.
 _LEGEND_FIT_EPS = 1e-9
 
+#: Matplotlib's legend dimensions are expressed in font-size units:
+#: `borderpad` is charged on both sides and `labelspacing` between rows.
+#: These are the defaults an undeclared legend still resolves to, so the
+#: px vocabulary can be added without moving a single unstyled legend.
+_LEGEND_BORDERPAD_EM = 0.4
+_LEGEND_ROWGAP_EM = 0.5
+
+#: The legend frame's offset-rect shadow, unified across the two writers
+#: (plan §8 flags A and H). Before this the SVG drew `rx="4"` unconditionally
+#: with `fill-opacity="0.22"` while the raster drew the frame's own radius at
+#: alpha 55/255 ≈ 0.2157 — the same shadow, two shapes and two alphas. One
+#: constant now, and the shadow takes the frame's radius: a square frame
+#: casting a rounded shadow was the SVG side's bug.
+_LEGEND_SHADOW_OFFSET = 2.0
+_LEGEND_SHADOW_COLOR = "rgba(0, 0, 0, 0.22)"
+
+
+def _legend_em_multiplier(value: Any) -> Optional[float]:
+    """`1.2em` as the bare multiplier 1.2, or None for anything else.
+
+    The legend's historical geometry domain: `padding`/`row-gap`/`font-size`
+    arrived as em multipliers of the legend font size, which schema v1
+    rightly refuses (a relative unit is a document dependency), so they rode
+    `DeclaredStyling.writer_domain` instead of the snapshot. They keep
+    working — an author who wrote `1.2em` still gets 1.2 em — but px is now
+    the resolved spelling every one of them also accepts, which is what
+    retires the residue (plan §6 item 2).
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text.endswith("em"):
+        return None
+    try:
+        return max(0.0, float(text[:-2]))
+    except ValueError:
+        return None
+
+
+def _legend_px(value: Any) -> Optional[float]:
+    """A resolved px length (`12`, `12.0`, `"12px"`), or None.
+
+    Deliberately narrower than `_chromebox._px`: an em string must fall
+    through to `_legend_em_multiplier` rather than being read as pixels.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.endswith("px"):
+            text = text[:-2].strip()
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _legend_length(
+    style: dict[str, Any], keys: Sequence[str], em_default: float, font_size: float
+) -> float:
+    """One legend length in px, from the first spelling present.
+
+    `keys` is the accepted spellings widest-last (the browser/pyplot
+    camelCase and the CSS slot's kebab reach the same merged declaration, so
+    both must resolve here or a file disagrees with the live chart). A px
+    value is used as-is; an em value multiplies `font_size`; anything absent
+    or unparsable falls back to `em_default` em, the pre-parity constant.
+    """
+    for key in keys:
+        if key not in style:
+            continue
+        value = style[key]
+        em = _legend_em_multiplier(value)
+        if em is not None:
+            return em * font_size
+        px = _legend_px(value)
+        if px is not None:
+            return max(0.0, px)
+    return em_default * font_size
+
 
 def _legend_font_size(style: dict[str, Any]) -> float:
-    """Resolve the bounded pixel font size used by static legend geometry."""
-    value = str(style.get("fontSize", "")).strip()
-    if value.endswith("px"):
-        try:
-            return max(1.0, float(value[:-2]))
-        except ValueError:
-            pass
-    return 11.0
+    """The bounded pixel font size static legend geometry measures at.
+
+    `fontSize` is the browser/pyplot spelling and `font-size` the CSS slot's;
+    the merged declaration may carry either, and the geometry has to agree
+    with whatever the emitters draw at or a styled label escapes its frame.
+    """
+    for key in ("fontSize", "font-size"):
+        if key not in style:
+            continue
+        px = _legend_px(style[key])
+        if px is not None:
+            return max(1.0, px)
+        em = _legend_em_multiplier(style[key])
+        if em is not None:
+            return max(1.0, em * _LEGEND_FONT_PX)
+    return _LEGEND_FONT_PX
 
 
-def _legend_em(style: dict[str, Any], key: str, default: float) -> float:
-    value = str(style.get(key, "")).strip()
-    if value.endswith("em"):
-        try:
-            return max(0.0, float(value[:-2]))
-        except ValueError:
-            pass
-    return default
+def _legend_padding(style: dict[str, Any], font_size: float) -> tuple[float, float, float, float]:
+    """The frame's `(top, right, bottom, left)` padding in px.
+
+    `padding` seeds all four sides (CSS 1-4 value expansion when it is a px
+    shorthand, one em multiplier when it is the legend's historical
+    spelling); a `padding-*` longhand then overrides its own side. The
+    pre-parity legend charged `borderpad` em symmetrically, so an
+    undeclared padding still resolves to exactly that on every side.
+    """
+    shorthand = style.get("padding")
+    em = _legend_em_multiplier(shorthand)
+    if em is not None:
+        side = em * font_size
+        sides = [side, side, side, side]
+    else:
+        parsed = parse_padding(shorthand) if shorthand is not None else None
+        if parsed is None:
+            base = _LEGEND_BORDERPAD_EM * font_size
+            sides = [base, base, base, base]
+        else:
+            sides = [max(0.0, value) for value in parsed]
+    for index, prop in enumerate(
+        ("padding-top", "padding-right", "padding-bottom", "padding-left")
+    ):
+        if prop not in style:
+            continue
+        longhand_em = _legend_em_multiplier(style[prop])
+        if longhand_em is not None:
+            sides[index] = longhand_em * font_size
+            continue
+        longhand = _legend_px(style[prop])
+        if longhand is not None:
+            sides[index] = max(0.0, longhand)
+    return (sides[0], sides[1], sides[2], sides[3])
 
 
-def _legend_text_width(value: Any, char_width: float = _LEGEND_CHAR_WIDTH) -> float:
+def _legend_text_width(
+    value: Any, char_width: float = _LEGEND_CHAR_WIDTH, letter_spacing: float = 0.0
+) -> float:
     """Measured advance width, in pixels, of a static legend string.
 
     Legend columns used to be sized as ``len(text) * _LEGEND_CHAR_WIDTH``. A
@@ -7618,31 +7762,51 @@ def _legend_text_width(value: Any, char_width: float = _LEGEND_CHAR_WIDTH) -> fl
     the rasterizer's zero advance: SVG resolves it against the viewer's own
     fonts and does paint it, and over-reserving only widens the frame, which
     can never spill a label.
+
+    ``letter_spacing`` is the per-advance px the emitters will hand SVG, so a
+    letter-spaced label is measured at the width it is actually drawn at
+    rather than at its unspaced one. SVG adds the spacing after every glyph
+    including the last, which is what ``len(text)`` (not ``len(text) - 1``)
+    reserves here.
     """
     font_size = char_width * (_LEGEND_FONT_PX / _LEGEND_CHAR_WIDTH)
-    return _fontmetrics_text_width(value, font_size, missing_advance=char_width)
+    width = _fontmetrics_text_width(value, font_size, missing_advance=char_width)
+    if letter_spacing:
+        width += letter_spacing * len(str(value))
+    return width
 
 
-def _legend_text(value: Any, max_width: float, char_width: float = _LEGEND_CHAR_WIDTH) -> str:
+def _legend_text(
+    value: Any,
+    max_width: float,
+    char_width: float = _LEGEND_CHAR_WIDTH,
+    letter_spacing: float = 0.0,
+) -> str:
     """Conservatively ellipsize a static legend string to a pixel budget.
 
     The budget is measured, not counted, so the returned string's own advance
     width is ``<= max_width`` and therefore fits the column it was sized for.
     """
     text = str(value)
-    if _legend_text_width(text, char_width) <= max_width + _LEGEND_FIT_EPS:
+    if _legend_text_width(text, char_width, letter_spacing) <= max_width + _LEGEND_FIT_EPS:
         return text
     # Longest prefix that still leaves room for the ellipsis.
     keep = 0
     for index in range(1, len(text)):
-        if _legend_text_width(f"{text[:index]}...", char_width) > max_width + _LEGEND_FIT_EPS:
+        if (
+            _legend_text_width(f"{text[:index]}...", char_width, letter_spacing)
+            > max_width + _LEGEND_FIT_EPS
+        ):
             break
         keep = index
     if keep:
         return f"{text[:keep]}..."
     # Too narrow for even one glyph plus an ellipsis: emit the dots that fit.
     for count in (3, 2, 1):
-        if _legend_text_width("." * count, char_width) <= max_width + _LEGEND_FIT_EPS:
+        if (
+            _legend_text_width("." * count, char_width, letter_spacing)
+            <= max_width + _LEGEND_FIT_EPS
+        ):
             return "." * count
     return ""
 
@@ -7697,7 +7861,13 @@ def legend_clip_rect(plot: dict) -> tuple[float, float, float, float]:
     return x0, y0, x1 - x0, y1 - y0
 
 
-def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
+def _legend_layout(
+    named: list[dict],
+    plot: dict,
+    options: dict,
+    title_slot: Optional[dict[str, Any]] = None,
+    label_slot: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """Shared bounded legend geometry for SVG and native raster exports.
 
     Static files cannot offer the browser legend's scrollbar, so an oversized
@@ -7708,6 +7878,19 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     A polar chart hands over a `legend_box_*` gutter beside the disc
     (`_recut_polar_plot`); everything below then bounds and places the legend in
     that box instead of over the marks, and `loc` chooses where within it.
+
+    `title_slot`/`label_slot` are the `legend_title`/`legend_label`
+    declarations the emitters will actually draw at. Measuring at the base
+    legend font while drawing at an authored one is how an oversized slot
+    title used to escape its own frame, so the size and letter-spacing that
+    reach the emitters reach the measurement too (plan §6 item 4). Callers
+    that have no slots — the pyplot reservation and best-loc scoring — pass
+    none and get exactly the pre-parity geometry.
+
+    This is the one legend geometry in the repo: the SVG writer, the raster
+    writer, pyplot's anchored-legend room reservation and pyplot's best-loc
+    scoring all size the box here, so a padding change moves all four
+    together or none of them.
     """
     if "legend_box_w" in plot:
         plot = {
@@ -7718,19 +7901,31 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
             "h": plot["legend_box_h"],
         }
     style_opts = options.get("style") or {}
+    title_slot = title_slot or {}
+    label_slot = label_slot or {}
     font_size = _legend_font_size(style_opts)
-    char_width = font_size * (_LEGEND_CHAR_WIDTH / 11.0)
-    text_h = font_size * 1.03
-    borderpad = _legend_em(style_opts, "padding", 0.4)
-    labelspacing = _legend_em(style_opts, "rowGap", 0.5)
+    # The sizes the emitters draw at — the measurement has to use the same
+    # ones or the frame is sized for text that is not what appears in it.
+    label_font = slot_font_size(label_slot, font_size)
+    title_font = slot_font_size(title_slot, font_size)
+    label_spacing = _slot_letter_spacing(label_slot)
+    title_spacing = _slot_letter_spacing(title_slot)
+    char_width = label_font * (_LEGEND_CHAR_WIDTH / _LEGEND_FONT_PX)
+    title_char_width = title_font * (_LEGEND_CHAR_WIDTH / _LEGEND_FONT_PX)
+    text_h = label_font * 1.03
+    title_text_h = title_font * 1.03
     # Matplotlib's legend dimensions are expressed in font-size units:
     # borderpad is applied on both sides, handlelength=2, handletextpad=.8,
-    # columnspacing=2, and labelspacing=.5 by default.
-    pad = 2.0 * borderpad * font_size
+    # columnspacing=2, and labelspacing=.5 by default. Each is now also
+    # spellable in resolved px, which is what lets legend geometry leave the
+    # em-only `writer_domain` residue behind (plan §6 item 2).
+    pad_t, pad_r, pad_b, pad_l = _legend_padding(style_opts, font_size)
+    pad = pad_l + pad_r
+    pad_y = pad_t + pad_b
     handle = max(0.0, float(options.get("handlelength", 2.0))) * font_size
     gap = max(0.0, float(options.get("handletextpad", 0.8))) * font_size
     column_gap = 2.0 * font_size
-    row_gap = labelspacing * font_size
+    row_gap = _legend_length(style_opts, ("rowGap", "row-gap", "gap"), _LEGEND_ROWGAP_EM, font_size)
     line_h = text_h + row_gap
     requested_handleheight = options.get("handleheight")
     swatch_h = 8.0
@@ -7740,7 +7935,11 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
     title = options.get("title")
-    title_h = line_h if title else 0.0
+    # The title band is a row of its own. `max` keeps a default-sized title
+    # on exactly the pre-parity `line_h` (including the handleheight bump)
+    # while letting an authored `legend_title` font-size grow its own band
+    # instead of overprinting the first entry.
+    title_h = max(line_h, title_text_h + row_gap) if title else 0.0
     inset = 6.0
     anchor = options.get("anchor")
     # An anchored legend is positioned from ``bbox_to_anchor`` rather than
@@ -7766,7 +7965,7 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
 
     natural_text_widths = [
         max(
-            _legend_text_width(named[index].get("name", ""), char_width)
+            _legend_text_width(named[index].get("name", ""), char_width, label_spacing)
             for index in range(column, len(named), ncols)
         )
         for column in range(ncols)
@@ -7794,33 +7993,41 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         # ``pad`` is the sum of the two side pads. The previous one-sided
         # calculation expanded the box to the title's glyph width but then
         # ellipsized against ``box_w - 2 * pad`` (e.g. "Classes" -> "Cl...").
-        title_w = _legend_text_width(title, char_width) + pad
+        title_w = _legend_text_width(title, title_char_width, title_spacing) + pad
         if title_w > box_w:
             extra = min(available_w - box_w, title_w - box_w)
             column_widths = [width + extra / ncols for width in column_widths]
             text_widths = [width + extra / ncols for width in text_widths]
             box_w += extra
     column_offsets = []
-    cursor = pad / 2
+    cursor = pad_l
     for width in column_widths:
         column_offsets.append(cursor)
         cursor += width + column_gap
 
+    def content_h(rows: int) -> float:
+        """Stacked height of the title band (if any) plus `rows` entry rows.
+
+        Written as an explicit block list rather than `content_rows * text_h`
+        so the title can carry its own height once `legend_title` authors a
+        font size; with the default sizes every term is identical to the
+        pre-parity arithmetic.
+        """
+        blocks = ([title_text_h] if title else []) + [text_h] * rows
+        if not blocks:
+            return 0.0
+        return sum(blocks) + (len(blocks) - 1) * row_gap
+
     nrows = (len(named) + ncols - 1) // ncols
     available_h = max(1.0, float(plot["h"]) - 2 * inset)
     visible_rows = nrows
-    content_rows = nrows + (1 if title else 0)
-    natural_box_h = content_rows * text_h + max(0, content_rows - 1) * row_gap + pad
+    natural_box_h = content_h(nrows) + pad_y
     if natural_box_h > available_h:
-        title_room = text_h + row_gap if title else 0.0
-        available_entries_h = max(0.0, available_h - pad - title_room)
+        title_room = title_text_h + row_gap if title else 0.0
+        available_entries_h = max(0.0, available_h - pad_y - title_room)
         visible_rows = max(0, int((available_entries_h + row_gap) // line_h))
     visible_count = min(len(named), visible_rows * ncols)
-    visible_content_rows = visible_rows + (1 if title else 0)
-    box_h = min(
-        available_h,
-        visible_content_rows * text_h + max(0, visible_content_rows - 1) * row_gap + pad,
-    )
+    box_h = min(available_h, content_h(visible_rows) + pad_y)
 
     loc = options.get("loc") or "upper right"
     loc_tokens = set(re.split(r"[\s_-]+", loc))
@@ -7862,20 +8069,62 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
             float(plot["y"]) + float(plot["h"]) - box_h - inset,
         )
 
+    # Per-entry geometry, computed once here and read by both emitters. The
+    # SVG and raster writers used to derive `rx`/`ry`/`hx0`/`cy` from `pad`
+    # independently; a per-side padding would have had to be threaded through
+    # two copies of the same arithmetic, which is exactly how the frame
+    # drifted before. One producer, two consumers.
+    rows: list[dict[str, float]] = []
+    for index in range(visible_count):
+        col, row = index % ncols, index // ncols
+        entry_x = x + column_offsets[col]
+        entry_y = y + pad_t + title_h + row * line_h
+        rows.append(
+            {
+                "col": float(col),
+                "row": float(row),
+                "x": entry_x,
+                "y": entry_y,
+                "w": column_widths[col],
+                "h": text_h,
+                "swatch_x": entry_x,
+                "swatch_y": entry_y + text_h / 2 - swatch_h / 2,
+                "swatch_w": handle,
+                "swatch_h": swatch_h,
+                "handle_cy": entry_y + text_h / 2,
+                "label_x": entry_x + handle + gap,
+                "label_w": max(0.0, column_widths[col] - handle - gap),
+                "label_baseline": entry_y + label_font * 0.82,
+            }
+        )
+
     return {
         "style": style_opts,
         "pad": pad,
+        "pad_top": pad_t,
+        "pad_right": pad_r,
+        "pad_bottom": pad_b,
+        "pad_left": pad_l,
+        "pad_y": pad_y,
         "handle": handle,
         "gap": gap,
         "column_gap": column_gap,
         "row_gap": row_gap,
         "font_size": font_size,
+        "label_font": label_font,
+        "title_font": title_font,
         "text_h": text_h,
+        "title_text_h": title_text_h,
         "line_h": line_h,
         "swatch_h": swatch_h,
         "ncols": ncols,
-        "title": _legend_text(title, max(0.0, box_w - pad), char_width) if title else None,
+        "title": (
+            _legend_text(title, max(0.0, box_w - pad), title_char_width, title_spacing)
+            if title
+            else None
+        ),
         "title_h": title_h,
+        "title_baseline": y + pad_t + title_font * 0.82,
         "cell_w": max(column_widths),
         "column_widths": column_widths,
         "column_offsets": column_offsets,
@@ -7884,11 +8133,177 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
         "x": x,
         "y": y,
         "visible_count": visible_count,
+        "rows": rows,
         "names": [
-            _legend_text(t.get("name", ""), text_widths[index % ncols], char_width)
+            _legend_text(t.get("name", ""), text_widths[index % ncols], char_width, label_spacing)
             for index, t in enumerate(named[:visible_count])
         ],
     }
+
+
+#: The legend frame's default paint when nothing declares a background: a
+#: grey at 8% that reads as a frame over any plot. Named so the two writers
+#: and the alpha logic below cannot spell it three ways.
+_LEGEND_DEFAULT_FRAME_RGB = "rgb(128, 128, 128)"
+_LEGEND_DEFAULT_FRAME_ALPHA = 0.08
+_LEGEND_DEFAULT_BORDER = "#cccccc"
+
+
+def legend_frame_box(legend: dict[str, Any]) -> Optional[ChromeBox]:
+    """The legend frame as a `ChromeBox`, or None when there is no frame.
+
+    One lowering for both writers, replacing the two hand-rolled frame
+    rects that had drifted into different shadow shapes and two different
+    shadow alphas (plan §8 flags A and H). What it resolves, and why each
+    is not simply copied from the old pair:
+
+    - `background: transparent` still drops the frame entirely — Matplotlib's
+      `frameon=False`, and the one behavior both writers already agreed on.
+    - the authored `border-radius` VALUE is honored. Both writers used to
+      pin `4` for *any* truthy radius, so `border-radius: 12px` drew a 4px
+      corner; the number is now the number.
+    - `border-color` is read in both spellings. The camelCase `borderColor`
+      was honored and the CSS slot's `border-color` silently was not, which
+      also made the preflight's legend report untrue.
+    - the frame alpha dims the border with the fill (flag B's open question,
+      resolved in favor of the coupling: the live frame is one translucent
+      element and its border fades with it).
+    - `box-shadow` keeps its historical offset-rect for any value the
+      offset-rect model cannot express — pyplot authors a blurred
+      `2px 2px 4px rgba(0,0,0,0.3)` and dropping its shadow to honor the
+      blur literally would be a silent regression — while a value the model
+      CAN express is now honored as written. The blur is recorded
+      unrepresentable either way (§28).
+    """
+    style_opts = legend["style"]
+    background_value = style_opts.get("background")
+    if background_value == "transparent":
+        return None
+
+    declaration = {
+        prop: value
+        for prop, value in (
+            ("border-color", style_opts.get("borderColor", style_opts.get("border-color"))),
+            ("border-width", style_opts.get("borderWidth", style_opts.get("border-width"))),
+            ("border-style", style_opts.get("borderStyle", style_opts.get("border-style"))),
+            ("border-radius", style_opts.get("borderRadius", style_opts.get("border-radius"))),
+            ("box-shadow", style_opts.get("boxShadow", style_opts.get("box-shadow"))),
+            ("opacity", style_opts.get("opacity")),
+        )
+        if value is not None
+    }
+    # An explicit background is a paint, not a tint. The browser renders
+    # `background:#fef3c7` opaque, so the writers must too; the frame-alpha
+    # token stays the knob for the default grey frame.
+    frame_alpha = style_opts.get("--xy-legend-frame-alpha")
+    if frame_alpha is not None:
+        alpha = float(frame_alpha)
+    else:
+        alpha = _LEGEND_DEFAULT_FRAME_ALPHA if background_value is None else 1.0
+    declaration["background"] = (
+        _LEGEND_DEFAULT_FRAME_RGB if background_value is None else _css(background_value, "#808080")
+    )
+    declaration["fill-opacity"] = alpha
+    declaration.setdefault("border-color", _LEGEND_DEFAULT_BORDER)
+
+    box = lower_box(
+        "legend",
+        declaration,
+        x=legend["x"],
+        y=legend["y"],
+        w=legend["box_w"],
+        h=legend["box_h"],
+    )
+    # A radius was authored as a bare truthiness for years (`borderRadius:
+    # true`, `'4px'`); anything that does not parse to a length keeps the
+    # historical 4.
+    if declaration.get("border-radius") is not None and box.radius == 0.0:
+        box = dataclasses.replace(
+            box, radius=min(4.0, legend["box_w"] / 2.0, legend["box_h"] / 2.0)
+        )
+    shadow = box.shadow
+    if shadow is None and style_opts.get("boxShadow", style_opts.get("box-shadow")):
+        shadow = (_LEGEND_SHADOW_OFFSET, _LEGEND_SHADOW_OFFSET, _LEGEND_SHADOW_COLOR)
+    return dataclasses.replace(box, border_opacity=alpha, shadow=shadow)
+
+
+def _legend_text_slot_box(
+    slot: str,
+    style: dict[str, Any],
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    qualifiers: tuple[str, ...] = (),
+) -> Optional[ChromeBox]:
+    """The box behind one legend text row, or None when nothing declares one.
+
+    The row rect, not a text-tight rect: `legend_title` and `legend_label`
+    are rows in the frame's flow, and a background that stopped at the glyph
+    advances would leave the row's own padding unpainted — which is not what
+    the same declaration does in the browser. Strictly declaration-gated, so
+    an unstyled legend emits exactly what it always did.
+    """
+    if not _has_box_declaration(style):
+        return None
+    return box_at(box_template(slot, style), x, y, w, h, qualifiers=qualifiers)
+
+
+def _legend_patch_box(
+    template: ChromeBox,
+    entry: dict[str, float],
+    handle: float,
+    swatch_h: float,
+    style: dict[str, Any],
+    color: str,
+) -> ChromeBox:
+    """A patch swatch lowered through the `legend_swatch` declaration.
+
+    The trace's own colour is the fallback fill and its stroke the fallback
+    border, so a slot that declares neither still paints the series' patch;
+    a slot that declares either wins, matching the browser, where the slot
+    rule is applied after the per-entry paint variables. An unauthored
+    radius keeps the historical `rx="2"`.
+    """
+    box = box_at(
+        template,
+        entry["swatch_x"],
+        entry["swatch_y"],
+        handle,
+        swatch_h,
+        qualifiers=(str(int(entry["row"])), str(int(entry["col"]))),
+        fallback_fill=color,
+    )
+    if box.radius == 0.0 and template.radius == 0.0:
+        box = dataclasses.replace(box, radius=min(2.0, handle / 2.0, swatch_h / 2.0))
+    if box.border_color is None:
+        stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+        stroke = style.get("stroke")
+        if stroke is not None and stroke_width > 0.0:
+            box = dataclasses.replace(
+                box, border_color=_css(stroke, color), border_width=stroke_width
+            )
+    return box
+
+
+def legend_text_align(
+    style: dict[str, Any], x: float, w: float, default_anchor: str, default_x: float
+) -> tuple[str, float]:
+    """`(text-anchor, x)` for a legend text row honoring `text-align`.
+
+    Alignment is resolved against the ROW box, not the frame: a right-aligned
+    label ends at its own column's right edge, which is what the browser's
+    flex row does. Undeclared (or an unknown keyword) keeps the writer's
+    historical anchor and x, so unstyled output is untouched.
+    """
+    align = str(style.get("text-align", "")).strip().lower()
+    if align in ("left", "start"):
+        return "start", x
+    if align in ("right", "end"):
+        return "end", x + w
+    if align == "center":
+        return "middle", x + w / 2.0
+    return default_anchor, default_x
 
 
 def _legend(
@@ -7900,72 +8315,97 @@ def _legend(
     palette: Sequence[str] = DEFAULT_PALETTE,
     label_slot: Optional[dict[str, Any]] = None,
     title_slot: Optional[dict[str, Any]] = None,
+    item_slot: Optional[dict[str, Any]] = None,
+    swatch_slot: Optional[dict[str, Any]] = None,
 ) -> str:
     label_slot = label_slot or {}
     title_slot = title_slot or {}
-    legend = _legend_layout(named, plot, options)
+    item_slot = item_slot or {}
+    swatch_slot = swatch_slot or {}
+    legend = _legend_layout(named, plot, options, title_slot, label_slot)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
         return ""
     rows = []
-    style_opts = legend["style"]
-    pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
-    line_h, ncols = legend["line_h"], legend["ncols"]
+    handle, gap = legend["handle"], legend["gap"]
     swatch_h = legend["swatch_h"]
-    title, title_h = legend["title"], legend["title_h"]
-    font_size, text_h = legend["font_size"], legend["text_h"]
-    column_offsets = legend["column_offsets"]
-    box_w, box_h = legend["box_w"], legend["box_h"]
-    x, y = legend["x"], legend["y"]
-    if style_opts.get("background") != "transparent":
-        if style_opts.get("boxShadow"):
-            rows.append(
-                f'<rect x="{_num(x + 2)}" y="{_num(y + 2)}" width="{_num(box_w)}" '
-                f'height="{_num(box_h)}" rx="4" fill="black" fill-opacity="0.22"/>'
-            )
-        radius = "4" if style_opts.get("borderRadius") else "0"
-        background_value = style_opts.get("background")
-        # An explicit background is a paint, not a tint. The browser renders
-        # `background:#fef3c7` opaque, so the writers must too; the
-        # frame-alpha token stays the knob for the default grey frame.
-        frame_alpha = style_opts.get("--xy-legend-frame-alpha")
-        if frame_alpha is not None:
-            alpha = float(frame_alpha)
-        else:
-            alpha = 0.08 if background_value is None else 1.0
-        if background_value is None and alpha == 0.08:
-            fill_attrs = 'fill="rgba(128,128,128,0.08)"'
-        else:
-            background = _css(background_value, "#808080")
-            fill_attrs = f'fill="{escape(background)}" fill-opacity="{_num(alpha)}"'
-        border = _css(style_opts.get("borderColor"), "#cccccc")
-        rows.append(
-            f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
-            f'rx="{radius}" {fill_attrs} stroke="{escape(border)}" '
-            f'stroke-opacity="{_num(alpha)}" stroke-width="1"/>'
-        )
+    title = legend["title"]
+    text_h = legend["text_h"]
+    box_w = legend["box_w"]
+    x = legend["x"]
+    entries = legend["rows"]
+    frame = legend_frame_box(legend)
+    if frame is not None:
+        rows.append(_slot_box_svg(frame))
     if title:
+        title_box = _legend_text_slot_box(
+            "legend_title", title_slot, x, legend["y"] + legend["pad_top"], box_w, legend["title_h"]
+        )
+        if title_box is not None:
+            rows.append(_slot_box_svg(title_box))
         # The layout's measured size is the default; a slot may override it.
-        title_size_attr = _slot_size_attr(title_slot) or f' font-size="{_num(font_size)}"'
+        title_size_attr = _slot_size_attr(title_slot) or f' font-size="{_num(legend["font_size"])}"'
+        title_anchor, title_x = legend_text_align(
+            title_slot,
+            x + legend["pad_left"],
+            max(0.0, box_w - legend["pad_left"] - legend["pad_right"]),
+            "middle",
+            x + box_w / 2,
+        )
         rows.append(
-            f'<text x="{_num(x + box_w / 2)}" '
-            f'y="{_num(y + pad / 2 + font_size * 0.82)}" text-anchor="middle"'
+            f'<text x="{_num(title_x)}" '
+            f'y="{_num(legend["title_baseline"])}" text-anchor="{title_anchor}"'
             f"{title_size_attr}"
             f"{slot_text_attrs(title_slot, font_weight='400')} "
             f'fill="{escape(slot_text_color(title_slot, text_color))}">'
             f"{escape(str(title))}</text>"
         )
-    label_size_attr = _slot_size_attr(label_slot) or f' font-size="{_num(font_size)}"'
+    label_size_attr = _slot_size_attr(label_slot) or f' font-size="{_num(legend["font_size"])}"'
+    item_tmpl = box_template("legend_item", item_slot) if _has_box_declaration(item_slot) else None
+    swatch_tmpl = (
+        box_template("legend_swatch", swatch_slot) if _has_box_declaration(swatch_slot) else None
+    )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
             palette[i % len(palette)],
         )
-        col, row = i % ncols, i // ncols
-        rx, ry = x + column_offsets[col], y + pad / 2 + title_h + row * line_h
-        hx0, hx1, cy = rx, rx + handle, ry + text_h / 2
+        entry = entries[i]
+        ry = entry["y"]
+        hx0, hx1, cy = entry["swatch_x"], entry["swatch_x"] + handle, entry["handle_cy"]
         kind = t.get("kind")
+        # Row background first: under this row's swatch and label, over the
+        # frame and the title (the browser's `.xy-legend-item` order).
+        if item_tmpl is not None:
+            rows.append(
+                _slot_box_svg(
+                    box_at(
+                        item_tmpl,
+                        entry["x"],
+                        ry,
+                        entry["w"],
+                        entry["h"],
+                        qualifiers=(str(int(entry["row"])), str(int(entry["col"]))),
+                    )
+                )
+            )
+        patch_kind = kind != "scatter" and kind not in _LEGEND_LINE_KINDS
+        if swatch_tmpl is not None and not patch_kind:
+            # A marker or line handle keeps its own ink; the swatch slot is
+            # the cell behind it.
+            rows.append(
+                _slot_box_svg(
+                    box_at(
+                        swatch_tmpl,
+                        entry["swatch_x"],
+                        entry["swatch_y"],
+                        handle,
+                        swatch_h,
+                        qualifiers=(str(int(entry["row"])), str(int(entry["col"]))),
+                    )
+                )
+            )
         if kind == "scatter":
             rows.append(_legend_marker_svg(style, (hx0 + hx1) / 2, cy, color))
         elif kind in _LEGEND_LINE_KINDS:
@@ -7987,18 +8427,28 @@ def _legend(
             if isinstance(marker, dict):
                 rows.append(_legend_marker_svg(marker, (hx0 + hx1) / 2, cy, color))
         else:
-            stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
-            stroke = style.get("stroke")
-            stroke_attr = (
-                f' stroke="{escape(_css(stroke, color))}" stroke-width="{_num(stroke_width)}"'
-                if stroke is not None and stroke_width > 0.0
-                else ""
-            )
-            rows.append(
-                f'<rect x="{_num(hx0)}" y="{_num(cy - swatch_h / 2)}" '
-                f'width="{handle}" height="{_num(swatch_h)}" '
-                f'rx="2" fill="{escape(color)}"{stroke_attr}/>'
-            )
+            if swatch_tmpl is not None:
+                # The patch IS the swatch: the slot's paint replaces the trace
+                # colour and its radius replaces the literal rx="2" (browser
+                # precedence — `_applySlot` runs after the paint vars).
+                rows.append(
+                    _slot_box_svg(
+                        _legend_patch_box(swatch_tmpl, entry, handle, swatch_h, style, color)
+                    )
+                )
+            else:
+                stroke_width = max(0.0, float(style.get("stroke_width", 0.0)))
+                stroke = style.get("stroke")
+                stroke_attr = (
+                    f' stroke="{escape(_css(stroke, color))}" stroke-width="{_num(stroke_width)}"'
+                    if stroke is not None and stroke_width > 0.0
+                    else ""
+                )
+                rows.append(
+                    f'<rect x="{_num(hx0)}" y="{_num(cy - swatch_h / 2)}" '
+                    f'width="{handle}" height="{_num(swatch_h)}" '
+                    f'rx="2" fill="{escape(color)}"{stroke_attr}/>'
+                )
             if style.get("hatch"):
                 rows.append(
                     _legend_hatch_svg(
@@ -8010,8 +8460,23 @@ def _legend(
                         _css(style.get("hatch_color"), "#222222"),
                     )
                 )
+        label_box = _legend_text_slot_box(
+            "legend_label",
+            label_slot,
+            entry["label_x"],
+            ry,
+            entry["label_w"],
+            text_h,
+            qualifiers=(str(int(entry["row"])), str(int(entry["col"]))),
+        )
+        if label_box is not None:
+            rows.append(_slot_box_svg(label_box))
+        label_anchor, label_x = legend_text_align(
+            label_slot, entry["label_x"], entry["label_w"], "start", hx1 + gap
+        )
+        anchor_attr = "" if label_anchor == "start" else f' text-anchor="{label_anchor}"'
         rows.append(
-            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + font_size * 0.82)}"'
+            f'<text x="{_num(label_x)}" y="{_num(entry["label_baseline"])}"{anchor_attr}'
             f"{label_size_attr}"
             f"{slot_text_attrs(label_slot)} "
             f'fill="{escape(slot_text_color(label_slot, text_color))}">'
