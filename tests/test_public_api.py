@@ -1,36 +1,17 @@
 from __future__ import annotations
 
 import importlib.metadata
-import importlib.util
 import json
 import subprocess
-import sys
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
+from _public_api_test_utils import load_public_api_module
 
-def _load_public_api_module():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "check_public_api.py"
-    module_name = "_xy_test_public_api_checker"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    previous = sys.modules.get(module_name)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if previous is None:
-            sys.modules.pop(module_name, None)
-        else:
-            sys.modules[module_name] = previous
-    return module
-
-
-check_public_api = _load_public_api_module()
+check_public_api = load_public_api_module("_xy_test_public_api_checker")
 
 
 def _fresh_import_stdout(

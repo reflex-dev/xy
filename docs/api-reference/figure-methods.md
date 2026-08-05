@@ -19,9 +19,10 @@ code should build charts through components and call the public methods below.
 | `chart.figure()` | Build or return the cached internal engine figure. |
 
 In a compatible notebook, leaving a chart as the final cell expression invokes
-its display hook automatically. The live widget is used when the notebook
-supports it; `_repr_html_()` is the standalone-HTML fallback. Python callbacks
-require the live widget or a framework adapter.
+its display hook automatically. In `display="auto"` mode, controlled by
+`XY_NOTEBOOK_DISPLAY`, supported notebooks use the live widget and HTML mode
+uses `_repr_html_()` as the standalone-HTML path. Python callbacks require the
+live widget or a framework adapter.
 
 ## HTML and Static Export
 
