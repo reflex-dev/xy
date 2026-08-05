@@ -67,6 +67,7 @@ def wire(namespace: XYNamespace) -> None:
     """Point the registry's fan-out seams at a namespace (setup and tests)."""
     registry.on_publish(namespace.broadcast_payload)
     registry.on_push(namespace.broadcast_message)
+    registry.on_error(namespace.broadcast_error)
 
 
 async def _xy_lifespan() -> None:

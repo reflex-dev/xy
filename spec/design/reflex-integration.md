@@ -491,7 +491,31 @@ immutable generation and bumps its version), no pins, always sweepable
 under the same TTL. The registry also keeps the `data token → {digests}`
 index that lets a column republish rebuild every mounted dependent plan,
 and an error seam (`on_error`) for room-wide failures that answer no
-request; §4 covers the fan-out those two enable.
+request.
+
+**Composite tokens.** The two halves compose into one figure identity —
+`xyp1|<digest>|<xyd1 token>` — subscribed as a unit. Rooms, versions, `mid`
+addressing, the attachment cap, and every message below the subscribe path
+treat it as an ordinary `fig` string; the envelope grew no fields. Serving
+it = `plan_of(digest)` + columns (registry hit, else `rebuild_data` re-runs
+the data method against session state) + bind into a fresh `Chart` →
+`figure()` → cached under the composite token as a normal, TTL-sweepable
+`FigureEntry`. The rebuild recipe is (plan map, data method): both halves
+independently recoverable on any worker, which is what keeps §3.2's
+promise intact for this tier. Session affinity reads the embedded data
+token, so a composite belonging to another session is refused exactly like
+a figure token; a *bare* `xyd1` token names columns, never a figure, and is
+refused as a subscription outright.
+
+**Republish fan-out.** A data var recompute publishes new columns and
+re-binds every mounted dependent through the `data token → {digests}`
+index — fresh figures, bumped versions, coalesced room broadcasts, exactly
+the figure-var republish machinery. The index is added to when a composite
+binds and pruned when a republish finds the plan unmounted, so it stays
+bounded by mounted plans. Failure stays loud: a bind that stops matching
+(possible only for untyped data vars) logs server-side, releases the
+composite entry, and answers the room `err {resync}`; a stale digest
+(hot-reload drift) answers `err {resync}` naming the digest.
 
 **Republish ordering.** Dependent rebuilds run outside the registry mutex
 (they execute user-scale figure builds), so two republishes of one data
@@ -821,9 +845,11 @@ python/reflex_xy/
   data_vars.py               @reflex_xy.data (DataVar: columns in, handle out)
   plan.py                    ChartPlan: zero-row probe, canonical digest,
                              process-local plan map, bind (§3.6)
-  state_bridge.py            token -> state_manager -> builder rebuild hook
+  state_bridge.py            token -> state_manager -> builder/data/plan
+                             rebuild hooks
   namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
-                             affinity, rebuild-on-miss, binary attachments
+                             affinity (incl. composite), rebuild-on-miss,
+                             binary attachments
   app.py                     setup(app), XYPlugin (post_compile), lifespan
   component.py               chart(figure=...) -> rx.Component (local-JSX
                              library); typed figure prop; static tier
@@ -849,7 +875,8 @@ tests/reflex_adapter/        token/registry/var/data-var/plan/bridge/
                              contract pins (R1/R7/R8), and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
-                             publish-broadcast/append/unsub
+                             publish-broadcast/append/unsub + the composite
+                             plan tier (fan-out, plan-miss resync, bind errs)
 ```
 
 `inline()` (content-addressed pinned tokens, §3.4) lives in the package
