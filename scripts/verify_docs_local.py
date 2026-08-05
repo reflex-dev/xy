@@ -16,7 +16,18 @@ def run(command: tuple[str, ...]) -> int:
 
 def main() -> int:
     commands = (
+        ("uv", "sync", "--project", "docs/app", "--frozen", "--group", "dev"),
         ("uv", "run", "--project", "docs/app", "--no-sync", "pytest", "docs/app/tests", "-v"),
+        (
+            "uv",
+            "run",
+            "--project",
+            "docs/app",
+            "--no-sync",
+            "python",
+            "scripts/check_public_api.py",
+            "--skip-lazy-import-check",
+        ),
         (
             "uv",
             "run",
