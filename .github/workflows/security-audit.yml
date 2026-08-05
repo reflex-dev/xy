@@ -1,0 +1,68 @@
+name: Dependency security audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/security-audit.yml"
+      - "Cargo.lock"
+      - "**/Cargo.lock"
+      - "**/package-lock.json"
+      - "**/bun.lock"
+      - "**/uv.lock"
+      - "**/requirements*.lock"
+      - "pyproject.toml"
+      - "scripts/verify_dependency_lock_inventory.py"
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit committed dependency locks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Verify audit inventory
+        run: python3 scripts/verify_dependency_lock_inventory.py
+
+      - name: Audit root Python environment
+        run: |
+          uv sync --locked --all-extras --all-groups
+          uv run --with pip-audit pip-audit --progress-spinner off
+
+      - name: Audit documentation Python environment
+        run: |
+          uv sync --project docs/app --frozen --group dev
+          uv run --project docs/app --no-sync --with pip-audit pip-audit --progress-spinner off
+
+      - name: Audit benchmark Python lock
+        run: uvx --from pip-audit pip-audit -r benchmarks/requirements-ci.lock --progress-spinner off
+
+      - name: Audit Rust locks
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --locked
+          cargo audit --file examples/osm/osmium-rs/Cargo.lock
+
+      - name: Audit npm lock
+        run: npm audit --package-lock-only --audit-level=high
+
+      - name: Audit Bun lock
+        run: |
+          npm install --global bun@1.2.20
+          cd docs/app/reflex.lock
+          bun install --frozen-lockfile
+          bun audit --audit-level=high

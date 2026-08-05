@@ -610,22 +610,11 @@ def html_to_png(
         )
         if not shot.exists():
             first_tail = (proc.stderr or "")[-500:]
-            if sandbox:
-                retry_args = list(args)
-                retry_args.insert(2, "--no-sandbox")
-                proc = subprocess.run(
-                    retry_args,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                )
-            if not shot.exists():
-                tail = (proc.stderr or "")[-500:]
-                if sandbox:
-                    tail = f"sandboxed launch failed: {first_tail}\nno-sandbox retry failed: {tail}"
-                raise RuntimeError(
-                    f"Chromium produced no screenshot (exit {proc.returncode}): {tail}"
-                )
+            mode = "sandboxed" if sandbox else "unsandboxed"
+            raise RuntimeError(
+                f"Chromium {mode} launch produced no screenshot "
+                f"(exit {proc.returncode}): {first_tail}"
+            )
         data = shot.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise RuntimeError("screenshot output was not a PNG")
@@ -1032,7 +1021,7 @@ def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional
 
 
 def _browser_session(*, gl: str, sandbox: bool) -> "Any":
-    """One launched ChromiumSession, mirroring `html_to_png`'s sandbox retry."""
+    """Launch one Chromium session without silently changing its sandbox mode."""
     exe = find_browser()
     if exe is None:
         raise RuntimeError(
@@ -1041,14 +1030,9 @@ def _browser_session(*, gl: str, sandbox: bool) -> "Any":
             "or install a supported browser. Native export (engine=Engine.default) "
             "and HTML export need nothing extra."
         )
-    from ._chromium import ChromiumError, ChromiumSession
+    from ._chromium import ChromiumSession
 
-    try:
-        return ChromiumSession(exe, gl=gl, sandbox=sandbox)
-    except ChromiumError:
-        if not sandbox:
-            raise
-        return ChromiumSession(exe, gl=gl, sandbox=False)
+    return ChromiumSession(exe, gl=gl, sandbox=sandbox)
 
 
 def _native_image(
