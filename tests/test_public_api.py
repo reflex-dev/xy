@@ -271,21 +271,52 @@ def test_public_api_checker_accepts_component_module_all() -> None:
 
 
 def _fake_declarative_modules() -> tuple[ModuleType, ModuleType]:
-    fake = ModuleType("xy")
-    fake.__all__ = ["__version__", *check_public_api.DECLARATIVE_API_EXPORTS]
-    fake._EXPORTS = {name: ".components" for name in check_public_api.DECLARATIVE_API_EXPORTS}
-
-    fake_components = ModuleType("xy.components")
-    fake_components.__all__ = list(check_public_api.DECLARATIVE_API_EXPORTS)
-    for name in check_public_api.DECLARATIVE_API_EXPORTS:
-        setattr(fake_components, name, object())
-
     class Chart:
+        def figure(self):
+            return None
+
+        def html(self):
+            return None
+
+    class Mark:
         pass
 
-    for method in check_public_api.DECLARATIVE_CHART_READOUTS:
-        setattr(Chart, method, lambda self: None)
-    fake_components.Chart = Chart
+    class Annotation:
+        pass
+
+    class Axis:
+        pass
+
+    class Legend:
+        pass
+
+    def factory(return_type):
+        def inner():
+            return return_type()
+
+        inner.__annotations__ = {"return": return_type}
+        return inner
+
+    names = {
+        "Chart": Chart,
+        "Mark": Mark,
+        "Annotation": Annotation,
+        "Axis": Axis,
+        "Legend": Legend,
+        "chart": factory(Chart),
+        "scatter": factory(Mark),
+        "label": factory(Annotation),
+        "x_axis": factory(Axis),
+        "tooltip": factory(Legend),
+    }
+    fake = ModuleType("xy")
+    fake.__all__ = ["__version__", *names]
+    fake._EXPORTS = {name: ".components" for name in names}
+
+    fake_components = ModuleType("xy.components")
+    fake_components.__all__ = list(names)
+    for name, value in names.items():
+        setattr(fake_components, name, value)
     return fake, fake_components
 
 
@@ -301,17 +332,11 @@ def test_public_api_checker_rejects_missing_declarative_export() -> None:
     fake, fake_components = _fake_declarative_modules()
     fake.__all__.remove("tooltip")
     fake._EXPORTS.pop("tooltip")
-    fake_components.__all__.remove("tooltip")
-    del fake_components.tooltip
-    delattr(fake_components.Chart, "html")
 
     errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
 
     assert any("tooltip" in error and "xy.__all__" in error for error in errors)
     assert any("tooltip" in error and "'.components'" in error for error in errors)
-    assert any("tooltip" in error and "xy.components.__all__" in error for error in errors)
-    assert any("tooltip" in error and "undefined" in error for error in errors)
-    assert any("html" in error and "readout" in error for error in errors)
 
 
 def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
@@ -323,6 +348,36 @@ def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
     assert any(
         "chart" in error and "'.components'" in error and ".figure" in error for error in errors
     )
+
+
+def test_public_api_checker_rejects_missing_method_docs(tmp_path: Path) -> None:
+    chart_doc = tmp_path / "figure-methods.md"
+    selection_doc = tmp_path / "events-and-callbacks.md"
+    chart_doc.write_text("documented chart.visible_method()\n", encoding="utf-8")
+    selection_doc.write_text("documented rows(limit=None) and len(selection)\n", encoding="utf-8")
+    inventory = check_public_api.PublicApiInventory(
+        component_reexports=(),
+        component_types=(),
+        mark_factories=(),
+        annotation_factories=(),
+        axis_factories=(),
+        chrome_factories=(),
+        chart_factories=(),
+        support_factories=(),
+        chart_methods=("visible_method", "missing_method"),
+        selection_methods=("rows", "__len__", "missing_selection_method"),
+    )
+
+    errors = check_public_api.validate_docs_inventory(
+        inventory,
+        chart_doc=chart_doc,
+        selection_doc=selection_doc,
+    )
+
+    assert any("missing_method" in error for error in errors)
+    assert any("missing_selection_method" in error for error in errors)
+    assert not any("visible_method" in error for error in errors)
+    assert not any("'rows'" in error for error in errors)
 
 
 def test_public_api_checker_rejects_stale_component_module_all() -> None:

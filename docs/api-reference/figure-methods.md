@@ -19,8 +19,8 @@ code should build charts through components and call the public methods below.
 | `chart.figure()` | Build or return the cached internal engine figure. |
 
 In a compatible notebook, leaving a chart as the final cell expression invokes
-its display hook automatically. Python callbacks require the live widget or a
-framework adapter.
+its display hook automatically through `_repr_html_()`. Python callbacks
+require the live widget or a framework adapter.
 
 ## HTML and Static Export
 
@@ -105,6 +105,24 @@ selection: xy.Selection = chart.select_range(x0, x1, y0, y1, trace_id=None)
 
 Streaming has additional channel and monotonic-line constraints documented in
 [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/).
+
+## View and Selection State
+
+~~~python
+chart.set_view(ranges, animate=True, history=True)
+chart.reset_view(axes=None)
+chart.select(selection, source="python")
+chart.clear_selection()
+state: dict = chart.view_state()
+~~~
+
+- `set_view()` applies explicit axis ranges to the live chart state.
+- `reset_view()` asks the chart to return selected axes to their computed
+  domains.
+- `select()` applies an explicit selection payload through the same state path
+  used by browser gestures and callbacks.
+- `clear_selection()` clears the current selected rows.
+- `view_state()` returns the latest recorded viewport and selection state.
 
 ## Framework Chrome
 
