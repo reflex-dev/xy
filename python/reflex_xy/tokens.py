@@ -65,6 +65,9 @@ _PLAN_RE = re.compile(r"^xyp1\|(?P<digest>[0-9a-f]{8,64})\|(?P<data>xyd1\|.+)$")
 #: It lives on the *function* (not the ComputedVar) so it survives reflex's
 #: `_replace` copies, which re-instantiate the var but thread fget through.
 BUILDER_ATTR = "__xy_builder__"
+#: Attribute stashed beside it carrying the figure var's compile-probe level
+#: ("build" | "figure" | False); same placement rationale.
+PROBE_ATTR = "__xy_probe__"
 
 
 @dataclass(frozen=True)

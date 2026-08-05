@@ -22,20 +22,26 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
+import warnings
 from collections.abc import Coroutine
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from reflex.plugins import Plugin
 
 from .handles import FigureHandle, token_of
 from .namespace import XYNamespace
-from .registry import registry
+from .registry import _figure_of, registry
 from .state_bridge import make_rebuild_hook
+from .tokens import BUILDER_ATTR, PROBE_ATTR
+from .vars import AsyncFigureVar, FigureVar
 
 __all__ = [
+    "FigureProbeError",
     "XYPlugin",
     "append",
     "clear_selection",
+    "probe_figure_builders",
     "reset_view",
     "select",
     "set_view",
@@ -137,18 +143,116 @@ async def _xy_lifespan() -> None:
         await registry.sweep_forever()
 
 
+class FigureProbeError(Exception):
+    """A `@reflex_xy.figure` builder failed its compile-time probe."""
+
+
+def _builder_location(builder: Any) -> str:
+    try:
+        filename = inspect.getsourcefile(builder)
+        _, line = inspect.getsourcelines(builder)
+    except (OSError, TypeError):
+        return "<source unavailable>"
+    return f"{filename}:{line}"
+
+
+def _touches_session(builder: Any) -> bool:
+    """Heuristic escape valve (constraint 2): builders that read the session
+    (`self.router`) cannot be expected to run against default state — their
+    probe failures degrade to a warning instead of failing the compile."""
+    try:
+        source = inspect.getsource(builder)
+    except (OSError, TypeError):
+        return False
+    return "self.router" in source
+
+
+def _iter_probed_figure_vars(state_cls: Any, seen: set[Any]):
+    if state_cls in seen:
+        return
+    seen.add(state_cls)
+    computed = getattr(state_cls, "computed_vars", {})
+    for name, var in computed.items():
+        if isinstance(var, (FigureVar, AsyncFigureVar)):
+            yield state_cls, name, var
+    for subclass in state_cls.get_substates():
+        yield from _iter_probed_figure_vars(subclass, seen)
+
+
+def probe_figure_builders(root_cls: Any = None) -> list[str]:
+    """Run every probe-enabled `@reflex_xy.figure` builder against default
+    state (reflex-integration.md §3.1): the compile gate of the escape-hatch
+    tier. Returns the probed var full names; raises :class:`FigureProbeError`
+    (wrapping the original) on the first failing builder.
+
+    Level ``"build"`` runs the builder body — hallucinated `xy.*` names,
+    wrong kwargs, and eager chrome errors fail here. ``"figure"`` also
+    compiles the returned chart. ``False`` (and, by default, async builders)
+    are skipped. Builders whose source touches ``self.router`` degrade
+    failures to a `RuntimeWarning`: they are session-dependent by
+    declaration and only a live session can validate them.
+    """
+    import reflex as rx
+
+    root_cls = root_cls if root_cls is not None else cast("Any", rx.State)
+    root = root_cls(_reflex_internal_init=True)
+    probed: list[str] = []
+    for state_cls, name, var in _iter_probed_figure_vars(root_cls, set()):
+        fget = var._fget
+        level = getattr(fget, PROBE_ATTR, False)
+        builder = getattr(fget, BUILDER_ATTR, None)
+        if not level or builder is None:
+            continue
+        full_name = f"{state_cls.get_full_name()}.{name}"
+        try:
+            substate = root.get_substate(tuple(state_cls.get_full_name().split("."))[1:])
+        except (KeyError, ValueError):
+            continue  # not reachable from this root (e.g. mixin scaffolding)
+        try:
+            if inspect.iscoroutinefunction(builder):
+                chart = asyncio.run(builder(substate))
+            else:
+                chart = builder(substate)
+            if level == "figure" and chart is not None:
+                _figure_of(chart)
+        except Exception as exc:
+            location = _builder_location(builder)
+            if _touches_session(builder):
+                warnings.warn(
+                    f"@reflex_xy.figure probe: {full_name} ({location}) reads the "
+                    f"session and failed against default state: {exc!r}. Probes "
+                    "validate what they can; pass probe=False to silence.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            msg = (
+                f"@reflex_xy.figure probe failed for {full_name} ({location}): "
+                f"{type(exc).__name__}: {exc}. The builder ran against default "
+                "state at compile so this error would not wait for a browser "
+                "session; pass @reflex_xy.figure(probe=False) if this builder "
+                "cannot run outside a live session."
+            )
+            raise FigureProbeError(msg) from exc
+        probed.append(full_name)
+    return probed
+
+
 class XYPlugin(Plugin):
     """Reflex plugin: `plugins=[reflex_xy.XYPlugin()]` in rxconfig.py.
 
     `post_compile` is the one plugin hook that receives the live App, and it
     fires at backend worker startup — after the socket server exists, before
-    any client connects, and never during frontend-only compiles.
+    any client connects, and never during frontend-only compiles. It wires
+    the data plane and then runs the figure-builder compile probes (§3.1) so
+    escape-hatch builders fail `reflex run`, not the browser.
     """
 
     def post_compile(self, **context: Any) -> None:
         app = context.get("app")
         if app is not None:
             setup(app)
+            probe_figure_builders()
 
 
 def _token(source: "str | FigureHandle") -> str:

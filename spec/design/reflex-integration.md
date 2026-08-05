@@ -285,6 +285,32 @@ points at is exactly the recovery contract). This is §27 applied to
 processes: canonical data is Reflex state; every registered figure is a
 derived buffer.
 
+**Compile probe.** With the data-bound tier (§3.6) validating everything at
+page evaluation, the figure var is the one place chart-building user code
+still defers to hydrate — so it gets a compile gate of its own.
+`XYPlugin.post_compile` walks the state tree, and for every figure var runs
+the builder once against a default state instance
+(`@reflex_xy.figure(probe=...)` sets the level):
+
+- `probe="build"` — the default for sync builders: run the body only.
+  Hallucinated `xy.*` names, wrong kwargs, and eager chrome errors fail
+  `reflex run` with the state class, var name, and source location
+  (`FigureProbeError` wrapping the original), instead of an `err` frame
+  and a silently blank mount at hydrate.
+- `probe="figure"` — additionally compile the result: full config/shape
+  validation at the price of building one real figure per var at startup.
+- `probe=False` — opt out; the default for `async def` builders (compile
+  is sync, and awaiting a data source at compile is what constraint 2
+  forbids). An async builder may opt in explicitly and runs under
+  `asyncio.run`.
+
+The escape valve for constraint 2: a builder whose source reads
+`self.router` is session-dependent by declaration — its probe failure
+degrades to a `RuntimeWarning` instead of failing the compile, because only
+a live session can validate it. The probe's cost is the builder's own cost
+against *default* state, once per backend worker start — the same order of
+work Reflex already accepts evaluating ordinary computed vars at compile.
+
 ### 3.2 Registry miss: rebuild from state
 
 `sub` (or `msg`) on an unknown state token parses it, resolves the state

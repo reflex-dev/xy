@@ -40,9 +40,11 @@ from reflex_base.vars.base import AsyncComputedVar, ComputedVar
 
 from .handles import FigureHandle
 from .registry import _figure_of, registry
-from .tokens import BUILDER_ATTR, build_state_token
+from .tokens import BUILDER_ATTR, PROBE_ATTR, build_state_token
 
 __all__ = ["AsyncFigureVar", "FigureVar", "figure"]
+
+_PROBE_LEVELS = ("build", "figure", False)
 
 
 def _builder_target(var: Any, obj: Any) -> Any:
@@ -136,12 +138,15 @@ def figure(builder: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar": ...
 
 @overload
 def figure(
-    builder: None = None, **var_kwargs: Any
+    builder: None = None, *, probe: "str | bool | None" = None, **var_kwargs: Any
 ) -> Callable[[Callable[[Any], Any]], "FigureVar | AsyncFigureVar"]: ...
 
 
 def figure(
-    builder: Optional[Callable[[Any], Any]] = None, **var_kwargs: Any
+    builder: Optional[Callable[[Any], Any]] = None,
+    *,
+    probe: "str | bool | None" = None,
+    **var_kwargs: Any,
 ) -> "FigureVar | AsyncFigureVar | Callable[[Callable[[Any], Any]], FigureVar | AsyncFigureVar]":
     """Declare a chart on a Reflex state class.
 
@@ -168,7 +173,20 @@ def figure(
     Keyword arguments pass through to reflex's computed var (``deps=``,
     ``auto_deps=``, ``interval=``, ...); dependencies are auto-tracked from
     the builder's body by default, exactly like a normal ``@rx.var``.
+
+    ``probe=`` sets the compile-time probe level (spec
+    reflex-integration.md §3.1): at app compile the plugin runs the builder
+    once against default state, so hallucinated chart APIs and bad kwargs
+    fail ``reflex run`` instead of a silent blank mount at hydrate.
+    ``"build"`` (the sync default) runs the body only; ``"figure"``
+    additionally compiles the result (full config/shape validation at the
+    price of one real figure); ``False`` opts out — the default for
+    ``async def`` builders, whose data sources should not be awaited at
+    compile.
     """
+    if probe not in (*_PROBE_LEVELS, None):
+        msg = f"@reflex_xy.figure probe= must be 'build', 'figure', or False, got {probe!r}"
+        raise ValueError(msg)
 
     def _decorate(fn: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar":
         if _fn_name(fn).startswith("_"):
@@ -180,9 +198,14 @@ def figure(
             )
             raise ValueError(msg)
         var_kwargs.setdefault("cache", True)
-        if inspect.iscoroutinefunction(fn):
-            return AsyncFigureVar(fget=_make_async_fget(fn), return_type=FigureHandle, **var_kwargs)
-        return FigureVar(fget=_make_fget(fn), return_type=FigureHandle, **var_kwargs)
+        is_async = inspect.iscoroutinefunction(fn)
+        if is_async:
+            var = AsyncFigureVar(fget=_make_async_fget(fn), return_type=FigureHandle, **var_kwargs)
+        else:
+            var = FigureVar(fget=_make_fget(fn), return_type=FigureHandle, **var_kwargs)
+        level = probe if probe is not None else (False if is_async else "build")
+        setattr(var._fget, PROBE_ATTR, level)
+        return var
 
     if builder is None:
         return _decorate
