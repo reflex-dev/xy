@@ -10,7 +10,6 @@ contract, and a PDF round-trip of every construct the family emits.
 
 from __future__ import annotations
 
-import io
 import re
 
 import numpy as np
@@ -35,10 +34,17 @@ def _raster_pixels(chart: xy.Chart) -> np.ndarray:
     return rendered
 
 
-def _decode_png(data: bytes) -> np.ndarray:
-    from PIL import Image
+def _transparent_rgba(fig, **kw) -> np.ndarray:
+    """The composited RGBA a transparent-background export paints.
 
-    return np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"))
+    `_raster.to_rgba` is the raster writer's own pre-encode surface, so this
+    asserts against exactly what the PNG encoder receives — and, unlike
+    decoding the encoded PNG, it needs no image library: Pillow is absent
+    from the 3.11-floor CI environment, and a test that silently depends on
+    a dev-only extra is a test that only runs where someone happens to have
+    it.
+    """
+    return _raster.to_rgba(fig, background="transparent", scale=1.0, **kw)
 
 
 def _pdf_round_trips(svg: str) -> None:
@@ -217,7 +223,7 @@ def test_root_radius_corners_show_the_underlay_not_native_white() -> None:
     assert tuple(pixels[60, 450][:3]) == (0x11, 0x22, 0x33)
     # And on a transparent fast-path export the corners are transparent,
     # never uninitialized native white.
-    png = _decode_png(export.to_image(chart.figure(), "png", background="transparent", scale=1.0))
+    png = _transparent_rgba(chart.figure())
     assert tuple(png[0, 0]) == (0, 0, 0, 0)
 
 
@@ -226,7 +232,7 @@ def test_transparent_export_background_kills_the_root_paint() -> None:
     svg = export.to_image(fig, "svg", background="transparent").decode()
     assert "#0f172a" not in svg  # the fill is silenced...
     assert "#334155" in svg  # ...the border is chrome, not backdrop
-    png = _decode_png(export.to_image(fig, "png", background="transparent", scale=1.0))
+    png = _transparent_rgba(fig)
     assert png[5, 450][3] == 0
     # The override mutates one export's spec, never the figure: the next
     # un-overridden export keeps the declared root paint.
