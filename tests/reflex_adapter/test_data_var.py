@@ -229,6 +229,45 @@ def test_republish_drops_unmounted_dependents_from_the_index(_fresh_registry, cl
     assert _fresh_registry._digests_by_data_token.get(handle.token) is None
 
 
+def test_unmount_transitions_drop_plan_bindings(_fresh_registry, client_token):
+    """The plan index is bounded by *mounted* plans: unsubscribe/disconnect
+    and entry eviction (release, sweep) must unbind — never only a later
+    republish under the same session token (short-lived sessions would
+    otherwise accumulate bindings forever)."""
+    registry = _fresh_registry
+    data_token = f"xyd1|{client_token}|app.app.State|cloud"
+    digest = "ab" * 10
+    composite = build_plan_token(digest, data_token)
+
+    # subscriber-only mount (no cached figure): last unsubscribe unbinds
+    registry.bind_plan(data_token, digest)
+    registry.subscribe(composite, "sid-1", rebuildable=True)
+    registry.unsubscribe(composite, "sid-1")
+    assert registry._digests_by_data_token.get(data_token) is None
+
+    # same via disconnect
+    registry.bind_plan(data_token, digest)
+    registry.subscribe(composite, "sid-2", rebuildable=True)
+    registry.disconnect("sid-2")
+    assert registry._digests_by_data_token.get(data_token) is None
+
+    # a cached figure keeps the mount alive across unsubscribe...
+    registry.bind_plan(data_token, digest)
+    registry.subscribe(composite, "sid-3", rebuildable=True)
+    registry.publish(composite, xy.scatter_chart(xy.scatter([0.0], [0.0])).figure())
+    registry.unsubscribe(composite, "sid-3")
+    assert registry._digests_by_data_token.get(data_token) == {digest}
+    # ...until the entry itself goes: release unbinds
+    registry.release(composite)
+    assert registry._digests_by_data_token.get(data_token) is None
+
+    # and the TTL sweep unbinds an idle, unsubscribed composite entry
+    registry.bind_plan(data_token, digest)
+    entry = registry.publish(composite, xy.scatter_chart(xy.scatter([0.0], [0.0])).figure())
+    registry.sweep(now=entry.last_access + 10**9)
+    assert registry._digests_by_data_token.get(data_token) is None
+
+
 def test_release_columns_releases_dependent_figures(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
     handle = state.maybe.token

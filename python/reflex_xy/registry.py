@@ -125,8 +125,10 @@ class FigureRegistry:
         # and the data-token -> {plan digest} index that lets a column
         # republish rebuild + broadcast every mounted dependent figure. The
         # index is bounded by mounted plans: entries are added when a
-        # composite figure binds and dropped when a republish finds neither
-        # a cached figure nor live subscribers under the composite token.
+        # composite figure binds (namespace sub) and dropped by
+        # _unbind_plan_if_unmounted_locked on every transition that can end
+        # the mount — unsubscribe, disconnect, release, failed-rebuild
+        # cleanup, TTL sweep, and a republish that finds it unmounted.
         self._column_entries: dict[str, ColumnEntry] = {}
         self._digests_by_data_token: dict[str, set[str]] = {}
         # A mounted client remains in its socket room when a TTL sweep evicts
@@ -458,6 +460,7 @@ class FigureRegistry:
             self._invalidate_rebuild_guards_locked(token)
             entry = self._entries.pop(token, None)
             self._retain_removed_version_locked(token, entry)
+            self._unbind_plan_if_unmounted_locked(token)
 
     def remove_if_current(self, token: str, expected: FigureEntry, *, guard: object) -> bool:
         """Remove ``expected`` only while its rebuild guard is still valid.
@@ -474,10 +477,34 @@ class FigureRegistry:
                 return False
             del self._entries[token]
             self._retain_removed_version_locked(token, expected)
+            self._unbind_plan_if_unmounted_locked(token)
             return True
 
     def _invalidate_rebuild_guards_locked(self, token: str) -> None:
         self._active_rebuild_guards.pop(token, None)
+
+    def _unbind_plan_if_unmounted_locked(self, token: str) -> None:
+        """Drop a composite plan token's binding once nothing serves or
+        watches it (mutex held; no-op for non-plan tokens).
+
+        This is the other half of the index invariant "bounded by mounted
+        plans": ``bind_plan`` inserts on subscribe, and every transition that
+        can end a mount — unsubscribe, disconnect, release, failed-rebuild
+        cleanup, the TTL sweep — funnels here, so short-lived sessions cannot
+        accumulate bindings that only a republish would have collected.
+        """
+        from .tokens import parse_plan_token
+
+        parsed = parse_plan_token(token)
+        if parsed is None:
+            return
+        if token in self._entries or self._rebuildable_subscribers.get(token):
+            return
+        digests = self._digests_by_data_token.get(parsed.data_token)
+        if digests is not None:
+            digests.discard(parsed.digest)
+            if not digests:
+                self._digests_by_data_token.pop(parsed.data_token, None)
 
     def _retain_removed_version_locked(self, token: str, entry: Optional[FigureEntry]) -> None:
         if self._rebuildable_subscribers.get(token):
@@ -518,6 +545,7 @@ class FigureRegistry:
             if not subscribers:
                 self._rebuildable_subscribers.pop(token, None)
                 self._evicted_versions.pop(token, None)
+                self._unbind_plan_if_unmounted_locked(token)
 
         tokens = self._rebuildable_tokens_by_sid.get(sid)
         if tokens is not None:
@@ -537,6 +565,7 @@ class FigureRegistry:
                 if not subscribers:
                     self._rebuildable_subscribers.pop(token, None)
                     self._evicted_versions.pop(token, None)
+                    self._unbind_plan_if_unmounted_locked(token)
 
     def tokens(self) -> list[str]:
         with self._mutex:
@@ -613,13 +642,9 @@ class FigureRegistry:
             )
             if not mounted:
                 # Nothing serves or watches this plan anymore: forget the
-                # binding (this is what keeps the index bounded by mounts);
-                # a later subscribe rebuilds from scratch and re-indexes.
-                digests = self._digests_by_data_token.get(data_token)
-                if digests is not None:
-                    digests.discard(digest)
-                    if not digests:
-                        self._digests_by_data_token.pop(data_token, None)
+                # binding (the same invariant every unmount transition
+                # enforces); a later subscribe rebuilds and re-indexes.
+                self._unbind_plan_if_unmounted_locked(composite)
                 return
         parsed = parse_token(data_token)
         source = (
@@ -897,6 +922,7 @@ class FigureRegistry:
                     self._invalidate_rebuild_guards_locked(token)
                     self._retain_removed_version_locked(token, entry)
                     del self._entries[token]
+                    self._unbind_plan_if_unmounted_locked(token)
                     dropped.append(token)
             for token, column_entry in list(self._column_entries.items()):
                 if now - column_entry.last_access > self._ttl:

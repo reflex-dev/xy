@@ -511,8 +511,14 @@ refused as a subscription outright.
 re-binds every mounted dependent through the `data token → {digests}`
 index — fresh figures, bumped versions, coalesced room broadcasts, exactly
 the figure-var republish machinery. The index is added to when a composite
-binds and pruned when a republish finds the plan unmounted, so it stays
-bounded by mounted plans. Failure stays loud: a bind that stops matching
+binds (namespace `sub`) and pruned on **every transition that can end the
+mount**: the last unsubscribe or disconnect for the composite token, its
+entry's release, failed-rebuild cleanup, the TTL sweep, and a republish
+that finds it unmounted (`_unbind_plan_if_unmounted_locked`). "Bounded by
+mounted plans" therefore holds for short-lived sessions too — cleanup never
+depends on that same session republishing later. Pinned by
+`test_data_var.py::test_unmount_transitions_drop_plan_bindings`. Failure
+stays loud: a bind that stops matching
 (possible only for untyped data vars) logs server-side, releases the
 composite entry, and answers the room `err {resync}`; a stale digest
 (hot-reload drift) answers `err {resync}` naming the digest.
