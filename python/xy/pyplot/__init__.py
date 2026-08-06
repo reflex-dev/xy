@@ -1729,7 +1729,7 @@ def table(
     )
 
 
-def legend(*args: Any, **kwargs: Any) -> Legend | None:
+def legend(*args: Any, **kwargs: Any) -> Legend:
     """Show the legend of the current axes.
 
     Call forms: ``legend()`` (labeled artists), ``legend(labels)``, or
@@ -2735,8 +2735,10 @@ def xticks(
     ``rotation`` (degrees) and supported text keywords style the labels.
     """
     axes = gca()
-    if ticks is None and labels is None and rotation is None and not kwargs:
-        return axes.get_xticks(), axes.get_xticklabels()
+    minor = bool(kwargs.get("minor", False))
+    if ticks is None and labels is None and rotation is None and not (set(kwargs) - {"minor"}):
+        labels = axes.xaxis.get_minorticklabels() if minor else axes.get_xticklabels()
+        return axes.get_xticks(minor=minor), labels
     axes.set_xticks(ticks, labels, rotation=rotation, **kwargs)
     return axes.get_xticks(), axes.get_xticklabels()
 
@@ -2750,8 +2752,10 @@ def yticks(
 ) -> tuple[np.ndarray, list[Any]]:
     """Get or set y ticks (see `xticks`)."""
     axes = gca()
-    if ticks is None and labels is None and rotation is None and not kwargs:
-        return axes.get_yticks(), axes.get_yticklabels()
+    minor = bool(kwargs.get("minor", False))
+    if ticks is None and labels is None and rotation is None and not (set(kwargs) - {"minor"}):
+        labels = axes.yaxis.get_minorticklabels() if minor else axes.get_yticklabels()
+        return axes.get_yticks(minor=minor), labels
     axes.set_yticks(ticks, labels, rotation=rotation, **kwargs)
     return axes.get_yticks(), axes.get_yticklabels()
 

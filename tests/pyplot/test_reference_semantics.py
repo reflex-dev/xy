@@ -86,6 +86,25 @@ def test_pyplot_ticks_getters_are_non_mutating_and_setters_return_handles() -> N
     assert [label.get_text() for label in labels] == ["zero", "one"]
 
 
+def test_pyplot_minor_tick_getters_return_minor_locations() -> None:
+    _fig, ax = xyplt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.set_xlim(0.0, 10.0)
+    ax.set_ylim(0.0, 10.0)
+    ax.minorticks_on()
+    ax._build_chart(640, 480)
+
+    xlocations, xlabels = xyplt.xticks(minor=True)
+    ylocations, ylabels = xyplt.yticks(minor=True)
+
+    np.testing.assert_array_equal(xlocations, ax.get_xticks(minor=True))
+    np.testing.assert_array_equal(ylocations, ax.get_yticks(minor=True))
+    assert xlocations.size > 0
+    assert ylocations.size > 0
+    assert xlabels == ax.xaxis.get_minorticklabels()
+    assert ylabels == ax.yaxis.get_minorticklabels()
+
+
 def test_pyplot_legend_returns_live_legend_handle() -> None:
     _fig, ax = xyplt.subplots()
     ax.plot([0.0, 1.0], [0.0, 1.0], label="line")
