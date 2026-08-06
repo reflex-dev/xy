@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -102,6 +103,40 @@ def _load_verify_module():
 
 
 verify_wheel = _load_verify_module()
+
+
+@pytest.mark.parametrize(
+    ("platform", "binary"),
+    [
+        (
+            "manylinux_2_17_x86_64",
+            b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62),
+        ),
+        (
+            "macosx_11_0_arm64",
+            b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x0100000C) + bytes(24),
+        ),
+        (
+            "win_amd64",
+            b"MZ"
+            + bytes(58)
+            + struct.pack("<I", 64)
+            + b"PE\0\0"
+            + struct.pack("<H", 0x8664)
+            + bytes(18)
+            + struct.pack("<H", 0x20B),
+        ),
+    ],
+)
+def test_native_binary_header_matches_wheel_platform(platform: str, binary: bytes) -> None:
+    verify_wheel._require_native_target("native", binary, platform)
+
+
+def test_native_binary_header_rejects_wrong_architecture() -> None:
+    binary = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62)
+
+    with pytest.raises(AssertionError, match="expected ELF/aarch64/64-bit"):
+        verify_wheel._require_native_target("native", binary, "manylinux_2_17_aarch64")
 
 
 def _record_hash(data: bytes) -> str:

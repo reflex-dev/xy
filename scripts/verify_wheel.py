@@ -14,6 +14,7 @@ import base64
 import csv
 import hashlib
 import re
+import struct
 import sys
 import zipfile
 from dataclasses import dataclass
@@ -77,6 +78,89 @@ FORBIDDEN_SUFFIXES = {".pyc", ".pyo"}
 class WheelInfo:
     root_is_purelib: bool
     tags: list[str]
+
+
+@dataclass(frozen=True)
+class NativeBinaryInfo:
+    """Architecture facts read from a packaged native library header."""
+
+    format: str
+    machine: str
+    bits: int
+
+
+_ELF_MACHINES = {40: "arm", 62: "x86_64", 183: "aarch64"}
+_PE_MACHINES = {0x14C: "x86", 0x8664: "x86_64", 0xAA64: "aarch64"}
+_MACHO_CPU_TYPES = {0x01000007: "x86_64", 0x0100000C: "aarch64"}
+_WHEEL_TARGETS = {
+    "manylinux_2_17_x86_64": ("ELF", "x86_64", 64),
+    "manylinux_2_17_aarch64": ("ELF", "aarch64", 64),
+    "manylinux_2_17_armv7l": ("ELF", "arm", 32),
+    "musllinux_1_2_x86_64": ("ELF", "x86_64", 64),
+    "musllinux_1_2_aarch64": ("ELF", "aarch64", 64),
+    "musllinux_1_2_armv7l": ("ELF", "arm", 32),
+    "macosx_10_12_x86_64": ("Mach-O", "x86_64", 64),
+    "macosx_11_0_arm64": ("Mach-O", "aarch64", 64),
+    "win_amd64": ("PE", "x86_64", 64),
+    "win32": ("PE", "x86", 32),
+    "win_arm64": ("PE", "aarch64", 64),
+}
+
+
+def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
+    """Read format, machine, and bitness without platform-specific tools."""
+    if data[:4] == b"\x7fELF":
+        if len(data) < 20:
+            raise AssertionError(f"{name} has a truncated ELF header")
+        elf_class, endian = data[4], data[5]
+        if elf_class not in {1, 2} or endian not in {1, 2}:
+            raise AssertionError(f"{name} has an invalid ELF class or byte order")
+        prefix = "<" if endian == 1 else ">"
+        machine = struct.unpack_from(prefix + "H", data, 18)[0]
+        if machine not in _ELF_MACHINES:
+            raise AssertionError(f"{name} has unsupported ELF machine {machine}")
+        return NativeBinaryInfo("ELF", _ELF_MACHINES[machine], 32 if elf_class == 1 else 64)
+
+    if len(data) >= 8 and data[:4] in {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+    }:
+        prefix = ">" if data[:4] == b"\xfe\xed\xfa\xce" else "<"
+        cputype = struct.unpack_from(prefix + "I", data, 4)[0]
+        if cputype not in _MACHO_CPU_TYPES:
+            raise AssertionError(f"{name} has unsupported Mach-O CPU type {cputype}")
+        bits = 64 if data[:4] in {b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"} else 32
+        return NativeBinaryInfo("Mach-O", _MACHO_CPU_TYPES[cputype], bits)
+
+    if len(data) >= 0x40 and data[:2] == b"MZ":
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+        if pe_offset + 26 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+            raise AssertionError(f"{name} has an invalid PE header")
+        machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
+        if machine not in _PE_MACHINES:
+            raise AssertionError(f"{name} has unsupported PE machine {machine:#x}")
+        optional_magic = struct.unpack_from("<H", data, pe_offset + 24)[0]
+        if optional_magic not in {0x10B, 0x20B}:
+            raise AssertionError(f"{name} has an invalid PE optional-header magic")
+        return NativeBinaryInfo("PE", _PE_MACHINES[machine], 32 if optional_magic == 0x10B else 64)
+
+    raise AssertionError(f"{name} is not an ELF, Mach-O, or PE native library")
+
+
+def _require_native_target(name: str, data: bytes, platform: str) -> None:
+    expected = _WHEEL_TARGETS.get(platform)
+    if expected is None:
+        raise AssertionError(
+            f"no native binary contract is defined for wheel platform {platform!r}"
+        )
+    actual = _inspect_native_binary(name, data)
+    if (actual.format, actual.machine, actual.bits) != expected:
+        raise AssertionError(
+            f"{name} identifies as {actual.format}/{actual.machine}/{actual.bits}-bit, "
+            f"expected {expected[0]}/{expected[1]}/{expected[2]}-bit for {platform}"
+        )
 
 
 def _dist_info_name(names: set[str], filename: str) -> str:
@@ -289,7 +373,9 @@ def _require_record(zf: zipfile.ZipFile, names: set[str]) -> None:
             )
 
 
-def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
+def verify_wheel(
+    path: Path, *, expect_native: Optional[bool], expect_platform: Optional[str] = None
+) -> None:
     with zipfile.ZipFile(path) as zf:
         _require_unique_archive_members(zf.infolist())
         names = set(zf.namelist())
@@ -398,6 +484,9 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             raise AssertionError("native wheel must set Root-Is-Purelib: false")
         if any(tag == "py3-none-any" for tag in wheel.tags):
             raise AssertionError(f"native wheel must not use a pure tag: {wheel.tags}")
+        if expect_platform is not None:
+            with zipfile.ZipFile(path) as zf:
+                _require_native_target(native_libs[0], zf.read(native_libs[0]), expect_platform)
     elif expect_native is False:
         if native_libs:
             raise AssertionError(
@@ -421,11 +510,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--expect-native", action="store_true")
     group.add_argument("--expect-pure", action="store_true")
+    parser.add_argument(
+        "--expect-platform",
+        help="validate the native library header against this wheel platform tag",
+    )
     args = parser.parse_args(argv)
 
     expect_native = True if args.expect_native else False if args.expect_pure else None
     try:
-        verify_wheel(args.wheel, expect_native=expect_native)
+        verify_wheel(
+            args.wheel,
+            expect_native=expect_native,
+            expect_platform=args.expect_platform,
+        )
     except (AssertionError, KeyError, zipfile.BadZipFile) as e:
         print(f"wheel verification failed for {args.wheel}: {e}", file=sys.stderr)
         return 1

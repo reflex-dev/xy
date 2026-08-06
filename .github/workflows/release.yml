@@ -109,7 +109,7 @@ jobs:
         shell: bash
         run: |
           whl=$(ls dist/*.whl)
-          python scripts/verify_wheel.py "$whl" --expect-native
+          python scripts/verify_wheel.py "$whl" --expect-native --expect-platform "${{ matrix.plat }}"
       - name: Install-size budget (<= 15 MB)
         shell: bash
         run: |
