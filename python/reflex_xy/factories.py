@@ -79,6 +79,7 @@ __all__ = [
     "line_chart",
     "scatter_chart",
     "segments_chart",
+    "stem_chart",
     "step_chart",
 ]
 

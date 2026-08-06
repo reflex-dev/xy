@@ -932,7 +932,14 @@ export function XYChart(props) {
     // Resubscribe on every (re)connect: after the app plane reconnects the
     // shared manager, rooms are gone and — on another backend node — the
     // figure itself may need a state-driven rebuild. `sub` triggers both.
-    socket.on("connect", subscribe);
+    // A fresh connection also restores the bounded resync-retry budget: the
+    // cap exists to stop same-connection err loops, not to dead-end a chart
+    // whose backend recovered after the budget ran out.
+    const onConnect = () => {
+      errResyncs = 0;
+      subscribe();
+    };
+    socket.on("connect", onConnect);
     subCounts.set(liveToken, (subCounts.get(liveToken) || 0) + 1);
     if (socket.connected) subscribe();
 
@@ -963,7 +970,7 @@ export function XYChart(props) {
       socket.off("msg", onMsg);
       socket.off("err", onErr);
       socket.off("disconnect", onDisconnect);
-      socket.off("connect", subscribe);
+      socket.off("connect", onConnect);
       const remaining = (subCounts.get(liveToken) || 1) - 1;
       if (remaining <= 0) {
         subCounts.delete(liveToken);
