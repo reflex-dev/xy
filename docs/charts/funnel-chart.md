@@ -21,8 +21,9 @@ prior value, overall share, previous-stage conversion, and drop-off.
 Jump to [the basic chart](#create-a-funnel-chart),
 [geometry modes](#choose-honest-geometry),
 [horizontal funnels](#run-the-funnel-horizontally),
-[necks, gaps, and floors](#shape-the-silhouette), or
-[styling](#style-a-funnel).
+[necks, gaps, and floors](#shape-the-silhouette),
+[styling](#style-a-funnel), or
+[the legend](#add-a-legend).
 
 ## Create a Funnel Chart
 
@@ -212,15 +213,45 @@ kernel applies them once for every surface — segment labels, hover tooltips,
 and static exports all print the same string, because the client is handed
 the formatted text rather than re-implementing the format spec.
 
-## Interact With a Funnel
+## Add a Legend
 
-The legend is off by default — the stage axis already names every stage — and
-an explicit `xy.legend(...)` child brings back one row per stage from the
-categorical stage encoding. Those rows are live: clicking one hides that
-stage's segment **and its labels**, leaving the remaining stages and their
-arithmetic untouched (a funnel's stage values are the data, not a running
-total to recompute), and clicking again restores it. Hovering a row
-emphasizes its stage and dims the rest.
+The legend is **off by default** — the stage axis already names every stage,
+so a second list of the same names is usually noise. Pass an explicit
+`xy.legend(...)` child to bring back one row per stage, drawn from the
+categorical stage encoding:
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+legend_funnel = xy.funnel_chart(
+    ["Sourced", "Screen", "Onsite", "Offer", "Hired"],
+    [1_840, 920, 388, 152, 121],
+    xy.legend(loc="center right", title="Stage"),
+    show_dropoff=True,
+    percent_format="{:.1%}",
+    title="Recruiting — click a legend row to hide a stage",
+)
+
+
+def funnel_legend_demo():
+    return reflex_xy.chart(legend_funnel, height="460px")
+~~~
+
+Those rows are live. Clicking one hides that stage's segment **and its
+labels**, leaving every other stage's geometry and arithmetic untouched — a
+funnel's stage values are the data, not a running total to recompute — and
+clicking again restores it. Hovering a row emphasizes its stage and dims the
+rest. `xy.legend(show=False)` is the default; `loc`, `title`, and `ncols`
+place and shape it like any other chart's legend, and the `legend`,
+`legend_item`, `legend_swatch`, and `legend_label`
+[chrome slots](/docs/xy/styling/chrome-slots/) style it.
+
+Because stage colours come from a categorical channel keyed on the stage
+names, a `xy.theme(palette={...})` mapping keeps each legend swatch and its
+segment in the same colour across every chart that names that stage.
+
+## Interact With a Funnel
 
 Hover reads the full arithmetic for a stage, and because a segment covers an
 area rather than a point, the tooltip follows the cursor within it. Clicking
