@@ -558,7 +558,17 @@ Bound methods are refused outright (instance state has no content
 address; two differently configured instances would collide on one
 digest), as are lambdas, closures, and partials. Re-registration under a
 digest is last-write-wins, so a hot-reloaded page replaces stale node
-objects. The probe
+objects. **Recorded boundary:** the fingerprint addresses *code*, not
+process state. A module-level function that reads a mutable module global
+executes whatever that global holds in the serving worker — exactly like
+an `@reflex_xy.figure` builder or `@reflex_xy.data` method that does the
+same, and no more addressable: hashing referenced global *values* would
+have to snapshot an unbounded, mutable object graph at registration and
+still be stale by bind time, and refusing functions that reference any
+global name would refuse every NumPy-using reducer (`np` is a global
+reference). The declared state carriers — closures, partials, bound
+methods — are refused; residual global-state impurity is the same
+purity contract every server-side builder tier already carries (§3.1). The probe
 figure also yields `dom_class_strings()`, so **live data-bound charts get
 automatic Tailwind discovery** (previously live sources needed the manual
 inventory).

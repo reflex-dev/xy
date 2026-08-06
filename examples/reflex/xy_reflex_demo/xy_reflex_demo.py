@@ -532,9 +532,14 @@ class Demo(rx.State):
         x, y, _ = _cloud(POINTS)
         edges = np.linspace(x.min(), x.max(), 121)
         idx = np.clip(np.digitize(x, edges) - 1, 0, 119)
-        counts = np.maximum(np.bincount(idx, minlength=120), 1)
-        mean_y = np.bincount(idx, weights=y, minlength=120) / counts
+        counts = np.bincount(idx, minlength=120)
+        sums = np.bincount(idx, weights=y, minlength=120)
         centers = (edges[:-1] + edges[1:]) / 2.0
+        # A bin with no points has no mean — drop it rather than plotting a
+        # false zero at its centre (the columns just get shorter).
+        filled = counts > 0
+        mean_y = sums[filled] / counts[filled]
+        centers = centers[filled]
         return {"x": centers, "y": mean_y, "mag": np.hypot(centers, mean_y)}
 
     @rx.event
