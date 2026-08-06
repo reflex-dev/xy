@@ -487,9 +487,16 @@ Failure is **fail-closed**: a page that cannot evaluate would leave this
 worker's plan map incomplete — behind a load balancer that means charts
 blank or not depending on which worker answers — so `_ensure_page_plans`
 collects every failing page and refuses worker startup with an error
-naming them, instead of serving inconsistently. (The same page code fails
-`reflex run`'s real compile first, so a healthy deployment never hits
-this.) Binding is the reverse:
+naming them, instead of serving inconsistently. The contract this puts on
+app code is **re-evaluability**: a page body runs at least twice per
+process (the compile, then this pass) and must build the same charts each
+time. Code that mutates module state a later page body reads — the docs
+site's Markdown demo runner cached exec fences in one page-wide module
+namespace, so a second render rebuilt each demo from the *last* fence's
+data — either changes plan digests (leaving the compiled frontend's token
+unregistered) or fails outright here; a page that only fails on the second
+evaluation still passes `reflex run`'s compile, so the fail-closed error is
+the check that catches it. Binding is the reverse:
 columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
 Column-mismatch errors name both sides (*"plan binds column 'mag';
 Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark

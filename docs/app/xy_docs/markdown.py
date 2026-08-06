@@ -7,7 +7,13 @@ from dataclasses import replace
 
 import reflex as rx
 from reflex_docgen.markdown import CodeBlock, HeadingBlock, parse_document
-from reflex_site_shared.docs.markdown import ReflexDocTransformer, _spans_to_plaintext
+from reflex_site_shared.docs.markdown import (
+    ReflexDocTransformer,
+    _exec_code,
+    _file_modules,
+    _last_defined_name,
+    _spans_to_plaintext,
+)
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.hosting_banner import HostingBannerState
 
@@ -27,6 +33,10 @@ from xy_docs.examples import chart_example_demo
 # plain literals, so it is valid before the imports below the divider).
 _DEMO_DATA_DIVIDER = "# --- chart ---"
 _DEMO_DATA_TAB_LINE_THRESHOLD = 10
+
+# Namespace of the page module as of the end of each executed fence, keyed by
+# (virtual filepath, fence source). See `_exec_fence`.
+_FENCE_NAMESPACES: dict[tuple[str, str], dict] = {}
 
 
 def _split_demo_data(content: str) -> tuple[str | None, str]:
@@ -109,9 +119,59 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
         """Use the accessible XY code block for every visible source fence."""
         flags = set(block.flags)
         language = block.language or "plain"
+        if language == "python" and "exec" in flags and not flags & {"demo", "demo-only"}:
+            # Same contract as the shared renderer's bare-``exec`` branch, but
+            # through the snapshot-aware seam below.
+            self._exec_fence(block.content)
+            return rx.fragment()
         if language == "python" and flags.intersection({"demo", "demo-only", "exec", "eval"}):
             return super().code_block(block)
         return code_block(block.content, language)
+
+    def _exec_fence(self, content: str) -> None:
+        """Execute one fence, or restore the namespace it left behind.
+
+        Every exec fence in a page shares one synthetic module, and the shared
+        renderer skips re-executing a fence it has already run (State classes
+        must not be redefined). A page is evaluated more than once per process
+        — the frontend compile, then `reflex_xy`'s worker-startup pass over the
+        unevaluated pages (reflex-integration.md §"Plans") — and on those later
+        renders the module namespace holds *end-of-page* values, so a fence's
+        preview function reads whatever a later fence last bound its names to.
+        Demos that reuse names (`months`, `x`, `y`) then build from another
+        demo's data: silently different charts, mismatched plan digests, or a
+        hard failure when the shadowing arrays disagree in length.
+
+        So snapshot the namespace at the end of each fence's first execution
+        and restore it in place (the module dict object is what the fence's
+        functions close over) before the fence renders again. Every render
+        sees exactly the namespace the first one did.
+        """
+        key = (self.virtual_filepath, content)
+        namespace = _FENCE_NAMESPACES.get(key)
+        if namespace is None:
+            _exec_code(content, self.env, self.virtual_filepath)
+            _FENCE_NAMESPACES[key] = dict(self.env)
+            return
+        module = _file_modules.get(self.virtual_filepath)
+        if module is not None:
+            module.__dict__.clear()
+            module.__dict__.update(namespace)
+        self.env.clear()
+        self.env.update(namespace)
+
+    def _exec_and_get_last_callable(self, content: str):
+        """Call the fence's last-defined callable against its own namespace."""
+        self._exec_fence(content)
+        last_name = _last_defined_name(content)
+        if last_name is None:
+            msg = "Exec block defines no function or class"
+            raise RuntimeError(msg)
+        last = self.env[last_name]
+        if not callable(last):
+            msg = f"Last defined name {last_name!r} is not callable"
+            raise TypeError(msg)
+        return last()
 
     def _render_demo(self, content: str, flags: set[str]) -> rx.Component:
         """Render public chart demos with consistent Preview/Code/Data tabs."""

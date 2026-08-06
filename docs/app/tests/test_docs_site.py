@@ -1155,6 +1155,64 @@ def test_composition_demos_keep_distinct_assets_after_cached_render(
     assert second_payloads == first_payloads
 
 
+def _names_rebound_across_exec_fences(content: str) -> set[str]:
+    """Top-level names that more than one exec fence of a page assigns."""
+    seen: set[str] = set()
+    rebound: set[str] = set()
+    for fence, body in re.findall(r"~~~python([^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
+        if "exec" not in fence:
+            continue
+        assigned = {
+            target.id
+            for node in ast.parse(body).body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        rebound |= assigned & seen
+        seen |= assigned
+    return rebound
+
+
+def test_repeated_page_renders_rebuild_every_demo_from_its_own_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep cached fences bound to their own globals, not the page's last ones.
+
+    Pages are evaluated more than once per process — the frontend compile, then
+    the `reflex_xy` worker-startup pass over unevaluated pages — and demos that
+    reuse names such as `months` must not pick up a later demo's arrays on the
+    second pass. Content-addressed payload names make that visible: identical
+    demo data renders identical `.xyf` sources.
+    """
+    monkeypatch.chdir(tmp_path)
+    payload_pattern = re.compile(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"')
+    pages = [
+        page
+        for page in discover_docs(DOCS_CONFIG)
+        if _names_rebound_across_exec_fences(page.content)
+    ]
+
+    assert pages
+    for page in pages:
+        route = page.relative_path.as_posix()
+        virtual_filepath = f"tests/docdemo/repeated-render/{route}"
+        renders = [
+            str(
+                XyDocsMarkdownTransformer(
+                    virtual_filepath=virtual_filepath,
+                    filename=page.source_path.as_posix(),
+                ).transform(parse_document(page.content))
+            )
+            for _ in range(2)
+        ]
+
+        first, second = (payload_pattern.findall(rendered) for rendered in renders)
+        assert first, route
+        assert second == first, route
+
+
 def test_exact_readout_demo_is_backed_by_live_reflex_state() -> None:
     """Keep the readout driven by chart events instead of compiled sample values."""
     source_path = DOCS_ROOT / "core-concepts" / "interactions.md"
