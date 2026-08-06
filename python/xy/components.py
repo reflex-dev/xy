@@ -101,6 +101,8 @@ __all__ = [
     "errorbar_chart",
     "export_config",
     "facet_chart",
+    "funnel",
+    "funnel_chart",
     "heatmap",
     "heatmap_chart",
     "hexbin",
@@ -1141,6 +1143,114 @@ def sankey(
             "link_opacity": link_opacity,
             "labels": labels,
             "label_size": label_size,
+        },
+    )
+
+
+def funnel(
+    stage: Union[str, ArrayLike, None] = None,
+    value: Union[str, ArrayLike, None] = None,
+    *,
+    data: TableLike = None,
+    key: Any = None,
+    orientation: str = "vertical",
+    geometry: str = "area",
+    gap: Optional[float] = None,
+    neck: str = "rect",
+    min_width: float = 0.0,
+    color: Optional[str] = None,
+    colors: Optional[Sequence[str]] = None,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    show_values: bool = True,
+    show_conversion: bool = True,
+    show_dropoff: bool = False,
+    labels: bool = True,
+    label_size: float = 12.0,
+    value_format: str = "{:,.10g}",
+    percent_format: str = "{:.0%}",
+    animation: Animation | bool | None = None,
+    style: Optional[dict[str, StyleValue]] = None,
+    class_name: Optional[str] = None,
+) -> Mark:
+    """A funnel mark: one centered segment per stage, in declared order.
+
+    Stage order is the declared order — a funnel is a categorical business
+    process and is never sorted. Prefer `xy.funnel_chart(...)`, which also
+    hides the cross axis and puts stage 0 at the top.
+
+    Args:
+        stage: Stage names in order, or a column name resolved from ``data``.
+        value: One non-negative value per stage, or a column name.
+        data: Table used to resolve column-name inputs.
+        key: Stable per-stage identities for animation matching, or a column
+            name. Defaults to positional matching.
+        orientation: ``"vertical"`` stacks stages along y (stage 0 on top in
+            `funnel_chart`); ``"horizontal"`` runs them along x.
+        geometry: ``"area"`` draws the classic tapering silhouette (each
+            segment's far edge previews the next stage, so painted area is NOT
+            proportional to the value); ``"bar"`` draws centered
+            constant-width segments whose widths carry the values exactly.
+        gap: Gap between segments as a fraction of the stage pitch, in
+            ``[0, 1)``. ``None`` resolves per geometry: 0 for ``"area"``
+            (a continuous silhouette), 0.2 for ``"bar"`` (bar-chart spacing).
+        neck: Last area segment's far edge: ``"rect"`` holds the stage's own
+            width, ``"taper"`` runs it to a point. Area geometry only.
+        min_width: Drawn-width floor as a fraction of the widest stage, in
+            ``[0, 1]``. Keeps zero/tiny stages visible and hoverable; values
+            in labels, tooltips and events are never clamped.
+        color: One constant CSS color for every segment (no per-stage legend).
+        colors: One CSS color per stage. Defaults to the palette cycle in
+            declared stage order.
+        name: Series label. Legend rows normally come from the per-stage
+            categorical encoding instead.
+        opacity: Segment opacity from zero to one (per-trace).
+        stroke: Optional segment outline color (per-trace).
+        stroke_width: Segment outline width in pixels (per-trace).
+        show_values: Draw the value label on each segment.
+        show_conversion: Append the overall conversion (share of the first
+            stage) to each value label.
+        show_dropoff: Draw the signed stage-over-stage change at each
+            boundary (``-38%`` for a drop, ``+12%`` for growth).
+        labels: Master switch for all funnel labels.
+        label_size: Label font size in px.
+        value_format: ``str.format`` template for values.
+        percent_format: ``str.format`` template for ratios.
+        animation: Per-mark animation override; ``False`` disables animation.
+        style: Mark style overrides (opacity, stroke, stroke-width).
+        class_name: Adapter-only trace metadata; it does not style canvas
+            geometry.
+    """
+    return Mark(
+        kind="funnel",
+        x=stage,
+        y=value,
+        data=data,
+        name=name,
+        class_name=class_name,
+        key=key,
+        animation=animation,
+        style=_mark_style_dict(style, "funnel style"),
+        props={
+            "orientation": orientation,
+            "geometry": geometry,
+            "gap": gap,
+            "neck": neck,
+            "min_width": min_width,
+            "color": color,
+            "colors": None if colors is None else list(colors),
+            "opacity": opacity,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "show_values": show_values,
+            "show_conversion": show_conversion,
+            "show_dropoff": show_dropoff,
+            "labels": labels,
+            "label_size": label_size,
+            "value_format": value_format,
+            "percent_format": percent_format,
         },
     )
 
@@ -5829,6 +5939,32 @@ def _apply_sankey(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _apply_funnel(fig: Figure, m: Mark, data: Any) -> None:
+    fig.funnel(
+        _resolve(data, m.x, context=f"{m.kind}.stage"),
+        _resolve(data, m.y, context=f"{m.kind}.value"),
+        orientation=m.props["orientation"],
+        geometry=m.props["geometry"],
+        gap=m.props["gap"],
+        neck=m.props["neck"],
+        min_width=m.props["min_width"],
+        color=m.props["color"],
+        colors=m.props["colors"],
+        name=m.name,
+        opacity=m.props["opacity"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        show_values=m.props["show_values"],
+        show_conversion=m.props["show_conversion"],
+        show_dropoff=m.props["show_dropoff"],
+        labels=m.props["labels"],
+        label_size=m.props["label_size"],
+        value_format=m.props["value_format"],
+        percent_format=m.props["percent_format"],
+        style=m.style,
+    )
+
+
 def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
     color = m.props["color"]
     fig.triangle_mesh(
@@ -6202,6 +6338,7 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "stem": _apply_stem,
     "ribbon": _apply_ribbon,
     "sankey": _apply_sankey,
+    "funnel": _apply_funnel,
     "triangle_mesh": _apply_triangle_mesh,
     "violin": _apply_violin,
 }
@@ -6988,6 +7125,96 @@ def sankey_chart(
         *children,
     )
     return Chart("sankey_chart", children, **props)
+
+
+def funnel_chart(
+    *children: Any,
+    **props: Any,
+) -> Chart:
+    """A funnel chart: ordered stages, centered segments, hidden cross axis.
+
+        xy.funnel_chart(
+            xy.funnel(
+                data=df,
+                stage="stage",
+                value="users",
+                show_conversion=True,
+            ),
+        )
+
+    Positional ``(stage, value)`` sequences also work without composing the
+    mark explicitly: ``xy.funnel_chart(["Visit", "Signup"], [9800, 6200])``.
+
+    The stage axis keeps the declared order — stage 0 at the top for vertical
+    funnels (the axis is reversed exactly like a Sankey's), at the left for
+    horizontal ones — and shows the stage names as its tick labels. The cross
+    axis is layout, not data (segments are centered on zero), so it is hidden;
+    keyword arguments that belong to `xy.funnel` (``orientation``,
+    ``geometry``, ``gap``, ``neck``, ``min_width``, ``colors``,
+    ``show_dropoff``, …) are forwarded there, and everything else (``width``,
+    ``height``, ``title``, …) styles the chart.
+    """
+    mark_keys = (
+        "data",
+        "stage",
+        "value",
+        "key",
+        "orientation",
+        "geometry",
+        "gap",
+        "neck",
+        "min_width",
+        "color",
+        "colors",
+        "opacity",
+        "stroke",
+        "stroke_width",
+        "show_values",
+        "show_conversion",
+        "show_dropoff",
+        "labels",
+        "label_size",
+        "value_format",
+        "percent_format",
+        "animation",
+    )
+    mark_kwargs = {key: props.pop(key) for key in mark_keys if key in props}
+    rest = list(children)
+    marks: list[Component] = []
+    if rest and not isinstance(rest[0], Component):
+        stage_values = rest.pop(0)
+        if "stage" in mark_kwargs:
+            raise ValueError("funnel_chart got positional stages and stage=")
+        mark_kwargs["stage"] = stage_values
+        if rest and not isinstance(rest[0], Component):
+            if "value" in mark_kwargs:
+                raise ValueError("funnel_chart got positional values and value=")
+            mark_kwargs["value"] = rest.pop(0)
+    if mark_kwargs or not any(isinstance(child, Mark) and child.kind == "funnel" for child in rest):
+        marks.append(funnel(**mark_kwargs))
+    orientation = mark_kwargs.get("orientation", "vertical")
+    for child in rest:
+        if isinstance(child, Mark) and child.kind == "funnel":
+            orientation = child.props.get("orientation", orientation)
+    # The cross axis is layout, not data (segments center on zero), so it is
+    # hidden with a symmetric margin that keeps the widest stage — and the
+    # outside/drop-off labels beside it — clear of the plot edges. The legend
+    # is off by default: the stage axis already names every stage, and the
+    # widest stage sits exactly where an inside legend would land. An explicit
+    # `xy.legend(...)` child (or any later child) overrides these defaults.
+    if orientation == "vertical":
+        axes: tuple[Component, ...] = (
+            x_axis(show=False, margin=0.14),
+            y_axis(reverse=True),
+            legend(show=False),
+        )
+    else:
+        axes = (
+            y_axis(show=False, margin=0.14),
+            x_axis(),
+            legend(show=False),
+        )
+    return Chart("funnel_chart", (*marks, *axes, *rest), **props)
 
 
 def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:

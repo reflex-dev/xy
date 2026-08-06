@@ -600,6 +600,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     segments = _marks.segments
     ribbon = _marks.ribbon
     sankey = _marks.sankey
+    funnel = _marks.funnel
     triangle_mesh = _marks.triangle_mesh
     bar = _marks.bar
     column = _marks.column
@@ -1740,6 +1741,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
             # which ride in the `x`/`y` slots (ribbon geometry contract).
             if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
                 raise ValueError("ribbon trace missing geometry columns")
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
+        if t.kind == "funnel":
+            # The generic x/y slots carry the trailing CROSS edges (funnel
+            # geometry contract), so they range on the cross axis — x for a
+            # vertical funnel, y for a horizontal one.
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("funnel trace missing geometry columns")
+            if str(t.style.get("orientation", "vertical")) == "vertical":
+                return [t.x0, t.x1, t.x, t.y] if axis == "x" else [t.y0, t.y1]
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]

@@ -24,9 +24,10 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 Establish the primitive once; the charts sharing it are mostly wiring.
 
 The registry is the authority on what exists. `MARK_KINDS` (`js/src/55_marks.ts`)
-holds nineteen kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
-`column`, `contour`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `histogram`,
-`line`, `ribbon`, `scatter`, `segments`, `stem`, `triangle_mesh`, `violin` — each with a
+holds twenty kinds today — `area`, `bar`, `box`, `box_median`, `box_whisker`,
+`column`, `contour`, `error_band`, `errorbar`, `funnel`, `heatmap`, `hexbin`,
+`histogram`, `line`, `ribbon`, `scatter`, `segments`, `stem`, `triangle_mesh`,
+`violin` — each with a
 matching `_emit_<K>` in `_payload.py`. `density` is a *tier* of `scatter`, not a
 kind. Public builders that reuse an existing kind add no registry entry:
 `hist` → `histogram`, and `step`/`stairs`/`ecdf` → `line`.
@@ -145,6 +146,66 @@ lasso selection is correctly absent rather than present and wrong. When
 `tooltip_rows` is present, the client and kernel exact-pick path preserve those
 semantic fields so a Sankey tooltip describes the flow or node rather than its
 internal placement coordinates.
+
+#### The funnel geometry contract
+
+A `funnel` is a run of symmetric quads: one segment per stage of an ordered
+process, centered on zero along a cross axis, with independent cross widths at
+each end so a segment can taper. It is the primitive behind funnel charts and
+a straight, transposable sibling of the ribbon; a future pyramid or population
+chart reuses it.
+
+Three renderers draw it and must agree exactly: the client's funnel program
+(`FUNNEL_VS` + the shared `RIBBON_FS`, `js/src/40_gl.ts`), and both static
+exporters through `_scene.funnel_quad` — the single corner reference the
+golden tests pin. This section is normative — a fourth renderer implements it
+without reading the other three.
+
+**On the wire.** All layout happens in Python at build time
+(`python/xy/_funnel.py` — validation, conversion arithmetic, quad
+construction, the label ladder), the way `_sankey` owns the Sankey placement;
+renderers only ever see quads plus semantics:
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `"funnel"` |
+| `tier` | always `"direct"` — one quad per stage is small-N by nature, and neither decimation nor a density tier means anything for it (§28) |
+| `orientation` | `"vertical"` (stage axis = y) or `"horizontal"` (stage axis = x) |
+| `pos0`, `pos1` | segment edges along the stage axis, shipped on that axis's scale. Stage order is the DECLARED order; positions come from the categorical stage axis |
+| `lo0`, `hi0` | cross-axis edges at `pos0`, on the cross axis's scale |
+| `lo1`, `hi1` | cross-axis edges at `pos1` — internally these ride the trace's generic `x`/`y` slots, which is why `_range_columns` has a funnel branch |
+| `n_marks` | quad count (= stage count) |
+| `color` | per-stage paint channel: `constant`, `categorical` (codes + palette, categories in DECLARED stage order — the funnel factory builds this by hand because generic factorization sorts labels alphabetically), or `direct_rgba` |
+| `tooltip_rows` | one semantic row per stage: `stage`, `value`, `prior`, `share`, `conversion`, `dropoff`. Ratios over a zero denominator are `null`, never `inf`. Small-N readouts, not geometry, per §29's raw-buffer rule |
+
+**Geometry.** Corners run A=(`lo0`@`pos0`) B=(`hi0`@`pos0`) C=(`hi1`@`pos1`)
+D=(`lo1`@`pos1`), transposed per orientation. Edges are STRAIGHT in
+axis-transformed space: the exporters map the six edge values first and join
+them with lines (`_scene.funnel_quad` consumes mapped values), and the client
+lerps between per-vertex `xyMap` results in clip space — the affine image of
+transformed space, so all three draw literally the same line on every axis
+type. CPU hover lerps the same edges in transformed space and returns the
+QUAD (= stage) index.
+
+**Paint.** One flat color per stage; there is no along-segment gradient (that
+is the ribbon's contract, and its `a_rgba2` slot is exactly what a funnel does
+not need). `opacity`, `stroke`, `stroke_width` are per-trace scalars, refused
+as arrays; `style.fill` is absent from the property set (per-stage paint is
+the channel). An omitted stroke color outlines each segment with its own fill
+(`edgecolors="face"`), resolved per stage in every renderer. The client's
+segment edges get `fwidth` coverage antialiasing from the shared ribbon
+fragment stage — the GL context is `antialias: false`, and without coverage
+the funnel's long diagonals staircase (found in review).
+
+**Interaction.** `pointPick` is false (the GPU id pass draws points from the
+generic slots — trailing cross edges, garbage ids); hover is the CPU
+containment path, so box/lasso selection is absent rather than wrong, as for
+ribbon. The registry entry sets `stageNav`: the per-stage centers join the
+keyboard traversal groups, so arrow keys walk the declared order and the
+announcement reads "Stage i of n" plus the stage's semantic row.
+
+Deferred, recorded in the roadmap: GPU picking, box/lasso selection, and
+multi-series comparison grouping (facets are the current answer).
 
 #### Shared-geometry marks: the hexbin centers-only contract
 

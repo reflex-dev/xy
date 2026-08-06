@@ -1279,18 +1279,18 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 20
+    assert len(chart_section) == 21
     assert "XYChart" not in rendered
-    assert rendered.count("dangerouslySetInnerHTML") == 34
+    assert rendered.count("dangerouslySetInnerHTML") == 35
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
     assert rendered.count("2xl:grid-cols-3") == 9
-    assert rendered.count("aspect-[320/232]") == 34
-    assert rendered.count("shadow-large") == 34
-    assert rendered.count("transition-bg") == 34
+    assert rendered.count("aspect-[320/232]") == 35
+    assert rendered.count("shadow-large") == 35
+    assert rendered.count("transition-bg") == 35
     assert "--gallery-preview-surface: #fff" in rendered
     assert "--gallery-preview-fill: #efeaff" in rendered
     assert "--gallery-preview-soft: #dccfff" in rendered
@@ -1301,7 +1301,7 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     assert "object-contain" not in rendered
     assert "object-center" not in rendered
     assert "xy-tailwind-bridge" not in rendered
-    assert rendered.count("size:14") == 34
+    assert rendered.count("size:14") == 35
     assert "size:6" not in rendered
     for chart_type in (
         "Line",
@@ -1372,7 +1372,7 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
         for item in group.items
     }
 
-    assert len(previews) == 34
+    assert len(previews) == 35
     for svg in previews.values():
         assert 'viewBox="0 0 320 232"' in svg
         assert '<rect x="52" y="62" width="216" height="108" rx="12"' in svg
@@ -1538,7 +1538,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     titles = {item.title for group in _GALLERY_GROUPS for item in group.items}
     section_titles = [group.title for group in _GALLERY_GROUPS]
 
-    assert len(titles) == 34
+    assert len(titles) == 35
     assert section_titles[:3] == [
         "Line and Area",
         "Distributions",
@@ -1566,6 +1566,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         ("Stem", "/charts/stem-plot/"),
         ("Segments", "/charts/segments/"),
         ("Sankey", "/charts/sankey/"),
+        ("Funnel", "/charts/funnel-chart/"),
         ("Triangle Mesh", "/components/triangle-mesh/"),
     ]
     assert {"Step + Stairs", "Bar + Column"} <= titles

@@ -2,7 +2,7 @@ import { PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, FUNNEL_VS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
 import { acquireGLHost } from "./42_glhost";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
@@ -3277,8 +3277,51 @@ export class ChartView {
       g._filterDirty = true;
       for (const s of this._densityOverlays(g)) this._filterScatterRows(s, hidden);
       this._scheduleViewRequest(this.view, { delay: 0 });
+    } else if (g._cpuFunnel) {
+      this._filterFunnelStages(g, hidden);
     } else {
       this._filterScatterRows(g, hidden);
+    }
+  }
+
+  // Hiding a funnel stage removes that segment and nothing else: the stage
+  // axis keeps its label and the surviving stages keep their own geometry and
+  // conversion arithmetic, because a funnel's stage values are the data, not
+  // a running total to be recomputed. Small-N, so the six instance columns and
+  // the paint rows are simply rebuilt from the retained CPU views rather than
+  // read back off the GPU the way the scatter filter must.
+  _filterFunnelStages(g, hidden) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const codes = g._funnelCodes;
+    const visible = [];
+    for (let i = 0; i < f.n; i++) {
+      const code = codes ? Math.round(codes[i]) : i;
+      if (!hidden || !hidden.has(code)) visible.push(i);
+    }
+    // `_visMap` translates drawn instance → shipped stage row, so hover,
+    // tooltips and events keep naming the right stage while filtered.
+    g._visMap = visible.length === f.n ? null : Int32Array.from(visible);
+    g.n = visible.length;
+    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
+    for (const [name, slot] of Object.entries(slots)) {
+      const source = f[name];
+      const values = g._visMap
+        ? Float32Array.from(visible, (i) => source[i])
+        : source;
+      this._deleteBuffers(g, [slot + "Buf"]);
+      g[slot + "Buf"] = this._upload(values);
+    }
+    if (g._funnelRgbaFull || g.rgbaBuf) {
+      const full = g._funnelRgbaFull;
+      if (full) {
+        const rows = g._visMap
+          ? Uint8Array.from({ length: visible.length * 4 }, (_v, k) =>
+            full[visible[(k / 4) | 0] * 4 + (k % 4)])
+          : full;
+        this._deleteBuffers(g, ["rgbaBuf"]);
+        g.rgbaBuf = this._upload(rows);
+      }
     }
   }
 
@@ -3821,6 +3864,9 @@ export class ChartView {
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
   get ribbonProg() { return this._prog("ribbon", RIBBON_VS, RIBBON_FS); }
+  // The funnel program shares the ribbon fragment stage: same edge
+  // coverage, stroke inset, and match-fill outline contract.
+  get funnelProg() { return this._prog("funnel", FUNNEL_VS, RIBBON_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -4658,6 +4704,178 @@ export class ChartView {
       const edgeHi = w0 * yVal("y1", index) + w1 * yVal("t1", index);
       if (pointerY >= Math.min(edgeLo, edgeHi) && pointerY <= Math.max(edgeLo, edgeHi)) {
         return { trace: g.trace.id, index, g, dist: 0, synthetic: true };
+      }
+    }
+    return null;
+  }
+
+  // Funnel ships one symmetric quad per stage (pos0/pos1 along the stage
+  // axis, lo/hi cross edges at each end) plus a per-stage color channel. Each
+  // column uploads as a per-instance attribute with ITS OWN meta uniform —
+  // nothing is re-encoded client-side — and the funnel program sweeps a
+  // 4-vertex strip per stage, sharing RIBBON_FS for the fwidth edge coverage
+  // that keeps the slanted edges smooth on the antialias:false context.
+  _buildFunnelMark(g, t, buffer) {
+    const cols: any = {};
+    const metas: any = {};
+    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
+    let n = Infinity;
+    for (const [name, slot] of Object.entries(slots)) {
+      const values = this._columnView(buffer, this.spec.columns[t[name]]);
+      cols[name] = values;
+      metas[name] = { ...this.spec.columns[t[name]] };
+      g[slot + "Meta"] = metas[name];
+      g[slot + "Buf"] = this._upload(values);
+      n = Math.min(n, values.length);
+    }
+    n = Number.isFinite(n) ? n : 0;
+    g.n = n;
+    g.orientation = t.orientation === "horizontal" ? 1 : 0;
+    g._cpuFunnel = { ...cols, metas, n };
+    // Stage centers for keyboard traversal (declared order): the a11y walk
+    // reads g._cpu.x/y like any point group, so a funnel announces stage by
+    // stage from the first. Centers are decoded to data space and re-encoded
+    // against the pos0/lo0 metas the _cpu record carries.
+    const posMeta = metas.pos0;
+    const crossMeta = metas.lo0;
+    const dec = (name, i) => cols[name][i] / (metas[name].scale || 1) + (metas[name].offset || 0);
+    const centerX = new Float32Array(n);
+    const centerY = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const pCenter = (dec("pos0", i) + dec("pos1", i)) / 2;
+      const cCenter = (dec("lo0", i) + dec("hi0", i) + dec("lo1", i) + dec("hi1", i)) / 4;
+      const encP = (pCenter - (posMeta.offset || 0)) * (posMeta.scale || 1);
+      const encC = (cCenter - (crossMeta.offset || 0)) * (crossMeta.scale || 1);
+      centerX[i] = g.orientation === 1 ? encP : encC;
+      centerY[i] = g.orientation === 1 ? encC : encP;
+    }
+    g._cpu = {
+      x: centerX,
+      y: centerY,
+      xMeta: { ...(g.orientation === 1 ? posMeta : crossMeta) },
+      yMeta: { ...(g.orientation === 1 ? crossMeta : posMeta) },
+    };
+    this._funnelPaint(g, t, buffer);
+    const style = t.style || {};
+    g.strokeWidth = Number(style.stroke_width) || 0;
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, [0, 0, 0, 1]) : null;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
+  }
+
+  // Per-stage fill resolved to one RGBA8 row per instance. Categorical codes
+  // look their palette entry up here — theme-resolving each CSS color, so a
+  // var(--…) palette entry follows light/dark — and the funnel program needs
+  // no LUT texture. Build stashes codes+palette on the record; refreshColor
+  // re-runs this with buffer=null to re-resolve against the new theme.
+  _funnelPaint(g, t, buffer) {
+    const n = g.n;
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    const channel = t.color || {};
+    if (buffer !== null && Number.isInteger(channel.buf)) {
+      if (channel.mode === "categorical") {
+        g._funnelCodes = this._columnView(buffer, this.spec.columns[channel.buf]);
+      } else if (channel.mode === "direct_rgba") {
+        g._funnelRgba = this._columnView(buffer, this.spec.columns[channel.buf]);
+      }
+    }
+    let rgba = null;
+    if (channel.mode === "categorical" && g._funnelCodes) {
+      const palette = Array.isArray(channel.palette) && channel.palette.length
+        ? channel.palette : ["#4c78a8"];
+      const table = palette.map((css) => parseColor(this.root, css, [0.3, 0.47, 0.66, 1]));
+      rgba = new Uint8Array(n * 4);
+      for (let i = 0; i < n; i++) {
+        const c = table[Math.round(g._funnelCodes[i]) % table.length];
+        rgba.set([c[0] * 255, c[1] * 255, c[2] * 255, c[3] * 255], i * 4);
+      }
+    } else if (channel.mode === "direct_rgba" && g._funnelRgba) {
+      rgba = g._funnelRgba;
+    }
+    if (g.rgbaBuf) this._deleteBuffers(g, ["rgbaBuf"]);
+    // Full-length rows kept for the legend filter, which rebuilds the visible
+    // subset from them rather than reading the GPU buffer back.
+    g._funnelRgbaFull = rgba || null;
+    if (rgba) g.rgbaBuf = this._upload(rgba);
+  }
+
+  _drawFunnels(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.funnelProg;
+    gl.useProgram(prog);
+    const u = (name) => uniformOf(gl, prog, name);
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    gl.uniform2f(u("u_pmap"), ...(horizontal ? xm : ym));
+    gl.uniform2f(u("u_cmap"), ...(horizontal ? ym : xm));
+    this._setAxisUniforms(prog, "u_p0", g.x0Meta, posAxis);
+    this._setAxisUniforms(prog, "u_p1", g.x1Meta, posAxis);
+    this._setAxisUniforms(prog, "u_l0", g.y0Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h0", g.y1Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_l1", g.x2Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h1", g.y2Meta, crossAxis);
+    gl.uniform1i(u("u_pmode"), this._axisMode(posAxis));
+    gl.uniform1f(u("u_pconstant"), this._axisConstant(posAxis));
+    gl.uniform1i(u("u_cmode"), this._axisMode(crossAxis));
+    gl.uniform1f(u("u_cconstant"), this._axisConstant(crossAxis));
+    gl.uniform1i(u("u_horizontal"), horizontal ? 1 : 0);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const stroke = g.stroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
+    const parts = ["x0", "x1", "y0", "y1", "x2", "y2"].map((name) => g[name + "Buf"]._fcId);
+    parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0);
+    this._bindVao(g, "funnel", parts, () => {
+      this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax2, g.x2Buf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay2, g.y2Buf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+    });
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  // Containment against the same linear edges the mesh triangles draw, in
+  // axis-transformed space (the ribbon rule: the pointer and the decoded
+  // endpoints go through the transform the shader applies, so log/symlog
+  // axes hit-test the drawn shape, and on linear axes it is the identity).
+  // Index is the QUAD (= stage) index, which is what tooltip_rows and the
+  // kernel exact-pick expect.
+  _funnelHover(g, dataX, dataY) {
+    const f = g._cpuFunnel;
+    if (!f) return null;
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    const posAxisRec = { ...this._axis(posAxis), constant: this._axisConstant(posAxis) };
+    const crossAxisRec = { ...this._axis(crossAxis), constant: this._axisConstant(crossAxis) };
+    const pointerPos = this._axisCoord(posAxisRec, horizontal ? dataX : dataY);
+    const pointerCross = this._axisCoord(crossAxisRec, horizontal ? dataY : dataX);
+    const val = (name, i) => f[name][i] / (f.metas[name].scale || 1) + (f.metas[name].offset || 0);
+    const posVal = (name, i) => this._axisCoord(posAxisRec, val(name, i));
+    const crossVal = (name, i) => this._axisCoord(crossAxisRec, val(name, i));
+    // A legend-hidden stage draws nothing, so it must not hover either; the
+    // returned index stays the SHIPPED stage row, which is what tooltip_rows
+    // and the kernel exact-pick speak.
+    const rows = g._visMap ? Array.from(g._visMap) : null;
+    for (let k = 0; k < (rows ? rows.length : f.n); k++) {
+      const i = rows ? rows[k] : k;
+      const p0 = posVal("pos0", i);
+      const p1 = posVal("pos1", i);
+      const lo = Math.min(p0, p1);
+      const hi = Math.max(p0, p1);
+      if (!(pointerPos >= lo && pointerPos <= hi) || hi === lo) continue;
+      const t = (pointerPos - p0) / (p1 - p0);
+      const eLo = crossVal("lo0", i) + (crossVal("lo1", i) - crossVal("lo0", i)) * t;
+      const eHi = crossVal("hi0", i) + (crossVal("hi1", i) - crossVal("hi0", i)) * t;
+      if (pointerCross >= Math.min(eLo, eHi) && pointerCross <= Math.max(eLo, eHi)) {
+        return { trace: g.trace.id, index: i, g, dist: 0, synthetic: true };
       }
     }
     return null;
@@ -7844,6 +8062,13 @@ export class ChartView {
         if (hit) return hit;
         continue;
       }
+      if (g._cpuFunnel) {
+        // Before the generic point path: the funnel's _cpu holds stage
+        // centers for keyboard traversal, not hoverable point geometry.
+        const hit = this._funnelHover(g, dataX, dataY);
+        if (hit) return hit;
+        continue;
+      }
       if (g._cpuRect) {
         const hit = this._rectHover(g, dataX, dataY);
         if (hit) return hit;
@@ -8057,9 +8282,9 @@ export class ChartView {
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
       // Point tooltips stay attached to their data point. Sankey ribbons and
-      // nodes cover an area instead, so keep their tooltip at the pointer as
-      // it travels through the same picked shape.
-      if (hit.g && hit.g._cpuRibbon) {
+      // nodes — and funnel segments — cover an area instead, so keep their
+      // tooltip at the pointer as it travels through the same picked shape.
+      if (hit.g && (hit.g._cpuRibbon || hit.g._cpuFunnel)) {
         this._setTooltipAnchor(hit, this._lastRow, e.clientX, e.clientY);
         this._repositionTooltip();
       } else if (!this._tooltipAnchor) {

@@ -19,6 +19,7 @@ MARK_FACTORIES = (
     "scatter",
     "ribbon",
     "sankey",
+    "funnel",
     "line",
     "area",
     "histogram",

@@ -74,6 +74,31 @@ def ribbon_polygon(
     return np.vstack([upper, lower[::-1]])
 
 
+def funnel_quad(
+    pos0: float,
+    pos1: float,
+    lo0: float,
+    hi0: float,
+    lo1: float,
+    hi1: float,
+    horizontal: bool,
+) -> np.ndarray:
+    """One funnel segment as a closed 4-corner polygon, in the caller's space.
+
+    `pos` runs along the stage axis, `lo/hi` are the cross-axis edges at each
+    end; `horizontal` maps pos→x/cross→y and vertical the transpose. Corners
+    run A=(lo0@pos0) B=(hi0@pos0) C=(hi1@pos1) D=(lo1@pos1) — the same two
+    triangles (ABC, ACD) the client expands in `_buildFunnelMark`. This is the
+    single reference both static exporters and the golden geometry test
+    consume, so SVG and PNG cannot drift from each other or from the client.
+    """
+    if horizontal:
+        corners = [(pos0, lo0), (pos0, hi0), (pos1, hi1), (pos1, lo1)]
+    else:
+        corners = [(lo0, pos0), (hi0, pos0), (hi1, pos1), (lo1, pos1)]
+    return np.array(corners, dtype=np.float64)
+
+
 def curve_points(xv: np.ndarray, yv: np.ndarray, sx: Any, sy: Any, smooth: bool) -> np.ndarray:
     """Pixel-space polyline for a series. Smooth flattens the monotone-cubic
     Hermite (the same tangents `_svg._curve_path` emits as Béziers) into short

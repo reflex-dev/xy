@@ -8,6 +8,24 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- Funnel charts joined the core declarative API (protocol v13):
+  `xy.funnel_chart(stages, values)` / `xy.funnel(...)` draw one centered
+  segment per stage in declared order — never sorted — with explicit
+  `geometry="area"|"bar"` modes, `neck="rect"|"taper"`, per-geometry segment
+  gaps, and a `min_width` floor that keeps zero/tiny stages visible without
+  touching their reported values. Conversion arithmetic (value, prior, overall
+  share, previous-stage conversion, drop-off; `None` over zero denominators)
+  rides labels with a documented inside/outside/hidden collision ladder,
+  hover tooltips, click events, and ordered keyboard traversal with
+  screen-reader announcements. Per-stage colors are a categorical channel over
+  the stage names (theme `palette={...}` mappings pin by stage name; legend
+  rows opt in via `xy.legend(...)`), and per-trace `stroke`/`stroke-width`/
+  opacity style compiles to all three renderers. The client draws
+  antialiased quads through a dedicated funnel program sharing the ribbon
+  fragment stage; SVG/PNG/PDF exports emit the same `_scene.funnel_quad`
+  geometry, pinned by golden tests.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added

@@ -235,7 +235,7 @@ def test_sankey_chart_builds_ribbon_traces_only() -> None:
     # ribbon's internal placement (its target span), never a data readout.
     for row in (exact_link, exact_node):
         assert "x" not in row and "y" not in row
-    assert spec["protocol"] == PROTOCOL_VERSION == 12
+    assert spec["protocol"] == PROTOCOL_VERSION == 13
 
 
 # -- resolved paints and per-trace styles ------------------------------------

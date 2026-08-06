@@ -1019,6 +1019,47 @@ void main() {
   v_t = t;
 }`;
 
+// One funnel segment per instance: a 4-vertex strip between two cross spans
+// at two stage-axis positions — a straight, transposable ribbon. It shares
+// RIBBON_FS (same v_side/v_t/v_rgba contract), which is where the slanted
+// edges get their fwidth coverage: the GL context is antialias:false, so
+// without it the funnel's long diagonals staircase. Each of the six columns
+// keeps its own meta uniform, so nothing is re-encoded client-side.
+export const FUNNEL_VS = `#version 300 es
+in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
+in vec4 a_rgba;
+uniform vec2 u_pmap; uniform vec2 u_cmap;
+uniform vec2 u_p0meta; uniform vec2 u_p1meta;
+uniform vec2 u_l0meta; uniform vec2 u_h0meta; uniform vec2 u_l1meta; uniform vec2 u_h1meta;
+uniform int u_pmode; uniform float u_pconstant; uniform int u_cmode; uniform float u_cconstant;
+uniform int u_horizontal;
+out vec4 v_rgba;
+flat out vec4 v_rgba0;
+out float v_side;
+out float v_t;
+${AXIS_GLSL}
+void main() {
+  float P0 = xyMap(ax0, u_pmap, u_p0meta, u_pmode, u_pconstant);
+  float P1 = xyMap(ax1, u_pmap, u_p1meta, u_pmode, u_pconstant);
+  float L0 = xyMap(ay0, u_cmap, u_l0meta, u_cmode, u_cconstant);
+  float H0 = xyMap(ay1, u_cmap, u_h0meta, u_cmode, u_cconstant);
+  float L1 = xyMap(ax2, u_cmap, u_l1meta, u_cmode, u_cconstant);
+  float H1 = xyMap(ay2, u_cmap, u_h1meta, u_cmode, u_cconstant);
+  float t = floor(float(gl_VertexID) * 0.5);
+  float side = float(gl_VertexID & 1);
+  float pos = mix(P0, P1, t);
+  // Straight edges in clip space — the affine image of transformed space,
+  // which is exactly the line the exporters draw after mapping the corners.
+  float cross = mix(mix(L0, L1, t), mix(H0, H1, t), side);
+  gl_Position = u_horizontal == 1
+    ? vec4(pos, cross, 0.0, 1.0)
+    : vec4(cross, pos, 0.0, 1.0);
+  v_rgba = a_rgba;
+  v_rgba0 = a_rgba;
+  v_side = side;
+  v_t = t;
+}`;
+
 export const RIBBON_FS = `#version 300 es
 precision highp float;
 uniform float u_opacity;

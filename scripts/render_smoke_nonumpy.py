@@ -1219,7 +1219,55 @@ try{{
     gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
     const meancolor=(lpx[0]>60 && lpx[0]>lpx[2]*3 && rpx[2]>60 && rpx[2]>rpx[0]*3)?1:0;
     vMc.destroy();holderMc.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} dretire=${{dretire}}`;
+    // Funnel: per-stage quads expand locally into mesh triangles wearing the
+    // categorical palette; hover is CPU trapezoid containment returning the
+    // STAGE index with semantic tooltip rows; the per-stage centers join the
+    // keyboard traversal groups. Three stages, vertical, no axis reverse so
+    // stage 0 sits at the BOTTOM of the canvas (GL y small).
+    const fnBuf=new ArrayBuffer(512); const fnCols=[]; let fnOff=0;
+    const fncol=(vals)=>{{new Float32Array(fnBuf,fnOff*4,vals.length).set(vals);
+      fnCols.push({{byte_offset:fnOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      fnOff+=vals.length; return fnCols.length-1;}};
+    const fnu8=(vals)=>{{const bo=fnOff*4;new Uint8Array(fnBuf,bo,vals.length).set(vals);
+      fnCols.push({{byte_offset:bo,len:vals.length,dtype:"u8"}});
+      fnOff+=Math.ceil(vals.length/4); return fnCols.length-1;}};
+    const fnSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      x_axis:{{kind:"linear",label:"",range:[-6,6]}},
+      y_axis:{{kind:"linear",label:"",range:[-0.5,2.5]}},
+      traces:[{{id:0,kind:"funnel",name:null,tier:"direct",n_points:3,n_marks:3,
+        style:{{opacity:1.0,orientation:"vertical",role:"funnel"}},
+        orientation:"vertical",
+        pos0:fncol([-0.4,0.6,1.6]),pos1:fncol([0.4,1.4,2.4]),
+        lo0:fncol([-5,-3,-1]),hi0:fncol([5,3,1]),
+        lo1:fncol([-3,-1,-1]),hi1:fncol([3,1,1]),
+        color:{{mode:"categorical",categories:["A","B","C"],dtype:"u8",
+          buf:fnu8([0,1,2]),palette:["#e01010","#10c010","#1030e0"]}},
+        tooltip_rows:[
+          {{stage:"A",value:10,share:1.0,prior:null,conversion:null,dropoff:null}},
+          {{stage:"B",value:6,share:0.6,prior:10,conversion:0.6,dropoff:0.4}},
+          {{stage:"C",value:2,share:0.2,prior:6,conversion:0.3333,dropoff:0.6667}}]}}],
+      columns:fnCols}};
+    const holderFn=document.createElement("div");document.body.appendChild(holderFn);
+    const vFn=xy.renderStandalone(holderFn,fnSpec,fnBuf);
+    vFn._drawNow();
+    const gFn=vFn.gpuTraces[0];
+    const glFn=vFn.gl,WF=vFn.canvas.width,HF=vFn.canvas.height;
+    const apx=new Uint8Array(4), cpx=new Uint8Array(4);
+    // Stage A (data y=0, bottom sixth of the y range) and stage C (top).
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.17),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,apx);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.83),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,cpx);
+    const fnInk=(apx[0]>90 && apx[0]>apx[2]*2 && cpx[2]>90 && cpx[2]>cpx[0]*2)?1:0;
+    // Containment: stage B center hits index 1; a point beside B's taper at
+    // the same height (cross 4.5 > its widest half-width 3) misses.
+    const fnHit=vFn._funnelHover(gFn,0,1.0);
+    const fnMiss=vFn._funnelHover(gFn,4.5,1.0);
+    const fnRow=fnHit?vFn._localRow(fnHit):null;
+    const fnRowOk=(fnRow && fnRow.stage==="B" && fnRow.value===6 && fnRow.dropoff===0.4)?1:0;
+    const fnNav=vFn._a11yPointGroups().some((g)=>g===gFn)?1:0;
+    const funnel=(fnInk && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav)?1:0;
+    vFn.destroy();holderFn.remove();
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} funnel=${{funnel}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1424,6 +1472,7 @@ try{{
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     meancolor = int(re.search(r"meancolor=(\d+)", title).group(1))
+    funnel = int(re.search(r"funnel=(\d+)", title).group(1))
     dretire = int(re.search(r"dretire=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     hold = int(re.search(r"hold=(\d+)", title).group(1))
@@ -1605,6 +1654,11 @@ try{{
         raise SystemExit(
             "mean-color density failed (surface must wear the per-cell mean "
             "point colors, count as alpha — LOD doc §2)"
+        )
+    if funnel != 1:
+        raise SystemExit(
+            "funnel failed (per-stage palette ink, trapezoid containment "
+            "hover with stage index + semantic rows, or a11y stage nav)"
         )
     if dretire != 1:
         raise SystemExit(

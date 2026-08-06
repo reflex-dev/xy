@@ -469,8 +469,12 @@ Object.assign(ChartView.prototype, {
   },
 
   _a11yPointGroups() {
+    // stageNav marks (funnel) traverse their per-stage centers in data order,
+    // which for a funnel is the declared stage order — the ordered process a
+    // screen reader should hear.
     return (this.gpuTraces || []).filter((g) =>
-      markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
+      (markOf(g.trace.kind).pointPick || markOf(g.trace.kind).stageNav) &&
+      g.tier !== "density" && g._cpu &&
       g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
   },
 

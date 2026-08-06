@@ -1095,6 +1095,9 @@ def render_raster(
             )
         elif kind == "triangle_mesh":
             _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+        elif kind == "funnel":
+            _emit_funnel(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
+
         elif kind == "ribbon":
             # MUST precede the rect fall-through: a ribbon ships x0/x1/y0/y1
             # too, so a later branch would draw every band as a rectangle.
@@ -1102,7 +1105,17 @@ def render_raster(
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot, polar)
 
-    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height, polar=polar)
+    _emit_annotations(
+        cmd,
+        spec.get("annotations") or [],
+        sx,
+        sy,
+        plot,
+        width,
+        height,
+        polar=polar,
+        default_text=_css(dom_style.get("--chart-annotation-text"), "") or default_text,
+    )
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
@@ -1117,6 +1130,7 @@ def render_raster(
         width,
         height,
         phase="text",
+        default_text=_css(dom_style.get("--chart-annotation-text"), "") or default_text,
         polar=polar,
     )
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
@@ -1676,6 +1690,7 @@ def _emit_annotations(
     *,
     phase: str = "marks",
     polar: "Optional[_PolarProjection]" = None,
+    default_text: str = _TEXT,
 ) -> None:
     px0, py0 = plot["x"], plot["y"]
     text_phase = phase == "text"
@@ -1800,7 +1815,7 @@ def _emit_annotations(
                 "label_opacity",
                 style.get("opacity", 1.0) if ann.get("kind") == "text" else 1.0,
             )
-            color = _rgba(label_color, _TEXT, float(label_opacity))
+            color = _rgba(label_color, default_text, float(label_opacity))
             rotation = float(style.get("rotation", 0.0)) % 360.0
             italic, bold = _native_font_emphasis(style)
             math_ranges = _math_italic_ranges(style)
@@ -2431,6 +2446,79 @@ def _emit_hexbin(
     y2 = np.asarray(sy(cy[:n, None] + ring_y[None, 1:]), dtype=np.float64).reshape(-1)
     fills = np.repeat(_mesh_fill_rgba(t, blob, cols, n, style, color), 6, axis=0)
     cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
+
+
+def _emit_funnel(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
+    """Funnel segments: one flat-filled 4-corner polygon per stage.
+
+    Geometry comes from `_scene.funnel_quad` — the same reference the SVG
+    exporter and the golden test consume — built from the **axis-mapped**
+    edges, so the straight edges live in transformed space exactly like the
+    client's mesh triangles (the ribbon rule, minus the cubic).
+    """
+    pos0 = _column(blob, cols[t["pos0"]])
+    pos1 = _column(blob, cols[t["pos1"]])
+    lo0 = _column(blob, cols[t["lo0"]])
+    hi0 = _column(blob, cols[t["hi0"]])
+    lo1 = _column(blob, cols[t["lo1"]])
+    hi1 = _column(blob, cols[t["hi1"]])
+    horizontal = t.get("orientation") == "horizontal"
+    spos, scross = (sx, sy) if horizontal else (sy, sx)
+    n = min(len(pos0), len(pos1), len(lo0), len(hi0), len(lo1), len(hi1))
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    fills = np.rint(
+        _paint.effective_rgba(intrinsic, t, read, component="fill", default_opacity=1.0) * 255.0
+    ).astype(np.uint8)
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_op = _stroke_opacity(style)
+    stroke_c = (
+        _rgba(style.get("stroke"), color, stroke_op)
+        if stroke_width > 0 and style.get("stroke") is not None
+        else None
+    )
+    # An omitted stroke colour matches each segment's own fill
+    # (edgecolors="face"), resolved per stage like the ribbon's per-band rule.
+    edges = (
+        np.rint(
+            np.column_stack([intrinsic[:, :3] * 255.0, intrinsic[:, 3] * stroke_op * 255.0])
+        ).astype(np.uint8)
+        if stroke_width > 0 and style.get("stroke") is None
+        else None
+    )
+    for i in range(n):
+        mapped = (
+            float(spos(pos0[i])),
+            float(spos(pos1[i])),
+            float(scross(lo0[i])),
+            float(scross(hi0[i])),
+            float(scross(lo1[i])),
+            float(scross(hi1[i])),
+        )
+        if not all(math.isfinite(v) for v in mapped):
+            continue
+        quad = _scene.funnel_quad(*mapped, horizontal)
+        poly = list(zip(quad[:, 0].tolist(), quad[:, 1].tolist(), strict=True))
+        cmd.fill(poly, tuple(int(v) for v in fills[i]))
+        edge_c = (
+            stroke_c
+            if stroke_c is not None
+            else (tuple(int(v) for v in edges[i]) if edges is not None else None)
+        )
+        if edge_c is not None:
+            cmd.stroke([*poly, poly[0]], stroke_width, edge_c)
 
 
 def _emit_ribbon(

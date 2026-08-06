@@ -676,6 +676,298 @@ def sankey(
         raise
 
 
+def funnel(
+    self: "Figure",
+    stage: ArrayLike,
+    value: ArrayLike,
+    *,
+    orientation: str = "vertical",
+    geometry: str = "area",
+    gap: Optional[float] = None,
+    neck: str = "rect",
+    min_width: float = 0.0,
+    color: Union[str, None] = None,
+    colors: Optional[Sequence[str]] = None,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    show_values: bool = True,
+    show_conversion: bool = True,
+    show_dropoff: bool = False,
+    labels: bool = True,
+    label_size: float = 12.0,
+    value_format: str = "{:,.10g}",
+    percent_format: str = "{:.0%}",
+    style: styles.StyleMapping | None = None,
+) -> "Figure":
+    """Add a funnel: one centered segment per stage, in declared order.
+
+    Stage math (`_funnel.compute_stages`), quad geometry
+    (`_funnel.compute_layout`) and the label ladder (`_funnel.decide_labels`)
+    are pure Python at build time, exactly as `hist` owns its binning and
+    `sankey` its layout; the renderers only ever see `funnel` quads. The stage
+    axis is categorical (stage names in declared order — never sorted: a
+    funnel is a business process), the cross axis is numeric and centered on
+    zero.
+
+    ``geometry="area"`` draws the classic tapering silhouette — each segment's
+    far edge previews the next stage's width, so painted area is NOT
+    proportional to the stage value. ``geometry="bar"`` draws centered
+    constant-width segments whose widths carry the values exactly. ``neck``
+    ("rect" | "taper") decides the last area segment's far edge. ``min_width``
+    keeps zero/tiny stages visible (a drawn floor as a fraction of the widest
+    stage); event and label values are never clamped.
+
+    Per-stage colors are a categorical channel over the stage names — palette
+    slots follow declared stage order, and the legend gets one row per stage.
+    An explicit `color=` paints every segment one constant color instead (no
+    per-stage legend rows); `colors=` pins one CSS color per stage.
+    """
+    from . import _funnel
+
+    css = styles.compile_mark_style("funnel", style)
+    opacity = css.get("opacity", opacity)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    name = self._optional_text(name, "funnel name")
+
+    if stage is None or value is None:
+        raise ValueError(
+            "funnel needs stage names and values: xy.funnel(stage=[...], value=[...]) "
+            "or xy.funnel(data=df, stage='col', value='col')"
+        )
+    if self._is_category_like(self._materialize_sequence(stage)):
+        stage_names = self._category_axis_labels(self._materialize_sequence(stage), "funnel stage")
+    else:
+        # Numeric stages are legal input (quarter numbers, ordinal codes) but
+        # a funnel's stage axis is categorical by contract, so they become
+        # labels in the declared order.
+        stage_names = [
+            channels.category_label(raw)
+            for raw in np.asarray(self._materialize_sequence(stage)).reshape(-1)
+        ]
+    values_arr = self._as_1d_float(value, "funnel value")
+    layout = _funnel.compute_layout(
+        stage_names,
+        [float(v) for v in values_arr],
+        orientation=orientation,
+        geometry=geometry,
+        gap=gap,
+        neck=neck,
+        min_width=min_width,
+    )
+    n = len(layout.stages)
+
+    if colors is not None and color is not None:
+        raise ValueError("funnel takes color= or colors=, not both")
+    if colors is not None:
+        if len(colors) != n:
+            raise ValueError(
+                f"funnel colors must have one entry per stage ({n}); got {len(colors)}"
+            )
+        stage_css = [_validate.css_color(str(c), "funnel colors") for c in colors]
+    elif isinstance(self.palette, Mapping):
+        # A `{category: color}` theme palette pins colors by stage NAME. The
+        # canonical resolver owns that contract (spare-color fallback and the
+        # unmapped-category warning), so run it and reorder its per-category
+        # answer back into declared stage order — the resolver factorizes
+        # alphabetically for its own determinism, which a funnel must undo.
+        resolved = channels.resolve_color(
+            np.array(stage_names, dtype=object),
+            n,
+            default_constant=self.next_series_color,
+            palette=self.palette,
+        )
+        lookup = dict(zip(resolved.categories or [], resolved.palette or [], strict=True))
+        stage_css = [lookup[name] for name in stage_names]
+    else:
+        stage_css = [self.palette_color(i) for i in range(n)]
+
+    if color is not None:
+        color_ch = channels.ColorChannel(
+            mode="constant", constant=_validate.css_color(color, "funnel color")
+        )
+    else:
+        # Hand-built rather than `resolve_color`: factorization sorts category
+        # labels alphabetically for palette determinism, but a funnel's palette
+        # slots must follow the DECLARED stage order (stage 0 wears palette
+        # color 0), and `colors=` must pin by position.
+        code_dtype = np.uint8 if n <= channels.MAX_CATEGORIES else np.uint32
+        color_ch = channels.ColorChannel(
+            mode="categorical",
+            codes=np.arange(n, dtype=code_dtype),
+            categories=list(layout.stages[i].name for i in range(n)),
+            palette=stage_css,
+        )
+
+    opacity_constant, opacity_channel = channels.resolve_style_channel(
+        opacity, n, "funnel opacity", minimum=0.0, maximum=1.0
+    )
+    if opacity_channel is not None:
+        raise ValueError("funnel opacity is per-trace; use colors= with RGBA for per-stage alpha")
+    opacity_value = 1.0 if opacity_constant is None else float(opacity_constant)
+    stroke_value, stroke_ch = _stroke_channel(stroke, n, "funnel stroke")
+    if stroke_ch is not None:
+        raise ValueError("funnel stroke is per-trace")
+    width_constant, width_channel = channels.resolve_style_channel(
+        stroke_width, n, "funnel stroke_width", minimum=0.0
+    )
+    if width_channel is not None:
+        raise ValueError("funnel stroke_width is per-trace")
+    stroke_width_value = 0.0 if width_constant is None else float(width_constant)
+
+    stage_dim = "y" if orientation == "vertical" else "x"
+    # Category positions come from the axis registry so a funnel layered onto
+    # an axis that already holds categories lands after them instead of on top
+    # of them; on a fresh axis they are exactly 0..n-1.
+    centers = self._axis_positions(stage_names, stage_dim)
+    pos0 = np.array([centers[q.stage] + (q.pos0 - q.stage) for q in layout.quads], dtype=np.float64)
+    pos1 = np.array([centers[q.stage] + (q.pos1 - q.stage) for q in layout.quads], dtype=np.float64)
+    lo0 = np.array([q.lo0 for q in layout.quads], dtype=np.float64)
+    hi0 = np.array([q.hi0 for q in layout.quads], dtype=np.float64)
+    lo1 = np.array([q.lo1 for q in layout.quads], dtype=np.float64)
+    hi1 = np.array([q.hi1 for q in layout.quads], dtype=np.float64)
+
+    checkpoint = self._checkpoint()
+    try:
+        posc0, posc1 = self.store.ingest(pos0), self.store.ingest(pos1)
+        loc0, hic0 = self.store.ingest(lo0), self.store.ingest(hi0)
+        loc1, hic1 = self.store.ingest(lo1), self.store.ingest(hi1)
+        style_dict: dict[str, Any] = {
+            "opacity": opacity_value,
+            "orientation": orientation,
+            "role": "funnel",
+        }
+        style_dict.update(styles._opacity_channels(css))
+        if stroke_value is not None:
+            style_dict["stroke"] = stroke_value
+        if stroke_width_value:
+            style_dict["stroke_width"] = stroke_width_value
+        # Slot mapping (funnel geometry contract): the stage-axis edges ride
+        # the stage axis's x0/x1-or-y0/y1 pair, the leading cross edges ride
+        # the other pair, and the generic x/y slots carry the TRAILING cross
+        # edges — both on the CROSS axis scale, which is why `_range_columns`
+        # has a funnel branch.
+        if orientation == "vertical":
+            trace = Trace(
+                id=len(self.traces),
+                kind="funnel",
+                x=loc1,
+                y=hic1,
+                x0=loc0,
+                x1=hic0,
+                y0=posc0,
+                y1=posc1,
+                name=name,
+                style=style_dict,
+                color_ch=color_ch,
+                count=n,
+            )
+        else:
+            trace = Trace(
+                id=len(self.traces),
+                kind="funnel",
+                x=loc1,
+                y=hic1,
+                x0=posc0,
+                x1=posc1,
+                y0=loc0,
+                y1=hic0,
+                name=name,
+                style=style_dict,
+                color_ch=color_ch,
+                count=n,
+            )
+        self.traces.append(trace)
+        # Numeric fields are the event payload; the `*_text` twins are the
+        # readout. Python owns every format so a tooltip, a label and a static
+        # export can never disagree about how a number reads — the client has
+        # no `str.format`, and re-implementing these specs in JS is exactly the
+        # divergence the single-reference rule exists to prevent.
+        trace.tooltip_rows = [
+            {
+                "stage": s.name,
+                "value": s.value,
+                "share": s.share,
+                "prior": s.prior,
+                "conversion": s.conversion,
+                "dropoff": s.dropoff,
+                "value_text": _funnel.format_value(s.value, value_format),
+                "share_text": _funnel.format_ratio(s.share, percent_format),
+                "conversion_text": _funnel.format_ratio(s.conversion, percent_format),
+                "dropoff_text": _funnel.format_ratio(s.dropoff, percent_format),
+            }
+            for s in layout.stages
+        ]
+        if labels:
+            plot_w = self.width if isinstance(self.width, int) else 640
+            plot_h = self.height if isinstance(self.height, int) else 400
+            specs = _funnel.decide_labels(
+                layout,
+                show_values=show_values,
+                show_conversion=show_conversion,
+                show_dropoff=show_dropoff,
+                value_format=value_format,
+                percent_format=percent_format,
+                font_size=label_size,
+                plot_px=(plot_w * 0.85, plot_h * 0.85),
+            )
+            for spec in specs:
+                if spec.placement == "hidden":
+                    continue
+                inside = spec.placement == "inside"
+                pos = centers[spec.stage] + (spec.pos - spec.stage)
+                if orientation == "vertical":
+                    x_anchor, y_anchor = spec.cross, pos
+                    dx, dy = (0.0, 0.0) if inside else (8.0, 0.0)
+                else:
+                    x_anchor, y_anchor = pos, spec.cross
+                    dx, dy = (0.0, 0.0) if inside else (0.0, -8.0)
+                self.text(
+                    x_anchor,
+                    y_anchor,
+                    spec.text,
+                    dx=dx,
+                    dy=dy,
+                    anchor="middle" if inside else spec.anchor,
+                    color=_funnel_label_color(stage_css[spec.stage]) if inside else None,
+                    style={"font_size": label_size},
+                    # A funnel label describes one stage's geometry, so a
+                    # legend toggle must hide the two together — an orphaned
+                    # value floating over an empty slot is worse than no
+                    # label. A drop-off label belongs to the boundary it
+                    # names, so it retires with its own stage.
+                    owner={"trace": trace.id, "category": spec.stage},
+                )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
+def _funnel_label_color(css: str) -> Optional[str]:
+    """Contrast color for a label inside a segment of fill `css`.
+
+    WCAG relative-luminance threshold; None (theme default) when the fill is
+    not statically parseable (a CSS variable), which keeps the label legible
+    in whichever theme resolves the variable.
+    """
+    try:
+        from ._raster import _parse_color
+
+        r, g, b, _a = _parse_color(css)
+    except Exception:
+        return None
+
+    def channel(v: int) -> float:
+        c = v / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    luminance = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    return "#1f2430" if luminance > 0.45 else "#f7f8fa"
+
+
 def triangle_mesh(
     self: "Figure",
     x0: ArrayLike,

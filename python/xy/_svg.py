@@ -4183,6 +4183,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             # flow band as a rectangle.
             marks.append(_ribbon_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg))
 
+        elif kind == "funnel":
+            marks.append(_funnel_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
             marks.append(
                 _rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot, polar)
@@ -4333,7 +4336,20 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
 
     annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
-        spec.get("annotations") or [], sx, sy, plot, width, height, polar
+        spec.get("annotations") or [],
+        sx,
+        sy,
+        plot,
+        width,
+        height,
+        polar,
+        # The live client resolves an annotation label through
+        # var(--chart-annotation-text, var(--chart-text, inherit)); the
+        # exporters must reach the same colour or a themed chart's labels
+        # print in the light-mode default (parity is identity).
+        _css(dom_style.get("--chart-annotation-text"), "")
+        or _css(dom_style.get("--chart-text"), "")
+        or "#667085",
     )
     marks.extend(annotation_marks)
     labels.extend(annotation_labels)
@@ -4726,6 +4742,7 @@ def _annotation_svg(
     width: float,
     height: float,
     polar: "Optional[_PolarProjection]" = None,
+    default_text: str = "#667085",
 ) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
     unclipped_marks: list[str] = []
@@ -4751,7 +4768,7 @@ def _annotation_svg(
 
     for ann in annotations:
         style = ann.get("style") or {}
-        color = escape(_css(style.get("color"), "#667085"))
+        color = escape(_css(style.get("color"), default_text))
         opacity = float(style.get("opacity", 1.0))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
@@ -5579,6 +5596,82 @@ def _ribbon_marks(
             # The band paint's own alpha rides the stroke stack, exactly as
             # `effective_rgba` folds it into the fill.
             edge_op = stroke_op * (1.0 if stroke_paint is not None else float(source_rgba[i][3]))
+            attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
+            if edge_op < 1:
+                attrs += f'stroke-opacity="{_num(edge_op)}" '
+        out.append(f'<path d="{d}" {attrs}/>')
+    return "".join(out)
+
+
+def _funnel_marks(
+    t: dict,
+    blob: bytes,
+    cols: list,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict,
+    fallback: str,
+) -> str:
+    """Funnel segments as one closed 4-corner `<path>` each, flat per-stage
+    fill. Geometry comes from `_scene.funnel_quad` — the same reference the
+    raster consumes and the golden test pins — built from the axis-mapped
+    edges, so log/symlog cross axes keep the straight-in-transformed-space
+    edges the client's strip draws."""
+    # Deferred import: _scene itself imports the column readers from this
+    # module, so a module-level import here is a load-order cycle.
+    from . import _scene
+
+    pos0 = _column(blob, cols[t["pos0"]])
+    pos1 = _column(blob, cols[t["pos1"]])
+    lo0 = _column(blob, cols[t["lo0"]])
+    hi0 = _column(blob, cols[t["hi0"]])
+    lo1 = _column(blob, cols[t["lo1"]])
+    hi1 = _column(blob, cols[t["hi1"]])
+    horizontal = t.get("orientation") == "horizontal"
+    spos, scross = (sx, sy) if horizontal else (sy, sx)
+    n = min(len(pos0), len(pos1), len(lo0), len(hi0), len(lo1), len(hi1))
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, fallback, read)
+    fills = _paint.effective_rgba(intrinsic, t, read, component="fill", default_opacity=1.0)
+    stroke_css = style.get("stroke")
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_op = _stroke_opacity(style)
+    # An omitted stroke colour matches each segment's own fill
+    # (edgecolors="face"), the ribbon rule: a per-stage funnel has no single
+    # trace colour to outline with.
+    stroke_paint = None if stroke_css is None else escape(_css(stroke_css, fallback))
+
+    def rgb(paint: Any) -> str:
+        return f"rgb({round(paint[0] * 255)},{round(paint[1] * 255)},{round(paint[2] * 255)})"
+
+    out: list[str] = []
+    for i in range(n):
+        mapped = (
+            float(spos(pos0[i])),
+            float(spos(pos1[i])),
+            float(scross(lo0[i])),
+            float(scross(hi0[i])),
+            float(scross(lo1[i])),
+            float(scross(hi1[i])),
+        )
+        if not all(math.isfinite(v) for v in mapped):
+            continue
+        quad = _scene.funnel_quad(*mapped, horizontal)
+        d = (
+            f"M {_num(quad[0, 0])} {_num(quad[0, 1])} "
+            f"L {_num(quad[1, 0])} {_num(quad[1, 1])} "
+            f"L {_num(quad[2, 0])} {_num(quad[2, 1])} "
+            f"L {_num(quad[3, 0])} {_num(quad[3, 1])} Z"
+        )
+        paint = fills[i]
+        alpha = float(paint[3])
+        attrs = f'fill="{rgb(paint)}"' + (f' fill-opacity="{_num(alpha)}"' if alpha < 1 else "")
+        if stroke_width > 0:
+            paint_css = stroke_paint if stroke_paint is not None else rgb(intrinsic[i])
+            edge_op = stroke_op * (1.0 if stroke_paint is not None else float(intrinsic[i][3]))
             attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
             if edge_op < 1:
                 attrs += f'stroke-opacity="{_num(edge_op)}" '

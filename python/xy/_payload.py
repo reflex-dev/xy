@@ -871,6 +871,65 @@ class PayloadMixin(_Host):
         self._ship_trace_styles(entry, t, sel_arg, pw)
         return self._transition_entry(entry, t, pw, sel_arg)
 
+    def _emit_funnel(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        """Ship funnel segments: per-stage symmetric quads plus semantics.
+
+        Slot mapping (funnel geometry contract): the stage-axis edges ride the
+        stage dimension's edge pair, the leading cross edges ride the other
+        pair, and the generic x/y slots carry the TRAILING cross edges — both
+        on the CROSS axis scale. Orientation decides which axis is which, so
+        the wire re-labels the six columns semantically (`pos0`/`pos1`,
+        `lo0`/`hi0`, `lo1`/`hi1`) and renderers never see the slot trick.
+        """
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("funnel trace missing geometry columns")
+        orientation = str(t.style.get("orientation", "vertical"))
+        xs, ys = self._axis_scale(t.x_axis), self._axis_scale(t.y_axis)
+        if orientation == "vertical":
+            pos0, pos1, pos_scale = t.y0, t.y1, ys
+            lo0, hi0, cross_scale = t.x0, t.x1, xs
+        elif orientation == "horizontal":
+            pos0, pos1, pos_scale = t.x0, t.x1, xs
+            lo0, hi0, cross_scale = t.y0, t.y1, ys
+        else:
+            raise ValueError(f"unknown funnel orientation {orientation!r}")
+        lo1, hi1 = t.x, t.y
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            # Always direct: a funnel is small-N by nature — one quad per
+            # stage — and neither decimation nor a density tier means
+            # anything for it (§28).
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(pos0.values)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "orientation": orientation,
+            "pos0": pw.ship(pos0.values, pos0, scale=pos_scale),
+            "pos1": pw.ship(pos1.values, pos1, scale=pos_scale),
+            "lo0": pw.ship(lo0.values, lo0, scale=cross_scale),
+            "hi0": pw.ship(hi0.values, hi0, scale=cross_scale),
+            "lo1": pw.ship(lo1.values, lo1, scale=cross_scale),
+            "hi1": pw.ship(hi1.values, hi1, scale=cross_scale),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, None, pw.ship_scalar, pw.ship_u8)
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "funnel tooltip rows must match funnel geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            entry["tooltip_rows"] = [dict(row) for row in t.tooltip_rows]
+        self._ship_trace_styles(entry, t, None, pw)
+        return self._transition_entry(entry, t, pw, None)
+
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:

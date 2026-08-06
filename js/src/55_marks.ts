@@ -194,6 +194,30 @@ export const MARK_KINDS = {
     },
   },
   error_band: AREA_MARK,
+  funnel: {
+    build: (view, g, t, buffer) => view._buildFunnelMark(g, t, buffer),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawFunnels(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+    },
+    // No pointPick: the GPU id pass draws gl.POINTS from the xy slots, which
+    // for a funnel hold trailing cross edges — garbage ids. Hover works
+    // through the CPU containment path (_funnelHover); box/lasso selection is
+    // absent rather than wrong, as for ribbon. stageNav puts the per-stage
+    // centers into the keyboard traversal so the funnel reads as an ordered
+    // process, stage 0 first.
+    stageNav: true,
+    retainCpu: true,
+    refreshColor: (view, g) => {
+      // The palette rows (possibly var(--…)) and the outline are CSS; both
+      // re-resolve against the new theme. buffer=null reuses the stashed
+      // codes and re-uploads the recolored per-stage RGBA rows.
+      view._funnelPaint(g, g.trace, null);
+      const style = g.trace.style || {};
+      g.stroke = style.stroke ? parseColor(view.root, style.stroke, [0, 0, 0, 1]) : null;
+    },
+  },
   hexbin: {
     build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),
     draw: (view, g) => {

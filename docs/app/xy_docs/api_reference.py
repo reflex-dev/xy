@@ -70,6 +70,7 @@ CHART_FACTORY_GROUPS = (
             xy.stem_chart,
             xy.segments_chart,
             xy.sankey_chart,
+            xy.funnel_chart,
             xy.triangle_mesh_chart,
         ),
     ),
@@ -114,6 +115,7 @@ MARKS = (
     xy.segments,
     xy.ribbon,
     xy.sankey,
+    xy.funnel,
     xy.triangle_mesh,
 )
 

@@ -593,6 +593,20 @@ Object.assign(ChartView.prototype, {
     ctx.fill();
   },
 
+  // A mark-owned annotation (a funnel's value/drop-off label) retires with
+  // the geometry it describes: legend-hidden category, or hidden trace. An
+  // author-written annotation carries no `owner` and is never suppressed.
+  _annotationSuppressed(ann) {
+    const owner = ann && ann.owner;
+    if (!owner) return false;
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    const index = traces.findIndex((t) => t && t.id === owner.trace);
+    if (index < 0) return false;
+    if (this._legendOffTraces && this._legendOffTraces.has(index)) return true;
+    const hidden = this._legendOffCats && this._legendOffCats.get(index);
+    return !!(hidden && hidden.has(owner.category));
+  },
+
   _drawAnnotationShapes(ctx) {
     const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
     if (!annotations.length) return;
@@ -606,6 +620,7 @@ Object.assign(ChartView.prototype, {
       polarGeom,
     );
     for (const [annotationIndex, ann] of annotations.entries()) {
+      if (this._annotationSuppressed(ann)) continue;
       ctx.save();
       let targetX = NaN;
       let targetY = NaN;
@@ -718,7 +733,7 @@ Object.assign(ChartView.prototype, {
     this._resolvedAnnotationAnchors = new Map();
     for (const [annotationIndex, ann] of annotations.entries()) {
       const text: string = typeof ann.text === "string" ? ann.text : "";
-      if (!text) continue;
+      if (!text || this._annotationSuppressed(ann)) continue;
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       let px = null;
       let py = null;

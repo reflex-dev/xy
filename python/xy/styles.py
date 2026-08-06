@@ -40,6 +40,9 @@ _MESH_KINDS = frozenset({"triangle_mesh"})
 # deliberately absent from its property set and the guard below rejects a
 # `linear-gradient(...)` on it with the standard message.
 _RIBBON_KINDS = frozenset({"ribbon"})
+# Funnel per-stage colors are a channel (categorical by stage, or explicit
+# per-stage paints), so like ribbon its style carries no "fill".
+_FUNNEL_KINDS = frozenset({"funnel"})
 _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 
 _AXIS_COLOR_PROPERTIES = frozenset(
@@ -88,6 +91,7 @@ _MARK_KINDS = tuple(
         | _FILL_KINDS
         | _MESH_KINDS
         | _RIBBON_KINDS
+        | _FUNNEL_KINDS
         | _DENSITY_KINDS
     )
 )
@@ -292,10 +296,11 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         # distribution outline, so keep their smaller fill-only contract.
         if kind == "box":
             props |= {"stroke", "stroke-width", "stroke-opacity"}
-    elif kind in _RIBBON_KINDS:
-        # No "fill": a ribbon's two end colors are channels. Leaving the
-        # property out is what makes `style={"fill": "linear-gradient(...)"}`
-        # raise instead of silently painting one end's colour across the band.
+    elif kind in _RIBBON_KINDS | _FUNNEL_KINDS:
+        # No "fill": a ribbon's two end colors — and a funnel's per-stage
+        # colors — are channels. Leaving the property out is what makes
+        # `style={"fill": "linear-gradient(...)"}` raise instead of silently
+        # painting one paint across per-mark geometry.
         props |= {"fill-opacity", "stroke", "stroke-width", "stroke-opacity"}
     elif kind in _MESH_KINDS:
         props |= {
@@ -361,12 +366,16 @@ def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> di
             _set(out, target, paint, prop, seen)
         elif prop == "stroke":
             target = "line_color" if kind == "area" else "color"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | {"box"}:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | _FUNNEL_KINDS | {
+                "box"
+            }:
                 target = "stroke"
             _set(out, target, _paint(raw, f"{label}['stroke']"), prop, seen)
         elif prop == "stroke-width":
             target = "line_width" if kind in _AREA_KINDS else "width"
-            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | {"box"}:
+            if kind in _POINT_KINDS | _RECT_KINDS | _MESH_KINDS | _RIBBON_KINDS | _FUNNEL_KINDS | {
+                "box"
+            }:
                 target = "stroke_width"
             _set(out, target, _px(raw, f"{label}['stroke-width']"), prop, seen)
         elif prop == "stroke-dasharray":

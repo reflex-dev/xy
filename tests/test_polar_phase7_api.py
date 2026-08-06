@@ -28,9 +28,9 @@ def _spec(*children: xy.Component) -> dict:
     return spec
 
 
-def test_protocol_v12_is_locked_to_the_client() -> None:
+def test_protocol_v13_is_locked_to_the_client() -> None:
     header = Path(__file__).parents[1] / "js" / "src" / "00_header.ts"
-    assert PROTOCOL_VERSION == 12
+    assert PROTOCOL_VERSION == 13
     assert f"PROTOCOL = {PROTOCOL_VERSION};" in header.read_text()
 
 
