@@ -1305,7 +1305,7 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
     path = tmp_path / "release.yml"
     path.write_text(
         workflow.replace(
-            '          python scripts/verify_wheel.py "$whl" --expect-native --expect-platform "${{ matrix.plat }}"\n',
+            '          python scripts/verify_wheel.py "$whl" --expect-native --expect-platform "${{ matrix.plat }}" --require-symbol xy_abi_version\n',
             "",
         ),
         encoding="utf-8",

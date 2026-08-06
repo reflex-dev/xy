@@ -87,6 +87,7 @@ class NativeBinaryInfo:
     format: str
     machine: str
     bits: int
+    exported_symbols: frozenset[str] = frozenset()
 
 
 _ELF_MACHINES = {40: "arm", 62: "x86_64", 183: "aarch64"}
@@ -119,7 +120,9 @@ def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
         machine = struct.unpack_from(prefix + "H", data, 18)[0]
         if machine not in _ELF_MACHINES:
             raise AssertionError(f"{name} has unsupported ELF machine {machine}")
-        return NativeBinaryInfo("ELF", _ELF_MACHINES[machine], 32 if elf_class == 1 else 64)
+        bits = 32 if elf_class == 1 else 64
+        symbols = _elf_exported_symbols(name, data, prefix, bits)
+        return NativeBinaryInfo("ELF", _ELF_MACHINES[machine], bits, symbols)
 
     if len(data) >= 8 and data[:4] in {
         b"\xfe\xed\xfa\xce",
@@ -132,7 +135,8 @@ def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
         if cputype not in _MACHO_CPU_TYPES:
             raise AssertionError(f"{name} has unsupported Mach-O CPU type {cputype}")
         bits = 64 if data[:4] in {b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"} else 32
-        return NativeBinaryInfo("Mach-O", _MACHO_CPU_TYPES[cputype], bits)
+        symbols = _macho_exported_symbols(name, data, prefix, bits)
+        return NativeBinaryInfo("Mach-O", _MACHO_CPU_TYPES[cputype], bits, symbols)
 
     if len(data) >= 0x40 and data[:2] == b"MZ":
         pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
@@ -144,9 +148,177 @@ def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
         optional_magic = struct.unpack_from("<H", data, pe_offset + 24)[0]
         if optional_magic not in {0x10B, 0x20B}:
             raise AssertionError(f"{name} has an invalid PE optional-header magic")
-        return NativeBinaryInfo("PE", _PE_MACHINES[machine], 32 if optional_magic == 0x10B else 64)
+        bits = 32 if optional_magic == 0x10B else 64
+        symbols = _pe_exported_symbols(name, data, pe_offset, optional_magic, bits)
+        return NativeBinaryInfo("PE", _PE_MACHINES[machine], bits, symbols)
 
     raise AssertionError(f"{name} is not an ELF, Mach-O, or PE native library")
+
+
+def _elf_exported_symbols(name: str, data: bytes, prefix: str, bits: int) -> frozenset[str]:
+    """Read defined global/weak names from an ELF dynamic symbol table."""
+    if len(data) < (64 if bits == 64 else 52):
+        return frozenset()
+    if bits == 64:
+        section_offset, section_count = (
+            struct.unpack_from(prefix + "QI", data, 40)[0],
+            struct.unpack_from(prefix + "H", data, 60)[0],
+        )
+        section_size, _section_name_index = (
+            struct.unpack_from(prefix + "H", data, 58)[0],
+            struct.unpack_from(prefix + "H", data, 62)[0],
+        )
+        section_header_size = section_size
+        section_fields = (24, 32, 40, 56)
+    else:
+        section_offset = struct.unpack_from(prefix + "I", data, 32)[0]
+        section_count = struct.unpack_from(prefix + "H", data, 48)[0]
+        section_header_size = struct.unpack_from(prefix + "H", data, 46)[0]
+        _section_name_index = struct.unpack_from(prefix + "H", data, 50)[0]
+        section_fields = (16, 20, 24, 36)
+    if not section_offset or not section_count or not section_header_size:
+        return frozenset()
+
+    sections: list[tuple[int, int, int, int]] = []
+    for index in range(section_count):
+        offset = section_offset + index * section_header_size
+        if offset + section_header_size > len(data):
+            raise AssertionError(f"{name} has a truncated ELF section table")
+        section_type = struct.unpack_from(prefix + "I", data, offset + 4)[0]
+        section_file_offset = struct.unpack_from(
+            prefix + ("Q" if bits == 64 else "I"), data, offset + section_fields[0]
+        )[0]
+        section_length = struct.unpack_from(
+            prefix + ("Q" if bits == 64 else "I"), data, offset + section_fields[1]
+        )[0]
+        section_link = struct.unpack_from(prefix + "I", data, offset + section_fields[2])[0]
+        section_entry_size = struct.unpack_from(
+            prefix + ("Q" if bits == 64 else "I"), data, offset + section_fields[3]
+        )[0]
+        sections.append(
+            (section_type, section_file_offset, section_length, section_link or section_entry_size)
+        )
+
+    dynamic_index = next((i for i, section in enumerate(sections) if section[0] == 11), None)
+    if dynamic_index is None:
+        return frozenset()
+    _, symbol_offset, symbol_length, string_index = sections[dynamic_index]
+    if string_index >= len(sections):
+        raise AssertionError(f"{name} has an invalid ELF dynamic string-table link")
+    _, string_offset, string_length, _ = sections[string_index]
+    symbol_size = 24 if bits == 64 else 16
+    entry_size = sections[dynamic_index][3] or symbol_size
+    if entry_size < symbol_size or symbol_offset + symbol_length > len(data):
+        raise AssertionError(f"{name} has an invalid ELF dynamic symbol table")
+    if string_offset + string_length > len(data):
+        raise AssertionError(f"{name} has a truncated ELF dynamic string table")
+    strings = data[string_offset : string_offset + string_length]
+    exported: set[str] = set()
+    for offset in range(symbol_offset, symbol_offset + symbol_length, entry_size):
+        if bits == 64:
+            string_name, info, section_index = (
+                struct.unpack_from(prefix + "I", data, offset)[0],
+                data[offset + 4],
+                struct.unpack_from(prefix + "H", data, offset + 6)[0],
+            )
+        else:
+            string_name = struct.unpack_from(prefix + "I", data, offset)[0]
+            info = data[offset + 12]
+            section_index = struct.unpack_from(prefix + "H", data, offset + 14)[0]
+        if section_index == 0 or info >> 4 not in {1, 2} or string_name >= len(strings):
+            continue
+        end = strings.find(b"\0", string_name)
+        if end > string_name:
+            exported.add(strings[string_name:end].decode("utf-8", errors="replace"))
+    return frozenset(exported)
+
+
+def _macho_exported_symbols(name: str, data: bytes, prefix: str, bits: int) -> frozenset[str]:
+    """Read externally defined names from a thin Mach-O symbol table."""
+    header_size = 32 if bits == 64 else 28
+    if len(data) < header_size:
+        return frozenset()
+    ncommands = struct.unpack_from(prefix + "I", data, 16)[0]
+    command_offset = header_size
+    symbol_table: tuple[int, int, int, int] | None = None
+    for _ in range(ncommands):
+        if command_offset + 8 > len(data):
+            raise AssertionError(f"{name} has a truncated Mach-O load-command table")
+        command, command_size = struct.unpack_from(prefix + "II", data, command_offset)
+        if command_size < 8 or command_offset + command_size > len(data):
+            raise AssertionError(f"{name} has an invalid Mach-O load command")
+        if command == 2 and command_size >= 24:  # LC_SYMTAB
+            symbol_table = struct.unpack_from(prefix + "IIII", data, command_offset + 8)
+            break
+        command_offset += command_size
+    if symbol_table is None:
+        return frozenset()
+    symbol_offset, symbol_count, string_offset, string_size = symbol_table
+    entry_size = 16 if bits == 64 else 12
+    if string_offset + string_size > len(data):
+        raise AssertionError(f"{name} has a truncated Mach-O string table")
+    strings = data[string_offset : string_offset + string_size]
+    exported: set[str] = set()
+    for index in range(symbol_count):
+        offset = symbol_offset + index * entry_size
+        if offset + entry_size > len(data):
+            raise AssertionError(f"{name} has a truncated Mach-O symbol table")
+        string_name = struct.unpack_from(prefix + "I", data, offset)[0]
+        symbol_type = data[offset + 4]
+        if not symbol_type & 0x01 or symbol_type & 0x0E == 0x00 or string_name >= len(strings):
+            continue
+        end = strings.find(b"\0", string_name)
+        if end > string_name:
+            exported.add(strings[string_name:end].decode("utf-8", errors="replace").lstrip("_"))
+    return frozenset(exported)
+
+
+def _pe_exported_symbols(
+    name: str, data: bytes, pe_offset: int, optional_magic: int, bits: int
+) -> frozenset[str]:
+    """Read names from the PE export directory."""
+    optional_offset = pe_offset + 24
+    data_directory_offset = optional_offset + (96 if optional_magic == 0x10B else 112)
+    if data_directory_offset + 8 > len(data):
+        return frozenset()
+    export_rva, export_size = struct.unpack_from("<II", data, data_directory_offset)
+    if not export_rva or not export_size:
+        return frozenset()
+    section_count = struct.unpack_from("<H", data, pe_offset + 6)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 20)[0]
+    section_offset = optional_offset + optional_size
+    sections: list[tuple[int, int, int, int]] = []
+    for index in range(section_count):
+        offset = section_offset + index * 40
+        if offset + 40 > len(data):
+            raise AssertionError(f"{name} has a truncated PE section table")
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+            "<IIII", data, offset + 8
+        )
+        sections.append((virtual_address, max(virtual_size, raw_size), raw_offset, raw_size))
+
+    def file_offset(rva: int) -> int:
+        for virtual_address, size, raw_offset, _raw_size in sections:
+            if virtual_address <= rva < virtual_address + size:
+                return raw_offset + (rva - virtual_address)
+        raise AssertionError(f"{name} has an export RVA outside its PE sections")
+
+    export_offset = file_offset(export_rva)
+    if export_offset + 40 > len(data):
+        raise AssertionError(f"{name} has a truncated PE export directory")
+    number_of_names = struct.unpack_from("<I", data, export_offset + 24)[0]
+    names_rva = struct.unpack_from("<I", data, export_offset + 32)[0]
+    names_offset = file_offset(names_rva)
+    exported: set[str] = set()
+    for index in range(number_of_names):
+        offset = names_offset + index * 4
+        if offset + 4 > len(data):
+            raise AssertionError(f"{name} has a truncated PE export-name table")
+        string_offset = file_offset(struct.unpack_from("<I", data, offset)[0])
+        end = data.find(b"\0", string_offset)
+        if end > string_offset:
+            exported.add(data[string_offset:end].decode("ascii", errors="replace"))
+    return frozenset(exported)
 
 
 def _require_native_target(name: str, data: bytes, platform: str) -> None:
@@ -161,6 +333,16 @@ def _require_native_target(name: str, data: bytes, platform: str) -> None:
             f"{name} identifies as {actual.format}/{actual.machine}/{actual.bits}-bit, "
             f"expected {expected[0]}/{expected[1]}/{expected[2]}-bit for {platform}"
         )
+
+
+def _require_exported_symbols(name: str, data: bytes, required: set[str]) -> None:
+    """Require ABI symbols when the binary format has a supported export table."""
+    info = _inspect_native_binary(name, data)
+    if info.format != "ELF":
+        raise AssertionError(f"exported-symbol inspection is not implemented for {info.format}")
+    missing = sorted(required - info.exported_symbols)
+    if missing:
+        raise AssertionError(f"{name} is missing exported ABI symbols: {missing}")
 
 
 def _dist_info_name(names: set[str], filename: str) -> str:
@@ -374,7 +556,11 @@ def _require_record(zf: zipfile.ZipFile, names: set[str]) -> None:
 
 
 def verify_wheel(
-    path: Path, *, expect_native: Optional[bool], expect_platform: Optional[str] = None
+    path: Path,
+    *,
+    expect_native: Optional[bool],
+    expect_platform: Optional[str] = None,
+    required_symbols: Optional[set[str]] = None,
 ) -> None:
     with zipfile.ZipFile(path) as zf:
         _require_unique_archive_members(zf.infolist())
@@ -487,6 +673,9 @@ def verify_wheel(
         if expect_platform is not None:
             with zipfile.ZipFile(path) as zf:
                 _require_native_target(native_libs[0], zf.read(native_libs[0]), expect_platform)
+        if required_symbols:
+            with zipfile.ZipFile(path) as zf:
+                _require_exported_symbols(native_libs[0], zf.read(native_libs[0]), required_symbols)
     elif expect_native is False:
         if native_libs:
             raise AssertionError(
@@ -514,6 +703,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--expect-platform",
         help="validate the native library header against this wheel platform tag",
     )
+    parser.add_argument(
+        "--require-symbol",
+        action="append",
+        default=[],
+        help="require an exported native ABI symbol (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     expect_native = True if args.expect_native else False if args.expect_pure else None
@@ -522,6 +717,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.wheel,
             expect_native=expect_native,
             expect_platform=args.expect_platform,
+            required_symbols=set(args.require_symbol),
         )
     except (AssertionError, KeyError, zipfile.BadZipFile) as e:
         print(f"wheel verification failed for {args.wheel}: {e}", file=sys.stderr)

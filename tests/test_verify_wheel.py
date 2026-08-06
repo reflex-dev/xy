@@ -139,6 +139,13 @@ def test_native_binary_header_rejects_wrong_architecture() -> None:
         verify_wheel._require_native_target("native", binary, "manylinux_2_17_aarch64")
 
 
+def test_native_binary_rejects_missing_exported_abi_symbol() -> None:
+    binary = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62)
+
+    with pytest.raises(AssertionError, match="missing exported ABI symbols"):
+        verify_wheel._require_exported_symbols("native", binary, {"xy_abi_version"})
+
+
 def _record_hash(data: bytes) -> str:
     digest = hashlib.sha256(data).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
