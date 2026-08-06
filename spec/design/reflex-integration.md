@@ -481,7 +481,8 @@ One factory, dispatched on the source. `figure=` takes the live tier: a
 `register()`/`inline()`, landing in the typed `figure` prop
 (`Var[FigureHandle]`) and riding the socket data plane. Because the prop is
 `Var`-typed, `chart(figure=Dash.points)` and `chart(figure="raw string")`
-fail at compile with the framework's `TypeError` (R1). A Chart/Figure
+fail at `create()` — page evaluation, before any browser — with the
+framework's `TypeError` (R1, §3.1). A Chart/Figure
 passed positionally compiles to a payload asset and lands in the `src`
 prop, which the wrapper fetches and renders kernel-less — the static tier
 stays positional (it is the only route for arbitrary Charts, e.g. facet

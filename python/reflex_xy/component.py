@@ -387,8 +387,10 @@ def chart(
             props["tailwind_class_tokens"] = _tailwind_scan_literal(tailwind_manifest)
     elif isinstance(source, (str, rx.Var)):
         _warn_positional(
-            "chart(figure=...) — register()/inline() return a FigureHandle, and "
-            "@reflex_xy.figure vars are FigureHandle-valued"
+            "chart(figure=...) — register()/inline() return a FigureHandle, "
+            "@reflex_xy.figure vars are FigureHandle-valued, and a stored bare "
+            "token wraps as figure=FigureHandle(token) (the typed prop rejects "
+            "raw strings)"
         )
         props.setdefault("width", "100%")
         props.setdefault("height", "420px")

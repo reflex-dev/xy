@@ -49,7 +49,8 @@ def test_component_compiles_with_events(app_cwd):
     assert comp.tag == "XYChart"
     assert str(comp.library).startswith("$/public/external/reflex_xy/assets/XYChart")
     rendered = str(comp)
-    assert '"tok-abc"' in rendered  # the handle's token reaches the figure prop
+    # the handle's token reaches the *figure* prop, not just any prop
+    assert 'figure:({ ["token"] : "tok-abc" })' in rendered
     assert "onPointHover" in rendered
     assert "picked" in rendered  # the reflex event dispatch is in the prop
 

@@ -281,8 +281,9 @@ export function XYChart(props) {
   void _tailwindClassTokens;
   // One subscription token from the two live spellings. `figure` is the
   // typed handle ({token}); the bare `token` string is the deprecated wire.
-  // An empty handle token means "not ready" — no subscription yet.
-  const liveToken = (figure && figure.token) || token || null;
+  // A present handle always wins — its empty token means "not ready" (no
+  // subscription yet), never a fallback to the legacy spelling.
+  const liveToken = figure != null ? figure.token || null : token || null;
   const elRef = useRef(null); // inner chart mount (wiped on payload swaps)
   const outerRef = useRef(null); // stable wrapper: events, tooltip slot
   const tooltipSlotRef = useRef(null);
