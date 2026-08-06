@@ -76,6 +76,25 @@ def test_plans_refuse_render_components():
         )
 
 
+def test_plan_is_a_snapshot_immune_to_later_node_mutation():
+    """The registered plan holds a deep copy of what was hashed: mutating a
+    reused mark node or the chart props afterwards must not change binding
+    behavior behind an unchanged digest/columns record."""
+    mark = xy.scatter("x", "y", color="mag")
+    props = {"title": "cloud"}
+    plan = build_plan("scatter_chart", (mark,), props)
+    assert plan.columns == ("x", "y", "mag")
+
+    mark.props["color"] = "sneaky"  # node reused and mutated by page code
+    props["title"] = "renamed"
+    assert plan.children[0] is not mark
+    assert plan.children[0].props["color"] == "mag"
+    assert plan.chart_props == {"title": "cloud"}
+    # binding still resolves the snapshot's channels, not the mutated node's
+    fig = plan.bind({"x": [1.0], "y": [2.0], "mag": [3.0]}).figure()
+    assert fig.traces[0].n_points == 1
+
+
 def test_bind_produces_fresh_figures_per_call():
     """X3: Chart.figure() memoizes, so bind() must mint a fresh Chart —
     two binds with different columns give independent figures."""

@@ -493,6 +493,24 @@ index that lets a column republish rebuild every mounted dependent plan,
 and an error seam (`on_error`) for room-wide failures that answer no
 request; §4 covers the fan-out those two enable.
 
+**Republish ordering.** Dependent rebuilds run outside the registry mutex
+(they execute user-scale figure builds), so two republishes of one data
+token may finish in reverse order. Every rebuild therefore carries the
+`ColumnEntry` generation it serves, and each of its outcomes — the figure
+publish, and the failure path's release + `err {resync}` frame — is gated
+on that generation still being current, *atomically with the registry
+mutation*. An older generation that finishes late is dropped whole:
+subscribers can never observe a newer generation's pixels replaced by an
+older one's, and a superseded failure raises no stale error. Pinned by
+`test_data_var.py::test_stale_column_generation_cannot_overwrite_a_newer_publish`.
+
+**Plan immutability.** `build_plan` hashes — and registers — a deep
+snapshot of the node tree and chart props, not the caller's objects.
+Page code that reuses and later mutates a mark node (or the props dict)
+cannot change binding behavior behind an unchanged digest/columns record;
+the canonical representation is the source of truth. Pinned by
+`test_plan.py::test_plan_is_a_snapshot_immune_to_later_node_mutation`.
+
 **Plan format stability.** `plan_version: 1` is part of the canonical
 serialization and a golden digest is pinned in
 `tests/reflex_adapter/test_plan.py`. Digests are content addresses, not a

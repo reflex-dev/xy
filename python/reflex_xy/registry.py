@@ -334,38 +334,7 @@ class FigureRegistry:
         which is the signal that subscribers need a new payload.
         """
         with self._mutex:
-            entry = self._entries.get(token)
-            # A cache-miss rebuild inserts its entry before room fan-out. A
-            # canonical same-object publish re-authorizes that provisional
-            # generation without bumping its version, but must still own a
-            # normal broadcast in case the rebuild-owned fan-out fails.
-            reauthorized = entry is not None and bool(self._active_rebuild_guards.get(token))
-            # This is a canonical dependency/application publish. Any builder
-            # that began from the preceding absence must not overwrite it,
-            # even if this entry is released again before that builder ends.
-            self._invalidate_rebuild_guards_locked(token)
-            if entry is None:
-                version = self._evicted_versions.pop(token, 0) + 1
-                entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
-                self._entries[token] = entry
-                changed = True
-            else:
-                changed = entry.figure is not figure
-                if changed:
-                    # A replacement is a new immutable generation. In-flight
-                    # handlers keep a self-consistent old figure/version pair
-                    # instead of observing the old figure with a newly bumped
-                    # version. Their results are discarded by ``is_current``.
-                    entry = FigureEntry(
-                        figure=figure,
-                        token=token,
-                        version=entry.version + 1,
-                        pinned=entry.pinned or pinned,
-                    )
-                    self._entries[token] = entry
-                else:
-                    entry.pinned = entry.pinned or pinned
-                    entry.touch()
+            entry, changed, reauthorized = self._publish_locked(token, figure, pinned)
         if broadcast and (changed or reauthorized):
             # Re-publishing the identical object means nothing moved; a new
             # figure object is normally the signal subscribers need a fresh
@@ -374,6 +343,48 @@ class FigureRegistry:
             # schedules an independently coalesced delivery of the same version.
             self.schedule_broadcast(token)
         return entry
+
+    def _publish_locked(
+        self, token: str, figure: "Figure", pinned: bool
+    ) -> tuple[FigureEntry, bool, bool]:
+        """The mutation half of ``publish``; the registry mutex must be held.
+
+        Returns ``(entry, changed, reauthorized)`` so callers can schedule the
+        broadcast after releasing the mutex.
+        """
+        entry = self._entries.get(token)
+        # A cache-miss rebuild inserts its entry before room fan-out. A
+        # canonical same-object publish re-authorizes that provisional
+        # generation without bumping its version, but must still own a
+        # normal broadcast in case the rebuild-owned fan-out fails.
+        reauthorized = entry is not None and bool(self._active_rebuild_guards.get(token))
+        # This is a canonical dependency/application publish. Any builder
+        # that began from the preceding absence must not overwrite it,
+        # even if this entry is released again before that builder ends.
+        self._invalidate_rebuild_guards_locked(token)
+        if entry is None:
+            version = self._evicted_versions.pop(token, 0) + 1
+            entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
+            self._entries[token] = entry
+            changed = True
+        else:
+            changed = entry.figure is not figure
+            if changed:
+                # A replacement is a new immutable generation. In-flight
+                # handlers keep a self-consistent old figure/version pair
+                # instead of observing the old figure with a newly bumped
+                # version. Their results are discarded by ``is_current``.
+                entry = FigureEntry(
+                    figure=figure,
+                    token=token,
+                    version=entry.version + 1,
+                    pinned=entry.pinned or pinned,
+                )
+                self._entries[token] = entry
+            else:
+                entry.pinned = entry.pinned or pinned
+                entry.touch()
+        return entry, changed, reauthorized
 
     def begin_rebuild(self, token: str) -> tuple[Optional[FigureEntry], Optional[object]]:
         """Atomically return the current entry or guard this missing generation."""
@@ -549,7 +560,7 @@ class FigureRegistry:
             self._column_entries[token] = entry
             digests = sorted(self._digests_by_data_token.get(token, ()))
         for digest in digests:
-            self._rebuild_dependent(token, digest, columns)
+            self._rebuild_dependent(token, digest, entry)
         return entry
 
     def get_columns(self, token: str) -> Optional[ColumnEntry]:
@@ -580,13 +591,23 @@ class FigureRegistry:
         with self._mutex:
             self._digests_by_data_token.setdefault(data_token, set()).add(digest)
 
-    def _rebuild_dependent(self, data_token: str, digest: str, columns: dict[str, Any]) -> None:
-        """Re-bind one dependent plan against freshly published columns."""
+    def _rebuild_dependent(self, data_token: str, digest: str, column_entry: ColumnEntry) -> None:
+        """Re-bind one dependent plan against freshly published columns.
+
+        ``column_entry`` is the generation this rebuild serves. Concurrent
+        republishes rebuild concurrently and may complete out of order; every
+        outcome below (publish, failure release + err frame) is gated on the
+        generation still being current — atomically with the registry mutation
+        — so an older generation that finishes late can never overwrite a
+        newer one's figure or report a stale failure.
+        """
         from .plan import plan_of
         from .tokens import build_plan_token, parse_token
 
         composite = build_plan_token(digest, data_token)
         with self._mutex:
+            if self._column_entries.get(data_token) is not column_entry:
+                return  # a newer generation owns this rebuild now
             mounted = composite in self._entries or bool(
                 self._rebuildable_subscribers.get(composite)
             )
@@ -610,16 +631,28 @@ class FigureRegistry:
                 from .plan import PlanMissError
 
                 raise PlanMissError(digest)
-            figure = plan.bind(columns, source=source).figure()
+            figure = plan.bind(column_entry.columns, source=source).figure()
         except Exception as exc:  # noqa: BLE001 - user data meets page structure here
             # Fail loud on both sides: the server log carries the bind error,
             # and subscribers get an err frame instead of silently frozen
-            # pixels (their bounded resync retries against current state).
+            # pixels (their bounded resync retries against current state) —
+            # unless a newer generation superseded this one meanwhile, in
+            # which case the failure is obsolete and it owns the outcome.
+            with self._mutex:
+                if self._column_entries.get(data_token) is not column_entry:
+                    return
+                self._invalidate_rebuild_guards_locked(composite)
+                removed = self._entries.pop(composite, None)
+                self._retain_removed_version_locked(composite, removed)
             _logger.warning("republish of %s failed: %s", composite, exc)
-            self.release(composite)
             self._schedule_error(composite, str(exc), resync=True)
             return
-        self.publish(composite, figure)
+        with self._mutex:
+            if self._column_entries.get(data_token) is not column_entry:
+                return  # a newer generation's figure must win; drop this one
+            _, changed, reauthorized = self._publish_locked(composite, figure, False)
+        if changed or reauthorized:
+            self.schedule_broadcast(composite)
 
     # -- version bump + fan-out ---------------------------------------------
 

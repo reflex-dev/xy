@@ -182,6 +182,41 @@ def test_republish_rebuilds_and_bumps_mounted_dependents(_fresh_registry, client
     assert rebuilt.figure.traces[0].n_points == 48
 
 
+def test_stale_column_generation_cannot_overwrite_a_newer_publish(_fresh_registry, client_token):
+    """Two concurrent republishes may finish their rebuilds in reverse order;
+    the older generation's late publish must be dropped, atomically with the
+    currency check, so subscribers never regress to stale pixels."""
+    state = hydrated_substate(client_token)
+    handle = state.cloud
+    plan = build_plan("scatter_chart", (xy.scatter("x", "y"),), {})
+    composite = build_plan_token(plan.digest, handle.token)
+    _fresh_registry.publish(
+        composite,
+        plan.bind(_fresh_registry.get_columns(handle.token).columns).figure(),
+        broadcast=False,
+    )
+    _fresh_registry.bind_plan(handle.token, plan.digest)
+
+    old_generation = _fresh_registry.get_columns(handle.token)
+    state.n = 48
+    DataDemo.computed_vars["cloud"].mark_dirty(state)
+    assert state.cloud == handle
+    current = _fresh_registry.get(composite)
+    assert current.figure.traces[0].n_points == 48
+
+    # The older generation's rebuild finishes late: its publish must be a
+    # no-op (same for its failure path — no release, no stale err frame).
+    _fresh_registry._rebuild_dependent(handle.token, plan.digest, old_generation)
+    after = _fresh_registry.get(composite)
+    assert after is current
+    assert after.figure.traces[0].n_points == 48
+    assert after.version == current.version
+
+    broken = type(old_generation)(columns={"x": [1.0]}, token=handle.token, version=1)
+    _fresh_registry._rebuild_dependent(handle.token, plan.digest, broken)
+    assert _fresh_registry.get(composite) is current  # stale failure: no release
+
+
 def test_republish_drops_unmounted_dependents_from_the_index(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
     handle = state.cloud

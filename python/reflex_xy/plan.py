@@ -28,6 +28,7 @@ source. Everything session-shaped lives in the data token half.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import hashlib
 import json
@@ -163,6 +164,12 @@ def build_plan(
                 "chart-level data source (this is tracked as deferred work in "
                 "spec/design/reflex-component-api-implementation.md)"
             )
+    # The plan must be immutable once addressed: hash a deep snapshot and
+    # register *that* snapshot, so mutating a reused mark node or a props
+    # dict after the factory call can never change binding behavior behind
+    # an unchanged digest/columns record.
+    children = copy.deepcopy(children)
+    chart_props = copy.deepcopy(chart_props)
     serialized = {
         "plan_version": PLAN_VERSION,
         "kind": kind,
