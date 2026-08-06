@@ -31,6 +31,23 @@ def _fresh_registry():
 
 
 @pytest.fixture
+def app_cwd(tmp_path, monkeypatch):
+    """Emulate a Reflex app directory for the compile-time asset seams.
+
+    `rx.asset` symlinks into `Path.cwd()/assets` and `payload_asset` writes
+    under it, so a test that mounts a chart needs a private cwd. The private
+    component class is cached per process and its asset registration is
+    per-cwd, so it is dropped too — rebuilding it exercises registration in
+    *this* cwd instead of reusing another test's symlinks.
+    """
+    monkeypatch.chdir(tmp_path)
+    import reflex_xy.component as component_mod
+
+    monkeypatch.setattr(component_mod, "_component_cls", None)
+    return tmp_path
+
+
+@pytest.fixture
 def client_token() -> str:
     return "11111111-2222-4333-8444-555566667777"
 

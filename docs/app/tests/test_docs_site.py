@@ -1155,23 +1155,130 @@ def test_composition_demos_keep_distinct_assets_after_cached_render(
     assert second_payloads == first_payloads
 
 
+def test_repeated_identical_fence_keeps_the_page_namespace_accumulating(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A duplicated fence must not roll the page back to its first occurrence.
+
+    Snapshots are keyed by fence source *and* occurrence: two identical
+    fences are two positions in the page's fence sequence, and the second one
+    restoring the first one's namespace would discard everything the fences
+    between them defined — the shared renderer skips re-execution and lets
+    the namespace keep accumulating, and this seam must not change that.
+    """
+    duplicated = "shared = 1\n"
+    content = "\n".join(
+        (
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "between = 2",
+            "~~~",
+            "",
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "def result():",
+            "    return (shared, between)",
+            "~~~",
+        )
+    )
+    virtual_filepath = "tests/docdemo/repeated-fence/page.md"
+
+    def render() -> dict:
+        transformer = XyDocsMarkdownTransformer(
+            virtual_filepath=virtual_filepath,
+            filename=virtual_filepath,
+        )
+        transformer.transform(parse_document(content))
+        return transformer.env
+
+    monkeypatch.chdir(tmp_path)
+    first, second = render(), render()
+    # `between` survives the duplicate fence on the first render and on every
+    # later one; a KeyError here is the regression.
+    assert first["result"]() == (1, 2)
+    assert second["result"]() == (1, 2)
+
+
+def _assigned_names(target: ast.expr) -> set[str]:
+    """Every top-level name an assignment target binds, unpacking included."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {name for element in target.elts for name in _assigned_names(element)}
+    if isinstance(target, ast.Starred):
+        return _assigned_names(target.value)
+    return set()  # attribute/subscript targets rebind no module-level name
+
+
+def _bound_names(body: str) -> set[str]:
+    """Top-level names one fence binds, in every form a demo can use.
+
+    Plain assignment is not the only way to shadow a name a sibling fence
+    also owns: `x: list = ...`, `x += ...`, `x, y = ...`, and `def`/`class`
+    all do it. Matching only `ast.Assign` would skip those pages, leaving the
+    regression this guards unexercised on exactly the demos most likely to
+    hit it.
+    """
+    bound: set[str] = set()
+    for node in ast.parse(body).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bound |= _assigned_names(target)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            bound |= _assigned_names(node.target)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+    return bound
+
+
 def _names_rebound_across_exec_fences(content: str) -> set[str]:
-    """Top-level names that more than one exec fence of a page assigns."""
+    """Top-level names that more than one exec fence of a page binds."""
     seen: set[str] = set()
     rebound: set[str] = set()
     for fence, body in re.findall(r"~~~python([^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
         if "exec" not in fence:
             continue
-        assigned = {
-            target.id
-            for node in ast.parse(body).body
-            if isinstance(node, ast.Assign)
-            for target in node.targets
-            if isinstance(target, ast.Name)
-        }
-        rebound |= assigned & seen
-        seen |= assigned
+        bound = _bound_names(body)
+        rebound |= bound & seen
+        seen |= bound
     return rebound
+
+
+def test_rebound_name_detection_covers_every_binding_form() -> None:
+    """Pin the detector itself: the page filter above is only as complete as
+    the binding forms it recognizes."""
+    fence = "~~~python exec\n{body}\n~~~"
+    page = "\n".join(
+        fence.format(body=body)
+        for body in (
+            "plain = 1\nannotated: int = 1\naugmented = 0\nunpacked = 0\nspread = 0\n"
+            "def fn():\n    pass\n\n\nclass Cls:\n    pass",
+            "plain = 2",
+            "annotated: int = 2",
+            "augmented += 2",
+            "unpacked, other = (2, 3)",
+            "*spread, tail = [2, 3]",
+            "def fn():\n    return 2",
+            "class Cls:\n    pass",
+            "obj.attr = 2\nmapping['key'] = 2",  # rebinds no module-level name
+        )
+    )
+    assert _names_rebound_across_exec_fences(page) == {
+        "plain",
+        "annotated",
+        "augmented",
+        "unpacked",
+        "spread",
+        "fn",
+        "Cls",
+    }
 
 
 def test_repeated_page_renders_rebuild_every_demo_from_its_own_data(

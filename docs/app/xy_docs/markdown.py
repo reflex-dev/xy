@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import replace
 
 import reflex as rx
@@ -35,8 +36,11 @@ _DEMO_DATA_DIVIDER = "# --- chart ---"
 _DEMO_DATA_TAB_LINE_THRESHOLD = 10
 
 # Namespace of the page module as of the end of each executed fence, keyed by
-# (virtual filepath, fence source). See `_exec_fence`.
-_FENCE_NAMESPACES: dict[tuple[str, str], dict] = {}
+# (virtual filepath, fence source, occurrence of that source in the page). The
+# occurrence disambiguates a page that repeats an identical fence: those are
+# distinct positions in the page's fence sequence and saw different namespaces.
+# See `_exec_fence`.
+_FENCE_NAMESPACES: dict[tuple[str, str, int], dict] = {}
 
 
 def _split_demo_data(content: str) -> tuple[str | None, str]:
@@ -111,6 +115,21 @@ def _heading_link(text: str, level: int) -> rx.Component:
 class XyDocsMarkdownTransformer(ReflexDocTransformer):
     """Render XY docs while keeping heading links independent of router state."""
 
+    def __init__(
+        self,
+        virtual_filepath: str = "",
+        filename: str = "",
+        fence_occurrences: Counter[str] | None = None,
+    ) -> None:
+        super().__init__(virtual_filepath=virtual_filepath, filename=filename)
+        # Counts exec fences by source as this render walks the page, so the
+        # nth identical fence keys its own snapshot. `render_xy_markdown_page`
+        # renders a page's body and its FAQ through two transformers; passing
+        # one counter through keeps a single fence sequence across both.
+        self.fence_occurrences: Counter[str] = (
+            Counter() if fence_occurrences is None else fence_occurrences
+        )
+
     def heading(self, block: HeadingBlock) -> rx.Component:
         """Render one route-local Markdown heading."""
         return _heading_link(_spans_to_plaintext(block.children), block.level)
@@ -146,8 +165,18 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
         and restore it in place (the module dict object is what the fence's
         functions close over) before the fence renders again. Every render
         sees exactly the namespace the first one did.
+
+        A fence is identified by its source *and* its occurrence index within
+        the page, never by source alone: a page that repeats an identical
+        fence has two positions in its fence sequence, and keying on source
+        alone would make the second one restore the first one's snapshot —
+        discarding whatever the fences in between defined, which is not what
+        the shared renderer does (it skips re-execution and lets the page's
+        namespace keep accumulating).
         """
-        key = (self.virtual_filepath, content)
+        occurrence = self.fence_occurrences[content]
+        self.fence_occurrences[content] += 1
+        key = (self.virtual_filepath, content, occurrence)
         namespace = _FENCE_NAMESPACES.get(key)
         if namespace is None:
             _exec_code(content, self.env, self.virtual_filepath)
@@ -201,11 +230,15 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
 def render_xy_markdown_page(page: DocsPage) -> rx.Component:
     """Render one discovered XY documentation page."""
     source_path = page.source_path.resolve()
+    # One fence sequence per page render, even though the body and the FAQ are
+    # transformed separately around the generated API section.
+    fence_occurrences: Counter[str] = Counter()
 
     def _render(markdown_text: str) -> rx.Component:
         transformer = XyDocsMarkdownTransformer(
             virtual_filepath=str(source_path),
             filename=str(source_path),
+            fence_occurrences=fence_occurrences,
         )
         return transformer.transform(parse_document(markdown_text))
 

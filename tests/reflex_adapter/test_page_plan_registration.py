@@ -9,6 +9,7 @@ startup; these tests pin that seam (reflex-integration.md §3.6).
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 from typing import TypedDict
 
@@ -30,15 +31,6 @@ class PagePlanState(rx.State):
     @reflex_xy.data
     def table(self) -> PageSchema:
         return {"x": np.array([1.0]), "y": np.array([2.0])}
-
-
-@pytest.fixture
-def app_cwd(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    import reflex_xy.component as component_mod
-
-    monkeypatch.setattr(component_mod, "_component_cls", None)
-    return tmp_path
 
 
 def test_backend_worker_page_evaluation_registers_plans(app_cwd, _fresh_registry):
@@ -83,3 +75,56 @@ def test_failing_page_refuses_worker_startup(app_cwd, _fresh_registry):
 def test_apps_without_unevaluated_pages_are_a_noop():
     _ensure_page_plans(SimpleNamespace())  # nothing to do, nothing raised
     assert not _PLANS
+
+
+def _fake_app(pages: dict, tasks: list) -> SimpleNamespace:
+    """Enough of an `rx.App` for `setup()`: a socket server and task sink."""
+
+    class _Sio:
+        def register_namespace(self, namespace) -> None:
+            pass
+
+    return SimpleNamespace(
+        sio=_Sio(),
+        _unevaluated_pages=pages,
+        register_lifespan_task=tasks.append,
+        _state=None,
+        state_manager=None,
+    )
+
+
+def test_page_evaluation_runs_before_the_lifespan_coroutine_is_scheduled(app_cwd, _fresh_registry):
+    """Fail-closed only holds if the refusal reaches Reflex's startup path.
+
+    Reflex runs a coroutine lifespan task as `asyncio.create_task(task())`
+    and then yields — so an `async def` body raising after that point would
+    leave the worker serving with an incomplete plan map, the exact
+    load-balancer-dependent failure `_ensure_page_plans` exists to prevent.
+    The registered task must therefore do the page pass in its *synchronous*
+    part (the `task()` call) and return the sweep coroutine.
+    """
+
+    def broken() -> rx.Component:
+        raise RuntimeError("page body exploded")
+
+    tasks: list = []
+    reflex_xy.setup(_fake_app({"broken": SimpleNamespace(component=broken)}, tasks))
+    (task,) = tasks
+    assert not inspect.iscoroutinefunction(task)  # else the raise lands in the task
+    with pytest.raises(RuntimeError, match="page body exploded"):
+        task()  # Reflex calls this inline, before create_task and before yield
+
+
+def test_lifespan_task_returns_the_sweep_coroutine(app_cwd, _fresh_registry):
+    """The healthy path still hands Reflex a coroutine to run as the task."""
+
+    def index() -> rx.Component:
+        return reflex_xy.scatter_chart(data=PagePlanState.table, x="x", y="y")
+
+    tasks: list = []
+    reflex_xy.setup(_fake_app({"index": SimpleNamespace(component=index)}, tasks))
+    (task,) = tasks
+    coro = task()
+    assert inspect.iscoroutine(coro)
+    coro.close()  # never awaited here; the sweep runs forever
+    assert len(_PLANS) == 1  # the page pass already ran, synchronously

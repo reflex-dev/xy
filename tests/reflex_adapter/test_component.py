@@ -27,18 +27,6 @@ TAILWIND_SCAN_EDGE_CLASSES = (
 )
 
 
-@pytest.fixture
-def app_cwd(tmp_path, monkeypatch):
-    """rx.asset symlinks into Path.cwd()/assets — emulate an app directory."""
-    monkeypatch.chdir(tmp_path)
-    # component class is cached per process; asset symlinks are per-cwd, so
-    # force a rebuild to exercise registration in this cwd.
-    import reflex_xy.component as component_mod
-
-    monkeypatch.setattr(component_mod, "_component_cls", None)
-    return tmp_path
-
-
 def test_component_compiles_with_events(app_cwd):
     comp = reflex_xy.chart(
         figure=reflex_xy.FigureHandle("tok-abc"),

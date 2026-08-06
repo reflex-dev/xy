@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import TypedDict
 
 import numpy as np
@@ -38,15 +39,6 @@ class FactoryDash(rx.State):
         pass
 
 
-@pytest.fixture
-def app_cwd(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    import reflex_xy.component as component_mod
-
-    monkeypatch.setattr(component_mod, "_component_cls", None)
-    return tmp_path
-
-
 def test_partition_table_is_the_public_contract():
     """The generated collision table (options doc §5.6 decision 2): the
     component level owns the reserved names; shadowed mark options get
@@ -72,6 +64,21 @@ def test_partition_table_is_the_public_contract():
         "stem_chart": {**base, "stroke_width": "width"},
         "step_chart": {**base, "stroke_width": "width"},
     }
+
+
+def test_private_mark_params_stay_off_the_public_surface(app_cwd):
+    """The partition is signature-derived, so it inherits whatever xy's mark
+    signatures carry — including the pyplot shim's private adapter knobs
+    (`_artist_alpha`, `_marker_path`, …). Those are not documented options:
+    accepting them would quietly widen the flat surface, and listing them as
+    did-you-mean candidates would advertise it."""
+    private = {name for name in inspect.signature(xy.scatter).parameters if name.startswith("_")}
+    assert private  # the hazard is real, not hypothetical
+    for kind in FLAT_KINDS.values():
+        assert not {name for name in kind.mark_params if name.startswith("_")}
+        assert not {name for name in kind.known if name.startswith("_")}
+    with pytest.raises(TypeError, match="_artist_alpha"):
+        reflex_xy.scatter_chart(data=FactoryDash.cloud, x="x", y="y", _artist_alpha=0.5)
 
 
 def test_event_trigger_set_matches_the_component(app_cwd):

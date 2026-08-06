@@ -13,7 +13,8 @@ Two equivalent entry points, both one line for the user:
 What setup does: registers the `/_xy` socket.io namespace on the app's
 existing AsyncServer (same physical websocket as the app plane — see
 namespace.py), wires publish fan-out, and adds a lifespan task that
-captures the event loop (for thread-safe broadcasts from sync handlers)
+registers this worker's chart plans (`_ensure_page_plans`, fail-closed),
+captures the event loop (for thread-safe broadcasts from sync handlers),
 and runs the registry TTL sweep.
 """
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Coroutine
 from typing import Any, Optional
 
 from reflex.plugins import Plugin
@@ -59,13 +61,17 @@ def setup(app: Any) -> XYNamespace:
     sio.register_namespace(namespace)
     wire(namespace)
 
-    async def _lifespan() -> None:
-        # The lifespan runs at server startup: every page has been added and
-        # the serving loop exists, in *every* worker — including backend-only
-        # workers that never ran the frontend compile. Register the plans
-        # there before serving (see _ensure_page_plans), then run the sweep.
+    def _lifespan() -> Coroutine[Any, Any, None]:
+        # Deliberately a *sync* function returning the sweep coroutine, not an
+        # `async def`. Reflex starts a coroutine lifespan task with
+        # `asyncio.create_task(task())` and then yields, so anything raised
+        # inside an `async def` body surfaces in the background *after* the
+        # worker is already serving — exactly the fail-open shape
+        # `_ensure_page_plans` exists to prevent. Reflex calls `task()` inline
+        # to *get* that coroutine, before create_task and before the lifespan
+        # yields, so raising from this body aborts startup instead.
         _ensure_page_plans(app)
-        await _xy_lifespan()
+        return _xy_lifespan()
 
     app.register_lifespan_task(_lifespan)
     _namespace = namespace
@@ -91,7 +97,11 @@ def _ensure_page_plans(app: Any) -> None:
     which worker answers, with only a startup warning to explain it. Every
     failing page is collected and the worker refuses to start, naming the
     pages; the same page code already fails `reflex run`'s real compile, so
-    a healthy deployment never hits this.
+    a healthy deployment never hits this. "Refuses to start" is load-bearing
+    and depends on *where* this runs: `setup`'s lifespan calls it in the
+    synchronous part of the task, before Reflex schedules the sweep
+    coroutine, so the exception aborts lifespan startup rather than landing
+    in a background task on an already-serving worker.
     """
     pages = getattr(app, "_unevaluated_pages", None) or {}
     failures: list[str] = []

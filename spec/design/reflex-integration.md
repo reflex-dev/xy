@@ -487,7 +487,16 @@ Failure is **fail-closed**: a page that cannot evaluate would leave this
 worker's plan map incomplete — behind a load balancer that means charts
 blank or not depending on which worker answers — so `_ensure_page_plans`
 collects every failing page and refuses worker startup with an error
-naming them, instead of serving inconsistently. The contract this puts on
+naming them, instead of serving inconsistently. "Refuses worker startup"
+depends on *where* the pass runs: Reflex starts a coroutine lifespan task
+with `asyncio.create_task(task())` and then yields, so an `async def`
+lifespan body would raise in the background on an already-serving worker —
+fail-open, the shape this exists to prevent. The registered task is
+therefore a plain function that runs `_ensure_page_plans` synchronously and
+*returns* the sweep coroutine; the raise happens in the `task()` call, in
+Reflex's startup path, before serving. Pinned by
+`test_page_plan_registration.py::test_page_evaluation_runs_before_the_lifespan_coroutine_is_scheduled`.
+The contract this puts on
 app code is **re-evaluability**: a page body runs at least twice per
 process (the compile, then this pass) and must build the same charts each
 time. Code that mutates module state a later page body reads — the docs
@@ -514,7 +523,12 @@ surviving to hydrate). The kwarg partition between mark options, chrome,
 component props, and event handlers is derived from `inspect.signature` at
 import — not hand-listed — so it cannot drift from xy's own signatures;
 collisions get generated aliases (`mark_<name>`, with `width` becoming
-`stroke_width` where the mark hasn't claimed it), pinned by test. Top-level
+`stroke_width` where the mark hasn't claimed it), pinned by test. Derivation
+is filtered on one axis only: underscore-prefixed signature params are xy's
+private adapter knobs (the pyplot shim's `_artist_alpha`, `_marker_path`, …)
+and are excluded from both the accepted set and the did-you-mean
+candidates — deriving the public surface from signatures must not promote
+private names into it. Top-level
 kwargs are **strict**: an unknown name always raises `TypeError` at page
 evaluation — with a did-you-mean when a known name is close — and never
 silently becomes a CSS property (the R8 hazard, closed rather than
@@ -909,12 +923,36 @@ Recorded 2026-08-06 (Linux, Python 3.12, native core, dev machine):
 |---|---|---|
 | plan build (compile + probe + digest) | 0.26 ms median | per chart factory call, milliseconds — page evaluation stays compile-scale |
 | worker startup page evaluation | 15 ms (20 pages × 4 charts) | `_ensure_page_plans` re-runs pages once per worker boot; linear in charts |
-| column republish → new mounted payload | 1.0 ms (100k points) | dominated by the dependent figure build, not registry bookkeeping |
+| column republish → new mounted payload | see the sweep below | dominated by the dependent figure build, not registry bookkeeping |
 | plan map entry | ~1.5 KB/plan | process-lifetime map, bounded by page code |
 
+Republish is recorded as a **sweep**, not as one number: "state deltas are
+independent of data size, a republish is one screen-bounded reship" is a
+scaling claim, and a single measurement at a single N is consistent with
+every growth curve while revealing none of them. The sweep straddles
+`SCATTER_DENSITY_THRESHOLD` (200k) so both regimes are visible — below it
+each republish rebuilds a full exact-marker figure, above it the density
+tier takes over — and the top of the range crosses the direct soft ceiling
+(2M). Recorded 2026-08-06 (Linux, Python 3.11, native core, CI-class
+container; a faster dev machine records ≈2× lower across the board, so the
+contract is the *shape* of the column, not its constant):
+
+| points | republish | per 1M points |
+|---|---|---|
+| 10,000 | 0.37 ms | 36.8 ms |
+| 100,000 | 1.47 ms | 14.7 ms |
+| 1,000,000 | 3.90 ms | 3.9 ms |
+| 5,000,000 | 23.6 ms | 4.7 ms |
+
+The normalized column falls to a floor and then stays flat: small republishes
+are dominated by fixed per-publish work, large ones by the figure build they
+fan out, and nothing grows faster than the build. A `per 1M points` column
+that climbs with N — a second pass over the columns, a copy that used to be a
+view — is the regression this sweep exists to catch.
+
 Re-record when the probe or serialization changes materially; a plan build
-drifting toward tens of milliseconds or a republish cost growing faster
-than its figure build is a regression against this table.
+drifting toward tens of milliseconds, or a republish cost growing faster
+than its figure build, is a regression against this table.
 
 ## 7. What shipped where (prototype map)
 

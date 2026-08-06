@@ -35,6 +35,8 @@ The kwarg partition of the flat form is **derived from signatures**, not
 hand-listed: positional mark params are channels, keyword-only params are
 options (xy's uniform convention), `Chart.__init__` provides the
 chart-level names, and a small reserved set belongs to the component.
+Underscore-prefixed signature params are xy-internal adapter knobs and are
+excluded — derivation must not promote private names to public API.
 Colliding mark options get flat aliases (`stroke_width` for `line`'s
 `width`, `mark_<name>` otherwise); the resulting table is pinned by
 `tests/reflex_adapter/test_factories.py` as public contract. Unknown
@@ -193,7 +195,16 @@ class _FlatKind:
 
 
 def _flat_kind(chart_kind: str, mark_factory: Any) -> _FlatKind:
-    params = frozenset(inspect.signature(mark_factory).parameters) - {"data"}
+    # Underscore-prefixed params are xy's private adapter knobs (the pyplot
+    # shim's `_artist_alpha`, `_marker_path`, …), not documented mark options.
+    # Deriving the partition from the signature must not promote them to the
+    # public flat surface — they would be silently accepted *and* offered as
+    # did-you-mean suggestions, which is the opposite of the strict contract.
+    params = frozenset(
+        name
+        for name in inspect.signature(mark_factory).parameters
+        if name != "data" and not name.startswith("_")
+    )
     return _FlatKind(
         chart_kind=chart_kind,
         mark_factory=mark_factory,

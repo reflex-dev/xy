@@ -22,15 +22,6 @@ def make_chart(n: int = 32, seed: float = 1.0):
     return xy.line_chart(xy.line(xs, xs * seed), width=400, height=200)
 
 
-@pytest.fixture
-def app_cwd(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    import reflex_xy.component as component_mod
-
-    monkeypatch.setattr(component_mod, "_component_cls", None)
-    return tmp_path
-
-
 def test_payload_asset_writes_decodable_frame(app_cwd):
     url = payload_asset(make_chart())
     assert url.startswith("/xy/") and url.endswith(".xyf")

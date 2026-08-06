@@ -6,7 +6,10 @@ a plan) and backend-worker startup (`_ensure_page_plans` re-evaluates every
 page). Both must stay compile-scale (milliseconds), and a column republish
 must stay dominated by the figure build it fans out, or the tier's promise
 ("state deltas independent of data size, republish = one screen-bounded
-reship") quietly erodes. This harness measures all of it reproducibly;
+reship") quietly erodes. That last promise is a *scaling* claim, so
+republish is measured as a sweep over data size rather than at one N: a
+single number at a single N is consistent with any growth curve and reveals
+none of them. This harness measures all of it reproducibly;
 recorded results live in spec/design/reflex-integration.md §6.
 
 Run (needs the reflex extra):
@@ -27,9 +30,19 @@ from types import SimpleNamespace
 from typing import Any
 
 REPEATS = 30
-REPUBLISH_POINTS = 100_000
 STARTUP_PAGES = 20
 CHARTS_PER_PAGE = 4
+
+#: Republish is measured as a *sweep*, not at one size. The property under
+#: test — "state deltas are independent of data size; a republish is one
+#: screen-bounded reship" — is a scaling claim, and a single datum at a
+#: single N is consistent with O(N) without ever revealing it. The sweep
+#: straddles `SCATTER_DENSITY_THRESHOLD` (200k) deliberately: below it every
+#: republish rebuilds a full exact-marker figure, above it the density tier
+#: takes over, and the two regimes have to be visible separately. Repeats
+#: shrink with N to keep the whole run interactive.
+REPUBLISH_SWEEP = ((10_000, 20), (100_000, 10), (1_000_000, 5), (5_000_000, 3))
+REPUBLISH_REFERENCE_POINTS = 100_000
 
 
 def _median_ms(fn: Callable[[], Any], repeats: int = REPEATS) -> float:
@@ -91,8 +104,10 @@ def bench_worker_startup() -> float:
     return _median_ms(boot, repeats=5)
 
 
-def bench_republish() -> float:
+def _republish_at(points: int, repeats: int) -> float:
     """publish_columns -> dependent bind + figure build + publish, mounted."""
+    import warnings
+
     import numpy as np
 
     import xy
@@ -102,19 +117,44 @@ def bench_republish() -> float:
 
     registry = FigureRegistry()
     plan = build_plan("scatter_chart", (xy.scatter("x", "y"),), {})
-    data_token = "xyd1|bench-client-token|app.app.State|cloud"
+    data_token = f"xyd1|bench-client-token|app.app.State|cloud{points}"
     composite = build_plan_token(plan.digest, data_token)
     registry.subscribe(composite, "bench-sid", rebuildable=True)
     registry.bind_plan(data_token, plan.digest)
     rng = np.random.default_rng(7)
-    xs = rng.normal(size=REPUBLISH_POINTS)
+    xs = rng.normal(size=points)
     columns = {"x": xs, "y": xs * 0.5}
 
     def republish() -> None:
         registry.publish_columns(data_token, columns)
 
-    republish()  # prime the mount
-    return _median_ms(republish, repeats=10)
+    with warnings.catch_warnings():
+        # Above the direct soft ceiling xy renders a density surface and says
+        # so. That regime change is what the top of the sweep is *for*, so the
+        # notice is expected here rather than a finding.
+        warnings.filterwarnings("ignore", message=".*soft ceiling.*")
+        republish()  # prime the mount
+        return _median_ms(republish, repeats=repeats)
+
+
+def bench_republish_sweep() -> list[dict[str, float]]:
+    """Republish cost across data sizes, with per-million-point normalization.
+
+    A flat `ms_per_million` column means the cost is dominated by the
+    per-point figure build and nothing worse than linear has crept in; a
+    column that climbs with N is the regression this exists to catch.
+    """
+    rows: list[dict[str, float]] = []
+    for points, repeats in REPUBLISH_SWEEP:
+        ms = _republish_at(points, repeats)
+        rows.append(
+            {
+                "points": points,
+                "republish_ms": round(ms, 2),
+                "ms_per_million": round(ms * 1e6 / points, 2),
+            }
+        )
+    return rows
 
 
 def bench_plan_memory() -> float:
@@ -140,13 +180,18 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     args = parser.parse_args()
 
+    sweep = bench_republish_sweep()
+    reference = next(
+        (row for row in sweep if row["points"] == REPUBLISH_REFERENCE_POINTS), sweep[0]
+    )
     results = {
         "plan_build_ms": round(bench_plan_build(), 3),
         "worker_startup_ms": round(bench_worker_startup(), 1),
         "worker_startup_pages": STARTUP_PAGES,
         "worker_startup_charts": STARTUP_PAGES * CHARTS_PER_PAGE,
-        "republish_ms": round(bench_republish(), 1),
-        "republish_points": REPUBLISH_POINTS,
+        "republish_sweep": sweep,
+        "republish_ms": reference["republish_ms"],
+        "republish_points": reference["points"],
         "plan_memory_bytes": round(bench_plan_memory()),
     }
     if args.json:
@@ -157,10 +202,12 @@ def main() -> int:
         f"worker startup page evaluation     {results['worker_startup_ms']:8.1f} ms "
         f"({STARTUP_PAGES} pages x {CHARTS_PER_PAGE} charts)"
     )
-    print(
-        f"column republish -> new payload    {results['republish_ms']:8.1f} ms "
-        f"({REPUBLISH_POINTS:,} points, mounted)"
-    )
+    print("column republish -> new payload (mounted, median):")
+    for row in sweep:
+        print(
+            f"  {int(row['points']):>10,} points          {row['republish_ms']:8.2f} ms "
+            f"({row['ms_per_million']:.2f} ms / 1M points)"
+        )
     print(f"plan map entry                     {results['plan_memory_bytes']:8.0f} bytes/plan")
     return 0
 

@@ -381,6 +381,54 @@ def release(token: "str | FigureHandle") -> None:
 
 
 if TYPE_CHECKING:
+    # The curated xy node re-exports (`_XY_REEXPORTS`) resolve at runtime
+    # through `__getattr__`; restate them here so a type checker sees the real
+    # constructor signatures instead of `Any` (or nothing at all).
+    from xy import (
+        animation,
+        area,
+        arrow,
+        bar,
+        box,
+        callout,
+        colorbar,
+        column,
+        contour,
+        ecdf,
+        error_band,
+        errorbar,
+        export_config,
+        heatmap,
+        hexbin,
+        histogram,
+        hline,
+        interaction_config,
+        label,
+        legend,
+        line,
+        marker,
+        modebar,
+        r_axis,
+        scatter,
+        segments,
+        spring,
+        stairs,
+        stem,
+        step,
+        text,
+        theme,
+        theta_axis,
+        threshold,
+        threshold_zone,
+        tooltip,
+        violin,
+        vline,
+        x_axis,
+        x_band,
+        y_axis,
+        y_band,
+    )
+
     from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
     from .data_vars import AsyncDataVar, DataVar, data
     from .events import (
@@ -395,7 +443,20 @@ if TYPE_CHECKING:
         SelectionPayload,
         ViewChangeEvent,
     )
-    from .factories import bar_chart, chart, histogram_chart, line_chart, scatter_chart
+    from .factories import (
+        area_chart,
+        bar_chart,
+        chart,
+        column_chart,
+        error_band_chart,
+        errorbar_chart,
+        histogram_chart,
+        line_chart,
+        scatter_chart,
+        segments_chart,
+        stem_chart,
+        step_chart,
+    )
     from .handles import DataHandle, FigureHandle
     from .namespace import XY_NAMESPACE, XYNamespace
     from .registry import FigureRegistry, registry
