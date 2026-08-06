@@ -92,7 +92,7 @@ def test_canonical_public_names_come_from_source_exports(tmp_path: Path) -> None
 def test_canonical_public_names_match_the_current_root_contract() -> None:
     names = check_typing._canonical_public_names()
 
-    assert len(names) == 102
+    assert len(names) == 103  # +structural_probe (the compile-gate build mode)
     assert names == sorted(xy.__all__)
 
 

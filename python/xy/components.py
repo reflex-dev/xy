@@ -45,7 +45,7 @@ from typing import Any, Literal, Optional, TypeAlias, Union
 import numpy as np
 
 from . import _validate, channels, export, plugins, styles
-from ._figure import Figure, Selection
+from ._figure import Figure, Selection, structural_probe
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
@@ -136,6 +136,7 @@ __all__ = [
     "stem_chart",
     "step",
     "step_chart",
+    "structural_probe",
     "text",
     "theme",
     "theta_axis",

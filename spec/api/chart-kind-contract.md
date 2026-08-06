@@ -367,6 +367,29 @@ usually wrong). Each has an explicit trigger:
   viewport message the kernel answers per trace, and bump PROTOCOL once, instead
   of accreting a message type per tier.
 
+## Structural probe (compile-gate contract)
+
+`xy.structural_probe()` is a context manager under which figures build in
+**structural-probe mode** (`Figure._structural_probe`): a mark whose data
+channels are all empty must validate its *configuration* — enums, numeric
+bounds, colormaps, range/level shapes — and then return without appending
+traces, instead of refusing zero rows or aggregating. Compile gates (the
+Reflex plan probe, reflex-integration.md §3.6) rely on this to validate
+chart structure with **no data and no invented data**: a probe failure
+always indicts structure, and data-dependent work (binning, quantiles,
+marching, range filtering) never runs at page evaluation. Non-empty
+channels behave identically in and out of probe mode, and outside the
+context the aggregating validators keep their at-least-one-value
+contracts. Real-data shape couplings (x/y lengths, `edges = len+1`, z
+2-D-ness) are checked when data binds, not by the probe.
+
+Mark-author obligation: every aggregating builder orders config validation
+before its data work and gates its zero-row refusal on
+`self._structural_probe` (see `stairs`/`ecdf`/`histogram`/`box`/`violin`/
+`hexbin`/`contour`/`heatmap` in `marks.py`). Pinned by
+`tests/test_validation_timing.py` (compiles empty under probe, still
+refuses empty normally, still raises config errors under probe).
+
 ## Checklist for a new kind
 
 1. Internal `Figure.<K>(...)` builder (`marks.py`) + `_emit_<K>` (kernel
@@ -377,6 +400,8 @@ usually wrong). Each has an explicit trigger:
 4. Tests: payload shape + tier decision (pytest); a render probe in
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.
 5. If aggregating: an aggregate kernel (native Rust core) and wire
-   it through the `lod` framework rather than a bespoke path.
+   it through the `lod` framework rather than a bespoke path — and honor
+   the structural-probe contract above (config first, probe-gated
+   zero-row early-out, entries in `tests/test_validation_timing.py`).
 6. Roadmap and contract docs: record the kind as implemented and note any
    compatibility-depth follow-ups.

@@ -2,16 +2,18 @@
 
 The Reflex component API (spec/design/reflex-component-api-options.md §4,
 implementation plan in reflex-component-api-implementation.md) compiles
-chart *plans* by binding placeholder columns — zero-row, or the tiny
-shaped synthetic columns for aggregating kinds — and calling ``.figure()``
-once at page evaluation. That only works while:
+chart *plans* by binding zero-row placeholder columns and calling
+``.figure()`` once at page evaluation, under the core's
+``xy.components.structural_probe()`` mode. That only works while:
 
 - X1: the tree is cheap to build without data; chrome nodes validate
   eagerly; mark config validates at ``.figure()``.
-- X2: placeholder columns compile — zero-row for most kinds, and for the
-  aggregating kinds the recorded minimal shapes (SHAPED_ROW_CHARTS below,
-  mirroring reflex_xy.plan._SYNTHETIC_CHANNELS) — so the probe exercises
-  the full validation gate with no real data.
+- X2: zero-row columns compile for **every** mark kind — directly for the
+  non-aggregating kinds, and under ``structural_probe()`` for the
+  aggregating kinds, whose marks then validate configuration and skip
+  aggregation instead of refusing empty input. No synthetic data exists
+  anywhere in the probe: a probe failure indicts structure, never
+  invented values.
 - X3: ``Chart.figure()`` memoizes and is never invalidated — rebinding data
   means a fresh ``Chart``, never mutating one.
 
@@ -25,14 +27,12 @@ import numpy as np
 import pytest
 
 import xy
+from xy.components import structural_probe
 
 EMPTY = np.empty(0, dtype=np.float64)
 
 # Every mark kind the flat/composed Reflex factories cover with the plain
-# zero-row probe (Phase 2 kinds first, then the Phase 3 signature-derived
-# set). Kinds whose validators require at least one finite value (stairs,
-# ecdf, box, violin, hexbin, heatmap, contour) probe with the shaped
-# synthetic columns pinned in SHAPED_ROW_CHARTS below instead.
+# zero-row build (no probe mode needed: their validators accept empty).
 ZERO_ROW_CHARTS = {
     "scatter": lambda: xy.scatter_chart(xy.scatter(EMPTY, EMPTY)),
     "line": lambda: xy.line_chart(xy.line(EMPTY, EMPTY)),
@@ -45,6 +45,41 @@ ZERO_ROW_CHARTS = {
     "errorbar": lambda: xy.errorbar_chart(xy.errorbar(EMPTY, EMPTY, yerr=EMPTY)),
     "error_band": lambda: xy.error_band_chart(xy.error_band(EMPTY, EMPTY, upper=EMPTY)),
     "segments": lambda: xy.segments_chart(xy.segments(EMPTY, EMPTY, x1=EMPTY, y1=EMPTY)),
+    "triangle_mesh": lambda: xy.triangle_mesh_chart(
+        xy.triangle_mesh(EMPTY, EMPTY, x1=EMPTY, y1=EMPTY, x2=EMPTY, y2=EMPTY)
+    ),
+}
+
+# The aggregating kinds refuse zero rows in a normal build (their validators
+# need at least one finite value) but compile zero-row under the structural
+# probe: config validates, aggregation is skipped, no trace is contributed.
+AGGREGATING_CHARTS = {
+    "box": lambda: xy.box_chart(xy.box(EMPTY, group=EMPTY)),
+    "violin": lambda: xy.violin_chart(xy.violin(EMPTY)),
+    "hexbin": lambda: xy.hexbin_chart(xy.hexbin(EMPTY, EMPTY)),
+    "contour": lambda: xy.contour_chart(xy.contour(EMPTY, x=EMPTY, y=EMPTY)),
+    "heatmap": lambda: xy.heatmap_chart(xy.heatmap(EMPTY, x=EMPTY, y=EMPTY)),
+    "stairs": lambda: xy.stairs_chart(xy.stairs(EMPTY, EMPTY)),
+    "ecdf": lambda: xy.ecdf_chart(xy.ecdf(EMPTY)),
+    "histogram_density": lambda: xy.histogram_chart(xy.histogram(EMPTY, density=True)),
+}
+
+# Config errors the structural probe must still raise with empty channels:
+# no data does not mean no validation. One representative per kind.
+AGGREGATING_CONFIG_ERRORS = {
+    "box": (lambda: xy.box_chart(xy.box(EMPTY, orientation="diagonal")), "orientation"),
+    "violin": (lambda: xy.violin_chart(xy.violin(EMPTY, bins=2)), "bins"),
+    "hexbin": (lambda: xy.hexbin_chart(xy.hexbin(EMPTY, EMPTY, gridsize=0)), "gridsize"),
+    "hexbin_range": (
+        lambda: xy.hexbin_chart(xy.hexbin(EMPTY, EMPTY, range=(0.0, 1.0))),
+        "range",
+    ),
+    "hexbin_mincnt": (lambda: xy.hexbin_chart(xy.hexbin(EMPTY, EMPTY, mincnt=-1)), "mincnt"),
+    "contour": (lambda: xy.contour_chart(xy.contour(EMPTY, levels=0)), "levels"),
+    "heatmap": (lambda: xy.heatmap_chart(xy.heatmap(EMPTY, colormap="virids")), "colormap"),
+    "stairs": (lambda: xy.stairs_chart(xy.stairs(EMPTY, where="diagonal")), "where"),
+    "ecdf": (lambda: xy.ecdf_chart(xy.ecdf(EMPTY, bins=-1)), "bins"),
+    "histogram": (lambda: xy.histogram_chart(xy.histogram(EMPTY, bins=-1)), "bins"),
 }
 
 
@@ -56,36 +91,42 @@ def test_zero_row_construction_compiles(kind):
     assert figure is not None
 
 
-# The aggregating kinds' minimal validator contracts: deterministic, positive,
-# finite, strictly increasing placeholder values (log-scale- and ratio-safe),
-# one group for grouped kinds, a square grid with matching side coordinates,
-# `len+1` bin edges. This is the xy-level half of the shaped-probe contract;
-# reflex_xy.plan._SYNTHETIC_CHANNELS mirrors these shapes and
-# tests/reflex_adapter/test_plan.py pins that table.
-SPREAD = np.linspace(1.0, 8.0, 8)
-ONE_GROUP = np.ones(8)
-GRID = np.linspace(1.0, 16.0, 16).reshape(4, 4)
-GRID_SIDE = np.linspace(1.0, 4.0, 4)
-BIN_EDGES = np.linspace(1.0, 9.0, 9)
-
-SHAPED_ROW_CHARTS = {
-    "box": lambda: xy.box_chart(xy.box(SPREAD, group=ONE_GROUP)),
-    "violin": lambda: xy.violin_chart(xy.violin(SPREAD, group=ONE_GROUP)),
-    "hexbin": lambda: xy.hexbin_chart(xy.hexbin(SPREAD, SPREAD)),
-    "contour": lambda: xy.contour_chart(xy.contour(GRID, x=GRID_SIDE, y=GRID_SIDE)),
-    "heatmap": lambda: xy.heatmap_chart(xy.heatmap(GRID, x=GRID_SIDE, y=GRID_SIDE)),
-    "stairs": lambda: xy.stairs_chart(xy.stairs(SPREAD, BIN_EDGES)),
-    "ecdf": lambda: xy.ecdf_chart(xy.ecdf(SPREAD)),
-}
-
-
-@pytest.mark.parametrize("kind", sorted(SHAPED_ROW_CHARTS))
-def test_shaped_row_construction_compiles(kind):
-    """X2 for the aggregating kinds: the recorded minimal synthetic shapes
-    compile. If a validator starts demanding more (two groups, a bigger
-    grid), this fails first, named after the fact it broke."""
-    figure = SHAPED_ROW_CHARTS[kind]().figure()
+@pytest.mark.parametrize("kind", sorted(AGGREGATING_CHARTS))
+def test_aggregating_kinds_compile_zero_row_under_structural_probe(kind):
+    """X2 for the aggregating kinds: under structural_probe() an all-empty
+    mark validates config and contributes no trace instead of refusing."""
+    with structural_probe():
+        figure = AGGREGATING_CHARTS[kind]().figure()
     assert figure is not None
+    assert figure.traces == []
+
+
+@pytest.mark.parametrize("kind", sorted(AGGREGATING_CHARTS))
+def test_aggregating_kinds_still_refuse_zero_rows_normally(kind):
+    """Probe mode never leaks: outside structural_probe() the aggregating
+    validators keep their at-least-one-value contract."""
+    with pytest.raises(ValueError):
+        AGGREGATING_CHARTS[kind]().figure()
+
+
+@pytest.mark.parametrize("case", sorted(AGGREGATING_CONFIG_ERRORS))
+def test_structural_probe_still_raises_config_errors(case):
+    """No synthetic data does not mean no validation: configuration errors
+    surface in probe mode exactly as they do with real data."""
+    build, match = AGGREGATING_CONFIG_ERRORS[case]
+    with structural_probe(), pytest.raises((ValueError, TypeError), match=match):
+        build().figure()
+
+
+def test_structural_probe_does_not_change_real_data_builds():
+    """Probe mode is a zero-row affordance only: non-empty channels build
+    identical figures in and out of it."""
+    values = np.linspace(1.0, 8.0, 8)
+    with structural_probe():
+        probed = xy.ecdf_chart(xy.ecdf(values)).figure()
+    normal = xy.ecdf_chart(xy.ecdf(values)).figure()
+    assert len(probed.traces) == len(normal.traces) == 1
+    assert probed.traces[0].n_points == normal.traces[0].n_points
 
 
 def test_zero_row_columns_resolve_through_chart_data():

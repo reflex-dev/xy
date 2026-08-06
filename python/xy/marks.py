@@ -841,6 +841,10 @@ def _split_by_positions(
     without the O(n·k) rescan. NaN positions keep the mask semantics: NaN never
     compares equal, so a NaN key carries an empty group.
     """
+    if len(vals) == 0:
+        # np.split of nothing still yields one empty chunk, which would
+        # desynchronize groups (1) from unique positions (0).
+        return [], positions[:0]
     unique, inverse = np.unique(positions, return_inverse=True)
     order = np.argsort(inverse, kind="stable")
     bounds = np.searchsorted(inverse[order], np.arange(1, len(unique)))
@@ -1600,6 +1604,13 @@ def stairs(
         raise ValueError("stairs where must be 'pre', 'post', or 'mid'")
     vals = self._as_1d_float(values, "stairs values")
     if len(vals) == 0:
+        if self._structural_probe:
+            # Structural probe: config validated above; the values/edges
+            # coupling (len+1, strictly increasing) is a real-data contract
+            # and is checked when data binds. No trace is contributed.
+            if edges is not None:
+                self._as_1d_float(edges, "stairs edges")
+            return self
         raise ValueError("stairs values must contain at least one value")
     if edges is None:
         edge_values = np.arange(len(vals) + 1, dtype=np.float64)
@@ -1644,17 +1655,21 @@ def ecdf(
     bounded approximation for very large distributions using the native
     histogram kernel.
     """
-    vals = self._as_1d_float(values, "ecdf values")
-    vals = vals[np.isfinite(vals)]
+    # Config before data: the bins contract is structural and must hold (and
+    # be reported) whether or not any values arrived yet.
+    if bins is not None and (
+        isinstance(bins, (bool, np.bool_))
+        or not isinstance(bins, (int, np.integer))
+        or int(bins) <= 0
+    ):
+        raise ValueError("ecdf bins must be a positive integer or None")
+    vals_all = self._as_1d_float(values, "ecdf values")
+    vals = vals_all[np.isfinite(vals_all)]
     if len(vals) == 0:
+        if self._structural_probe and len(vals_all) == 0:
+            return self  # structural probe: config checked, no trace
         raise ValueError("ecdf values must contain at least one finite value")
     if bins is not None:
-        if (
-            isinstance(bins, (bool, np.bool_))
-            or not isinstance(bins, (int, np.integer))
-            or int(bins) <= 0
-        ):
-            raise ValueError("ecdf bins must be a positive integer or None")
         lo, hi = self._auto_domain(kernels.min_max(vals))
         counts, edges = kernels.histogram_uniform(vals, lo, hi, int(bins), density=False)
         keep = counts > 0
@@ -2000,6 +2015,15 @@ def histogram(
     density = self._bool_param(density, "histogram density")
     cumulative = self._bool_param(cumulative, "histogram cumulative")
     vals = self._as_1d_float(values, "histogram values")
+    if self._structural_probe and len(vals) == 0:
+        # Structural probe: validate the config the aggregation below would
+        # otherwise carry, then contribute no trace — binning is data work
+        # and empty probe input must never be able to fail it.
+        if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool) and int(bins) <= 0:
+            raise ValueError("histogram bins must be positive")
+        if range is not None:
+            self._finite_increasing_pair(range, "histogram range")
+        return self
     if density and not np.isfinite(vals).any():
         raise ValueError("histogram density requires at least one finite value")
     if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
@@ -2177,6 +2201,8 @@ def box(
     stats = [_distribution_stats(g) for g in groups]
     finite_stats = [s for s in stats if np.isfinite(s[0])]
     if not finite_stats:
+        if self._structural_probe and not any(len(g) for g in groups):
+            return self  # structural probe: config checked, no trace
         raise ValueError("box values must contain at least one finite group")
     checkpoint = self._checkpoint()
     try:
@@ -2372,6 +2398,8 @@ def violin(
             rect_y0.append(center - half_width)
             rect_y1.append(center + half_width)
     if not rect_x0:
+        if self._structural_probe and not any(len(g) for g in groups):
+            return self  # structural probe: config checked, no trace
         raise ValueError("violin values must contain at least one finite group")
     checkpoint = self._checkpoint()
     try:
@@ -2438,6 +2466,21 @@ def hexbin(
     name = self._optional_text(name, "hexbin name")
     opacity = self._opacity(opacity, "hexbin opacity")
     colormap = channels.resolve_colormap(colormap)
+    # Config before data (the structural probe relies on this ordering: the
+    # range's shape, mincnt's sign, and gridsize above are structure — where
+    # the invented-free probe must still fail loudly — while which points
+    # fall inside the range is data work that only runs on real rows).
+    if range is not None:
+        if len(range) != 2:
+            raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
+        xr = self._finite_increasing_pair(range[0], "hexbin x range")
+        yr = self._finite_increasing_pair(range[1], "hexbin y range")
+    # Matplotlib displays zero-count cells when C is absent and mincnt is not
+    # specified, producing the full rectangular honeycomb. Reducer hexbins
+    # cannot reduce an empty group and therefore default to one observation.
+    threshold = (0 if C is None else 1) if mincnt is None else int(mincnt)
+    if threshold < 0:
+        raise ValueError("hexbin mincnt must be nonnegative")
     # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
     # raw points must not stay resident in the figure's column store.
     x_all, _x_kind, _x_copies = columns._canonicalize(x)
@@ -2456,23 +2499,14 @@ def hexbin(
     if c_all is not None:
         finite &= np.isfinite(c_all)
     if not np.any(finite):
+        if self._structural_probe and n_points == 0:
+            return self  # structural probe: config checked, no aggregation
         raise ValueError("hexbin x and y must contain at least one finite pair")
     xv, yv = x_all[finite], y_all[finite]
     cv = None if c_all is None else c_all[finite]
     if range is None:
         xr = self._auto_domain(kernels.min_max(xv))
         yr = self._auto_domain(kernels.min_max(yv))
-    else:
-        if len(range) != 2:
-            raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
-        xr = self._finite_increasing_pair(range[0], "hexbin x range")
-        yr = self._finite_increasing_pair(range[1], "hexbin y range")
-    # Matplotlib displays zero-count cells when C is absent and mincnt is not
-    # specified, producing the full rectangular honeycomb. Reducer hexbins
-    # cannot reduce an empty group and therefore default to one observation.
-    threshold = (0 if cv is None else 1) if mincnt is None else int(mincnt)
-    if threshold < 0:
-        raise ValueError("hexbin mincnt must be nonnegative")
     # Matplotlib's hex lattice is the union of an integer grid and a half-cell
     # offset grid. Assign each point to the nearer center in the hex metric;
     # rectangular binning plus staggered display centers leaves overlaps and
@@ -2712,6 +2746,27 @@ def _contourf_corner_triangles(
     )
 
 
+def _validated_contour_levels(
+    self: "Figure", levels: Union[int, ArrayLike]
+) -> Union[int, np.ndarray]:
+    """The config half of contour level resolution: bounds and finiteness.
+
+    Returns the validated level count for the int form (whose concrete
+    values derive from the data's domain later), or the sorted explicit
+    level values. Shared by the normal build and the structural-probe gate
+    so the contract cannot fork.
+    """
+    if isinstance(levels, (int, np.integer)) and not isinstance(levels, (bool, np.bool_)):
+        n_levels = int(levels)
+        if n_levels <= 0 or n_levels > 256:
+            raise ValueError("contour levels must be between 1 and 256")
+        return n_levels
+    level_values = self._as_1d_float(levels, "contour levels")
+    if len(level_values) == 0 or len(level_values) > 256 or not np.all(np.isfinite(level_values)):
+        raise ValueError("contour levels must contain 1 to 256 finite values")
+    return np.sort(level_values)
+
+
 def contour(
     self: "Figure",
     z: ArrayLike,
@@ -2740,7 +2795,16 @@ def contour(
     color = css.get("color", color)
     width = css.get("width", width)
     opacity = css.get("opacity", opacity)
+    # Config before data (single-source: _validated_contour_levels is shared
+    # with the structural-probe gate below).
+    levels_config = _validated_contour_levels(self, levels)
+    colormap = channels.resolve_colormap(colormap)
+    name = self._optional_text(name, "contour name")
+    if extend not in ("neither", "min", "max", "both"):
+        raise ValueError("contour extend must be 'neither', 'min', 'max', or 'both'")
     arr = self._as_float_array(z, "contour z")
+    if self._structural_probe and arr.size == 0:
+        return self  # structural probe: config checked, no marching
     if arr.ndim != 2 or min(arr.shape) < 2:
         raise ValueError(
             f"contour z must be a 2-D matrix with at least 2 rows/columns, got {arr.shape}"
@@ -2751,30 +2815,16 @@ def contour(
     finite = arr[np.isfinite(arr)]
     if len(finite) == 0:
         raise ValueError("contour z must contain at least one finite value")
-    if isinstance(levels, (int, np.integer)) and not isinstance(levels, (bool, np.bool_)):
-        n_levels = int(levels)
-        if n_levels <= 0 or n_levels > 256:
-            raise ValueError("contour levels must be between 1 and 256")
+    if isinstance(levels_config, int):
         lo, hi = self._auto_domain(kernels.min_max(finite))
-        level_values = np.linspace(lo, hi, n_levels + 2, dtype=np.float64)[1:-1]
+        level_values = np.linspace(lo, hi, levels_config + 2, dtype=np.float64)[1:-1]
     else:
-        level_values = self._as_1d_float(levels, "contour levels")
-        if (
-            len(level_values) == 0
-            or len(level_values) > 256
-            or not np.all(np.isfinite(level_values))
-        ):
-            raise ValueError("contour levels must contain 1 to 256 finite values")
-        level_values = np.sort(level_values)
+        level_values = levels_config
     work = (rows - 1) * (cols - 1) * len(level_values)
     if work > MAX_CONTOUR_WORK:
         raise ValueError(
             f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    colormap = channels.resolve_colormap(colormap)
-    name = self._optional_text(name, "contour name")
-    if extend not in ("neither", "min", "max", "both"):
-        raise ValueError("contour extend must be 'neither', 'min', 'max', or 'both'")
     extend_min = filled and extend in ("min", "both")
     extend_max = filled and extend in ("max", "both")
     color_table: Optional[np.ndarray]
@@ -3142,6 +3192,13 @@ def heatmap(
     if hasattr(z, "to_numpy"):
         z = z.to_numpy()
     arr = np.asarray(z)
+    if self._structural_probe and arr.size == 0:
+        # Structural probe: validate the config the build below would carry
+        # (z's 2-D-ness is a real-data shape contract, checked at bind).
+        channels.resolve_colormap(colormap)
+        if domain is not None:
+            self._finite_increasing_pair(domain, "heatmap domain")
+        return self
     truecolor = arr.ndim == 3 and arr.shape[-1] in (3, 4)
     if not truecolor and arr.ndim != 2:
         raise ValueError(f"heatmap z must be 2-D or RGB(A), got shape {arr.shape}")
