@@ -1729,7 +1729,7 @@ def table(
     )
 
 
-def legend(*args: Any, **kwargs: Any) -> None:
+def legend(*args: Any, **kwargs: Any) -> Legend | None:
     """Show the legend of the current axes.
 
     Call forms: ``legend()`` (labeled artists), ``legend(labels)``, or
@@ -2691,18 +2691,25 @@ def ylabel(label: str, **kwargs: Any) -> None:
     gca().set_ylabel(label, **kwargs)
 
 
-def xlim(*args: Any) -> None:
-    """Set the x limits of the current axes.
+def xlim(
+    left: float | LimitsLike | None = None,
+    right: float | None = None,
+) -> tuple[float, float]:
+    """Get or set the x limits of the current axes.
 
     Call as ``xlim(left, right)``, ``xlim((left, right))``, or with
-    ``left=``/``right=``; a descending pair inverts the axis.
+    ``left=``/``right=``. With no arguments, return the current limits
+    without changing the automatic view. A descending pair inverts the axis.
     """
-    gca().set_xlim(*args)
+    return gca().set_xlim(left, right)
 
 
-def ylim(*args: Any) -> None:
-    """Set the y limits of the current axes (forms as in `xlim`)."""
-    gca().set_ylim(*args)
+def ylim(
+    bottom: float | LimitsLike | None = None,
+    top: float | None = None,
+) -> tuple[float, float]:
+    """Get or set the y limits of the current axes (forms as in `xlim`)."""
+    return gca().set_ylim(bottom, top)
 
 
 def xscale(scale: str) -> None:
@@ -2721,12 +2728,17 @@ def xticks(
     *,
     rotation: float | None = None,
     **kwargs: Any,
-) -> None:
-    """Place the x ticks at the given positions, optionally relabeled.
+) -> tuple[np.ndarray, list[Any]]:
+    """Get or set x ticks, optionally relabeled.
 
+    With no tick arguments, return the current locations and label handles.
     ``rotation`` (degrees) and supported text keywords style the labels.
     """
-    gca().set_xticks(ticks, labels, rotation=rotation, **kwargs)
+    axes = gca()
+    if ticks is None and labels is None and rotation is None and not kwargs:
+        return axes.get_xticks(), axes.get_xticklabels()
+    axes.set_xticks(ticks, labels, rotation=rotation, **kwargs)
+    return axes.get_xticks(), axes.get_xticklabels()
 
 
 def yticks(
@@ -2735,9 +2747,13 @@ def yticks(
     *,
     rotation: float | None = None,
     **kwargs: Any,
-) -> None:
-    """Place the y ticks at the given positions (see `xticks`)."""
-    gca().set_yticks(ticks, labels, rotation=rotation, **kwargs)
+) -> tuple[np.ndarray, list[Any]]:
+    """Get or set y ticks (see `xticks`)."""
+    axes = gca()
+    if ticks is None and labels is None and rotation is None and not kwargs:
+        return axes.get_yticks(), axes.get_yticklabels()
+    axes.set_yticks(ticks, labels, rotation=rotation, **kwargs)
+    return axes.get_yticks(), axes.get_yticklabels()
 
 
 def tight_layout(**kwargs: Any) -> None:
