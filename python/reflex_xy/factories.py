@@ -38,9 +38,9 @@ chart-level names, and a small reserved set belongs to the component.
 Colliding mark options get flat aliases (`stroke_width` for `line`'s
 `width`, `mark_<name>` otherwise); the resulting table is pinned by
 `tests/reflex_adapter/test_factories.py` as public contract. Unknown
-kwargs near a known name error with a suggestion; anything else falls
-through to the component as CSS, preserving Reflex's style convention
-(the R8 hazard this partition exists to compensate for).
+kwargs always error at page evaluation — with a did-you-mean suggestion
+when a known name is close — and never silently become CSS (the R8 hazard
+this partition exists to close); explicit ``style={...}`` carries CSS.
 """
 
 from __future__ import annotations
@@ -285,15 +285,19 @@ def _partition_flat(
                 raise TypeError(msg)
             component_kwargs[name] = value
         else:
+            # Strict top-level kwargs: a typo far from every known name must
+            # not silently become a CSS property on the mount (the promise
+            # "unknown kwargs fail at page evaluation" holds without a
+            # distance threshold). CSS stays available, explicitly, through
+            # the reserved style={...} prop.
             suggestion = _suggest(name, kind.known)
-            if suggestion is not None:
-                msg = (
-                    f"{kind.chart_kind}() got an unexpected keyword {name!r}; "
-                    f"did you mean {suggestion!r}?"
-                )
-                raise TypeError(msg)
-            # Far from everything chart-shaped: Reflex's CSS convention.
-            component_kwargs[name] = value
+            hint = f"; did you mean {suggestion!r}?" if suggestion is not None else "."
+            msg = (
+                f"{kind.chart_kind}() got an unexpected keyword {name!r}{hint} "
+                f"CSS belongs in style={{...}}; chart/mark options are listed in "
+                "the factory docs."
+            )
+            raise TypeError(msg)
     return mark_kwargs, chart_kwargs, chrome, component_kwargs
 
 
@@ -479,11 +483,11 @@ def _composed_chart(nodes: tuple[Component, ...], data: Any, kwargs: dict[str, A
                 raise TypeError(msg)
             component_kwargs[name] = value
         else:
+            # Same strict rule as the flat factories: never silently CSS.
             suggestion = _suggest(name, CHART_PARAMS | COMPONENT_RESERVED | EVENT_TRIGGERS)
-            if suggestion is not None:
-                msg = f"chart() got an unexpected keyword {name!r}; did you mean {suggestion!r}?"
-                raise TypeError(msg)
-            component_kwargs[name] = value
+            hint = f"; did you mean {suggestion!r}?" if suggestion is not None else "."
+            msg = f"chart() got an unexpected keyword {name!r}{hint} CSS belongs in style={{...}}."
+            raise TypeError(msg)
     plan = build_plan("chart", tuple(nodes), chart_kwargs)
     _check_schema(plan, data)
     return _mount(plan, data, component_kwargs)

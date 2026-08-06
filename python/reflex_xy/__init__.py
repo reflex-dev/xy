@@ -47,7 +47,7 @@ page and validated at ``reflex run``; state supplies only columns)::
     app = rx.App()
 
 Multi-mark charts compose xy nodes around the same data var
-(``reflex_xy.chart(reflex_xy.scatter("x", "y"), reflex_xy.line("x", "t"),
+(``reflex_xy.chart(reflex_xy.scatter("x", "y"), reflex_xy.line("x", "mag"),
 data=Dash.cloud)``), and charts whose *structure* depends on state keep the
 escape hatch: an ``@reflex_xy.figure`` method returning an ``xy.Chart``,
 rendered with ``reflex_xy.chart(figure=Dash.built)`` and probed at compile

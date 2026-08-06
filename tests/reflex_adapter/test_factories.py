@@ -117,10 +117,15 @@ def test_unknown_kwarg_near_a_known_name_suggests(app_cwd):
         )
 
 
-def test_far_off_kwargs_stay_css_passthrough(app_cwd):
-    """R8's convention, preserved deliberately: unknown non-chart-shaped
-    kwargs are style props (border_radius here reaches the DOM styles)."""
-    comp = reflex_xy.scatter_chart(data=FactoryDash.cloud, x="x", y="y", border_radius="12px")
+def test_far_off_kwargs_error_and_point_at_style(app_cwd):
+    """Strict top-level kwargs: a typo far from every known name errors at
+    page evaluation instead of silently becoming CSS (the R8 hazard);
+    explicit style={...} is the CSS route and still reaches the DOM."""
+    with pytest.raises(TypeError, match=r"borderr_radus.*style=\{"):
+        reflex_xy.scatter_chart(data=FactoryDash.cloud, x="x", y="y", borderr_radus="12px")
+    comp = reflex_xy.scatter_chart(
+        data=FactoryDash.cloud, x="x", y="y", style={"border_radius": "12px"}
+    )
     assert "borderRadius" in {str(key) for key in comp.style}
 
 

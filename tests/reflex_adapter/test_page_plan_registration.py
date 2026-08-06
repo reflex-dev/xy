@@ -51,22 +51,33 @@ def test_backend_worker_page_evaluation_registers_plans(app_cwd, _fresh_registry
     assert len(_PLANS) == 1  # the factory ran and content-addressed its plan
 
 
-def test_failing_page_warns_and_spares_the_others(app_cwd, _fresh_registry):
+def test_failing_page_refuses_worker_startup(app_cwd, _fresh_registry):
+    """Fail closed: a worker whose plan map would be incomplete must not
+    serve (blank charts depending on which worker the balancer picks). The
+    error names every failing page; healthy pages still registered, so a
+    fixed deployment starts clean."""
+
     def good() -> rx.Component:
         return reflex_xy.line_chart(data=PagePlanState.table, x="x", y="y")
 
     def broken() -> rx.Component:
         raise RuntimeError("page body exploded")
 
+    def also_broken() -> rx.Component:
+        raise ValueError("second page exploded")
+
     app = SimpleNamespace(
         _unevaluated_pages={
             "broken": SimpleNamespace(component=broken),
             "good": SimpleNamespace(component=good),
+            "worse": SimpleNamespace(component=also_broken),
         }
     )
-    with pytest.warns(RuntimeWarning, match="'broken'"):
+    with pytest.raises(RuntimeError, match=r"'broken'.*'worse'") as excinfo:
         _ensure_page_plans(app)
-    assert len(_PLANS) == 1
+    assert "page body exploded" in str(excinfo.value)
+    assert "second page exploded" in str(excinfo.value)
+    assert len(_PLANS) == 1  # the good page registered before the refusal
 
 
 def test_apps_without_unevaluated_pages_are_a_noop():

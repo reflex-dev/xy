@@ -482,9 +482,14 @@ would leave their plan maps empty and every plan subscription answering
 `setup(app)`'s lifespan evaluates the app's unevaluated page component
 functions once at worker startup (`_ensure_page_plans`), before serving —
 factories register their plans as a side effect and the built trees are
-discarded (plans and payload assets are content-addressed and idempotent;
-a failing page degrades to a warning rather than taking down the data
-plane). Binding is the reverse:
+discarded (plans and payload assets are content-addressed and idempotent).
+Failure is **fail-closed**: a page that cannot evaluate would leave this
+worker's plan map incomplete — behind a load balancer that means charts
+blank or not depending on which worker answers — so `_ensure_page_plans`
+collects every failing page and refuses worker startup with an error
+naming them, instead of serving inconsistently. (The same page code fails
+`reflex run`'s real compile first, so a healthy deployment never hits
+this.) Binding is the reverse:
 columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
 Column-mismatch errors name both sides (*"plan binds column 'mag';
 Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark
@@ -502,9 +507,14 @@ surviving to hydrate). The kwarg partition between mark options, chrome,
 component props, and event handlers is derived from `inspect.signature` at
 import — not hand-listed — so it cannot drift from xy's own signatures;
 collisions get generated aliases (`mark_<name>`, with `width` becoming
-`stroke_width` where the mark hasn't claimed it), pinned by test. Errors
+`stroke_width` where the mark hasn't claimed it), pinned by test. Top-level
+kwargs are **strict**: an unknown name always raises `TypeError` at page
+evaluation — with a did-you-mean when a known name is close — and never
+silently becomes a CSS property (the R8 hazard, closed rather than
+compensated for by a distance threshold); CSS goes through the explicit
+`style={...}` prop, which reaches the DOM unchanged. Errors
 this tier catches at `reflex run`: hallucinated factory names (import),
-unknown kwargs with a did-you-mean (partition), bad colormaps/enums/axis
+unknown kwargs (partition), bad colormaps/enums/axis
 refs (zero-row probe), unknown column names against a typed data var
 (schema channel), and the wrong var or a raw string in `data=` (typed
 prop, R1).
@@ -882,6 +892,22 @@ not poll-bound. The figure-var rebuild path adds builder time on state
 changes — builders are user code and should be O(state); heavy shared data
 prep belongs outside the builder (module cache / backend var), which the
 demo app models.
+
+**Plan-tier costs (measured).** The data-bound tier moves work to page
+evaluation and worker startup; `scripts/bench_reflex_plans.py` measures it
+reproducibly (`uv run python scripts/bench_reflex_plans.py [--json]`).
+Recorded 2026-08-06 (Linux, Python 3.12, native core, dev machine):
+
+| metric | recorded | scale contract |
+|---|---|---|
+| plan build (compile + probe + digest) | 0.26 ms median | per chart factory call, milliseconds — page evaluation stays compile-scale |
+| worker startup page evaluation | 15 ms (20 pages × 4 charts) | `_ensure_page_plans` re-runs pages once per worker boot; linear in charts |
+| column republish → new mounted payload | 1.0 ms (100k points) | dominated by the dependent figure build, not registry bookkeeping |
+| plan map entry | ~1.5 KB/plan | process-lifetime map, bounded by page code |
+
+Re-record when the probe or serialization changes materially; a plan build
+drifting toward tens of milliseconds or a republish cost growing faster
+than its figure build is a regression against this table.
 
 ## 7. What shipped where (prototype map)
 

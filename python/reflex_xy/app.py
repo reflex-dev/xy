@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import warnings
 from typing import Any, Optional
 
 from reflex.plugins import Plugin
@@ -84,11 +83,18 @@ def _ensure_page_plans(app: Any) -> None:
     forever. Running the page functions here makes "the plan map is
     populated in every worker" true by construction; the built component
     trees are discarded (plans and payload assets are content-addressed and
-    idempotent). A failing page degrades to a warning: it would have failed
-    the real compile in the compile process, and one broken page must not
-    take down the data plane for the others.
+    idempotent).
+
+    Failure is fail-closed: a page that cannot evaluate here leaves this
+    worker with an incomplete plan map, and behind a load balancer that is
+    the worst failure shape there is — charts blank or not depending on
+    which worker answers, with only a startup warning to explain it. Every
+    failing page is collected and the worker refuses to start, naming the
+    pages; the same page code already fails `reflex run`'s real compile, so
+    a healthy deployment never hits this.
     """
     pages = getattr(app, "_unevaluated_pages", None) or {}
+    failures: list[str] = []
     for route, page in dict(pages).items():
         component = getattr(page, "component", None)
         if not callable(component):
@@ -96,13 +102,15 @@ def _ensure_page_plans(app: Any) -> None:
         try:
             component()
         except Exception as exc:  # noqa: BLE001 - user page code is an input boundary
-            warnings.warn(
-                f"reflex_xy: evaluating page {route!r} for chart-plan "
-                f"registration failed: {exc!r}. Data-bound charts declared on "
-                "this page cannot be served by this worker.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            failures.append(f"{route!r}: {type(exc).__name__}: {exc}")
+    if failures:
+        msg = (
+            "reflex_xy: evaluating page component functions for chart-plan "
+            "registration failed on this worker; serving would leave its "
+            "plan map incomplete (load-balancer-dependent blank charts), "
+            "so startup is refused. Failing pages: " + "; ".join(sorted(failures))
+        )
+        raise RuntimeError(msg)
 
 
 def wire(namespace: XYNamespace) -> None:
