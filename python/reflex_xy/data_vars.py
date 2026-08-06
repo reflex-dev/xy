@@ -33,16 +33,9 @@ from reflex_base.vars.base import AsyncComputedVar, ComputedVar
 from .handles import DataHandle
 from .registry import registry
 from .tokens import BUILDER_ATTR, build_data_token
+from .vars import _builder_target
 
 __all__ = ["AsyncDataVar", "DataVar", "data", "validate_columns"]
-
-
-def _builder_target(var: Any, obj: Any) -> Any:
-    """Point dependency tracking at the *data method*, not the token wrapper
-    (same reason as vars.py: the wrapper fget reads nothing but the router)."""
-    if obj is not None:
-        return obj
-    return getattr(var._fget, BUILDER_ATTR, None)
 
 
 class DataVar(ComputedVar):

@@ -46,8 +46,9 @@ __all__ = ["AsyncFigureVar", "FigureVar", "figure"]
 
 
 def _builder_target(var: Any, obj: Any) -> Any:
-    """Point dependency tracking at the *builder*, not the token wrapper:
-    reflex should track what the chart reads, and the wrapper fget reads
+    """Point dependency tracking at the wrapped method — the figure builder
+    here, the data method in data_vars.py — not the token wrapper: reflex
+    should track what the method body reads, and the wrapper fget reads
     nothing but the router."""
     if obj is not None:
         return obj
