@@ -69,13 +69,16 @@ def serialize_data_handle(handle: DataHandle) -> dict:
 
 
 def token_of(source: object) -> str | None:
-    """The token string of a handle or raw-string source; None otherwise.
+    """The token string of a *figure* source; None otherwise.
 
     The one-cycle compatibility seam: public helpers that take "a figure"
     (``append``, ``set_view``, ``release``, ...) accept both a handle and the
-    old-style bare token string through this normalizer.
+    old-style bare token string through this normalizer. A ``DataHandle``
+    names a column set, never a figure — figure-only operations must reject
+    it immediately (None here) instead of addressing a room that can never
+    exist.
     """
-    if isinstance(source, (FigureHandle, DataHandle)):
+    if isinstance(source, FigureHandle):
         return source.token
     if isinstance(source, str):
         return source

@@ -221,7 +221,11 @@ def release(token: "str | FigureHandle") -> None:
 
     globals()["registry"] = registry
 
-    registry.release(token_of(token) or "")
+    resolved = token_of(token)
+    if resolved is None:
+        msg = f"expected a FigureHandle or figure token string, got {type(token).__name__}"
+        raise TypeError(msg)
+    registry.release(resolved)
 
 
 if TYPE_CHECKING:

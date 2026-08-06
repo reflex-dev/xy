@@ -494,13 +494,19 @@ legacy `str`-typed vars and raw token strings keep the old `Var[str]`
 `token` prop, which the wrapper still accepts alongside `figure`
 (`figure` wins when both are set). Public APIs that take "a figure"
 (`append`, `set_view`, `reset_view`, `select`, `clear_selection`,
-`release`) accept both a `FigureHandle` and its bare `.token` string.
+`release`) accept both a `FigureHandle` and its bare `.token` string —
+and *only* those: a `DataHandle` (columns, never a figure) or any other
+value raises `TypeError` immediately instead of resolving to a token that
+can never name a figure room.
 
 Kernel-backed event props (`on_point_hover`, `on_point_click`,
 `on_select_end`) on a static `src` source are refused at `create()` with a
 `ValueError` naming the live alternatives — previously they compiled and
 silently never fired. Client-resolved events (`on_hover`,
-`on_view_change`, animation events) stay valid on every tier.
+`on_view_change`, animation events) stay valid on every tier. A
+`None`-valued `on_*` prop is an explicitly disabled handler: `create()`
+drops it before validation and before the framework sees it, so
+`on_point_hover=None` is legal on every tier.
 
 Static Chart/Figure sources mirror every class string from
 `Figure.dom_class_strings()` into the scan-only `tailwindClassTokens` JSX prop,

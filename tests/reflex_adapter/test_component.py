@@ -114,6 +114,14 @@ def test_kernel_events_on_static_source_fail_at_compile(app_cwd):
     assert "onViewChange" in str(comp)
 
 
+def test_explicitly_disabled_kernel_events_pass_on_static_source(app_cwd):
+    """``on_point_hover=None`` means "no handler" — a disabled handler must
+    not fail the static-source compile (value check, not key presence)."""
+    static_chart = xy.line_chart(xy.line([0, 1], [1, 2]))
+    comp = reflex_xy.chart(static_chart, on_point_hover=None, on_select_end=None)
+    assert "src" in str(comp)
+
+
 def test_component_import_is_local_library(app_cwd):
     comp = reflex_xy.chart(figure=reflex_xy.FigureHandle("tok"))
     imports = comp._get_all_imports()

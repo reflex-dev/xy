@@ -124,8 +124,16 @@ def _build_component_cls() -> Any:
             # (recharts pattern, fact R5): kernel-backed events on a static
             # source would be silent no-ops at runtime — fail the compile
             # with the reason instead.
+            # `on_point_hover=None` is an explicitly disabled handler: drop it
+            # (Reflex would reject a None trigger) so the value-based static
+            # check below and the framework both see "no handler".
+            props = {
+                name: value
+                for name, value in props.items()
+                if value is not None or not name.startswith("on_")
+            }
             if props.get("src") is not None:
-                offenders = [name for name in _KERNEL_EVENT_PROPS if name in props]
+                offenders = [name for name in _KERNEL_EVENT_PROPS if props.get(name) is not None]
                 if offenders:
                     msg = (
                         f"{', '.join(offenders)} need the interaction kernel and never "
