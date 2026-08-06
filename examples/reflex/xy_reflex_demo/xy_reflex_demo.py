@@ -1,6 +1,6 @@
 """XY Reflex showcase: ways to link chart data into a Reflex app.
 
-One page of nine sections; each has a "Code" accordion showing its own source
+One page of ten sections; each has a "Code" accordion showing its own source
 via `inspect.getsource`. Charts use the data-bound component API — structure
 declared in the page, compiled to a validated plan at ``reflex run``, columns
 supplied by ``@reflex_xy.data`` state methods — except where a section
@@ -55,7 +55,8 @@ A second page, ``/kinds``, renders **every chart kind**: all 19 standalone
 mark kinds as data-bound flat factories fed by one ``@reflex_xy.data`` var
 (mixed column lengths and a 2-D grid in a single var), and the composite
 kinds (pie, radar, sankey, polar, polar bars, wind rose, facet) on the
-static tier.
+static tier. ``scripts/reflex_ws_smoke.py`` pixel-probes every cell, so
+the page carries browser render coverage, not only compile coverage.
 
 Run from ``examples/reflex``::
 
@@ -1038,6 +1039,8 @@ def _composite_kind_charts() -> dict[str, xy.Chart]:
 
 
 def _kind_cell(title: str, chart: rx.Component) -> rx.Component:
+    # id on the cell (not the chart): scripts/reflex_ws_smoke.py locates each
+    # cell by `kind-<name>` and ink-probes the canvas inside it.
     return rx.box(
         rx.text(title, font_family="monospace", size="2", margin_bottom="0.4rem"),
         chart,
@@ -1046,6 +1049,7 @@ def _kind_cell(title: str, chart: rx.Component) -> rx.Component:
         background="var(--gray-1)",
         padding="0.75rem",
         width="100%",
+        id=f"kind-{title}",
     )
 
 
@@ -1121,7 +1125,7 @@ def kinds() -> rx.Component:
         ),
     ]
     composites = [
-        (name, reflex_xy.chart(chart, height=height, id=f"kind-{name}"))
+        (name, reflex_xy.chart(chart, height=height))
         for name, chart in _composite_kind_charts().items()
     ]
     return rx.container(

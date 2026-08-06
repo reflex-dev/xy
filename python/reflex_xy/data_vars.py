@@ -198,9 +198,12 @@ def data(
         # in the page:
         #   reflex_xy.scatter_chart(data=Dash.cloud, x="x", y="y", color="mag")
 
-    The method must return a mapping of column name -> equal-length
-    array-likes, or ``None`` for "no data right now" (which releases the
-    registered columns and yields the empty handle). ``async def`` methods
+    The method must return a mapping of column name -> array-likes — mixed
+    lengths and dimensionalities are fine (a scatter's rows can sit next to
+    a stairs mark's ``len+1`` edges or a heatmap's 2-D grid; coupled-shape
+    contracts belong to the mark validators when a plan binds) — or
+    ``None`` for "no data right now" (which releases the registered columns
+    and yields the empty handle). ``async def`` methods
     become ``AsyncDataVar``s (same dispatch rule as ``rx.var``); keyword
     arguments pass through to reflex's computed var (``deps=``,
     ``interval=``, ...).

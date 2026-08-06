@@ -22,9 +22,9 @@ and the composed, multi-mark form (Level 2)::
         height="460px",
     )
 
-Both compile the real xy tree at page evaluation, run the plan probe
-(`plan.py` — the full mark/config validation gate, X1/X2; zero-row
-columns, shaped synthetic ones for the aggregating kinds), check channel
+Both compile the real xy tree at page evaluation, run the zero-row plan
+probe (`plan.py` — the mark/config validation gate, X1/X2, under the
+core's `structural_probe()` mode: no synthetic data), check channel
 names against the data var's TypedDict schema (R7), and mount the private
 component with a `plan` digest plus the `data` handle var. Marks and chrome
 are plain xy dataclass nodes — they never enter the Reflex tree
@@ -236,8 +236,9 @@ FLAT_KINDS: dict[str, _FlatKind] = {
         _flat_kind("errorbar_chart", _xy.errorbar),
         _flat_kind("error_band_chart", _xy.error_band),
         _flat_kind("segments_chart", _xy.segments),
-        # Aggregating kinds: their channels probe with the shaped synthetic
-        # columns recorded in plan._SYNTHETIC_CHANNELS instead of zero rows.
+        # Aggregating kinds: zero-row like everything else — under the
+        # core's structural_probe() mode they validate config and skip
+        # aggregation, so no synthetic data is ever invented for them.
         _flat_kind("box_chart", _xy.box),
         _flat_kind("violin_chart", _xy.violin),
         _flat_kind("ecdf_chart", _xy.ecdf),

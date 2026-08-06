@@ -5,17 +5,19 @@ A plan is the server-side half of the composite figure identity
 node tree with **string channels only**, compiled once at page evaluation.
 
 - **Build** (factory call = page evaluation = Reflex compile): construct the
-  real xy tree, bind a placeholder column for every referenced channel
-  name, and call ``.figure()`` once — the full mark/config validation gate
-  (facts X1/X2, pinned in tests/test_validation_timing.py) runs in
-  milliseconds with no real data. Placeholders are zero-row except for the
-  channels of the aggregating kinds (box, violin, hexbin, contour, heatmap,
-  stairs, ecdf), whose validators need at least one finite value: those
-  bind tiny fixed synthetic columns shaped per channel
-  (:data:`_SYNTHETIC_CHANNELS`, the recorded table — spec:
-  reflex-integration.md "Kind coverage"). The probe figure is discarded;
-  what is kept is the digest, the recorded column names, and (for live
-  charts) the probe's Tailwind class inventory.
+  real xy tree, bind a **zero-row** placeholder column for every referenced
+  channel name, and call ``.figure()`` once under the core's
+  ``structural_probe()`` mode — the mark/config validation gate (facts
+  X1/X2, pinned in tests/test_validation_timing.py) runs in milliseconds
+  with no real data and **no invented data**: in probe mode a mark whose
+  channels are all empty validates its configuration (enums, bounds,
+  colormaps, range shapes) and skips aggregation, so a probe failure always
+  indicts the chart's structure, and no value-dependent check (hexbin
+  range/mincnt filtering, contour marching, quantiles) can fire on
+  placeholder values or allocate at page evaluation. Real-data shape
+  contracts (coupled lengths, z's 2-D-ness) stay at bind. The probe figure
+  is discarded; what is kept is the digest, the recorded column names, and
+  (for live charts) the probe's Tailwind class inventory.
 - **Serialize**: nodes → canonical JSON (sorted keys, ``plan_version``) →
   sha256 prefix = ``digest``. The digest is a *content address*: every
   worker that evaluates the page derives the same digest and holds the plan
@@ -36,13 +38,16 @@ from __future__ import annotations
 import copy
 import dataclasses
 import hashlib
+import importlib
 import json
+import sys
+import types
 from collections.abc import Mapping
 from typing import Any, Optional
 
 import numpy as np
 
-from xy.components import Chart, Component, Mark
+from xy.components import Chart, Component, Mark, structural_probe
 
 __all__ = [
     "PLAN_VERSION",
@@ -57,80 +62,6 @@ __all__ = [
 
 PLAN_VERSION = 1
 _DIGEST_CHARS = 20  # sha256 hex prefix; content address for a process-local map
-
-#: Synthetic probe columns. Aggregating kinds (quantiles, bins, meshes)
-#: refuse zero rows, so their channels probe with tiny *fixed* placeholder
-#: arrays instead — deterministic constants that satisfy every value-domain
-#: precondition a validator imposes (finite, positive, strictly increasing,
-#: log-scale-safe), so a probe failure still means the *structure* is
-#: invalid, never the made-up values. Real-data shape contracts (actual
-#: lengths, the user's z being 2-D) stay where they always were: at bind.
-_PROBE_LEN = 8
-_PROBE_GRID_SIDE = 4
-
-
-def _spread() -> np.ndarray:
-    return np.linspace(1.0, float(_PROBE_LEN), _PROBE_LEN)
-
-
-def _one_group() -> np.ndarray:
-    return np.ones(_PROBE_LEN, dtype=np.float64)
-
-
-def _grid() -> np.ndarray:
-    side = _PROBE_GRID_SIDE
-    return np.linspace(1.0, float(side * side), side * side).reshape(side, side)
-
-
-def _grid_side() -> np.ndarray:
-    return np.linspace(1.0, float(_PROBE_GRID_SIDE), _PROBE_GRID_SIDE)
-
-
-def _bin_edges() -> np.ndarray:
-    return np.linspace(1.0, float(_PROBE_LEN + 1), _PROBE_LEN + 1)
-
-
-#: The recorded shape table: mark kind -> {channel storage: builder}. Keys
-#: name where the factory stores each column-capable channel on the Mark
-#: node — its ``x``/``y`` fields or a ``props`` entry (``box(values=...)``
-#: lands on field ``x``; ``stairs(edges=...)`` on field ``y``;
-#: ``heatmap(z=...)`` in ``props["z"]``). Kinds absent here probe zero-row.
-#: Extending a kind means recording its minimal validator contract here —
-#: never a silent guess (§28 spirit); pinned by tests/reflex_adapter/
-#: test_plan.py and tests/test_validation_timing.py.
-_SYNTHETIC_CHANNELS: dict[str, dict[str, Any]] = {
-    "box": {"x": _spread, "props.x": _one_group, "props.group": _one_group},
-    "violin": {"x": _spread, "props.x": _one_group, "props.group": _one_group},
-    "hexbin": {"x": _spread, "y": _spread, "props.C": _spread},
-    "contour": {"props.z": _grid, "x": _grid_side, "y": _grid_side},
-    "heatmap": {"props.z": _grid, "x": _grid_side, "y": _grid_side},
-    "stairs": {"x": _spread, "y": _bin_edges},
-    "ecdf": {"x": _spread},
-}
-
-
-def _probe_shapes(children: tuple[Component, ...]) -> dict[str, np.ndarray]:
-    """Synthetic columns for every aggregating-kind channel bound by name.
-
-    Shared column names keep one shape (first mark wins) — the same column
-    genuinely is the same array at bind time. A column shared between an
-    aggregating channel and a zero-row mark's channel cannot probe (the
-    lengths disagree); the probe then fails with xy's ordinary length
-    message, which is also what real data would do in every case where the
-    aggregating channel's shape truly differs.
-    """
-    shapes: dict[str, np.ndarray] = {}
-    for child in children:
-        if not isinstance(child, Mark):
-            continue
-        for location, build in _SYNTHETIC_CHANNELS.get(child.kind, {}).items():
-            if location.startswith("props."):
-                name = child.props.get(location[len("props.") :])
-            else:
-                name = getattr(child, location, None)
-            if isinstance(name, str):
-                shapes.setdefault(name, build())
-    return shapes
 
 
 class PlanError(ValueError):
@@ -153,26 +84,23 @@ class PlanBindError(PlanError):
 
 
 class _ProbeTable(Mapping):
-    """Placeholder table that records every column it resolves.
+    """Zero-row placeholder table that records every column it resolves.
 
     ``Chart.figure()`` resolves string channels through ``data[name]``
     (the exact production code path), so the recorded names are *derived*
     from the real resolution logic — the plan's column list can never drift
-    from what binding will actually look up. Columns are zero-row unless
-    ``shapes`` carries a synthetic array for the name (the aggregating
-    kinds' channels, from :data:`_SYNTHETIC_CHANNELS`).
+    from what binding will actually look up. Every column is empty: under
+    ``structural_probe()`` the marks validate configuration against empty
+    channels and never aggregate, so no synthetic values exist for a
+    validator to (falsely) accept or reject.
     """
 
-    def __init__(self, shapes: Optional[Mapping[str, np.ndarray]] = None) -> None:
+    def __init__(self) -> None:
         self.seen: list[str] = []
-        self._shapes = dict(shapes or {})
 
     def __getitem__(self, key: str) -> np.ndarray:
         if key not in self.seen:
             self.seen.append(key)
-        shaped = self._shapes.get(key)
-        if shaped is not None:
-            return shaped
         return np.empty(0, dtype=np.float64)
 
     def __iter__(self):  # pragma: no cover - Mapping protocol completeness
@@ -180,6 +108,97 @@ class _ProbeTable(Mapping):
 
     def __len__(self) -> int:  # pragma: no cover - Mapping protocol completeness
         return len(self.seen)
+
+
+def _code_fingerprint(fn: Any) -> str:
+    """Content hash of a pure-Python function's behavior.
+
+    A qualified name is *identity*, not *content*: hashing only the import
+    path would keep the digest stable while the function body changes (a
+    rolling deployment then executes two behaviors behind one address). The
+    fingerprint covers the bytecode, referenced names, nested code objects,
+    and default values. It is deterministic across processes for one
+    interpreter version; across differing interpreter versions digests
+    diverge and stale clients resync — fail-safe, never silently wrong.
+    """
+    h = hashlib.sha256()
+
+    def feed(code: types.CodeType) -> None:
+        h.update(code.co_code)
+        h.update(",".join(code.co_names).encode())
+        h.update(",".join(code.co_varnames).encode())
+        for const in code.co_consts:
+            if isinstance(const, types.CodeType):
+                feed(const)
+            elif isinstance(const, frozenset):
+                # frozenset repr order follows per-process string hashing;
+                # sort for a process-independent byte stream.
+                h.update(",".join(sorted(map(repr, const))).encode())
+            else:
+                h.update(repr(const).encode())
+
+    feed(fn.__code__)
+    h.update(repr(getattr(fn, "__defaults__", None)).encode())
+    h.update(repr(getattr(fn, "__kwdefaults__", None)).encode())
+    return h.hexdigest()[:16]
+
+
+def _resolve_qualname(module: str, qualname: str) -> Any:
+    """The object ``module.qualname`` names right now, or None."""
+    try:
+        target: Any = importlib.import_module(module)
+        for part in qualname.split("."):
+            target = getattr(target, part)
+    except Exception:  # noqa: BLE001 - resolution failure means "not addressable"
+        return None
+    return target
+
+
+def _callable_address(value: Any, context: str) -> dict[str, str]:
+    """Serialize one plan callable as a true content address (fail closed).
+
+    Bound methods are refused outright: the instance state behind
+    ``__self__`` has no content address, so two differently configured
+    instances would collide on one digest and last-write-wins registration
+    would silently swap behavior. Pure-Python functions carry a code
+    fingerprint beside their import path; C-level callables (ufuncs,
+    builtins) must resolve back to the same object by name and carry their
+    distribution's version, which is what pins their behavior.
+    """
+    if getattr(value, "__self__", None) is not None:
+        raise PlanError(
+            f"{context} holds a bound method ({value!r}). The instance state "
+            "behind it has no content address, so differently configured "
+            "instances would collide on one plan digest. Use a module-level "
+            "function, or build the chart with @reflex_xy.figure."
+        )
+    module = getattr(value, "__module__", "") or ""
+    qualname = getattr(value, "__qualname__", "") or ""
+    if not module or not qualname or "<" in module or "<" in qualname:
+        raise PlanError(
+            f"{context} holds a {type(value).__name__} without a stable "
+            "qualified name (a lambda, closure, or partial?), which cannot "
+            "be content-addressed into a chart plan. Use a module-level "
+            "function, or build the chart with @reflex_xy.figure."
+        )
+    code = getattr(value, "__code__", None)
+    if code is not None:
+        if code.co_freevars:
+            raise PlanError(
+                f"{context} holds a closure ({module}.{qualname}), whose "
+                "captured variables have no content address. Use a module-"
+                "level function, or build the chart with @reflex_xy.figure."
+            )
+        return {"~callable": f"{module}.{qualname}", "code": _code_fingerprint(value)}
+    if _resolve_qualname(module, qualname) is not value:
+        raise PlanError(
+            f"{context} holds {value!r}, whose qualified name "
+            f"{module}.{qualname!r} does not resolve back to it — the name "
+            "cannot address this callable across workers. Use a module-level "
+            "function, or build the chart with @reflex_xy.figure."
+        )
+    root = sys.modules.get(module.split(".", 1)[0])
+    return {"~callable": f"{module}.{qualname}", "dist": str(getattr(root, "__version__", ""))}
 
 
 def _plain(value: Any, context: str) -> Any:
@@ -198,20 +217,7 @@ def _plain(value: Any, context: str) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if callable(value):
-        # A module-level named callable (hexbin's reduce_C_function is
-        # np.mean by default) has a stable import path — that path is its
-        # content address. Lambdas and closures don't, so they cannot keep
-        # digests faithful and are refused like any other opaque value.
-        module = getattr(value, "__module__", "") or ""
-        qualname = getattr(value, "__qualname__", "") or ""
-        if module and qualname and "<" not in module and "<" not in qualname:
-            return {"~callable": f"{module}.{qualname}"}
-        raise PlanError(
-            f"{context} holds a {type(value).__name__} without a stable "
-            "qualified name (a lambda or closure?), which cannot be "
-            "content-addressed into a chart plan. Use a module-level "
-            "function, or build the chart with @reflex_xy.figure."
-        )
+        return _callable_address(value, context)
     raise PlanError(
         f"{context} holds a {type(value).__name__}, which cannot be part of a "
         "data-bound chart plan. Plans are data-free structure: bind columns "
@@ -273,12 +279,14 @@ def build_plan(
     canonical = json.dumps(serialized, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).hexdigest()[:_DIGEST_CHARS]
 
-    # The compile-time validation gate: bind placeholders for every string
-    # channel (zero-row, or the shaped synthetic columns for aggregating
-    # kinds) and compile once. Errors surface here — at page evaluation —
-    # with the ordinary xy messages.
-    probe = _ProbeTable(_probe_shapes(children))
-    probe_figure = Chart(kind, children, data=probe, **chart_props).figure()
+    # The compile-time validation gate: bind zero-row placeholders for every
+    # string channel and compile once under the core's structural-probe
+    # mode — configuration validates, aggregation never runs on invented
+    # values. Errors surface here — at page evaluation — with the ordinary
+    # xy messages.
+    probe = _ProbeTable()
+    with structural_probe():
+        probe_figure = Chart(kind, children, data=probe, **chart_props).figure()
     tailwind_classes = " ".join(probe_figure.dom_class_strings())
 
     plan = ChartPlan(
@@ -304,9 +312,11 @@ def register_plan(plan: ChartPlan) -> ChartPlan:
 
     Last write wins (idempotent for identical content — the digest is the
     content address): after a hot reload re-evaluates the page, the fresh
-    node objects replace the stale ones, which matters for the one node
-    field a digest addresses by *name* rather than by value (module-level
-    callables, e.g. a hexbin ``reduce_C_function`` whose body was edited).
+    node objects replace the stale ones. An edited pure-Python callable
+    changes the digest itself (its code fingerprint is part of the
+    serialization), so behavior can never swap silently behind a stable
+    address; C-level callables are pinned by import path + distribution
+    version instead.
     """
     _PLANS[plan.digest] = plan
     return plan

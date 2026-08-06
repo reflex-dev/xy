@@ -209,9 +209,9 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert module.DRILLDOWN.token.startswith("xyin-")
     assert module.DRILLDOWN_POINTS == 50000
     assert module.index() is not None
-    # The /kinds page: all 19 data-bound kind plans compile (shaped synthetic
-    # probes included), the composite kinds build on the static tier, and one
-    # data var legally carries mixed-length plus 2-D columns.
+    # The /kinds page: all 19 data-bound kind plans compile (zero-row under
+    # the structural probe), the composite kinds build on the static tier,
+    # and one data var legally carries mixed-length plus 2-D columns.
     assert module.kinds() is not None
     columns = module._kind_columns()
     assert columns["grid"].ndim == 2

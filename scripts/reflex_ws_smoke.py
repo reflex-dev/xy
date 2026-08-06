@@ -17,6 +17,10 @@ design:
 5. Composition: toggling the §9 cond swaps the composed board for
    `rx.foreach` small multiples over a `list[DataHandle]` var — new plan
    charts mount and subscribe live.
+6. Kind coverage: the /kinds page mounts and paints **every chart kind**
+   (19 data-bound plan charts + 7 static composites), pixel-probed per
+   `kind-<name>` cell — the compile guarantee is backed by a render
+   guarantee.
 
 Usage:
     python3 scripts/reflex_ws_smoke.py [--frontend http://localhost:3100]
@@ -384,6 +388,69 @@ def main() -> None:
         )
         views_after = probe.eval("window.__xy_views.size")
         print(f"cond/foreach: {views_before} -> {views_after} mounted views after split toggle")
+
+        # 7) /kinds: every chart kind renders in the browser — 19 data-bound
+        #    plan charts plus the 7 static composites. Each `kind-<name>`
+        #    cell must hold a canvas that paints real ink (a compile-only
+        #    guarantee is not a render guarantee).
+        probe._call("Page.navigate", {"url": args.frontend.rstrip("/") + "/kinds"})
+        probe.wait_for(
+            "window.__xy_views && window.__xy_views.size >= 26",
+            timeout_s=120.0,
+            label="mounted /kinds chart views",
+        )
+        time.sleep(2.0)  # let late payloads paint before the pixel probe
+        kinds_png = probe.screenshot()
+        kind_names = [
+            "scatter",
+            "line",
+            "area",
+            "step",
+            "stem",
+            "bar",
+            "column",
+            "histogram",
+            "errorbar",
+            "error_band",
+            "segments",
+            "box",
+            "violin",
+            "ecdf",
+            "hexbin",
+            "heatmap",
+            "contour",
+            "stairs",
+            "triangle_mesh",
+            "pie",
+            "radar",
+            "sankey",
+            "polar",
+            "polar_bar",
+            "wind_rose",
+            "facet",
+        ]
+        blank: list[str] = []
+        for name in kind_names:
+            rect_js = (
+                f"(() => {{ const cell = document.getElementById('kind-{name}');"
+                " if (!cell) return null;"
+                " const c = cell.querySelector('canvas');"
+                " if (!c) return null;"
+                " const b = c.getBoundingClientRect();"
+                " return {x: b.x + window.scrollX, y: b.y + window.scrollY,"
+                "         w: b.width, h: b.height}; })()"
+            )
+            canvas_rect = probe.eval(rect_js)
+            if not canvas_rect or not canvas_rect["w"] or not canvas_rect["h"]:
+                failures.append(f"/kinds {name}: no mounted canvas")
+                continue
+            frac = ink_fraction(kinds_png, canvas_rect, 1.0)
+            if frac < 0.003:
+                blank.append(f"{name} ({frac:.2%})")
+        if blank:
+            failures.append("/kinds charts look blank: " + ", ".join(blank))
+        else:
+            print(f"/kinds: all {len(kind_names)} kind cells painted")
 
         if args.screenshot:
             Path(args.screenshot).write_bytes(probe.screenshot())

@@ -545,14 +545,20 @@ the check that catches it. Binding is the reverse:
 columns + plan → a **fresh** `Chart` (never reused — X3) → `.figure()`.
 Column-mismatch errors name both sides (*"plan binds column 'mag';
 Dash.cloud produced {x, y}"*). Plans refuse concrete arrays, per-mark
-`data=`, and `render=` components — data-free structure only. One node
-field is addressed by *name* rather than by value: a module-level named
-callable (hexbin's `reduce_C_function`, `np.mean` by default) serializes
-as its import path, which is a stable content address; lambdas and
-closures have none and are refused toward a module-level function or the
-escape hatch. Re-registration under a digest is last-write-wins, so a
-hot-reloaded page replaces stale node objects (the body behind a callable
-path may have changed). The probe
+`data=`, and `render=` components — data-free structure only. Callables
+in mark props (hexbin's `reduce_C_function`, `np.mean` by default) are
+**content-addressed, not name-addressed**: a pure-Python function
+serializes as its import path *plus a code fingerprint* (bytecode, names,
+nested code, defaults), so editing a reducer's body changes the digest —
+two workers on either side of a rolling deployment can never execute
+different behavior behind one address (mismatched digests resync
+instead). C-level callables (ufuncs, builtins) must resolve back to the
+same object by qualified name and carry their distribution's version.
+Bound methods are refused outright (instance state has no content
+address; two differently configured instances would collide on one
+digest), as are lambdas, closures, and partials. Re-registration under a
+digest is last-write-wins, so a hot-reloaded page replaces stale node
+objects. The probe
 figure also yields `dom_class_strings()`, so **live data-bound charts get
 automatic Tailwind discovery** (previously live sources needed the manual
 inventory).
@@ -588,33 +594,35 @@ binds immediately and routes to the §3.4 payload-asset path — same
 validation, same spec-aware bind errors, works under `reflex export`,
 never touches the registry.
 
-**Kind coverage (recorded decision, revised 2026-08).** Flat factories
-exist for **every standalone mark kind**: scatter, line, histogram, bar,
-area, step, stem, column, errorbar, error_band, segments, triangle_mesh
-(zero-row probe) and box, violin, ecdf, hexbin, contour, heatmap, stairs
-(shaped synthetic probe) — each derived from the mark's signature, and the
-composed `reflex_xy.chart(*nodes, data=...)` accepts any mix of those
-marks plus annotations and chrome. The aggregating kinds were previously
-excluded on the argument that a synthetic-row probe's failures could
-depend on made-up values; that objection is answered by discipline rather
-than exclusion. Each such kind's channels probe with **fixed, recorded**
-placeholder columns (`plan._SYNTHETIC_CHANNELS`, pinned by
-`tests/reflex_adapter/test_plan.py` and, at the xy level, by
-`tests/test_validation_timing.py`) whose values satisfy every value-domain
-precondition a validator imposes: finite, positive, strictly increasing
-(log-scale-safe); one group for grouped kinds; a square z grid with
-matching side coordinates; `len+1` bin edges. A probe failure therefore
-still indicts the chart's structure, never the synthetic values, and the
-compile guarantee is unchanged in kind — config and channel structure at
-compile, real-data shapes at bind, exactly where the zero-row probe
-already left them (§28 spirit: the shapes are recorded, not guessed).
-Known edge, recorded: a column shared between an aggregating channel and
-a zero-row mark's channel in one composed chart cannot probe (the
-placeholder lengths disagree); such charts take `@reflex_xy.figure`. The
-data-taking composite factories (pie, radar, wind_rose, sankey — eager
-numeric work at call time) remain outside the plan tier: they don't
-produce data-free nodes, and keep the two recorded routes
-(`@reflex_xy.figure`, or a concrete xy Chart on the static tier).
+**Kind coverage (recorded decision, revised 2026-08 twice).** Flat
+factories exist for **every standalone mark kind**: scatter, line,
+histogram, bar, area, step, stem, column, errorbar, error_band, segments,
+triangle_mesh, box, violin, ecdf, hexbin, contour, heatmap, stairs — each
+derived from the mark's signature, and the composed
+`reflex_xy.chart(*nodes, data=...)` accepts any mix of those marks plus
+annotations and chrome. The aggregating kinds were first excluded (their
+validators refuse zero rows), then briefly probed with recorded synthetic
+placeholder columns; review showed synthetic data is **not structurally
+sound**: a column shared between an aggregating channel and a zero-row
+channel falsely failed on invented lengths, a valid hexbin `range=` or
+`mincnt=` falsely failed on invented values, and a large `gridsize` ran
+real aggregation at page evaluation. The resolution is a core validation
+seam instead of cleverer data: the probe compiles under
+`xy.structural_probe()` (spec/api/chart-kind-contract.md "Structural
+probe"), where a mark with all-empty channels validates configuration and
+skips aggregation. Every kind probes **zero-row**; there is no synthetic
+data anywhere; configuration errors (bad enums/bounds/colormaps/range
+shapes) still fail `reflex run`; data-dependent outcomes (range
+filtering, mincnt, quantiles, marching) and real-data shape couplings
+(`edges = len+1`, z 2-D-ness) are computed and checked at bind. Pinned by
+`tests/test_validation_timing.py` (the xy half: every kind compiles empty
+under the probe, still refuses empty normally, still raises config
+errors) and `tests/reflex_adapter/test_plan.py` (the plan half, including
+the shared-column and hexbin-config repros from review). The data-taking
+composite factories (pie, radar, wind_rose, sankey — eager numeric work
+at call time) remain outside the plan tier: they don't produce data-free
+nodes, and keep the two recorded routes (`@reflex_xy.figure`, or a
+concrete xy Chart on the static tier).
 
 **Column entries.** Published columns are registry entries in their own
 right, keyed by the data token: pure rebuildable caches of Reflex state

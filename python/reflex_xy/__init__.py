@@ -120,8 +120,9 @@ _EXPORTS = {
 #: (`reflex_xy.chart(reflex_xy.scatter("x", "y"), data=...)`) and a
 #: hallucinated constructor dies at import against this explicit map
 #: instead of surviving to hydrate. Every standalone mark kind is plan-
-#: compatible: the aggregating ones (box, violin, hexbin, …) probe with
-#: the shaped synthetic columns recorded in `plan._SYNTHETIC_CHANNELS`.
+#: compatible: the aggregating ones (box, violin, hexbin, …) probe
+#: zero-row under the core's structural_probe() mode — config validates,
+#: aggregation never runs on invented values.
 #: Chart factories are deliberately absent: the flat `*_chart` names above
 #: are reflex-native factories, not xy's.
 _XY_REEXPORTS = frozenset(
