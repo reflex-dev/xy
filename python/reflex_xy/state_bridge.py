@@ -91,9 +91,7 @@ async def rebuild_data(app: Any, parsed: ParsedToken) -> Optional[dict[str, Any]
     columns = await _run_state_method(app, parsed)
     if columns is None:
         return None
-    return validate_columns(
-        columns, source=f"{parsed.state_full_name.rsplit('.', 1)[-1]}.{parsed.var_name}"
-    )
+    return validate_columns(columns, source=f"{parsed.state_full_name}.{parsed.var_name}")
 
 
 async def rebuild_plan_figure(app: Any, composite: ParsedPlanToken) -> Optional["Figure"]:
@@ -111,7 +109,9 @@ async def rebuild_plan_figure(app: Any, composite: ParsedPlanToken) -> Optional[
         # Future binds (other plans over the same data var) hit the cache;
         # bind_plan below is the subscribe path's job, not the rebuild's.
         registry.publish_columns(composite.data_token, columns)
-    source = f"{composite.data.state_full_name.rsplit('.', 1)[-1]}.{composite.data.var_name}"
+    # Same label the registry's republish path builds in _rebuild_dependent:
+    # one mismatch, one err frame, whichever path hits it first.
+    source = f"{composite.data.state_full_name}.{composite.data.var_name}"
     return plan.bind(columns, source=source).figure()
 
 
