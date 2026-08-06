@@ -106,6 +106,8 @@ _WHEEL_TARGETS = {
     "win32": ("PE", "x86", 32),
     "win_arm64": ("PE", "aarch64", 64),
 }
+_ELF_ALLOWED_GLIBC = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "ld-linux-x86-64.so.2"}
+_ELF_ALLOWED_MUSL_PREFIXES = ("libc.musl-", "ld-musl-", "libgcc_s.so.")
 
 
 def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
@@ -345,6 +347,126 @@ def _require_exported_symbols(name: str, data: bytes, required: set[str]) -> Non
         raise AssertionError(f"{name} is missing exported ABI symbols: {missing}")
 
 
+def _elf_linkage(name: str, data: bytes, prefix: str, bits: int) -> tuple[str, tuple[str, ...]]:
+    """Return the ELF interpreter and DT_NEEDED names."""
+    if bits == 64:
+        if len(data) < 64:
+            raise AssertionError(f"{name} has a truncated ELF header")
+        program_offset = struct.unpack_from(prefix + "Q", data, 32)[0]
+        program_entry_size = struct.unpack_from(prefix + "H", data, 54)[0]
+        program_count = struct.unpack_from(prefix + "H", data, 56)[0]
+        program_fields = (8, 16, 32)
+        dynamic_entry_size = 16
+    else:
+        if len(data) < 52:
+            raise AssertionError(f"{name} has a truncated ELF header")
+        program_offset = struct.unpack_from(prefix + "I", data, 28)[0]
+        program_entry_size = struct.unpack_from(prefix + "H", data, 42)[0]
+        program_count = struct.unpack_from(prefix + "H", data, 44)[0]
+        program_fields = (4, 8, 16)
+        dynamic_entry_size = 8
+    if not program_offset or not program_entry_size or not program_count:
+        raise AssertionError(f"{name} has no ELF program headers")
+
+    load_segments: list[tuple[int, int, int, int]] = []
+    interpreter: str | None = None
+    dynamic: tuple[int, int] | None = None
+    number_size = "Q" if bits == 64 else "I"
+    for index in range(program_count):
+        offset = program_offset + index * program_entry_size
+        if offset + program_entry_size > len(data):
+            raise AssertionError(f"{name} has a truncated ELF program-header table")
+        program_type = struct.unpack_from(prefix + "I", data, offset)[0]
+        file_offset = struct.unpack_from(prefix + number_size, data, offset + program_fields[0])[0]
+        virtual_address = struct.unpack_from(
+            prefix + number_size, data, offset + program_fields[1]
+        )[0]
+        file_size = struct.unpack_from(prefix + number_size, data, offset + program_fields[2])[0]
+        if program_type == 1:
+            load_segments.append((virtual_address, file_offset, file_size, file_size))
+        elif program_type == 3:
+            raw = data[file_offset : file_offset + file_size]
+            interpreter = raw.split(b"\0", 1)[0].decode("utf-8", errors="replace")
+        elif program_type == 2:
+            dynamic = (file_offset, file_size)
+    if dynamic is None:
+        return interpreter or "", ()
+
+    def virtual_to_file(address: int) -> int:
+        for virtual_address, file_offset, file_size, _ in load_segments:
+            if virtual_address <= address < virtual_address + file_size:
+                return file_offset + address - virtual_address
+        raise AssertionError(f"{name} has an ELF dynamic string table outside load segments")
+
+    dynamic_offset, dynamic_size = dynamic
+    needed: list[int] = []
+    string_address = string_size = None
+    for offset in range(dynamic_offset, dynamic_offset + dynamic_size, dynamic_entry_size):
+        if offset + dynamic_entry_size > len(data):
+            raise AssertionError(f"{name} has a truncated ELF dynamic section")
+        tag = struct.unpack_from(prefix + number_size, data, offset)[0]
+        value = struct.unpack_from(prefix + number_size, data, offset + (8 if bits == 64 else 4))[0]
+        if tag == 0:
+            break
+        if tag == 1:
+            needed.append(value)
+        elif tag == 5:
+            string_address = value
+        elif tag == 10:
+            string_size = value
+    if string_address is None or string_size is None:
+        raise AssertionError(f"{name} has DT_NEEDED entries but no complete dynamic string table")
+    string_offset = virtual_to_file(string_address)
+    strings = data[string_offset : string_offset + string_size]
+    if len(strings) != string_size:
+        raise AssertionError(f"{name} has a truncated ELF dynamic string table")
+    dependencies = []
+    for string_index in needed:
+        if string_index >= len(strings):
+            raise AssertionError(f"{name} has an invalid DT_NEEDED string index")
+        end = strings.find(b"\0", string_index)
+        if end < string_index:
+            raise AssertionError(f"{name} has an unterminated DT_NEEDED name")
+        dependencies.append(strings[string_index:end].decode("utf-8", errors="replace"))
+    return interpreter or "", tuple(dependencies)
+
+
+def _require_elf_linkage(name: str, data: bytes, platform: str) -> None:
+    """Validate libc family and dependency policy for Linux wheel targets."""
+    if data[:4] != b"\x7fELF":
+        raise AssertionError(f"{name} is not an ELF binary for Linux linkage validation")
+    endian = data[5]
+    prefix = "<" if endian == 1 else ">" if endian == 2 else ""
+    if not prefix:
+        raise AssertionError(f"{name} has an invalid ELF byte order")
+    bits = 32 if data[4] == 1 else 64 if data[4] == 2 else 0
+    if not bits:
+        raise AssertionError(f"{name} has an invalid ELF class")
+    interpreter, dependencies = _elf_linkage(name, data, prefix, bits)
+    if platform.startswith("manylinux_"):
+        if "ld-linux" not in interpreter:
+            raise AssertionError(f"{name} is not linked against glibc: interpreter={interpreter!r}")
+        unexpected = sorted(set(dependencies) - _ELF_ALLOWED_GLIBC)
+        if unexpected:
+            raise AssertionError(f"{name} has unsupported glibc dependencies: {unexpected}")
+        versions = {
+            (int(match.group(1)), int(match.group(2)))
+            for match in re.finditer(rb"GLIBC_(\d+)\.(\d+)", data)
+        }
+        if versions and max(versions) > (2, 17):
+            raise AssertionError(f"{name} requires glibc {max(versions)}, above manylinux_2_17")
+    elif platform.startswith("musllinux_"):
+        if "musl" not in interpreter:
+            raise AssertionError(f"{name} is not linked against musl: interpreter={interpreter!r}")
+        unexpected = sorted(
+            dependency
+            for dependency in dependencies
+            if not dependency.startswith(_ELF_ALLOWED_MUSL_PREFIXES)
+        )
+        if unexpected:
+            raise AssertionError(f"{name} has unsupported musl dependencies: {unexpected}")
+
+
 def _dist_info_name(names: set[str], filename: str) -> str:
     matches = [n for n in names if n.endswith(f".dist-info/{filename}")]
     if len(matches) != 1:
@@ -561,6 +683,7 @@ def verify_wheel(
     expect_native: Optional[bool],
     expect_platform: Optional[str] = None,
     required_symbols: Optional[set[str]] = None,
+    require_linkage: bool = False,
 ) -> None:
     with zipfile.ZipFile(path) as zf:
         _require_unique_archive_members(zf.infolist())
@@ -676,6 +799,14 @@ def verify_wheel(
         if required_symbols:
             with zipfile.ZipFile(path) as zf:
                 _require_exported_symbols(native_libs[0], zf.read(native_libs[0]), required_symbols)
+        if require_linkage and expect_platform is not None:
+            with zipfile.ZipFile(path) as zf:
+                if expect_platform.startswith(("manylinux_", "musllinux_")):
+                    _require_elf_linkage(native_libs[0], zf.read(native_libs[0]), expect_platform)
+                else:
+                    raise AssertionError(
+                        f"linkage inspection is not implemented for wheel platform {expect_platform!r}"
+                    )
     elif expect_native is False:
         if native_libs:
             raise AssertionError(
@@ -709,6 +840,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=[],
         help="require an exported native ABI symbol (repeatable)",
     )
+    parser.add_argument(
+        "--require-linkage",
+        action="store_true",
+        help="validate native dynamic linkage against --expect-platform",
+    )
     args = parser.parse_args(argv)
 
     expect_native = True if args.expect_native else False if args.expect_pure else None
@@ -718,6 +854,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             expect_native=expect_native,
             expect_platform=args.expect_platform,
             required_symbols=set(args.require_symbol),
+            require_linkage=args.require_linkage,
         )
     except (AssertionError, KeyError, zipfile.BadZipFile) as e:
         print(f"wheel verification failed for {args.wheel}: {e}", file=sys.stderr)

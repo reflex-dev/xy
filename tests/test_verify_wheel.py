@@ -146,6 +146,44 @@ def test_native_binary_rejects_missing_exported_abi_symbol() -> None:
         verify_wheel._require_exported_symbols("native", binary, {"xy_abi_version"})
 
 
+def _elf_linkage_fixture(interpreter: bytes, dependency: bytes, version: bytes = b"") -> bytes:
+    data = bytearray(512)
+    data[:4] = b"\x7fELF"
+    data[4:8] = bytes([2, 1, 1, 0])
+    struct.pack_into("<H", data, 16, 3)
+    struct.pack_into("<H", data, 18, 62)
+    struct.pack_into("<I", data, 20, 1)
+    struct.pack_into("<Q", data, 32, 64)
+    struct.pack_into("<H", data, 52, 64)
+    struct.pack_into("<H", data, 54, 56)
+    struct.pack_into("<H", data, 56, 3)
+    # A load segment covering the fixture's dynamic data and string table.
+    struct.pack_into("<IIQQQQQQ", data, 64, 1, 0, 0, 0x400000, 0, 512, 512, 0)
+    struct.pack_into("<IIQQQQQQ", data, 120, 3, 0, 240, 0, 0, len(interpreter), len(interpreter), 1)
+    struct.pack_into("<IIQQQQQQ", data, 176, 2, 0, 280, 0, 0, 64, 64, 1)
+    data[240 : 240 + len(interpreter)] = interpreter
+    strings = b"\0" + dependency + b"\0" + version + b"\0"
+    data[384 : 384 + len(strings)] = strings
+    struct.pack_into("<QQ", data, 280, 5, 0x400000 + 384)
+    struct.pack_into("<QQ", data, 296, 10, len(strings))
+    struct.pack_into("<QQ", data, 312, 1, 1)
+    struct.pack_into("<QQ", data, 328, 0, 0)
+    return bytes(data)
+
+
+def test_elf_linkage_validates_glibc_floor_and_dependency_family() -> None:
+    binary = _elf_linkage_fixture(b"/lib64/ld-linux-x86-64.so.2\0", b"libc.so.6", b"GLIBC_2.17")
+
+    verify_wheel._require_elf_linkage("native", binary, "manylinux_2_17_x86_64")
+
+    with pytest.raises(AssertionError, match="above manylinux_2_17"):
+        verify_wheel._require_elf_linkage(
+            "native",
+            _elf_linkage_fixture(b"/lib64/ld-linux-x86-64.so.2\0", b"libc.so.6", b"GLIBC_2.28"),
+            "manylinux_2_17_x86_64",
+        )
+
+
 def _record_hash(data: bytes) -> str:
     digest = hashlib.sha256(data).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
