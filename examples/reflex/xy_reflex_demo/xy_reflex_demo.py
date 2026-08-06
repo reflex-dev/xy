@@ -1,6 +1,6 @@
 """XY Reflex showcase: ways to link chart data into a Reflex app.
 
-One page of eight sections; each has a "Code" accordion showing its own source
+One page of nine sections; each has a "Code" accordion showing its own source
 via `inspect.getsource`. Charts use the data-bound component API — structure
 declared in the page, compiled to a validated plan at ``reflex run``, columns
 supplied by ``@reflex_xy.data`` state methods — except where a section
@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import os
 import warnings
 from functools import lru_cache
@@ -68,6 +69,23 @@ import reflex_xy
 import xy
 from reflex_xy import DataHandle
 from reflex_xy.tokens import BUILDER_ATTR
+
+
+def _clamped_slider_value(value: object, lo: int, hi: int) -> int:
+    """Server-side bound for a slider event value.
+
+    The browser payload is untrusted input and these values size server
+    allocations; the slider's min/max are UI hints, not a security boundary.
+    Validate the shape and clamp the number before it reaches state.
+    """
+    if not isinstance(value, (list, tuple)) or not value:
+        msg = f"slider event must be a non-empty [number] list, got {value!r}"
+        raise ValueError(msg)
+    first = value[0]
+    if isinstance(first, bool) or not isinstance(first, (int, float)) or not math.isfinite(first):
+        msg = f"slider value must be a finite number, got {first!r}"
+        raise ValueError(msg)
+    return max(lo, min(hi, int(first)))
 
 
 class CloudCols(TypedDict):
@@ -426,7 +444,8 @@ class Demo(rx.State):
 
     @rx.event
     def set_bins(self, value: list[int | float]):
-        self.bins = int(value[0])
+        # mirrors the slider's min/max server-side: bins size an allocation
+        self.bins = _clamped_slider_value(value, 20, 160)
 
     @rx.event
     def on_view(self, event: reflex_xy.ViewChangeEvent):
@@ -455,7 +474,10 @@ class Demo(rx.State):
 
     @rx.event
     def set_bound_points(self, value: list[int | float]):
-        self.bound_points = int(value[0])
+        # mirrors the slider's min/max server-side: this value sizes the
+        # arrays bound_cloud allocates, so it must be clamped here, not
+        # trusted from the wire
+        self.bound_points = _clamped_slider_value(value, 10_000, 1_000_000)
 
     # §9 cond + foreach: one combined board or per-sensor small multiples.
     split: bool = False
