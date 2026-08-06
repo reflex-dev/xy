@@ -12,8 +12,8 @@ on:
         description: >-
           Dry run: build and verify every wheel/sdist/wasm artifact across the
           full release matrix without publishing to PyPI. Use this to validate
-          the cross-compile matrix (musllinux, win-arm64, wasm, ...) before a
-          real version-tag release. Defaults to true so a manual dispatch
+          the runtime-verified release matrix before a real version-tag
+          release. Defaults to true so a manual dispatch
           never accidentally publishes.
         type: boolean
         default: true
@@ -26,11 +26,9 @@ permissions:
 jobs:
   # One wheel per platform (the C-ABI core is CPython-version-independent, so
   # each entry produces a single py3-none-<platform> wheel). Coverage matches
-  # what the native core can target: Linux glibc + musl across x86-64/aarch64/
-  # armv7, macOS x86-64/arm64, and Windows x86/x64/arm64. Linux targets are
-  # cross-compiled with cargo-zigbuild (musl support + a low manylinux_2_17
-  # glibc floor without QEMU); the hook then packs the prebuilt core and stamps
-  # the platform tag (XY_CARGO_TARGET / XY_WHEEL_PLATFORM).
+  # what the release workflow can install, load, and exercise on its runners:
+  # Linux x86-64, macOS arm64, and Windows x86-64. Additional cross-compiled
+  # targets must not be added until CI has a matching runner or emulator.
   wheels:
     name: Wheel ${{ matrix.plat }}
     runs-on: ${{ matrix.os }}
@@ -38,30 +36,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux glibc (manylinux_2_17 floor) — cross-compiled with zig.
+          # Linux glibc (manylinux_2_17 floor), built with zig.
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: false }
-          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: false }
-          # Linux musl / Alpine. crt-static is musl's default, and rustc
-          # silently *drops* cdylib output under it (a warning, not an error)
-          # since a fully-static binary can't also be a shared library —
-          # -C target-feature=-crt-static switches to dynamic linking against
-          # musl libc so a real cdylib gets produced.
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          # macOS. Both build on the arm64 runner (macos-14): Apple Silicon
-          # runners are plentiful, while the last Intel runner (macos-13) is
-          # deprecated and frequently unschedulable. The Apple toolchain
-          # cross-links x86_64 Mach-O natively, so the Intel wheel is a cross
-          # build (native: false -> content-verified, not import-smoked, since
-          # an x86_64 lib can't be imported on the arm64 runner).
-          - { os: macos-14, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: false, deployment: "10.12" }
+          # macOS arm64, the native architecture of macos-14.
           - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true, deployment: "11.0" }
-          # Windows x64 (native), x86 and arm64 (cross-compiled).
+          # Windows x64.
           - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true }
-          - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,15 +98,14 @@ jobs:
           echo "wheel size: $size bytes ($whl)"
           test "$size" -le 15728640
       - name: Verify the wheel installs and loads the native core
-        # Only host-arch wheels can be imported on the runner; cross-compiled
-        # arches (aarch64/armv7/win-arm64/win32) are content-verified instead.
-        if: matrix.native
+        # Every published wheel is built for the runner architecture and must
+        # pass an import plus representative native-kernel call.
         shell: bash
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget "reflex>=0.9.6"
-          ./smoke/bin/python -c "import importlib.metadata as m, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); print('native', k.__file__)" \
-            || ./smoke/Scripts/python.exe -c "import importlib.metadata as m, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); print('native')"
+          ./smoke/bin/python -c "import importlib.metadata as m, numpy as np, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); codes, unique = k.factorize_fixed(np.asarray(['a', 'b', 'a'], dtype='S1')); assert codes.tolist() == [0, 1, 0] and unique.tolist() == [0, 1]; print('native', k.__file__)" \
+            || ./smoke/Scripts/python.exe -c "import importlib.metadata as m, numpy as np, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); codes, unique = k.factorize_fixed(np.asarray(['a', 'b', 'a'], dtype='S1')); assert codes.tolist() == [0, 1, 0] and unique.tolist() == [0, 1]; print('native', k.__file__)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.plat }}

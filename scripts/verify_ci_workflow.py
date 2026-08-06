@@ -1251,7 +1251,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wheels",
         "release",
-        "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
+        "runtime-verified wheel matrix (Linux, macOS, Windows), verification, and upload",
         "dtolnay/rust-toolchain@",
         "astral-sh/setup-uv@",
         "actions/setup-node@",
@@ -1261,19 +1261,29 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "uv build --wheel",
         "XY_REQUIRE_CARGO",
         "XY_WHEEL_PLATFORM",
-        "musllinux_1_2_x86_64",
-        "win_arm64",
+        "manylinux_2_17_x86_64",
+        "macosx_11_0_arm64",
+        "win_amd64",
         "scripts/verify_wheel.py",
         "--expect-native",
+        "--expect-platform",
+        "--require-symbol xy_abi_version",
+        "--require-linkage",
         "Install-size budget (<= 15 MB)",
         '"reflex>=0.9.6"',
-        "import importlib.metadata as m, reflex_xy",
+        "import importlib.metadata as m",
+        "reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "assert k.BACKEND=='native'",
+        "factorize_fixed",
         "actions/upload-artifact@",
         "dist/*.whl",
     )
     wheels_job = jobs.get("wheels", "")
+    if "native: false" in wheels_job:
+        errors.append(
+            "release wheels job must not publish a target without an install/load smoke"
+        )
     if "continue-on-error:" in wheels_job:
         errors.append(
             "release wheels job must block publishing when any native wheel build or "
