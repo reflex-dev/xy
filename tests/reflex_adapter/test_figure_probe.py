@@ -17,7 +17,13 @@ import xy
 from reflex_xy.app import FigureProbeError, probe_figure_builders
 
 #: Armed per-test; every probed builder below is a no-op otherwise.
-_ARM = {"hallucinated": False, "bad_config": False, "session": False, "async_ran": False}
+_ARM = {
+    "hallucinated": False,
+    "bad_config": False,
+    "bad_return": False,
+    "session": False,
+    "async_ran": False,
+}
 
 
 class ProbeDemo(rx.State):
@@ -47,6 +53,12 @@ class ProbeDemo(rx.State):
         # Session-dependent by declaration: reads self.router. Against the
         # probe's default state this raises; the probe must downgrade.
         raise RuntimeError(f"no session for {self.router.session.client_token!r}")
+
+    @reflex_xy.figure
+    def bad_return(self):
+        if not _ARM["bad_return"]:
+            return None
+        return {"x": [1.0], "y": [2.0]}  # not a chart: caught at "build" level
 
     @reflex_xy.figure(probe=False)
     def opted_out(self):
@@ -104,10 +116,31 @@ def test_session_dependent_builder_downgrades_to_warning():
     assert not any(name.endswith("session_bound") for name in probed)
 
 
+def test_non_chart_return_fails_the_default_probe_level():
+    """The default "build" level type-checks the return: a value no registry
+    publish can accept must not survive to hydrate."""
+    _ARM["bad_return"] = True
+    with pytest.raises(FigureProbeError, match="bad_return") as excinfo:
+        probe_figure_builders()
+    assert "dict" in str(excinfo.value)
+
+
 def test_invalid_probe_level_is_refused_at_decoration():
     with pytest.raises(ValueError, match="probe="):
 
         class BadProbe(rx.State):  # noqa: F841 - definition is the assertion
             @reflex_xy.figure(probe="everything")
+            def chart(self):
+                return None
+
+
+@pytest.mark.parametrize("level", [0, 0.0, 1, True])
+def test_probe_levels_are_identity_strict(level):
+    """0/0.0 compare equal to False (and 1/True to each other) but are not
+    probe levels; equality-based membership silently accepted them."""
+    with pytest.raises(ValueError, match="probe="):
+
+        class BadProbe(rx.State):  # noqa: F841 - definition is the assertion
+            @reflex_xy.figure(probe=level)
             def chart(self):
                 return None

@@ -44,8 +44,6 @@ from .tokens import BUILDER_ATTR, PROBE_ATTR, build_state_token
 
 __all__ = ["AsyncFigureVar", "FigureVar", "figure"]
 
-_PROBE_LEVELS = ("build", "figure", False)
-
 
 def _builder_target(var: Any, obj: Any) -> Any:
     """Point dependency tracking at the wrapped method — the figure builder
@@ -178,13 +176,15 @@ def figure(
     reflex-integration.md §3.1): at app compile the plugin runs the builder
     once against default state, so hallucinated chart APIs and bad kwargs
     fail ``reflex run`` instead of a silent blank mount at hydrate.
-    ``"build"`` (the sync default) runs the body only; ``"figure"``
-    additionally compiles the result (full config/shape validation at the
-    price of one real figure); ``False`` opts out — the default for
-    ``async def`` builders, whose data sources should not be awaited at
-    compile.
+    ``"build"`` (the sync default) runs the body and checks the return is a
+    chart (or ``None``); ``"figure"`` additionally compiles the result
+    (full config/shape validation at the price of one real figure);
+    ``False`` opts out — the default for ``async def`` builders, whose data
+    sources should not be awaited at compile.
     """
-    if probe not in (*_PROBE_LEVELS, None):
+    # Identity/equality-strict: 0 and 0.0 compare equal to False but are
+    # not a probe level — reject them instead of silently skipping probes.
+    if not (probe is None or probe is False or probe == "build" or probe == "figure"):
         msg = f"@reflex_xy.figure probe= must be 'build', 'figure', or False, got {probe!r}"
         raise ValueError(msg)
 

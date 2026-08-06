@@ -292,17 +292,22 @@ still defers to hydrate — so it gets a compile gate of its own.
 the builder once against a default state instance
 (`@reflex_xy.figure(probe=...)` sets the level):
 
-- `probe="build"` — the default for sync builders: run the body only.
-  Hallucinated `xy.*` names, wrong kwargs, and eager chrome errors fail
-  `reflex run` with the state class, var name, and source location
-  (`FigureProbeError` wrapping the original), instead of an `err` frame
-  and a silently blank mount at hydrate.
+- `probe="build"` — the default for sync builders: run the body and check
+  the return is a chart (or `None` for "no chart") — hallucinated `xy.*`
+  names, wrong kwargs, eager chrome errors, and a return value no registry
+  publish could accept fail `reflex run` with the state class, var name,
+  and source location (`FigureProbeError` wrapping the original), instead
+  of an `err` frame and a silently blank mount at hydrate.
 - `probe="figure"` — additionally compile the result: full config/shape
   validation at the price of building one real figure per var at startup.
 - `probe=False` — opt out; the default for `async def` builders (compile
   is sync, and awaiting a data source at compile is what constraint 2
   forbids). An async builder may opt in explicitly and runs under
   `asyncio.run`.
+
+The three levels are the whole domain and validation is identity-strict:
+`probe=0`/`0.0` (which compare equal to `False`) are refused at
+decoration, never silently treated as an opt-out.
 
 The escape valve for constraint 2: a builder whose source reads
 `self.router` is session-dependent by declaration — its probe failure

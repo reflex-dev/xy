@@ -185,10 +185,11 @@ def probe_figure_builders(root_cls: Any = None) -> list[str]:
     tier. Returns the probed var full names; raises :class:`FigureProbeError`
     (wrapping the original) on the first failing builder.
 
-    Level ``"build"`` runs the builder body — hallucinated `xy.*` names,
-    wrong kwargs, and eager chrome errors fail here. ``"figure"`` also
-    compiles the returned chart. ``False`` (and, by default, async builders)
-    are skipped. Builders whose source touches ``self.router`` degrade
+    Level ``"build"`` runs the builder body and type-checks its return —
+    hallucinated `xy.*` names, wrong kwargs, eager chrome errors, and a
+    return value that is not a chart (or ``None``) fail here. ``"figure"``
+    also compiles the returned chart. ``False`` (and, by default, async
+    builders) are skipped. Builders whose source touches ``self.router`` degrade
     failures to a `RuntimeWarning`: they are session-dependent by
     declaration and only a live session can validate them.
     """
@@ -213,6 +214,18 @@ def probe_figure_builders(root_cls: Any = None) -> list[str]:
                 chart = asyncio.run(builder(substate))
             else:
                 chart = builder(substate)
+            if chart is not None and not (
+                callable(getattr(chart, "figure", None))
+                or callable(getattr(chart, "build_payload", None))
+            ):
+                # Every probe level checks the return *type*: a builder that
+                # returns something no registry publish can accept would
+                # otherwise reach hydrate before failing.
+                msg = (
+                    f"builder returned {type(chart).__name__}; expected an "
+                    "xy Chart (or internal Figure), or None for 'no chart'"
+                )
+                raise TypeError(msg)
             if level == "figure" and chart is not None:
                 _figure_of(chart)
         except Exception as exc:
