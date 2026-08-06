@@ -108,6 +108,14 @@ _WHEEL_TARGETS = {
 }
 _ELF_ALLOWED_GLIBC = {"libc.so.6", "libm.so.6", "libgcc_s.so.1", "ld-linux-x86-64.so.2"}
 _ELF_ALLOWED_MUSL_PREFIXES = ("libc.musl-", "ld-musl-", "libgcc_s.so.")
+_PE_ALLOWED_IMPORTS = {
+    "api-ms-win-core",
+    "api-ms-win-crt",
+    "kernel32.dll",
+    "msvcrt.dll",
+    "ucrtbase.dll",
+    "vcruntime140.dll",
+}
 
 
 def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
@@ -323,6 +331,86 @@ def _pe_exported_symbols(
     return frozenset(exported)
 
 
+def _macho_linkage(
+    name: str, data: bytes, prefix: str, bits: int
+) -> tuple[tuple[str, ...], tuple[int, int] | None]:
+    """Read loaded dylibs and the minimum macOS version from Mach-O commands."""
+    header_size = 32 if bits == 64 else 28
+    if len(data) < header_size:
+        raise AssertionError(f"{name} has a truncated Mach-O header")
+    ncommands = struct.unpack_from(prefix + "I", data, 16)[0]
+    command_offset = header_size
+    dependencies: list[str] = []
+    minimum: tuple[int, int] | None = None
+    dylib_commands = {0xC, 0x18 | 0x80000000, 0x1F | 0x80000000}
+    for _ in range(ncommands):
+        if command_offset + 8 > len(data):
+            raise AssertionError(f"{name} has a truncated Mach-O load-command table")
+        command, command_size = struct.unpack_from(prefix + "II", data, command_offset)
+        if command_size < 8 or command_offset + command_size > len(data):
+            raise AssertionError(f"{name} has an invalid Mach-O load command")
+        if command in dylib_commands and command_size >= 24:
+            name_offset = struct.unpack_from(prefix + "I", data, command_offset + 8)[0]
+            start = command_offset + name_offset
+            end = data.find(b"\0", start, command_offset + command_size)
+            if end > start:
+                dependencies.append(data[start:end].decode("utf-8", errors="replace"))
+        elif command == 0x32 and command_size >= 16:  # LC_BUILD_VERSION
+            version = struct.unpack_from(prefix + "I", data, command_offset + 12)[0]
+            minimum = (version >> 16, (version >> 8) & 0xFF)
+        elif command == 0x24 and command_size >= 16:  # LC_VERSION_MIN_MACOSX
+            version = struct.unpack_from(prefix + "I", data, command_offset + 8)[0]
+            minimum = (version >> 16, (version >> 8) & 0xFF)
+        command_offset += command_size
+    return tuple(dependencies), minimum
+
+
+def _pe_imports(name: str, data: bytes, pe_offset: int, optional_magic: int) -> tuple[str, ...]:
+    """Read DLL names from the PE import directory."""
+    optional_offset = pe_offset + 24
+    data_directory_offset = optional_offset + (104 if optional_magic == 0x10B else 120)
+    if data_directory_offset + 8 > len(data):
+        return ()
+    import_rva, import_size = struct.unpack_from("<II", data, data_directory_offset)
+    if not import_rva or not import_size:
+        return ()
+    section_count = struct.unpack_from("<H", data, pe_offset + 6)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 20)[0]
+    section_offset = optional_offset + optional_size
+    sections: list[tuple[int, int, int]] = []
+    for index in range(section_count):
+        offset = section_offset + index * 40
+        if offset + 40 > len(data):
+            raise AssertionError(f"{name} has a truncated PE section table")
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+            "<IIII", data, offset + 8
+        )
+        sections.append((virtual_address, max(virtual_size, raw_size), raw_offset))
+
+    def file_offset(rva: int) -> int:
+        for virtual_address, size, raw_offset in sections:
+            if virtual_address <= rva < virtual_address + size:
+                return raw_offset + rva - virtual_address
+        raise AssertionError(f"{name} has an import RVA outside its PE sections")
+
+    import_offset = file_offset(import_rva)
+    imports: list[str] = []
+    for offset in range(import_offset, import_offset + import_size, 20):
+        if offset + 20 > len(data):
+            raise AssertionError(f"{name} has a truncated PE import directory")
+        original_thunk, timestamp, forwarder, name_rva, first_thunk = struct.unpack_from(
+            "<IIIII", data, offset
+        )
+        if not any((original_thunk, timestamp, forwarder, name_rva, first_thunk)):
+            break
+        string_offset = file_offset(name_rva)
+        end = data.find(b"\0", string_offset)
+        if end <= string_offset:
+            raise AssertionError(f"{name} has an unterminated PE import name")
+        imports.append(data[string_offset:end].decode("ascii", errors="replace"))
+    return tuple(imports)
+
+
 def _require_native_target(name: str, data: bytes, platform: str) -> None:
     expected = _WHEEL_TARGETS.get(platform)
     if expected is None:
@@ -465,6 +553,51 @@ def _require_elf_linkage(name: str, data: bytes, platform: str) -> None:
         )
         if unexpected:
             raise AssertionError(f"{name} has unsupported musl dependencies: {unexpected}")
+
+
+def _require_macho_linkage(name: str, data: bytes, platform: str) -> None:
+    magic = data[:4]
+    if magic not in {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+    }:
+        raise AssertionError(f"{name} is not a Mach-O binary for macOS linkage validation")
+    prefix = ">" if magic in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf"} else "<"
+    bits = 64 if magic in {b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"} else 32
+    dependencies, minimum = _macho_linkage(name, data, prefix, bits)
+    unexpected = sorted(
+        dependency
+        for dependency in dependencies
+        if not dependency.startswith(("/usr/lib/", "/System/Library/", "@rpath/", "@loader_path/"))
+    )
+    if unexpected:
+        raise AssertionError(f"{name} has unsupported macOS dependencies: {unexpected}")
+    expected_floor = (11, 0) if platform.endswith("arm64") else (10, 12)
+    if minimum is not None and minimum < expected_floor:
+        raise AssertionError(
+            f"{name} targets macOS {minimum[0]}.{minimum[1]}, below {expected_floor[0]}.{expected_floor[1]}"
+        )
+
+
+def _require_pe_linkage(name: str, data: bytes) -> None:
+    if len(data) < 2 or data[:2] != b"MZ":
+        raise AssertionError(f"{name} is not a PE binary for Windows linkage validation")
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if pe_offset + 26 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        raise AssertionError(f"{name} has an invalid PE header")
+    optional_magic = struct.unpack_from("<H", data, pe_offset + 24)[0]
+    if optional_magic not in {0x10B, 0x20B}:
+        raise AssertionError(f"{name} has an invalid PE optional-header magic")
+    imports = _pe_imports(name, data, pe_offset, optional_magic)
+    unexpected = sorted(
+        dependency
+        for dependency in imports
+        if not any(dependency.casefold().startswith(prefix) for prefix in _PE_ALLOWED_IMPORTS)
+    )
+    if unexpected:
+        raise AssertionError(f"{name} has unsupported Windows imports: {unexpected}")
 
 
 def _dist_info_name(names: set[str], filename: str) -> str:
@@ -803,6 +936,10 @@ def verify_wheel(
             with zipfile.ZipFile(path) as zf:
                 if expect_platform.startswith(("manylinux_", "musllinux_")):
                     _require_elf_linkage(native_libs[0], zf.read(native_libs[0]), expect_platform)
+                elif expect_platform.startswith("macosx_"):
+                    _require_macho_linkage(native_libs[0], zf.read(native_libs[0]), expect_platform)
+                elif expect_platform.startswith("win_"):
+                    _require_pe_linkage(native_libs[0], zf.read(native_libs[0]))
                 else:
                     raise AssertionError(
                         f"linkage inspection is not implemented for wheel platform {expect_platform!r}"
