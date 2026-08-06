@@ -83,6 +83,9 @@ def _disarm():
 
 
 def test_probe_runs_sync_builders_and_skips_optouts():
+    # Deliberately unscoped: this one test exercises the production shape —
+    # the whole-state-tree walk post_compile runs (every other builder in the
+    # session must probe clean under default state, the contract it enforces).
     probed = probe_figure_builders()
     names = {name.rsplit(".", 1)[-1] for name in probed if "probe_demo" in name}
     assert "healthy" in names
@@ -97,7 +100,7 @@ def test_hallucinated_chart_api_fails_the_compile():
     builder body is no longer dead code until hydrate."""
     _ARM["hallucinated"] = True
     with pytest.raises(FigureProbeError, match="hallucinated") as excinfo:
-        probe_figure_builders()
+        probe_figure_builders(ProbeDemo)
     assert "polar_scatter" in str(excinfo.value)
     assert isinstance(excinfo.value.__cause__, AttributeError)
 
@@ -105,14 +108,14 @@ def test_hallucinated_chart_api_fails_the_compile():
 def test_probe_figure_level_compiles_the_result():
     _ARM["bad_config"] = True
     with pytest.raises(FigureProbeError, match="bad_config") as excinfo:
-        probe_figure_builders()
+        probe_figure_builders(ProbeDemo)
     assert "colormap" in str(excinfo.value)
 
 
 def test_session_dependent_builder_downgrades_to_warning():
     _ARM["session"] = True
     with pytest.warns(RuntimeWarning, match="session_bound.*reads the session"):
-        probed = probe_figure_builders()
+        probed = probe_figure_builders(ProbeDemo)
     assert not any(name.endswith("session_bound") for name in probed)
 
 
@@ -121,7 +124,7 @@ def test_non_chart_return_fails_the_default_probe_level():
     publish can accept must not survive to hydrate."""
     _ARM["bad_return"] = True
     with pytest.raises(FigureProbeError, match="bad_return") as excinfo:
-        probe_figure_builders()
+        probe_figure_builders(ProbeDemo)
     assert "dict" in str(excinfo.value)
 
 
