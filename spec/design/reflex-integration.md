@@ -932,23 +932,34 @@ scaling claim, and a single measurement at a single N is consistent with
 every growth curve while revealing none of them. The sweep straddles
 `SCATTER_DENSITY_THRESHOLD` (200k) so both regimes are visible — below it
 each republish rebuilds a full exact-marker figure, above it the density
-tier takes over — and the top of the range crosses the direct soft ceiling
-(2M). Recorded 2026-08-06 (Linux, Python 3.11, native core, CI-class
-container; a faster dev machine records ≈2× lower across the board, so the
-contract is the *shape* of the column, not its constant):
+tier takes over — and the range spans the direct soft ceiling (2M). Each size
+is measured over `REPUBLISH_TRIALS` independent trials, because at the top of
+the sweep run-to-run variance is comparable to the gap between neighbouring
+sizes: a single median per size cannot tell a trend from noise, and reading
+one high point as a trend is precisely the error this table must not invite.
+Recorded 2026-08-06 (Linux, Python 3.11, native core, CI-class container; a
+faster dev machine records lower across the board, so the contract is the
+*shape* of the normalized column, not its constant):
 
-| points | republish | per 1M points |
-|---|---|---|
-| 10,000 | 0.37 ms | 36.8 ms |
-| 100,000 | 1.47 ms | 14.7 ms |
-| 1,000,000 | 3.90 ms | 3.9 ms |
-| 5,000,000 | 23.6 ms | 4.7 ms |
+| points | republish | per 1M points | per 1M across trials |
+|---|---|---|---|
+| 10,000 | 0.23 ms | 22.81 ms | 21.54 – 24.78 |
+| 100,000 | 1.22 ms | 12.22 ms | 12.09 – 12.47 |
+| 1,000,000 | 2.95 ms | 2.95 ms | 2.94 – 3.06 |
+| 2,000,000 | 5.72 ms | 2.86 ms | 2.78 – 2.87 |
+| 5,000,000 | 13.83 ms | 2.77 ms | 2.65 – 2.90 |
 
-The normalized column falls to a floor and then stays flat: small republishes
-are dominated by fixed per-publish work, large ones by the figure build they
-fan out, and nothing grows faster than the build. A `per 1M points` column
-that climbs with N — a second pass over the columns, a copy that used to be a
-view — is the regression this sweep exists to catch.
+The normalized column falls steeply while fixed per-publish work still
+dominates, then settles into a band — ~2.7–3.1 ms/1M from 1M up, with the
+three large sizes' trial ranges overlapping. Above the threshold the cost is
+the per-point figure build the republish fans out, and nothing is growing
+faster than it.
+
+The regression signal is the normalized value at the top of the sweep rising
+*clear of that band* — a second pass over the columns, a copy that used to be
+a view — not any increase between adjacent rows. Neighbouring sizes here
+differ by less than the spread within a single size, so a one-row uptick is
+noise until a trial range separates it. Compare bands, not medians.
 
 Re-record when the probe or serialization changes materially; a plan build
 drifting toward tens of milliseconds, or a republish cost growing faster

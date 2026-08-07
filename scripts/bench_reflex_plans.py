@@ -41,8 +41,22 @@ CHARTS_PER_PAGE = 4
 #: republish rebuilds a full exact-marker figure, above it the density tier
 #: takes over, and the two regimes have to be visible separately. Repeats
 #: shrink with N to keep the whole run interactive.
-REPUBLISH_SWEEP = ((10_000, 20), (100_000, 10), (1_000_000, 5), (5_000_000, 3))
+REPUBLISH_SWEEP = (
+    (10_000, 25),
+    (100_000, 15),
+    (1_000_000, 9),
+    (2_000_000, 7),
+    (5_000_000, 5),
+)
 REPUBLISH_REFERENCE_POINTS = 100_000
+
+#: Each size is measured over several independent trials, and the sweep
+#: reports the spread across them alongside the median. Run-to-run variance at
+#: the top of the sweep is comparable to the differences between neighbouring
+#: sizes, so a single median per size cannot distinguish a real trend from
+#: noise — and reading a lone high point as a trend is exactly the mistake the
+#: recorded table is there to prevent.
+REPUBLISH_TRIALS = 3
 
 
 def _median_ms(fn: Callable[[], Any], repeats: int = REPEATS) -> float:
@@ -140,18 +154,24 @@ def _republish_at(points: int, repeats: int) -> float:
 def bench_republish_sweep() -> list[dict[str, float]]:
     """Republish cost across data sizes, with per-million-point normalization.
 
-    A flat `ms_per_million` column means the cost is dominated by the
-    per-point figure build and nothing worse than linear has crept in; a
-    column that climbs with N is the regression this exists to catch.
+    `ms_per_million` settling into a band as N grows means the cost is
+    dominated by the per-point figure build and nothing worse than linear has
+    crept in. The regression this exists to catch is that normalized value
+    climbing *clear of the band* at the top of the sweep — `ms_per_million_min`
+    and `_max` are reported so the band is visible and a single high median is
+    not mistaken for a trend.
     """
     rows: list[dict[str, float]] = []
     for points, repeats in REPUBLISH_SWEEP:
-        ms = _republish_at(points, repeats)
+        trials = [_republish_at(points, repeats) for _ in range(REPUBLISH_TRIALS)]
+        per_million = sorted(ms * 1e6 / points for ms in trials)
         rows.append(
             {
                 "points": points,
-                "republish_ms": round(ms, 2),
-                "ms_per_million": round(ms * 1e6 / points, 2),
+                "republish_ms": round(statistics.median(trials), 2),
+                "ms_per_million": round(statistics.median(per_million), 2),
+                "ms_per_million_min": round(per_million[0], 2),
+                "ms_per_million_max": round(per_million[-1], 2),
             }
         )
     return rows
@@ -202,11 +222,12 @@ def main() -> int:
         f"worker startup page evaluation     {results['worker_startup_ms']:8.1f} ms "
         f"({STARTUP_PAGES} pages x {CHARTS_PER_PAGE} charts)"
     )
-    print("column republish -> new payload (mounted, median):")
+    print(f"column republish -> new payload (mounted, median of {REPUBLISH_TRIALS} trials):")
     for row in sweep:
         print(
             f"  {int(row['points']):>10,} points          {row['republish_ms']:8.2f} ms "
-            f"({row['ms_per_million']:.2f} ms / 1M points)"
+            f"({row['ms_per_million']:5.2f} ms / 1M points, "
+            f"{row['ms_per_million_min']:.2f}-{row['ms_per_million_max']:.2f} across trials)"
         )
     print(f"plan map entry                     {results['plan_memory_bytes']:8.0f} bytes/plan")
     return 0

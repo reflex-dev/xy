@@ -33,6 +33,8 @@ from reflex_docgen.markdown import (
 )
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
+from reflex_site_shared.docs.markdown import _file_modules
+from reflex_site_shared.docs.models import DocsPage
 from rxconfig import config
 from xy_docs.api_reference import (
     API_REFERENCE_HEADING,
@@ -1206,6 +1208,51 @@ def test_repeated_identical_fence_keeps_the_page_namespace_accumulating(
     assert second["result"]() == (1, 2)
 
 
+def test_editing_a_page_drops_the_fence_snapshots_keyed_to_its_old_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A page edit must not let a fence restore a snapshot from another position.
+
+    Snapshot keys carry the fence's occurrence index, so removing or reordering
+    a duplicated fence renumbers every surviving copy. Without invalidation the
+    renumbered fence adopts the snapshot the *other* copy left behind — a
+    namespace captured before the bindings that now precede it — and the page
+    silently renders from stale data. The dev server re-renders in-process on
+    reload, so this is the live path, not a hypothetical one.
+    """
+    source_path = tmp_path / "editable.md"
+
+    def page_of(*fences: str) -> DocsPage:
+        content = "\n".join(f"~~~python exec\n{body}\n~~~\n" for body in fences)
+        source_path.write_text(content)
+        return DocsPage(
+            source_path=source_path,
+            relative_path=Path("editable.md"),
+            route="/docs/xy/editable",
+            title="Editable",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    duplicated = "shared = 1"
+    monkeypatch.chdir(tmp_path)
+
+    # First layout: the duplicate sits at occurrence 1, after `between`, so
+    # occurrence 0's snapshot is the one captured before `between` existed.
+    render_xy_markdown_page(
+        page_of(duplicated, "between = 2", duplicated, "first = (shared, between)")
+    )
+    # The edit removes the leading copy, renumbering the survivor to occurrence
+    # 0 — and revises the trailing fence, as a real edit does, so it is a cache
+    # miss and runs against whatever namespace the restore left behind.
+    render_xy_markdown_page(page_of("between = 2", duplicated, "second = (shared, between)"))
+
+    module = _file_modules[str(source_path.resolve())]
+    assert module.__dict__["second"] == (1, 2)
+
+
 def _assigned_names(target: ast.expr) -> set[str]:
     """Every top-level name an assignment target binds, unpacking included."""
     if isinstance(target, ast.Name):
@@ -1217,25 +1264,74 @@ def _assigned_names(target: ast.expr) -> set[str]:
     return set()  # attribute/subscript targets rebind no module-level name
 
 
-def _bound_names(body: str) -> set[str]:
-    """Top-level names one fence binds, in every form a demo can use.
+#: Statements that run at module scope and can hold further bindings in their
+#: bodies. `FunctionDef`/`ClassDef` are deliberately absent: they bind their own
+#: name (handled below) but their bodies are a separate scope, so a name
+#: assigned inside one is not a module-level binding and cannot shadow a
+#: sibling fence's.
+_NESTED_SCOPE_FREE_BODIES = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.If,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.Match,
+)
 
-    Plain assignment is not the only way to shadow a name a sibling fence
-    also owns: `x: list = ...`, `x += ...`, `x, y = ...`, and `def`/`class`
-    all do it. Matching only `ast.Assign` would skip those pages, leaving the
-    regression this guards unexercised on exactly the demos most likely to
-    hit it.
-    """
+
+def _module_bindings(node: ast.AST) -> set[str]:
+    """Module-level names one statement binds, recursing into nested bodies."""
     bound: set[str] = set()
-    for node in ast.parse(body).body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                bound |= _assigned_names(target)
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            bound |= _assigned_names(node.target)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bound.add(node.name)
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            bound |= _assigned_names(target)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        bound.add(node.name)  # the body is another scope; the name is not
+        return bound
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        bound |= {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        for item in node.items:
+            if item.optional_vars is not None:
+                bound |= _assigned_names(item.optional_vars)
+    if isinstance(node, ast.Try):
+        bound |= {handler.name for handler in node.handlers if handler.name}
+    if isinstance(node, ast.Match):
+        for case in node.cases:
+            bound |= {
+                capture.name
+                for capture in ast.walk(case.pattern)
+                if isinstance(capture, (ast.MatchAs, ast.MatchStar)) and capture.name
+            }
+    if isinstance(node, _NESTED_SCOPE_FREE_BODIES):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.stmt):
+                bound |= _module_bindings(child)
+    # Walrus binds at the enclosing scope wherever the expression appears.
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.NamedExpr):
+            bound |= _assigned_names(inner.target)
     return bound
+
+
+def _bound_names(body: str) -> set[str]:
+    """Every module-level name one fence binds.
+
+    Plain assignment is not the only way to shadow a name a sibling fence also
+    owns: annotated, augmented and unpacked assignment, `def`/`class`, imports,
+    `for`/`with`/`except`/`match` targets, and walrus all do it — and the
+    compound statements among them nest, so a binding can sit inside a
+    top-level `for` or `if` body. Missing any of those forms under-reports
+    rebound names and silently drops pages from the guarded test, which then
+    still passes while covering less.
+    """
+    return {name for node in ast.parse(body).body for name in _module_bindings(node)}
 
 
 def _names_rebound_across_exec_fences(content: str) -> set[str]:
@@ -1255,22 +1351,7 @@ def test_rebound_name_detection_covers_every_binding_form() -> None:
     """Pin the detector itself: the page filter above is only as complete as
     the binding forms it recognizes."""
     fence = "~~~python exec\n{body}\n~~~"
-    page = "\n".join(
-        fence.format(body=body)
-        for body in (
-            "plain = 1\nannotated: int = 1\naugmented = 0\nunpacked = 0\nspread = 0\n"
-            "def fn():\n    pass\n\n\nclass Cls:\n    pass",
-            "plain = 2",
-            "annotated: int = 2",
-            "augmented += 2",
-            "unpacked, other = (2, 3)",
-            "*spread, tail = [2, 3]",
-            "def fn():\n    return 2",
-            "class Cls:\n    pass",
-            "obj.attr = 2\nmapping['key'] = 2",  # rebinds no module-level name
-        )
-    )
-    assert _names_rebound_across_exec_fences(page) == {
+    declared = (
         "plain",
         "annotated",
         "augmented",
@@ -1278,7 +1359,42 @@ def test_rebound_name_detection_covers_every_binding_form() -> None:
         "spread",
         "fn",
         "Cls",
-    }
+        "np",
+        "pi",
+        "looped",
+        "handle",
+        "caught",
+        "matched",
+        "walrus",
+        "nested",
+    )
+    page = "\n".join(
+        fence.format(body=body)
+        for body in (
+            "\n".join(f"{name} = 0" for name in declared),
+            "plain = 2",
+            "annotated: int = 2",
+            "augmented += 2",
+            "unpacked, other = (2, 3)",
+            "*spread, tail = [2, 3]",
+            "def fn():\n    return 2",
+            "class Cls:\n    pass",
+            "import numpy as np",
+            "from math import pi",
+            "for looped in range(2):\n    pass",
+            "with open(__file__) as handle:\n    pass",
+            "try:\n    pass\nexcept ValueError as caught:\n    pass",
+            "match [1]:\n    case [matched]:\n        pass",
+            "if (walrus := 2):\n    pass",
+            # A binding inside a top-level compound body is still module scope.
+            "for _ in range(1):\n    if True:\n        nested = 2",
+            # Neither rebinds a module-level name: attribute/subscript targets,
+            # and names assigned inside a function body (a separate scope).
+            "obj.attr = 2\nmapping['key'] = 2",
+            "def _unrelated():\n    plain = 3\n    return plain",
+        )
+    )
+    assert _names_rebound_across_exec_fences(page) == set(declared)
 
 
 def test_repeated_page_renders_rebuild_every_demo_from_its_own_data(

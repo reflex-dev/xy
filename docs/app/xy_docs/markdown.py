@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import replace
@@ -41,6 +42,40 @@ _DEMO_DATA_TAB_LINE_THRESHOLD = 10
 # distinct positions in the page's fence sequence and saw different namespaces.
 # See `_exec_fence`.
 _FENCE_NAMESPACES: dict[tuple[str, str, int], dict] = {}
+
+# Digest of the page source each filepath's snapshots were captured from. A
+# snapshot's key includes the fence's *position*, so entries are only valid for
+# the exact page content that produced them. See `_invalidate_stale_fences`.
+_FENCE_PAGE_DIGESTS: dict[str, str] = {}
+
+
+def _invalidate_stale_fences(virtual_filepath: str, content: str) -> None:
+    """Drop a page's fence snapshots when its source no longer matches theirs.
+
+    Snapshots are keyed by (filepath, fence source, occurrence index), so a
+    fence's identity depends on where it sits in the page's fence sequence.
+    Within one process that is exactly right — the repeat renders this cache
+    exists for (frontend compile, then `reflex_xy`'s worker-startup pass) walk
+    identical content. Across an edit it is not: adding, removing or reordering
+    a duplicated fence shifts the occurrence index of every surviving copy, so
+    a fence could restore a snapshot captured when it sat at a different
+    position, silently reviving a namespace that predates the bindings now
+    ahead of it. The dev server re-renders in-process on reload, which is
+    precisely where that happens.
+
+    So version the cache by page source: whenever a page renders with content
+    that differs from the digest its entries were captured under, those entries
+    are stale by construction and get dropped. This also bounds the cache —
+    superseded page versions are evicted rather than retained for the life of
+    the process, each one holding a full namespace snapshot (State classes,
+    arrays, every binding) alive.
+    """
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    if _FENCE_PAGE_DIGESTS.get(virtual_filepath) == digest:
+        return
+    _FENCE_PAGE_DIGESTS[virtual_filepath] = digest
+    for key in [key for key in _FENCE_NAMESPACES if key[0] == virtual_filepath]:
+        del _FENCE_NAMESPACES[key]
 
 
 def _split_demo_data(content: str) -> tuple[str | None, str]:
@@ -173,6 +208,10 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
         discarding whatever the fences in between defined, which is not what
         the shared renderer does (it skips re-execution and lets the page's
         namespace keep accumulating).
+
+        Because that identity is positional, it is only meaningful for the page
+        source it was captured from; `_invalidate_stale_fences` drops a page's
+        entries as soon as its content changes.
         """
         occurrence = self.fence_occurrences[content]
         self.fence_occurrences[content] += 1
@@ -230,6 +269,9 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
 def render_xy_markdown_page(page: DocsPage) -> rx.Component:
     """Render one discovered XY documentation page."""
     source_path = page.source_path.resolve()
+    # Cached snapshots are keyed by fence position, so they only survive while
+    # the page source that produced them does.
+    _invalidate_stale_fences(str(source_path), page.content)
     # One fence sequence per page render, even though the body and the FAQ are
     # transformed separately around the generated API section.
     fence_occurrences: Counter[str] = Counter()
