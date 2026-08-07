@@ -440,6 +440,7 @@ if TYPE_CHECKING:
         threshold,
         threshold_zone,
         tooltip,
+        triangle_mesh,
         violin,
         vline,
         x_axis,
@@ -465,16 +466,24 @@ if TYPE_CHECKING:
     from .factories import (
         area_chart,
         bar_chart,
+        box_chart,
         chart,
         column_chart,
+        contour_chart,
+        ecdf_chart,
         error_band_chart,
         errorbar_chart,
+        heatmap_chart,
+        hexbin_chart,
         histogram_chart,
         line_chart,
         scatter_chart,
         segments_chart,
+        stairs_chart,
         stem_chart,
         step_chart,
+        triangle_mesh_chart,
+        violin_chart,
     )
     from .handles import DataHandle, FigureHandle
     from .namespace import XY_NAMESPACE, XYNamespace
