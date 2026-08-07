@@ -1,4 +1,4 @@
-import { PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
@@ -3333,8 +3333,7 @@ export class ChartView {
     // tooltips and events keep naming the right stage while filtered.
     g._visMap = visible.length === f.n ? null : Int32Array.from(visible);
     g.n = visible.length;
-    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
-    for (const [name, slot] of Object.entries(slots)) {
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
       const source = f[name];
       const values = g._visMap
         ? Float32Array.from(visible, (i) => source[i])
@@ -4743,9 +4742,8 @@ export class ChartView {
   _buildFunnelMark(g, t, buffer) {
     const cols: any = {};
     const metas: any = {};
-    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
     let n = Infinity;
-    for (const [name, slot] of Object.entries(slots)) {
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
       const values = this._columnView(buffer, this.spec.columns[t[name]]);
       cols[name] = values;
       metas[name] = { ...this.spec.columns[t[name]] };
@@ -4763,14 +4761,14 @@ export class ChartView {
     // against the pos0/lo0 metas the _cpu record carries.
     const posMeta = metas.pos0;
     const crossMeta = metas.lo0;
-    const dec = (name, i) => cols[name][i] / (metas[name].scale || 1) + (metas[name].offset || 0);
+    const dec = (name, i) => this._decodeValue(cols[name], metas[name], i);
     const centerX = new Float32Array(n);
     const centerY = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const pCenter = (dec("pos0", i) + dec("pos1", i)) / 2;
       const cCenter = (dec("lo0", i) + dec("hi0", i) + dec("lo1", i) + dec("hi1", i)) / 4;
-      const encP = (pCenter - (posMeta.offset || 0)) * (posMeta.scale || 1);
-      const encC = (cCenter - (crossMeta.offset || 0)) * (crossMeta.scale || 1);
+      const encP = (pCenter - posMeta.offset) * (posMeta.scale || 1);
+      const encC = (cCenter - crossMeta.offset) * (crossMeta.scale || 1);
       centerX[i] = g.orientation === 1 ? encP : encC;
       centerY[i] = g.orientation === 1 ? encC : encP;
     }
@@ -4864,12 +4862,11 @@ export class ChartView {
       delete g._funnelGeomMixed;
     }
     const gl = this.gl;
-    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
     const rows = g._visMap;
     const count = rows ? rows.length : f.n;
     const scratch = (g._funnelMixScratch ||= {});
     const mixed = {};
-    for (const name of Object.keys(slots)) {
+    for (const name of Object.keys(FUNNEL_SLOTS)) {
       const out = scratch[name] && scratch[name].length === count
         ? scratch[name]
         : (scratch[name] = new Float32Array(count));
@@ -4891,19 +4888,19 @@ export class ChartView {
       // as a bar grows out of its baseline. Encoded space is fine — the two
       // edges share a meta per column pair only after decoding, so mix the
       // DECODED midpoint per end via the metas.
-      const dec = (name, v) => v / (f.metas[name].scale || 1) + (f.metas[name].offset || 0);
-      const enc = (name, v) => (v - (f.metas[name].offset || 0)) * (f.metas[name].scale || 1);
+      const dec = (name, values, index) => this._decodeValue(values, f.metas[name], index);
+      const enc = (name, value) => (value - f.metas[name].offset) * (f.metas[name].scale || 1);
       for (let k = 0; k < count; k++) {
         for (const [lo, hi] of [["lo0", "hi0"], ["lo1", "hi1"]]) {
-          const a = dec(lo, mixed[lo][k]);
-          const b = dec(hi, mixed[hi][k]);
+          const a = dec(lo, mixed[lo], k);
+          const b = dec(hi, mixed[hi], k);
           const mid = (a + b) / 2;
           mixed[lo][k] = enc(lo, mid + (a - mid) * grow);
           mixed[hi][k] = enc(hi, mid + (b - mid) * grow);
         }
       }
     }
-    for (const [name, slot] of Object.entries(slots)) {
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
       const buf = g[slot + "Buf"];
       if (!buf) continue;
       gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -4935,21 +4932,19 @@ export class ChartView {
     gl.uniform1i(u("u_cmode"), this._axisMode(crossAxis));
     gl.uniform1f(u("u_cconstant"), this._axisConstant(crossAxis));
     gl.uniform1i(u("u_horizontal"), horizontal ? 1 : 0);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
     const stroke = g.stroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
-    const parts = ["x0", "x1", "y0", "y1", "x2", "y2"].map((name) => g[name + "Buf"]._fcId);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
+    const parts = Object.values(FUNNEL_SLOTS).map((slot) => g[slot + "Buf"]._fcId);
     parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0);
     this._bindVao(g, "funnel", parts, () => {
-      this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ax2, g.x2Buf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ay2, g.y2Buf, 0, 1);
+      for (const slot of Object.values(FUNNEL_SLOTS)) {
+        this._vaoAttr(ATTR_SLOTS["a" + slot], g[slot + "Buf"], 0, 1);
+      }
       if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
     });
     if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
@@ -4972,7 +4967,7 @@ export class ChartView {
     const crossAxisRec = { ...this._axis(crossAxis), constant: this._axisConstant(crossAxis) };
     const pointerPos = this._axisCoord(posAxisRec, horizontal ? dataX : dataY);
     const pointerCross = this._axisCoord(crossAxisRec, horizontal ? dataY : dataX);
-    const val = (name, i) => f[name][i] / (f.metas[name].scale || 1) + (f.metas[name].offset || 0);
+    const val = (name, i) => this._decodeValue(f[name], f.metas[name], i);
     const posVal = (name, i) => this._axisCoord(posAxisRec, val(name, i));
     const crossVal = (name, i) => this._axisCoord(crossAxisRec, val(name, i));
     // A legend-hidden stage draws nothing, so it must not hover either; the

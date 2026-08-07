@@ -519,6 +519,13 @@ non-bool hidden) are dropped without mutating state.
   stale-predicate replies; drills ship only visible rows with canonical
   `shipped_sel`.
 
+**Accessibility compatibility exception.** Legend-hidden ordinary point-series
+rows remain in keyboard traversal in their full retained CPU order, so a screen
+reader can still inspect them and the announced `Point N of total` denominator
+does not change under a visual toggle. Funnel `stageNav` is geometry-semantic:
+it follows the currently visible stage/category geometry, and a whole hidden
+funnel contributes no stages to that walk.
+
 **Deliberate limits (recorded, not silent — §28):** toggles never rescale
 axes (the view is the user's; Fit Data is the re-fit tool). Toggle state
 does not enter durable view state or gesture history yet — a context-loss

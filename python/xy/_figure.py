@@ -648,8 +648,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             style["wedge_gap"] = gap
         stroke = self._optional_css_color(stroke, f"{kind} stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
-        if stroke is not None and stroke_width == 0.0:
-            stroke_width = 1.0
+        stroke_width = _marks._implied_stroke_width(stroke, stroke_width)
         fill_spec = _validate.mark_fill(fill, f"{kind} fill")
         if stroke is not None:
             style["stroke"] = stroke

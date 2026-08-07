@@ -147,6 +147,27 @@ def _stroke_channel(
     return None, resolved
 
 
+def _implied_stroke_width(
+    stroke: Optional[str],
+    stroke_width: float,
+    *,
+    stroke_channel: Optional[channels.ColorChannel] = None,
+    stroke_width_channel: Optional[channels.StyleChannel] = None,
+) -> float:
+    """Return the effective width, implying 1px for paint without a width.
+
+    Scalar zero shares the public default semantics and therefore implies 1px;
+    an authored width channel stays authoritative, even when its rows are zero.
+    """
+    if (
+        (stroke is not None or stroke_channel is not None)
+        and stroke_width == 0.0
+        and stroke_width_channel is None
+    ):
+        return 1.0
+    return stroke_width
+
+
 def _series_direct_paints(
     value: Any,
     n_series: int,
@@ -796,13 +817,13 @@ def funnel(
             unmapped = 0
             missing: list[str] = []
             stage_css = []
-            for name in stage_names:
-                if name in pinned:
-                    stage_css.append(pinned[name])
+            for stage_name in stage_names:
+                if stage_name in pinned:
+                    stage_css.append(pinned[stage_name])
                 else:
                     stage_css.append(spare[unmapped % len(spare)])
                     unmapped += 1
-                    missing.append(name)
+                    missing.append(stage_name)
             if missing:
                 # The resolver path warns about unmapped categories; this
                 # fallback must too, or a typo in the map is silent exactly
@@ -849,13 +870,7 @@ def funnel(
     if width_channel is not None:
         raise ValueError("funnel stroke_width is per-trace")
     stroke_width_value = 0.0 if width_constant is None else float(width_constant)
-    if stroke_value is not None and not stroke_width_value:
-        # `stroke=` with no width drew nothing: every renderer skips a
-        # zero-width stroke. The other mark builders imply 1px in exactly this
-        # case, so a documented option is never silently inert. Like them, an
-        # explicit `stroke_width=0` is indistinguishable from the default and
-        # also takes the 1px — "outline me, zero wide" has no other reading.
-        stroke_width_value = 1.0
+    stroke_width_value = _implied_stroke_width(stroke_value, stroke_width_value)
 
     stage_dim = "y" if orientation == "vertical" else "x"
     # The checkpoint is taken BEFORE the stage names commit to the axis
@@ -1095,12 +1110,12 @@ def triangle_mesh(
         default=0.0,
         minimum=0.0,
     )
-    if (
-        (stroke_value is not None or stroke_ch is not None)
-        and not stroke_width_value
-        and ("stroke_width" not in style_channels)
-    ):
-        stroke_width_value = 1.0
+    stroke_width_value = _implied_stroke_width(
+        stroke_value,
+        stroke_width_value,
+        stroke_channel=stroke_ch,
+        stroke_width_channel=style_channels.get("stroke_width"),
+    )
     color_ch = channels.resolve_color(
         color,
         n,
@@ -2203,12 +2218,12 @@ def scatter(
             default=0.0,
             minimum=0.0,
         )
-        if (
-            (stroke_value is not None or stroke_ch is not None)
-            and not stroke_width_value
-            and ("stroke_width" not in style_channels)
-        ):
-            stroke_width_value = 1.0
+        stroke_width_value = _implied_stroke_width(
+            stroke_value,
+            stroke_width_value,
+            stroke_channel=stroke_ch,
+            stroke_width_channel=style_channels.get("stroke_width"),
+        )
         if (
             stroke_value is None
             and stroke_ch is None

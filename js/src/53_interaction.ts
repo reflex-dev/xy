@@ -471,25 +471,29 @@ Object.assign(ChartView.prototype, {
   _a11yPointGroups() {
     // stageNav marks (funnel) traverse their per-stage centers in data order,
     // which for a funnel is the declared stage order — the ordered process a
-    // screen reader should hear. Legend-hidden series draw nothing and are
-    // not announced either; a category filter narrows the walk through
-    // _a11yGroupCount/_a11yGroupRow below.
-    return (this.gpuTraces || []).filter((g) =>
-      (markOf(g.trace.kind).pointPick || markOf(g.trace.kind).stageNav) &&
-      g.tier !== "density" && !g._legendHidden && g._cpu &&
-      g._cpu.x && g._cpu.y && this._a11yGroupCount(g) > 0);
+    // screen reader should hear. Funnel navigation follows its visible stage
+    // geometry; ordinary point-series navigation deliberately keeps the full
+    // retained CPU rows even when the legend hides their paint, preserving
+    // the pre-funnel accessibility path and stable "Point N of total" count.
+    return (this.gpuTraces || []).filter((g) => {
+      const mark = markOf(g.trace.kind);
+      return (mark.pointPick || mark.stageNav) && g.tier !== "density" &&
+        (!mark.stageNav || !g._legendHidden) && g._cpu &&
+        g._cpu.x && g._cpu.y && this._a11yGroupCount(g) > 0;
+    });
   },
 
-  // Keyboard traversal walks what is DRAWN: a legend category filter narrows
-  // the group to its visible rows, and the row index it reports stays in
-  // SHIPPED space (what tooltip_rows and the kernel exact-pick speak).
+  // stageNav walks what is DRAWN: a funnel category filter narrows the group
+  // to its visible stages, and the row index stays in SHIPPED space (what
+  // tooltip_rows and the kernel exact-pick speak). Ordinary point marks retain
+  // their complete accessibility universe regardless of paint-only filtering.
   _a11yGroupCount(g) {
-    if (g._visMap) return g._visMap.length;
+    if (markOf(g.trace.kind).stageNav && g._visMap) return g._visMap.length;
     return Math.min(g._cpu.x.length, g._cpu.y.length);
   },
 
   _a11yGroupRow(g, offset) {
-    return g._visMap ? g._visMap[offset] : offset;
+    return markOf(g.trace.kind).stageNav && g._visMap ? g._visMap[offset] : offset;
   },
 
   _onA11yKey(e) {

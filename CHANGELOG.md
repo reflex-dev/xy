@@ -26,6 +26,13 @@ in the README).
   fragment stage; SVG/PNG/PDF exports emit the same `_scene.funnel_quad`
   geometry, pinned by golden tests.
 
+### Changed
+- Native raster exports now resolve categorical palettes through the same
+  indexed fallback as SVG and density rendering. Browser-only or otherwise
+  unresolvable entries in hand-authored payloads emit a `RuntimeWarning` and
+  fall back to the built-in color at the same index, preserving distinct
+  categories instead of silently collapsing them onto one shared color.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added

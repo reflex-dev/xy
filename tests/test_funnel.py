@@ -610,6 +610,19 @@ def test_theme_palette_mapping_pins_stage_colors_by_name() -> None:
     assert channel.palette == ["#3b82f6", "#10b981", "#f4a300"]
 
 
+def test_color_shaped_stage_names_do_not_replace_the_trace_name() -> None:
+    """The mapped-palette fallback iterates CSS-color-shaped stage names but
+    must not shadow the already validated series name."""
+    fig = xy.funnel_chart(
+        ["red", "blue"],
+        [4.0, 2.0],
+        xy.theme(palette={"red": "#dc2626", "blue": "#2563eb"}),
+        name="pipeline",
+    ).figure()
+    assert fig.traces[0].name == "pipeline"
+    assert fig.traces[0].color_ch.palette == ["#dc2626", "#2563eb"]
+
+
 def test_chart_class_names_reach_the_slot_spec() -> None:
     spec, _ = (
         xy.funnel_chart(
@@ -746,12 +759,9 @@ def test_raster_gives_var_palette_entries_distinct_fallbacks() -> None:
     """SVG/PDF degrade browser-only palette entries to DISTINCT built-ins;
     the PNG rasterizer must match instead of collapsing every var() stage
     onto one fallback color."""
-    import warnings
-
     from test_png_export import _decode_rgba
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    with pytest.warns(RuntimeWarning, match="resolve only in a browser"):
         fig = xy.funnel_chart(
             ["a", "b"],
             [4.0, 4.0],
@@ -828,6 +838,49 @@ def test_chart_level_data_reaches_an_explicit_funnel_child() -> None:
 def test_stray_kwargs_with_an_explicit_child_are_refused_by_name() -> None:
     with pytest.raises(ValueError, match=r"got \['gap'\] alongside an explicit"):
         xy.funnel_chart(xy.funnel(stage=["a"], value=[1.0]), gap=0.5)
+
+
+@pytest.mark.parametrize(
+    "implicit_kwargs",
+    [
+        {"stage": ["b"]},
+        {"value": [2.0]},
+        {"data": {"stage": ["b"], "value": [2.0]}, "stage": "stage", "value": "value"},
+    ],
+)
+def test_explicit_child_cannot_be_combined_with_implicit_funnel_data(
+    implicit_kwargs,
+) -> None:
+    explicit = xy.funnel(stage=["a"], value=[1.0])
+    with pytest.raises(ValueError, match=r"alongside an explicit xy\.funnel"):
+        xy.funnel_chart(explicit, **implicit_kwargs)
+
+
+def test_empty_data_only_and_axis_only_funnel_charts_compile_without_a_mark() -> None:
+    charts = (
+        xy.funnel_chart(),
+        xy.funnel_chart(data={"unused": [1.0]}),
+        xy.funnel_chart(xy.x_axis(label="stage")),
+    )
+    for chart in charts:
+        assert not any(isinstance(child, xy.Mark) for child in chart.children)
+        fig = chart.figure()
+        spec, blob = fig.build_payload()
+        assert fig.traces == []
+        assert spec["traces"] == []
+        assert blob == b""
+
+
+@pytest.mark.parametrize(
+    "mark_kwargs",
+    [
+        {"geometry": "bar"},
+        {"data": {"unused": [1.0]}, "gap": 0.2},
+    ],
+)
+def test_mark_options_without_funnel_data_are_refused(mark_kwargs) -> None:
+    with pytest.raises(ValueError, match="without stage/value data"):
+        xy.funnel_chart(**mark_kwargs)
 
 
 def test_mixed_orientations_in_one_chart_are_refused() -> None:
@@ -1056,3 +1109,61 @@ def test_scene_reference_names_the_clients_actual_strip_order() -> None:
     doc = _scene.funnel_quad.__doc__ or ""
     assert "A, B, D, C" in doc
     assert "ABD and BDC" in doc
+
+
+def test_client_funnel_draw_multiplies_transition_opacity_into_both_paints() -> None:
+    """Retained old traces retire via `_transitionOpacity = 0`; both the fill
+    and outline uniforms must consume it or old funnel geometry ghosts."""
+    source = (Path(__file__).parents[1] / "js" / "src" / "50_chartview.ts").read_text(
+        encoding="utf-8"
+    )
+    draw = source.split("_drawFunnels(g, xm, ym) {")[1].split("\n  }\n\n", 1)[0]
+    assert "const transitionAlpha = (g._transitionOpacity ?? 1)" in draw
+    assert 'u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha' in draw
+    assert 'u("u_strokeOpacity")' in draw and "* transitionAlpha" in draw
+
+
+def test_client_funnel_geometry_uses_one_exported_slot_contract() -> None:
+    """Filtering, build, per-frame mix, draw and animation must share one
+    ordered semantic-column-to-GL-slot mapping."""
+    root = Path(__file__).parents[1] / "js" / "src"
+    header = (root / "00_header.ts").read_text(encoding="utf-8")
+    chart = (root / "50_chartview.ts").read_text(encoding="utf-8")
+    animation = (root / "56_animation.ts").read_text(encoding="utf-8")
+    expected = (
+        'pos0: "x0"',
+        'pos1: "x1"',
+        'lo0: "y0"',
+        'hi0: "y1"',
+        'lo1: "x2"',
+        'hi1: "y2"',
+    )
+    assert "export const FUNNEL_SLOTS" in header
+    assert all(entry in header for entry in expected)
+    assert chart.count("Object.entries(FUNNEL_SLOTS)") == 3
+    assert "Object.keys(FUNNEL_SLOTS)" in chart
+    assert chart.count("Object.values(FUNNEL_SLOTS)") == 2
+    assert "Object.keys(FUNNEL_SLOTS)" in animation
+    duplicated = '{ pos0: "x0", pos1: "x1", lo0: "y0"'
+    assert duplicated not in chart and duplicated not in animation
+
+
+def test_client_funnel_precision_paths_use_the_shared_decoder() -> None:
+    """Funnel center build, grow mix, containment and update retargeting must
+    inherit the shared §4/§16 offset semantics rather than private formulas."""
+    root = Path(__file__).parents[1] / "js" / "src"
+    chart = (root / "50_chartview.ts").read_text(encoding="utf-8")
+    animation = (root / "56_animation.ts").read_text(encoding="utf-8")
+    chart_methods = (
+        "_buildFunnelMark(g, t, buffer) {",
+        "_mixFunnelGeometry(g) {",
+        "_funnelHover(g, dataX, dataY) {",
+    )
+    for signature in chart_methods:
+        body = chart.split(signature)[1].split("\n  }\n\n", 1)[0]
+        assert "this._decodeValue" in body, signature
+        assert ".offset || 0" not in body, signature
+    prep = animation.split("_prepareFunnelPositionInterpolation(previous, next, match) {")[1]
+    prep = prep.split("\n  },", 1)[0]
+    assert prep.count("this._decodeValue") == 2
+    assert ".offset || 0" not in prep

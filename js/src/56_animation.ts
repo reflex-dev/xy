@@ -1,4 +1,4 @@
-import { PROTOCOL } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL } from "./00_header";
 import { ChartView } from "./50_chartview";
 
 // Declarative data animation: one browser clock, bounded previous/next GPU
@@ -488,9 +488,8 @@ Object.assign(ChartView.prototype, {
       const count = Math.min(oldF.n, newF.n);
       for (let i = 0; i < count; i++) match.pairs.push([i, i]);
     }
-    const names = ["pos0", "pos1", "lo0", "hi0", "lo1", "hi1"];
-    const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
-    const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+    const names = Object.keys(FUNNEL_SLOTS);
+    const encode = (value, meta) => (value - meta.offset) * (meta.scale || 1);
     const starts = {};
     for (const name of names) starts[name] = new Float32Array(newF[name].subarray(0, newF.n));
     const prevStarts = previous._transitionPrevFunnelValues;
@@ -499,9 +498,9 @@ Object.assign(ChartView.prototype, {
       if (oldIndex >= oldF.n || newIndex >= newF.n) continue;
       for (const name of names) {
         const meta = oldF.metas[name];
-        let displayed = decode(oldF[name][oldIndex], meta);
+        let displayed = this._decodeValue(oldF[name], meta, oldIndex);
         if (prevStarts && Number.isFinite(prevProgress)) {
-          const from = decode(prevStarts[name][oldIndex], meta);
+          const from = this._decodeValue(prevStarts[name], meta, oldIndex);
           displayed = from + (displayed - from) * prevProgress;
         }
         if (Number.isFinite(displayed)) {

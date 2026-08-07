@@ -7144,6 +7144,9 @@ def funnel_chart(
 
     Positional ``(stage, value)`` sequences also work without composing the
     mark explicitly: ``xy.funnel_chart(["Visit", "Signup"], [9800, 6200])``.
+    Without an explicit mark or ``stage``/``value`` input, no implicit mark is
+    created: empty, data-only, and axis-only calls stay mark-free like sibling
+    chart factories. Funnel-specific options without funnel data are refused.
 
     The stage axis keeps the declared order — stage 0 at the top for vertical
     funnels (the axis is reversed exactly like a Sankey's), at the left for
@@ -7194,29 +7197,30 @@ def funnel_chart(
                 raise ValueError("funnel_chart got positional values and value=")
             mark_kwargs["value"] = rest.pop(0)
     child_funnels = [c for c in rest if isinstance(c, Mark) and c.kind == "funnel"]
-    if child_funnels and not (
-        "stage" in mark_kwargs or "value" in mark_kwargs or "data" in mark_kwargs
-    ):
-        # The funnel came as an explicit child; forwarded keywords with no
-        # data of their own would build a second, empty funnel. Refuse by
-        # name instead of failing later inside that ghost mark.
+    if child_funnels:
+        # `data=` is the chart-level default for an explicit child, just as it
+        # is for every sibling chart factory. Every other forwarded funnel
+        # keyword would describe a second implicit mark, so refuse the mix
+        # instead of appending a ghost funnel beside the authored one.
+        if "data" in mark_kwargs:
+            props["data"] = mark_kwargs.pop("data")
         if mark_kwargs:
             raise ValueError(
                 f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
                 "xy.funnel(...) child; set these on the mark itself"
             )
-    elif child_funnels and "stage" not in mark_kwargs and "value" not in mark_kwargs:
-        # Chart-level data= with an explicit funnel child: the data belongs to
-        # the chart (the applier resolves the child's column names against
-        # it), not to a second implicit mark.
-        props["data"] = mark_kwargs.pop("data")
-        if mark_kwargs:
-            raise ValueError(
-                f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
-                "xy.funnel(...) child; set these on the mark itself"
-            )
-    else:
+    elif "stage" in mark_kwargs or "value" in mark_kwargs:
         marks.append(funnel(**mark_kwargs))
+    else:
+        # A data-only chart has no implicit mark, matching the empty/axis-only
+        # behaviour of the sibling chart factories.
+        if "data" in mark_kwargs:
+            props["data"] = mark_kwargs.pop("data")
+        if mark_kwargs:
+            raise ValueError(
+                f"funnel_chart got {sorted(mark_kwargs)} without stage/value data; "
+                "pass stage= and value= or set these options on an xy.funnel(...) child"
+            )
     orientations = {str(child.props.get("orientation", "vertical")) for child in child_funnels}
     if marks:
         orientations.add(str(mark_kwargs.get("orientation", "vertical")))

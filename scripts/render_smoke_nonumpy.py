@@ -1225,8 +1225,13 @@ try{{
     // keyboard traversal groups. Three stages, vertical, no axis reverse so
     // stage 0 sits at the BOTTOM of the canvas (GL y small).
     const fnBuf=new ArrayBuffer(512); const fnCols=[]; let fnOff=0;
-    const fncol=(vals)=>{{new Float32Array(fnBuf,fnOff*4,vals.length).set(vals);
-      fnCols.push({{byte_offset:fnOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+    // Give every funnel edge an independent non-zero offset/scale. The live
+    // build, hover and grow-mix paths must all decode through the shared §4/§16
+    // helper; a funnel-local `(offset || 0)` copy drifts under this probe.
+    const fncol=(vals,offset,scale)=>{{
+      const encoded=vals.map((value)=>(value-offset)*scale);
+      new Float32Array(fnBuf,fnOff*4,vals.length).set(encoded);
+      fnCols.push({{byte_offset:fnOff*4,len:vals.length,offset,scale,kind:"float"}});
       fnOff+=vals.length; return fnCols.length-1;}};
     const fnu8=(vals)=>{{const bo=fnOff*4;new Uint8Array(fnBuf,bo,vals.length).set(vals);
       fnCols.push({{byte_offset:bo,len:vals.length,dtype:"u8"}});
@@ -1238,9 +1243,9 @@ try{{
       traces:[{{id:0,kind:"funnel",name:null,tier:"direct",n_points:3,n_marks:3,
         style:{{opacity:1.0,orientation:"vertical",role:"funnel"}},
         orientation:"vertical",
-        pos0:fncol([-0.4,0.6,1.6]),pos1:fncol([0.4,1.4,2.4]),
-        lo0:fncol([-5,-3,-1]),hi0:fncol([5,3,1]),
-        lo1:fncol([-3,-1,-1]),hi1:fncol([3,1,1]),
+        pos0:fncol([-0.4,0.6,1.6],100,2),pos1:fncol([0.4,1.4,2.4],-80,0.5),
+        lo0:fncol([-5,-3,-1],240,0.25),hi0:fncol([5,3,1],-160,2),
+        lo1:fncol([-3,-1,-1],75,4),hi1:fncol([3,1,1],-45,0.125),
         color:{{mode:"categorical",categories:["A","B","C"],dtype:"u8",
           buf:fnu8([0,1,2]),palette:["#e01010","#10c010","#1030e0"]}},
         tooltip_rows:[
@@ -1262,6 +1267,13 @@ try{{
     const fnInk=(apx[0]>90 && apx[0]>apx[2]*2      // stage A red
       && bpx[1]>90 && bpx[1]>bpx[0]*2              // stage B green (was unchecked)
       && cpx[2]>90 && cpx[2]>cpx[0]*2)?1:0;        // stage C blue
+    // Old/removed traces retire only through `_transitionOpacity = 0` during
+    // data animation. A funnel must consume it just like every other mark.
+    gFn._transitionOpacity=0; vFn._drawNow();
+    const opx=new Uint8Array(4);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.17),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,opx);
+    const fnOpacity=!(opx[0]>90 && opx[0]>opx[2]*2)?1:0;
+    delete gFn._transitionOpacity; vFn._drawNow();
     // Containment: stage B center hits index 1; a point beside B's taper at
     // the same height (cross 4.5 > its widest half-width 3) misses.
     const fnHit=vFn._funnelHover(gFn,0,1.0);
@@ -1316,13 +1328,49 @@ try{{
     delete gFn._transitionPrevFunnelValues;
     delete gFn._transitionPositionProgress;
     gFn._funnelGeomMixed=true; vFn._drawNow(); // settled re-upload path
+    // Grow=0 collapses each cross-edge pair onto its DATA-SPACE midpoint even
+    // though the two columns use different offsets/scales.
+    gFn._transitionGrow=0;
+    vFn._mixFunnelGeometry(gFn);
+    const growScratch=gFn._funnelMixScratch;
+    const growLo=vFn._decodeValue(growScratch.lo0,gFn._cpuFunnel.metas.lo0,0);
+    const growHi=vFn._decodeValue(growScratch.hi0,gFn._cpuFunnel.metas.hi0,0);
+    const fnGrow=Math.abs(growLo-growHi)<1e-4?1:0;
+    delete gFn._transitionGrow;
+    gFn._funnelGeomMixed=true; vFn._drawNow();
+    // Retarget a synthetic mid-flight funnel into a second set of independent
+    // metas. The prepared starts must decode to the displayed OLD data values,
+    // not either endpoint's encoded f32 words.
+    const animNames=["pos0","pos1","lo0","hi0","lo1","hi1"];
+    const oldAnim={{_cpuFunnel:gFn._cpuFunnel,orientation:gFn.orientation,n:gFn.n,
+      _transitionPrevFunnelValues:{{}},_transitionPositionProgress:0.5}};
+    const newF={{n:gFn.n,metas:{{}}}};
+    for (let ni=0;ni<animNames.length;ni++) {{
+      const nm=animNames[ni], oldMeta=gFn._cpuFunnel.metas[nm];
+      const oldData=Array.from({{length:gFn.n}},(_,i)=>
+        vFn._decodeValue(gFn._cpuFunnel[nm],oldMeta,i));
+      oldAnim._transitionPrevFunnelValues[nm]=Float32Array.from(
+        oldData,(value)=>(value-2-oldMeta.offset)*(oldMeta.scale||1));
+      const meta={{offset:301+ni*17,scale:0.2+ni*0.15}};
+      newF.metas[nm]=meta;
+      newF[nm]=Float32Array.from(oldData,(value)=>(value+3-meta.offset)*meta.scale);
+    }}
+    const nextAnim={{_cpuFunnel:newF,orientation:gFn.orientation,n:gFn.n}};
+    const animMatch={{strategy:"index",pairs:[[0,0],[1,1],[2,2]]}};
+    const animPrepared=vFn._prepareFunnelPositionInterpolation(oldAnim,nextAnim,animMatch);
+    let fnAnim=animPrepared?1:0;
+    for (const nm of animNames) {{
+      const oldValue=vFn._decodeValue(gFn._cpuFunnel[nm],gFn._cpuFunnel.metas[nm],1);
+      const startValue=vFn._decodeValue(nextAnim._transitionPrevFunnelValues[nm],newF.metas[nm],1);
+      if (Math.abs(startValue-(oldValue-1))>1e-3) fnAnim=0;
+    }}
     const fnItems=vFn._defaultTooltipItems({{trace:gFn.trace.id,index:2,stage:"C",value:2,
       value_text:"2",share:0.2,share_text:"20%",conversion:null,conversion_text:"—",
       dropoff:null,dropoff_text:"—"}},{{}},{{}});
     const fnDash=(fnItems.length===5 && fnItems[3].value==="—" && fnItems[4].value==="—")?1:0;
-    const funnel=(fnInk && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav
+    const funnel=(fnInk && fnOpacity && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav
       && fnFilterN && fnA11y && fnHitHidden && fnPaintFull && fnRestored
-      && fnHiddenHover && fnMix && fnDash)?1:0;
+      && fnHiddenHover && fnMix && fnGrow && fnAnim && fnDash)?1:0;
     vFn.destroy();holderFn.remove();
     const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} funnel=${{funnel}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
