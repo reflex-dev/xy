@@ -1015,12 +1015,15 @@ def test_stroke_without_width_still_draws_an_outline() -> None:
         width=400,
         height=300,
     )
-    spec, _ = chart.figure().build_payload()
+    # One figure for all three surfaces: the point is that the SAME built
+    # object reaches the wire, the SVG and the raster identically.
+    fig = chart.figure()
+    spec, _ = fig.build_payload()
     assert spec["traces"][0]["style"]["stroke_width"] == 1.0
-    doc = chart.figure().to_svg()
+    doc = fig.to_svg()
     assert 'stroke="#ff0000"' in doc
     assert 'stroke-width="1"' in doc
-    pixels = _decode_rgba(chart.figure().to_image(format="png", scale=1))
+    pixels = _decode_rgba(fig.to_image(format="png", scale=1))
     reds = ((pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 90) & (pixels[:, :, 2] < 90)).sum()
     assert reds > 0, "raster dropped the implied 1px outline"
 
