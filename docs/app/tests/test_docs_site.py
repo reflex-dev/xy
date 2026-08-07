@@ -2112,12 +2112,16 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     module_path = tmp_path / "route.jsx"
     preview = 'viewBox=\\"0 0 320 232\\"'
     surface = "gallery-preview-surface aspect-[320/232] shadow-large"
-    module_path.write_text(preview * 35 + surface, encoding="utf-8")
+    expected = check_html_routes.INLINE_SVG_PREVIEW_COUNT
+    module_path.write_text(preview * expected + surface, encoding="utf-8")
 
     check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
-    module_path.write_text(preview * 34 + surface, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="34 previews, expected 35"):
+    module_path.write_text(preview * (expected - 1) + surface, encoding="utf-8")
+    with pytest.raises(
+        RuntimeError,
+        match=rf"{expected - 1} previews, expected {expected}",
+    ):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 

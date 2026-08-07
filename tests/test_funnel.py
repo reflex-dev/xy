@@ -874,6 +874,8 @@ def test_empty_data_only_and_axis_only_funnel_charts_compile_without_a_mark() ->
 @pytest.mark.parametrize(
     "mark_kwargs",
     [
+        {"stage": ["a"]},
+        {"value": [1.0]},
         {"geometry": "bar"},
         {"data": {"unused": [1.0]}, "gap": 0.2},
     ],
@@ -881,6 +883,11 @@ def test_empty_data_only_and_axis_only_funnel_charts_compile_without_a_mark() ->
 def test_mark_options_without_funnel_data_are_refused(mark_kwargs) -> None:
     with pytest.raises(ValueError, match="without stage/value data"):
         xy.funnel_chart(**mark_kwargs)
+
+
+def test_positional_stages_without_values_are_refused_at_factory_call() -> None:
+    with pytest.raises(ValueError, match="without stage/value data"):
+        xy.funnel_chart(["a"])
 
 
 def test_mixed_orientations_in_one_chart_are_refused() -> None:

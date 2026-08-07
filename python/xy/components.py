@@ -7215,7 +7215,7 @@ def funnel_chart(
                 f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
                 "xy.funnel(...) child; set these on the mark itself"
             )
-    elif "stage" in mark_kwargs or "value" in mark_kwargs:
+    elif "stage" in mark_kwargs and "value" in mark_kwargs:
         marks.append(funnel(**mark_kwargs))
     else:
         # A data-only chart has no implicit mark, matching the empty/axis-only
