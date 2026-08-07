@@ -996,3 +996,41 @@ def test_funnel_append_matching_downgrades_to_index_pairs() -> None:
     assert 'match.strategy === "snap"' in prep, "snap strategy must bail before mixing"
     assert 'match.strategy === "append"' in prep
     assert '"index:append-unsupported"' in prep
+
+
+def test_stroke_without_width_still_draws_an_outline() -> None:
+    """Every renderer skips a zero-width stroke, so `stroke=` alone drew
+    nothing. The other mark builders imply 1px in exactly this case."""
+    doc = xy.funnel_chart(["a", "b"], [4.0, 2.0], stroke="#ff0000").figure().to_svg()
+    assert 'stroke="#ff0000"' in doc
+    assert 'stroke-width="1"' in doc
+
+
+def test_tooltip_rows_carry_the_prior_value_text() -> None:
+    fig = Figure(width=400, height=300)
+    fig.funnel(["a", "b"], [9800.0, 6200.0], value_format="{:,.0f}")
+    rows = fig.traces[0].tooltip_rows
+    assert rows[0]["prior_text"] is None, "stage 0 has no prior"
+    assert rows[1]["prior_text"] == "9,800"
+
+
+def test_funnel_stage_centers_stay_out_of_the_selection_universe() -> None:
+    """`retainCpu` puts stage centers in `_cpu` for the KEYBOARD walk, but
+    funnel selection is documented as absent — counting those centers reported
+    a selection the chart never drew."""
+    source = (Path(__file__).parents[1] / "js" / "src" / "53_interaction.ts").read_text(
+        encoding="utf-8"
+    )
+    assert source.count("markOf(g.trace.kind).stageNav) continue;") == 2, (
+        "both _selectLocal and _selectLocalPolygon must skip stageNav marks"
+    )
+
+
+def test_scene_reference_names_the_clients_actual_strip_order() -> None:
+    """The client sweeps A,B,D,C (triangles ABD/BDC), not ABC/ACD. A normative
+    comment that names the wrong tessellation misleads the next renderer."""
+    from xy import _scene
+
+    doc = _scene.funnel_quad.__doc__ or ""
+    assert "A, B, D, C" in doc
+    assert "ABD and BDC" in doc

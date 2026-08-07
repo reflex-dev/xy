@@ -87,10 +87,14 @@ def funnel_quad(
 
     `pos` runs along the stage axis, `lo/hi` are the cross-axis edges at each
     end; `horizontal` maps pos→x/cross→y and vertical the transpose. Corners
-    run A=(lo0@pos0) B=(hi0@pos0) C=(hi1@pos1) D=(lo1@pos1) — the same two
-    triangles (ABC, ACD) the client expands in `_buildFunnelMark`. This is the
-    single reference both static exporters and the golden geometry test
-    consume, so SVG and PNG cannot drift from each other or from the client.
+    run A=(lo0@pos0) B=(hi0@pos0) C=(hi1@pos1) D=(lo1@pos1) as a closed
+    polygon. The client covers the same quad with a 4-vertex TRIANGLE_STRIP
+    in the order A, B, D, C — `FUNNEL_VS` takes `t = floor(id/2)` and
+    `side = id & 1` — so its two triangles are ABD and BDC. A different
+    tessellation of one identical quad, which is exactly why this POLYGON is
+    the shared reference rather than a triangle pair. Both static exporters
+    and the golden geometry test consume it, so SVG and PNG cannot drift from
+    each other or from the client.
     """
     if horizontal:
         corners = [(pos0, lo0), (pos0, hi0), (pos1, hi1), (pos1, lo1)]

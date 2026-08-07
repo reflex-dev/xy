@@ -348,6 +348,11 @@ Object.assign(ChartView.prototype, {
         row.value_text,
         row.value,
       );
+      // The prior value makes "From previous" checkable rather than asserted;
+      // stage 0 has no prior and simply omits the row.
+      if (row.prior_text || (row.prior !== undefined && row.prior !== null)) {
+        field("From", row.prior_text, row.prior);
+      }
       field("Overall", row.share_text, row.share);
       field("From previous", row.conversion_text, row.conversion);
       field("Drop-off", row.dropoff_text, row.dropoff);

@@ -849,6 +849,16 @@ def funnel(
     if width_channel is not None:
         raise ValueError("funnel stroke_width is per-trace")
     stroke_width_value = 0.0 if width_constant is None else float(width_constant)
+    if stroke_value is not None and not stroke_width_value:
+        # `stroke=` with no width drew nothing: every renderer skips a
+        # zero-width stroke. The other mark builders imply 1px in exactly this
+        # case, so a documented option is never silently inert.
+        stroke_width_value = 1.0
+    if stroke_value is not None and not stroke_width_value:
+        # `stroke=` with no width drew nothing: every renderer skips a
+        # zero-width stroke. The other mark builders imply 1px in exactly this
+        # case, so a documented option is not silently inert.
+        stroke_width_value = 1.0
 
     stage_dim = "y" if orientation == "vertical" else "x"
     # The checkpoint is taken BEFORE the stage names commit to the axis
@@ -934,6 +944,9 @@ def funnel(
                 "conversion": s.conversion,
                 "dropoff": s.dropoff,
                 "value_text": _funnel.format_value(s.value, value_format),
+                "prior_text": (
+                    None if s.prior is None else _funnel.format_value(s.prior, value_format)
+                ),
                 "share_text": _funnel.format_ratio(s.share, percent_format),
                 "conversion_text": _funnel.format_ratio(s.conversion, percent_format),
                 "dropoff_text": _funnel.format_ratio(s.dropoff, percent_format),

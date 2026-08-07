@@ -1257,14 +1257,29 @@ try{{
     // Stage A (data y=0, bottom sixth of the y range) and stage C (top).
     glFn.readPixels(Math.round(WF/2),Math.round(HF*0.17),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,apx);
     glFn.readPixels(Math.round(WF/2),Math.round(HF*0.83),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,cpx);
-    const fnInk=(apx[0]>90 && apx[0]>apx[2]*2 && cpx[2]>90 && cpx[2]>cpx[0]*2)?1:0;
+    const bpx=new Uint8Array(4);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.5),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,bpx);
+    const fnInk=(apx[0]>90 && apx[0]>apx[2]*2      // stage A red
+      && bpx[1]>90 && bpx[1]>bpx[0]*2              // stage B green (was unchecked)
+      && cpx[2]>90 && cpx[2]>cpx[0]*2)?1:0;        // stage C blue
     // Containment: stage B center hits index 1; a point beside B's taper at
     // the same height (cross 4.5 > its widest half-width 3) misses.
     const fnHit=vFn._funnelHover(gFn,0,1.0);
     const fnMiss=vFn._funnelHover(gFn,4.5,1.0);
     const fnRow=fnHit?vFn._localRow(fnHit):null;
     const fnRowOk=(fnRow && fnRow.stage==="B" && fnRow.value===6 && fnRow.dropoff===0.4)?1:0;
-    const fnNav=vFn._a11yPointGroups().some((g)=>g===gFn)?1:0;
+    // Traversal, not membership: Home then ArrowRight must land on stage 1
+    // and the live region must name it. Membership alone passed even when the
+    // walk was broken.
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"Home",bubbles:true}}));
+    const navHome=vFn._hoverTarget && vFn._hoverTarget.index===0;
+    const homeSaid=(vFn.a11yLive.textContent||"").includes("Stage 1 of 3");
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"ArrowRight",bubbles:true}}));
+    const navNext=vFn._hoverTarget && vFn._hoverTarget.index===1;
+    const nextSaid=(vFn.a11yLive.textContent||"").includes("Stage 2 of 3");
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"Escape",bubbles:true}}));
+    const fnNav=(vFn._a11yPointGroups().some((g)=>g===gFn)
+      && navHome && homeSaid && navNext && nextSaid)?1:0;
     // Review-fix probes (PR #474 round 2), all EXECUTED, not grepped:
     // (a) legend category filter narrows draw count, hover, and the keyboard
     //     walk, and the row index stays in shipped space;

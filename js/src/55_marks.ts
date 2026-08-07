@@ -1,4 +1,4 @@
-import { parseColor } from "./20_theme";
+import { chartBackdrop, parseColor } from "./20_theme";
 
 // ---------------------------------------------------------------------------
 // Mark-renderer registry — the client-side dispatch for chart kinds.
@@ -214,6 +214,14 @@ export const MARK_KINDS = {
       // re-resolve against the new theme. buffer=null reuses the stashed
       // codes and re-uploads the recolored per-stage RGBA rows.
       view._funnelPaint(g, g.trace, null);
+      // A rebuild uploads UNDIMMED rows, so a theme flip while a legend row
+      // is hovered dropped that row's emphasis until the next mouse move.
+      // Re-apply it against the NEW backdrop.
+      const hover = view._legendHover;
+      if (hover && hover.cat != null && !hover.off && hover.traces
+          && hover.traces.includes(view.gpuTraces.indexOf(g))) {
+        view._dimFunnelPaint(g, hover.cat, chartBackdrop(view.root, view.theme.bg));
+      }
       const style = g.trace.style || {};
       g.stroke = style.stroke ? parseColor(view.root, style.stroke, [0, 0, 0, 1]) : null;
     },

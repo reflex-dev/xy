@@ -1304,6 +1304,7 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     assert rendered.count("size:14") == 35
     assert "size:6" not in rendered
     for chart_type in (
+        "Funnel",
         "Line",
         "Area",
         "Step",

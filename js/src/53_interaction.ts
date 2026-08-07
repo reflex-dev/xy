@@ -1030,6 +1030,11 @@ Object.assign(ChartView.prototype, {
     let total = 0;
     for (const g of this.gpuTraces) {
       if (!g._cpu || g.tier === "density") continue;
+      // A stageNav mark retains `_cpu` as a KEYBOARD aid (funnel stage
+      // centers), not as selectable point geometry: its kind documents
+      // selection as absent, so counting those centers reported a selection
+      // the chart never drew.
+      if (markOf(g.trace.kind).stageNav) continue;
       // Restoration mirrors the kernel selection universe exactly. Otherwise
       // a provisional line/hidden-series mask would survive forever because
       // the authoritative reply only contains visible scatter trace ids.
@@ -1070,6 +1075,11 @@ Object.assign(ChartView.prototype, {
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
       if (!g._cpu || g.tier === "density") continue;
+      // A stageNav mark retains `_cpu` as a KEYBOARD aid (funnel stage
+      // centers), not as selectable point geometry: its kind documents
+      // selection as absent, so counting those centers reported a selection
+      // the chart never drew.
+      if (markOf(g.trace.kind).stageNav) continue;
       if (opts.localMask === true
           && (g.trace.kind !== "scatter" || g._legendHidden)) continue;
       const cx = g._cpu.x, cy = g._cpu.y;

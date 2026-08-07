@@ -192,7 +192,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
-| 18 | Funnel / funnel area | Common sales/product analytics chart. | Shipped as row 15 above (`xy.funnel_chart`, protocol v13): categorical quad geometry plus build-time labels, as predicted. |
+| 18 | Funnel / funnel area | Common sales/product analytics chart. | Shipped — see "Funnel" in the coverage-backlog table above (`xy.funnel_chart`, protocol v13): categorical quad geometry plus build-time labels, as predicted. |
 | 19 | Calendar/cohort heatmap | Common product analytics and retention surface. | Grid plus date semantics. |
 | 20 | Gantt/timeline/event charts | Product/project/ops domain chart. | High UI polish and interaction expectations. |
 
