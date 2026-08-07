@@ -385,6 +385,13 @@ invariants so future kinds don't regress them:
 - **T4 — normalization is eased, never stepped** (exposure-style normMax) —
   count-only surfaces; a mean-color texture's physical alpha is
   max-independent, so it has no normalization to ease.
+  When there is nothing to ease, the wire bytes ARE the texture: a
+  count-only `log-u8` reply under `prefers-reduced-motion` pins normMax at
+  the reply's own `max`, so decoding to floats and re-encoding against that
+  same max is the identity. Those replies upload `buf` straight to R8
+  (`lodUploadWireGrid`) and keep `grid` null, retaining the wire bytes so the
+  `_homeDensity` restore (T7) can re-upload after the buffer is gone. Every
+  other reply still decodes through `_uploadGrid`.
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests

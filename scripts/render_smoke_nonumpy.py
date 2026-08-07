@@ -842,6 +842,35 @@ try{{
         if(c>0&&Math.abs(qg[i]-c)/c>0.08)qok=0;}}
     }}
     const qwire=(qok && Math.abs(gd.density.max-qmax)<1e-9)?1:0;
+    // --- Direct-wire density (reduced motion): a count-only log-u8 reply
+    // uploads the wire bytes verbatim (grid null, normMax pinned to max) and
+    // retains a copy on density.wire so re-uploads survive without a decoded
+    // grid. Then the home-extent restore in _requestSampleRebin — the path
+    // that dereferenced the null grid — must re-upload from the wire copy.
+    const rmPrev=v._prefersReducedMotion.bind(v);
+    v._prefersReducedMotion=()=>true;
+    const rmax=9, renc=new Uint8Array(64);
+    for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
+      renc[i]=c>0?Math.max(1,Math.min(255,Math.round(255*Math.log1p(c)/Math.log1p(rmax)))):0;}}
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:12345,
+      density:{{buf:0,w:8,h:8,max:rmax,enc:"log-u8",x_range:[0,100],y_range:[0,100]}}}}]}},[renc.buffer.slice(0)]);
+    let dwire=(gd.density.grid===null && gd.density.wire instanceof Uint8Array &&
+      gd.density.wire.length===64 && gd.density.normMax===rmax &&
+      v.gl.isTexture(gd.density.tex))?1:0;
+    if(dwire){{for(let i=0;i<64;i++) if(gd.density.wire[i]!==renc[i]) dwire=0;}}
+    let drestore=0;
+    try{{
+      gd._homeDensity=gd.density;
+      v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:2345,
+        density:{{buf:0,w:8,h:8,max:rmax,enc:"log-u8",x_range:[40,60],y_range:[40,60]}}}}]}},[renc.buffer.slice(0)]);
+      const zoomed=gd.density!==gd._homeDensity;
+      if(!v.view0) v.view0={{...v.view}};
+      v._requestSampleRebin(gd, v.view0, 0);
+      drestore=(zoomed && gd.density.grid===null && gd.density.wire instanceof Uint8Array &&
+        gd.density.xRange[1]===100 && v.gl.isTexture(gd.density.tex))?1:0;
+    }}catch(e){{ drestore=0; }}
+    gd._homeDensity=null;
+    v._prefersReducedMotion=rmPrev;
     // --- Rapid zoom in/out torture (drill thrash): the marks/density alphas
     // must be CONTINUOUS across window-boundary crossings, dying-drill
     // revives, and kernel replies landing mid-transition. Runs on a virtual
@@ -1219,7 +1248,7 @@ try{{
     gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
     const meancolor=(lpx[0]>60 && lpx[0]>lpx[2]*3 && rpx[2]>60 && rpx[2]>rpx[0]*3)?1:0;
     vMc.destroy();holderMc.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} dretire=${{dretire}}`;
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} dwire=${{dwire}} drestore=${{drestore}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1435,6 +1464,8 @@ try{{
     stale = int(re.search(r"stale=(\d+)", title).group(1))
     thrash = int(re.search(r"thrash=(\d+)", title).group(1))
     qwire = int(re.search(r"qwire=(\d+)", title).group(1))
+    dwire = int(re.search(r"dwire=(\d+)", title).group(1))
+    drestore = int(re.search(r"drestore=(\d+)", title).group(1))
     stream = int(re.search(r"stream=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
@@ -1601,6 +1632,16 @@ try{{
         )
     if qwire != 1:
         raise SystemExit("log-u8 density decode failed (quantized wire)")
+    if dwire != 1:
+        raise SystemExit(
+            "direct-wire density failed (reduced motion must upload the "
+            "log-u8 wire bytes verbatim and retain them on density.wire)"
+        )
+    if drestore != 1:
+        raise SystemExit(
+            "direct-wire home restore failed (null-grid density must "
+            "re-upload from the retained wire bytes, not throw)"
+        )
     if meancolor != 1:
         raise SystemExit(
             "mean-color density failed (surface must wear the per-cell mean "
