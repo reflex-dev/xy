@@ -1829,18 +1829,17 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     """Accept only the complete code-native gallery in the production route."""
     module_path = tmp_path / "route.jsx"
     preview = 'viewBox=\\"0 0 320 232\\"'
-    module_path.write_text(
-        preview * 34 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
+    # Derived from the validator's own constant, not a second copy of the
+    # number: adding a gallery tile already updates that constant, and a
+    # hardcoded fixture here just failed the build a second time.
+    expected = check_html_routes.INLINE_SVG_PREVIEW_COUNT
+    surface = "gallery-preview-surface aspect-[320/232] shadow-large"
+    module_path.write_text(preview * expected + surface, encoding="utf-8")
 
     check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
-    module_path.write_text(
-        preview * 33 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
-    with pytest.raises(RuntimeError, match="33 previews, expected 34"):
+    module_path.write_text(preview * (expected - 1) + surface, encoding="utf-8")
+    with pytest.raises(RuntimeError, match=f"{expected - 1} previews, expected {expected}"):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 
