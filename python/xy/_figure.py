@@ -8,9 +8,11 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+import contextlib
 import math
 import warnings
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
 
@@ -48,6 +50,26 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 # "selection not passed" sentinel for state_patch_message: None is meaningful
 # there (clear the selection), so absence needs its own marker.
 _STATE_UNSET: Any = object()
+
+#: Structural-probe mode. While active, a mark whose data channels are all
+#: empty validates its *configuration* (enums, bounds, colormaps, range
+#: shapes) and contributes no traces, instead of refusing zero rows. This is
+#: the core validation seam compile gates build on (the Reflex plan probe:
+#: spec/design/reflex-integration.md §3.6 "Kind coverage") — structure is
+#: checkable with no data bound, and data-dependent aggregation never runs
+#: on invented values. Non-empty data behaves identically in and out of
+#: probe mode.
+_STRUCTURAL_PROBE: ContextVar[bool] = ContextVar("xy_structural_probe", default=False)
+
+
+@contextlib.contextmanager
+def structural_probe():
+    """Build figures in structural-probe mode (see ``_STRUCTURAL_PROBE``)."""
+    token = _STRUCTURAL_PROBE.set(True)
+    try:
+        yield
+    finally:
+        _STRUCTURAL_PROBE.reset(token)
 
 
 class Selection:
@@ -108,6 +130,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # size (§28). height="100%" needs a parent with a defined height (the
         # usual CSS contract); otherwise the chart falls back to its 120px
         # min-height.
+        # Captured at construction so every mark applied to this figure agrees
+        # on the mode regardless of where the applier call happens.
+        self._structural_probe = _STRUCTURAL_PROBE.get()
         self.width = self._pixel_dimension(width, "width")
         self.height = self._pixel_dimension(height, "height")
         # padding: override the auto plot margins (top, right, bottom, left) in

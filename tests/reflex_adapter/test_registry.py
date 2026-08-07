@@ -26,6 +26,21 @@ def test_register_release_roundtrip(_fresh_registry):
     registry.release(token)  # idempotent
 
 
+def test_figure_only_helpers_reject_data_handles_and_junk(_fresh_registry):
+    """A DataHandle names columns, never a figure: figure-only operations
+    fail immediately instead of resolving to a room that can never exist."""
+    import reflex_xy
+    from reflex_xy.handles import DataHandle
+
+    data = DataHandle("xyd1|client-token-1234|app.app.State|cloud")
+    with pytest.raises(TypeError, match="DataHandle"):
+        reflex_xy.release(data)
+    with pytest.raises(TypeError, match="DataHandle"):
+        reflex_xy.append(data, [0.0], [0.0])
+    with pytest.raises(TypeError, match="int"):
+        reflex_xy.release(123)  # never silently registry.release("")
+
+
 def test_release_preserves_version_while_rebuildable_subscriber_remains(
     _fresh_registry,
 ):
@@ -309,8 +324,8 @@ def test_figure_accepts_chart_or_figure(_fresh_registry):
 
     import reflex_xy
 
-    token = reflex_xy.register(chart)  # public API accepts the composed Chart
-    assert reflex_xy.registry.get(token) is not None
+    handle = reflex_xy.register(chart)  # public API accepts the composed Chart
+    assert reflex_xy.registry.get(handle.token) is not None
 
 
 def test_entry_lock_serializes(_fresh_registry):

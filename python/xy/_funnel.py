@@ -187,6 +187,40 @@ def compute_stages(names: Sequence[str], values: Sequence[float]) -> list[Funnel
     return stages
 
 
+def _validated_layout_options(
+    *,
+    orientation: str,
+    geometry: str,
+    gap: Optional[float],
+    neck: str,
+    min_width: float,
+) -> tuple[float, float]:
+    """Validate data-independent layout options and return normalized values.
+
+    Kept separate from :func:`compute_layout` so structural probes can run
+    the exact same configuration gate without fabricating a stage merely to
+    reach it. Stage/value coupling remains a real-data validation below.
+    """
+    if orientation not in ORIENTATIONS:
+        raise ValueError(f"funnel orientation must be one of {ORIENTATIONS}, got {orientation!r}")
+    if geometry not in GEOMETRIES:
+        raise ValueError(f"funnel geometry must be one of {GEOMETRIES}, got {geometry!r}")
+    if neck not in NECKS:
+        raise ValueError(f"funnel neck must be one of {NECKS}, got {neck!r}")
+    if neck != "rect" and geometry != "area":
+        raise ValueError('funnel neck applies to geometry="area" only; bar segments have no taper')
+    if gap is None:
+        gap_value = DEFAULT_GAP[geometry]
+    else:
+        gap_value = float(gap)
+        if not 0.0 <= gap_value < 1.0:
+            raise ValueError(f"funnel gap must be in [0, 1), got {gap!r}")
+    min_width_value = float(min_width)
+    if not 0.0 <= min_width_value <= 1.0:
+        raise ValueError(f"funnel min_width must be in [0, 1], got {min_width!r}")
+    return gap_value, min_width_value
+
+
 def compute_layout(
     names: Sequence[str],
     values: Sequence[float],
@@ -211,23 +245,13 @@ def compute_layout(
       stage so zero/tiny stages stay visible and hoverable; values in events,
       tooltips and labels are never clamped.
     """
-    if orientation not in ORIENTATIONS:
-        raise ValueError(f"funnel orientation must be one of {ORIENTATIONS}, got {orientation!r}")
-    if geometry not in GEOMETRIES:
-        raise ValueError(f"funnel geometry must be one of {GEOMETRIES}, got {geometry!r}")
-    if neck not in NECKS:
-        raise ValueError(f"funnel neck must be one of {NECKS}, got {neck!r}")
-    if neck != "rect" and geometry != "area":
-        raise ValueError('funnel neck applies to geometry="area" only; bar segments have no taper')
-    if gap is None:
-        gap_value = DEFAULT_GAP[geometry]
-    else:
-        gap_value = float(gap)
-        if not 0.0 <= gap_value < 1.0:
-            raise ValueError(f"funnel gap must be in [0, 1), got {gap!r}")
-    min_width_value = float(min_width)
-    if not 0.0 <= min_width_value <= 1.0:
-        raise ValueError(f"funnel min_width must be in [0, 1], got {min_width!r}")
+    gap_value, min_width_value = _validated_layout_options(
+        orientation=orientation,
+        geometry=geometry,
+        gap=gap,
+        neck=neck,
+        min_width=min_width,
+    )
 
     stages = compute_stages(names, values)
     max_value = max(stage.value for stage in stages)

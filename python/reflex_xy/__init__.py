@@ -3,38 +3,55 @@
 The integration in one paragraph (full design:
 spec/design/reflex-integration.md in the xy repo): chart data rides
 the app's *existing* websocket as a second socket.io namespace — binary
-columns, no JSON numbers, no extra endpoints to proxy. Figures live in a
-per-process registry keyed by tokens; the tokens live in Reflex state. A
-`@reflex_xy.figure` state method is both the chart definition and the
-recovery recipe: any worker can rebuild the figure from state when a
+columns, no JSON numbers, no extra endpoints to proxy. Figures and columns
+live in a per-process registry keyed by tokens; Reflex state holds only
+small typed handles. State methods are both the definition and the
+recovery recipe: any worker can rebuild what it serves from state when a
 reconnect lands somewhere new, so there is no central figure store to
 operate.
 
-Quickstart::
+Quickstart (the data-bound component API — structure is declared in the
+page and validated at ``reflex run``; state supplies only columns)::
 
     # rxconfig.py
     config = rx.Config(app_name="dash", plugins=[reflex_xy.XYPlugin()])
 
     # dash/dash.py
+    from typing import TypedDict
     import numpy as np
     import reflex as rx
-    import xy
     import reflex_xy
+
+    class CloudData(TypedDict):
+        x: np.ndarray
+        y: np.ndarray
+        mag: np.ndarray
 
     class Dash(rx.State):
         points: int = 200_000
 
-        @reflex_xy.figure
-        def chart(self) -> xy.Chart:
+        @reflex_xy.data
+        def cloud(self) -> CloudData:
             rng = np.random.default_rng(7)
-            xs = rng.normal(size=self.points)
-            ys = xs * 0.6 + rng.normal(scale=0.6, size=self.points)
-            return xy.scatter_chart(xy.scatter(xs, ys), width="100%", height=460)
+            x = rng.normal(size=self.points)
+            y = x * 0.6 + rng.normal(scale=0.6, size=self.points)
+            return {"x": x, "y": y, "mag": np.hypot(x, y)}
 
     def index() -> rx.Component:
-        return reflex_xy.chart(Dash.chart, height="460px")
+        return reflex_xy.scatter_chart(
+            data=Dash.cloud,
+            x="x", y="y", color="mag", colormap="viridis",
+            height="460px",
+        )
 
     app = rx.App()
+
+Multi-mark charts compose xy nodes around the same data var
+(``reflex_xy.chart(reflex_xy.scatter("x", "y"), reflex_xy.line("x", "mag"),
+data=Dash.cloud)``), and charts whose *structure* depends on state keep the
+escape hatch: an ``@reflex_xy.figure`` method returning an ``xy.Chart``,
+rendered with ``reflex_xy.chart(figure=Dash.built)`` and probed at compile
+(§3.1 of the design).
 """
 
 from __future__ import annotations
@@ -53,7 +70,32 @@ _EXPORTS = {
     "select": ".app",
     "set_view": ".app",
     "setup": ".app",
-    "chart": ".component",
+    "chart": ".factories",
+    "area_chart": ".factories",
+    "bar_chart": ".factories",
+    "box_chart": ".factories",
+    "column_chart": ".factories",
+    "contour_chart": ".factories",
+    "ecdf_chart": ".factories",
+    "error_band_chart": ".factories",
+    "errorbar_chart": ".factories",
+    "funnel_chart": ".factories",
+    "heatmap_chart": ".factories",
+    "hexbin_chart": ".factories",
+    "histogram_chart": ".factories",
+    "line_chart": ".factories",
+    "scatter_chart": ".factories",
+    "segments_chart": ".factories",
+    "stairs_chart": ".factories",
+    "stem_chart": ".factories",
+    "step_chart": ".factories",
+    "triangle_mesh_chart": ".factories",
+    "violin_chart": ".factories",
+    "AsyncDataVar": ".data_vars",
+    "DataVar": ".data_vars",
+    "data": ".data_vars",
+    "DataHandle": ".handles",
+    "FigureHandle": ".handles",
     "CanonicalRowIdGroup": ".events",
     "DataBounds": ".events",
     "Modifiers": ".events",
@@ -74,11 +116,77 @@ _EXPORTS = {
     "figure": ".vars",
 }
 
+#: Curated re-exports of xy node constructors: `reflex_xy.scatter` *is*
+#: `xy.scatter`, so composed data-bound charts read uniformly
+#: (`reflex_xy.chart(reflex_xy.scatter("x", "y"), data=...)`) and a
+#: hallucinated constructor dies at import against this explicit map
+#: instead of surviving to hydrate. Every standalone mark kind is plan-
+#: compatible: the aggregating ones (box, violin, hexbin, …) probe
+#: zero-row under the core's structural_probe() mode — config validates,
+#: aggregation never runs on invented values.
+#: Chart factories are deliberately absent: the flat `*_chart` names above
+#: are reflex-native factories, not xy's.
+_XY_REEXPORTS = frozenset(
+    {
+        # marks
+        "scatter",
+        "line",
+        "area",
+        "step",
+        "stairs",
+        "stem",
+        "column",
+        "bar",
+        "histogram",
+        "errorbar",
+        "error_band",
+        "segments",
+        "funnel",
+        "ecdf",
+        "box",
+        "violin",
+        "hexbin",
+        "contour",
+        "heatmap",
+        "triangle_mesh",
+        # annotations
+        "vline",
+        "hline",
+        "x_band",
+        "y_band",
+        "text",
+        "label",
+        "marker",
+        "arrow",
+        "threshold",
+        "threshold_zone",
+        "callout",
+        # chrome + config constructors
+        "x_axis",
+        "y_axis",
+        "theta_axis",
+        "r_axis",
+        "legend",
+        "tooltip",
+        "colorbar",
+        "modebar",
+        "export_config",
+        "theme",
+        "interaction_config",
+        "animation",
+        "spring",
+    }
+)
+
 __all__ = [
     "XY_NAMESPACE",
+    "AsyncDataVar",
     "AsyncFigureVar",
     "CanonicalRowIdGroup",
     "DataBounds",
+    "DataHandle",
+    "DataVar",
+    "FigureHandle",
     "FigureRegistry",
     "FigureVar",
     "Modifiers",
@@ -91,25 +199,96 @@ __all__ = [
     "ViewChangeEvent",
     "XYNamespace",
     "XYPlugin",
+    "animation",
     "append",
+    "area",
+    "area_chart",
+    "arrow",
+    "bar",
+    "bar_chart",
+    "box",
+    "box_chart",
+    "callout",
     "chart",
     "clear_selection",
+    "colorbar",
+    "column",
+    "column_chart",
+    "contour",
+    "contour_chart",
+    "data",
+    "ecdf",
+    "ecdf_chart",
+    "error_band",
+    "error_band_chart",
+    "errorbar",
+    "errorbar_chart",
+    "export_config",
     "figure",
+    "funnel",
+    "funnel_chart",
+    "heatmap",
+    "heatmap_chart",
+    "hexbin",
+    "hexbin_chart",
+    "histogram",
+    "histogram_chart",
+    "hline",
     "inline",
+    "interaction_config",
+    "label",
+    "legend",
+    "line",
+    "line_chart",
+    "marker",
+    "modebar",
+    "r_axis",
     "register",
     "registry",
     "release",
     "reset_view",
     "resolve_selection",
+    "scatter",
+    "scatter_chart",
+    "segments",
+    "segments_chart",
     "select",
     "set_view",
     "setup",
+    "spring",
+    "stairs",
+    "stairs_chart",
+    "stem",
+    "stem_chart",
+    "step",
+    "step_chart",
+    "text",
+    "theme",
+    "theta_axis",
+    "threshold",
+    "threshold_zone",
+    "tooltip",
+    "triangle_mesh",
+    "triangle_mesh_chart",
+    "violin",
+    "violin_chart",
+    "vline",
+    "x_axis",
+    "x_band",
+    "y_axis",
+    "y_band",
 ]
 
 
 def _load_export(name: str) -> Any:
     module_name = _EXPORTS.get(name)
     if module_name is None:
+        if name in _XY_REEXPORTS:
+            import xy
+
+            value = getattr(xy, name)
+            globals()[name] = value
+            return value
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(import_module(module_name, __name__), name)
 
@@ -154,22 +333,25 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
 
 
-def register(chart_or_figure: Any) -> str:
-    """Imperatively register a chart; returns an opaque token for state.
+def register(chart_or_figure: Any) -> "FigureHandle":
+    """Imperatively register a chart; returns a typed handle for state.
 
-    Dev-tier API: the figure lives only in this process and cannot be
-    rebuilt after a worker restart or on another node — prefer
-    `@reflex_xy.figure` for anything long-lived (see the module doc).
+    The handle's ``.token`` is the registry key; pass the handle itself to
+    ``chart(figure=...)`` (or store it in state). Dev-tier API: the figure
+    lives only in this process and cannot be rebuilt after a worker restart
+    or on another node — prefer `@reflex_xy.figure` for anything long-lived
+    (see the module doc).
     """
+    from .handles import FigureHandle
     from .registry import _figure_of, registry
 
     globals()["registry"] = registry
 
-    return registry.register(_figure_of(chart_or_figure))
+    return FigureHandle(registry.register(_figure_of(chart_or_figure)))
 
 
-def inline(chart_or_figure: Any) -> str:
-    """Register a fixed, kernel-backed chart at module scope; returns its token.
+def inline(chart_or_figure: Any) -> "FigureHandle":
+    """Register a fixed, kernel-backed chart at module scope; returns its handle.
 
     For charts whose data never changes but which still want server-side
     drilldown/picks on the shared websocket. Call at **module scope** so the
@@ -179,12 +361,13 @@ def inline(chart_or_figure: Any) -> str:
         cloud = reflex_xy.inline(xy.scatter_chart(xy.scatter(x, y)))
 
         def index():
-            return reflex_xy.chart(cloud, height="460px")
+            return reflex_xy.chart(figure=cloud, height="460px")
 
-    The token is content-addressed — every worker independently derives the
-    same one, so the frontend's baked-in token resolves everywhere without
-    state or rebuild hooks. The entry is pinned (exempt from the TTL sweep):
-    there is no recipe to rebuild it from, so it lives with the process.
+    The handle's token is content-addressed — every worker independently
+    derives the same one, so the frontend's baked-in token resolves
+    everywhere without state or rebuild hooks. The entry is pinned (exempt
+    from the TTL sweep): there is no recipe to rebuild it from, so it lives
+    with the process.
 
     Shared by design: one figure object serves every viewer, so kernel-side
     drill state is shared too (like N notebook views of one widget). Data
@@ -192,6 +375,7 @@ def inline(chart_or_figure: Any) -> str:
     no kernel at all can be passed straight to `reflex_xy.chart()` (static
     payload tier).
     """
+    from .handles import FigureHandle
     from .registry import _figure_of, registry
 
     globals()["registry"] = registry
@@ -202,21 +386,76 @@ def inline(chart_or_figure: Any) -> str:
     digest = hashlib.sha256(canonical + blob).hexdigest()[:20]
     token = f"xyin-{digest}"
     registry.publish(token, fig, broadcast=False, pinned=True)
-    return token
+    return FigureHandle(token)
 
 
-def release(token: str) -> None:
-    """Drop a registered figure (idempotent)."""
+def release(token: "str | FigureHandle") -> None:
+    """Drop a registered figure (idempotent). Takes a handle or its token."""
+    from .handles import token_of
     from .registry import registry
 
     globals()["registry"] = registry
 
-    registry.release(token)
+    resolved = token_of(token)
+    if resolved is None:
+        msg = f"expected a FigureHandle or figure token string, got {type(token).__name__}"
+        raise TypeError(msg)
+    registry.release(resolved)
 
 
 if TYPE_CHECKING:
+    # The curated xy node re-exports (`_XY_REEXPORTS`) resolve at runtime
+    # through `__getattr__`; restate them here so a type checker sees the real
+    # constructor signatures instead of `Any` (or nothing at all).
+    from xy import (
+        animation,
+        area,
+        arrow,
+        bar,
+        box,
+        callout,
+        colorbar,
+        column,
+        contour,
+        ecdf,
+        error_band,
+        errorbar,
+        export_config,
+        funnel,
+        heatmap,
+        hexbin,
+        histogram,
+        hline,
+        interaction_config,
+        label,
+        legend,
+        line,
+        marker,
+        modebar,
+        r_axis,
+        scatter,
+        segments,
+        spring,
+        stairs,
+        stem,
+        step,
+        text,
+        theme,
+        theta_axis,
+        threshold,
+        threshold_zone,
+        tooltip,
+        triangle_mesh,
+        violin,
+        vline,
+        x_axis,
+        x_band,
+        y_axis,
+        y_band,
+    )
+
     from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
-    from .component import chart
+    from .data_vars import AsyncDataVar, DataVar, data
     from .events import (
         CanonicalRowIdGroup,
         DataBounds,
@@ -229,6 +468,30 @@ if TYPE_CHECKING:
         SelectionPayload,
         ViewChangeEvent,
     )
+    from .factories import (
+        area_chart,
+        bar_chart,
+        box_chart,
+        chart,
+        column_chart,
+        contour_chart,
+        ecdf_chart,
+        error_band_chart,
+        errorbar_chart,
+        funnel_chart,
+        heatmap_chart,
+        hexbin_chart,
+        histogram_chart,
+        line_chart,
+        scatter_chart,
+        segments_chart,
+        stairs_chart,
+        stem_chart,
+        step_chart,
+        triangle_mesh_chart,
+        violin_chart,
+    )
+    from .handles import DataHandle, FigureHandle
     from .namespace import XY_NAMESPACE, XYNamespace
     from .registry import FigureRegistry, registry
     from .selections import resolve_selection

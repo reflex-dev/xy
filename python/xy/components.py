@@ -45,7 +45,7 @@ from typing import Any, Literal, Optional, TypeAlias, Union
 import numpy as np
 
 from . import _validate, channels, export, plugins, styles
-from ._figure import Figure, Selection
+from ._figure import Figure, Selection, structural_probe
 from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
@@ -138,6 +138,7 @@ __all__ = [
     "stem_chart",
     "step",
     "step_chart",
+    "structural_probe",
     "text",
     "theme",
     "theta_axis",
@@ -4872,6 +4873,11 @@ def _apply_mark_transition_metadata(
             else mark.key
         )
         if not traces:
+            if fig._structural_probe:
+                # Resolving above records a string key in the plan probe. Its
+                # row count/type are data contracts, so defer them until the
+                # real funnel emits a trace instead of inventing probe rows.
+                return
             raise ValueError(
                 f"{mark.kind} key cannot be attached because the mark emitted no traces"
             )
