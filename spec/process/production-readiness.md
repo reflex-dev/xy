@@ -359,13 +359,13 @@ Before tagging a release:
 - Before the first release after a change to the wheel matrix (new target,
   cross-compile toolchain, or tagging scheme), manually run the release
   workflow (`workflow_dispatch`, `dry_run` defaults to `true`) and confirm
-  every leg of the cross-compile matrix — including the newer aarch64/armv7/
-  musllinux/win-arm64 targets and the wasm job — actually builds, since a
-  target added to the matrix but never exercised in CI is unverified, not
-  working.
-- Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
-  (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
-  arm64).
+  every published native target — Linux x86-64, macOS arm64, and Windows x64 —
+  plus the separate PyEmscripten wheel actually builds and passes its runtime
+  gate. A target added to the matrix but never exercised in CI is unverified,
+  not working.
+- Confirm CI built and verified native wheels for Linux x86-64, macOS arm64, and
+  Windows x64. Cross-compiled targets remain out of the published matrix until
+  matching runtime verification is available.
 - Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
   its structural wheel check. The tested toolchain is Rust 1.97.0 with
   `panic=abort`, Emscripten 5.0.3, cibuildwheel 4.1.0, the PEP 783

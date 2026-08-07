@@ -568,6 +568,20 @@ def _step_run_lines(step_block: str) -> list[str]:
     return []
 
 
+def _require_step_run_contains(
+    errors: list[str], job_text: str, step: str, description: str, *needles: str
+) -> None:
+    """Require commands in a named step's active ``run`` value only."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    run_text = "\n".join(_step_run_lines(block))
+    missing = _missing_needles(run_text, needles)
+    if missing:
+        errors.append(f"CI step {step!r} missing {description}: {missing}")
+
+
 def _require_step_runs_exactly(
     errors: list[str], job_text: str, step: str, description: str, *commands: str
 ) -> None:
@@ -1278,11 +1292,24 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "--require-linkage",
         "Install-size budget (<= 15 MB)",
         '"reflex>=0.9.6"',
-        "scripts/wheel_smoke.py",
         "actions/upload-artifact@",
         "dist/*.whl",
     )
     wheels_job = jobs.get("wheels", "")
+    _require_step_run_contains(
+        errors,
+        wheels_job,
+        "Verify the wheel installs and loads the native core",
+        "native wheel smoke command",
+        '"$py" scripts/wheel_smoke.py',
+    )
+    _require_step_run_contains(
+        errors,
+        wheels_job,
+        "Verify the wheel installs and loads the native core",
+        "native wheel smoke command",
+        '"$py" scripts/wheel_smoke.py',
+    )
     matrix_entries = _matrix_include_entries(wheels_job)
     if not matrix_entries or any(
         entry.get("native", "").strip().strip("\"'").lower() != "true"

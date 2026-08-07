@@ -192,7 +192,10 @@ def test_linkage_validation_requires_platform() -> None:
 def test_linkage_validation_requires_native_wheel() -> None:
     with pytest.raises(AssertionError, match="requires an expected native wheel platform"):
         verify_wheel.verify_wheel(
-            Path("missing.whl"), expect_native=None, expect_platform="win_amd64", require_linkage=True
+            Path("missing.whl"),
+            expect_native=None,
+            expect_platform="win_amd64",
+            require_linkage=True,
         )
 
 

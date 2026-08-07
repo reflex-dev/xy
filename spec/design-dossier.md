@@ -1184,7 +1184,7 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    from Python with `ctypes`. There is no CPython extension ABI at all, so one
    `py3-none-<platform>` wheel covers every supported Python version on that platform
    without PyO3 or `abi3`. Wheel matrix in CI, release-blocking: manylinux
-   (x86_64 + aarch64), macOS (arm64 + x86_64), Windows x86_64. A missing native wheel
+   (x86_64), macOS (arm64), Windows x86_64. A missing native wheel
    is a release failure, not an end-user surprise.
 2. **The JS/WebGL2 render client as bundled static assets** inside the same wheel —
    versioned, no CDN dependency (notebooks are often airgapped; §23's CSP rules
@@ -1898,8 +1898,8 @@ detail or honesty.
 
 ### F1 — Packaging & distribution is unspecified. For Python-only, it's the highest risk. [Critical]
 **Failure scenario.** `pip install <engine>` must deliver three separately-hard things:
-(a) the **native Rust core** as prebuilt wheels across the matrix — manylinux (x86_64 +
-aarch64), macOS (arm64 + x86_64), Windows — via a plain C-ABI `cdylib` built by
+(a) the **native Rust core** as prebuilt wheels across the runtime-verified matrix —
+manylinux x86_64, macOS arm64, and Windows x86_64 — via a plain C-ABI `cdylib` built by
 Hatchling, so the Python-version cross-product disappears without PyO3 or `abi3`; (b)
 the compiled **JS/WebGL2 render client** as bundled static assets; (c) a **notebook
 front-end integration** that injects that client
