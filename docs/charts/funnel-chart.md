@@ -197,7 +197,7 @@ value/drop-off labels (`annotation_label`) — styles through the standard
 [chrome slots](/docs/xy/styling/chrome-slots/) with CSS classes, Tailwind
 utilities, or `styles={...}`:
 
-```python
+~~~python
 xy.funnel_chart(
     stages,
     values,
@@ -207,7 +207,7 @@ xy.funnel_chart(
         "tooltip": "rounded-xl shadow-lg",
     },
 )
-```
+~~~
 
 `value_format` and `percent_format` are `str.format` templates, and the
 kernel applies them once for every surface — segment labels, hover tooltips,
@@ -257,9 +257,10 @@ segment in the same colour across every chart that names that stage.
 Hover reads the full arithmetic for a stage, and because a segment covers an
 area rather than a point, the tooltip follows the cursor within it. Clicking
 emits `xy:click` carrying the stage name, value, prior value, overall share,
-conversion, and drop-off — the same semantic row the tooltip shows. Ratios
-over a zero denominator arrive as `null` in events and print as an em dash
-(—) in the tooltip, so a stage after a zero reads as "no meaningful number"
+conversion, and drop-off — the same semantic row the tooltip shows. A ratio
+with no meaningful value — a zero denominator, or one that would overflow to
+infinity on an extreme dynamic range — arrives as `null` in events and prints
+as an em dash (—) in the tooltip, so it reads as "no meaningful number"
 rather than as missing data. Box
 and lasso selection are deliberately absent rather than approximate.
 

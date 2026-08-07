@@ -471,9 +471,22 @@ Object.assign(ChartView.prototype, {
   _prepareFunnelPositionInterpolation(previous, next, match) {
     const oldF = previous._cpuFunnel;
     const newF = next._cpuFunnel;
-    if (!oldF || !newF || previous.orientation !== next.orientation) {
+    // Over the match limit the strategy is already "snap": preparing anyway
+    // would mix six full-size arrays per frame for identical values.
+    if (match.strategy === "snap" || !oldF || !newF ||
+        previous.orientation !== next.orientation) {
       match.fallback ||= "snap:layout-mismatch";
       return false;
+    }
+    if (match.strategy === "append") {
+      // Append matching pairs rows by their decoded x value, and a vertical
+      // funnel's x centers are all ~0 (the cross midline), so every new stage
+      // paired with the LAST old stage. Stages are an ordered process, not a
+      // stream: match them by position instead, and say so.
+      match.fallback ||= "index:append-unsupported";
+      match.pairs.length = 0;
+      const count = Math.min(oldF.n, newF.n);
+      for (let i = 0; i < count; i++) match.pairs.push([i, i]);
     }
     const names = ["pos0", "pos1", "lo0", "hi0", "lo1", "hi1"];
     const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);

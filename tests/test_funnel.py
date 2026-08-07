@@ -957,3 +957,42 @@ def test_hover_containment_rejects_the_bounding_box_corner() -> None:
     # edge); trapezoid containment must reject it.
     assert edge < 4.5
     assert edge > 2.0
+
+
+def test_horizontal_outside_labels_center_over_their_stage() -> None:
+    """A start anchor at the stage midpoint hung half the text over the
+    neighbour and clipped the last stage at the plot edge; horizontal outside
+    labels center instead. Vertical margin labels keep the start anchor."""
+    layout = compute_layout(
+        ["alpha", "beta", "gamma"],
+        [10.0, 6.0, 1.0],
+        orientation="horizontal",
+        geometry="bar",
+    )
+    labels = decide_labels(
+        layout,
+        show_values=True,
+        show_conversion=True,
+        show_dropoff=False,
+        value_format="{:,.0f}",
+        percent_format="{:.0%}",
+        font_size=12.0,
+        plot_px=(700.0, 120.0),
+    )
+    outside = [label for label in labels if label.placement == "outside"]
+    assert outside, "expected the thin stage to fall outside"
+    assert {label.anchor for label in outside} == {"middle"}
+
+
+def test_funnel_append_matching_downgrades_to_index_pairs() -> None:
+    """Append matching pairs rows by decoded x value, and a vertical funnel's
+    x centers are all ~0, so every new stage paired with the LAST old stage.
+    The funnel prep rebuilds the pairs by position and records the downgrade."""
+    source = (Path(__file__).parents[1] / "js" / "src" / "56_animation.ts").read_text(
+        encoding="utf-8"
+    )
+    prep = source.split("_prepareFunnelPositionInterpolation(previous, next, match) {")[1]
+    prep = prep.split("\n  },")[0]
+    assert 'match.strategy === "snap"' in prep, "snap strategy must bail before mixing"
+    assert 'match.strategy === "append"' in prep
+    assert '"index:append-unsupported"' in prep

@@ -369,7 +369,13 @@ def decide_labels(
             if _fits(width_px, along_px * 0.92) and _fits(line_px, across_px):
                 placement, cross, anchor = "inside", 0.0, "middle"
             elif outside_ok:
-                placement, cross, anchor = "outside", mid_half, "start"
+                # A vertical outside label runs into the side margin from the
+                # segment's edge; a horizontal one sits ABOVE its own stage,
+                # so it centers there — a start anchor at the stage midpoint
+                # hung half the text over the neighbour and clipped the last
+                # stage at the plot edge.
+                anchor = "middle" if horizontal else "start"
+                placement, cross = "outside", mid_half
             else:
                 placement, cross, anchor = "hidden", 0.0, "middle"
             labels.append(

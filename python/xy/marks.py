@@ -794,6 +794,7 @@ def funnel(
                 DEFAULT_PALETTE
             )
             unmapped = 0
+            missing: list[str] = []
             stage_css = []
             for name in stage_names:
                 if name in pinned:
@@ -801,6 +802,18 @@ def funnel(
                 else:
                     stage_css.append(spare[unmapped % len(spare)])
                     unmapped += 1
+                    missing.append(name)
+            if missing:
+                # The resolver path warns about unmapped categories; this
+                # fallback must too, or a typo in the map is silent exactly
+                # when the stage names look like colors.
+                warnings.warn(
+                    f"{len(missing)} stage(s) {missing} are not in the "
+                    "xy.theme(palette={...}) map and fall back to the cycle. "
+                    "Add them to the map to pin their colors.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
     else:
         stage_css = [self.palette_color(i) for i in range(n)]
 

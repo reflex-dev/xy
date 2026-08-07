@@ -85,6 +85,7 @@ CHART_FACTORIES = (
     "stem_chart",
     "segments_chart",
     "triangle_mesh_chart",
+    "funnel_chart",
 )
 CHROME_FACTORIES = (
     "legend",
@@ -390,7 +391,7 @@ def test_chart_factories_construct_named_lazy_charts() -> None:
             chart = getattr(components, name)()
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        if name not in {"radar_chart", "wind_rose", "pie_chart"}:
+        if name not in {"radar_chart", "wind_rose", "pie_chart", "funnel_chart"}:
             assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None
