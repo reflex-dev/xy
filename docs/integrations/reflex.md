@@ -6,6 +6,7 @@ components:
   - reflex_xy.data
   - reflex_xy.figure
   - reflex_xy.scatter_chart
+  - reflex_xy.line_chart
   - reflex_xy.inline
   - reflex_xy.append
 ---
