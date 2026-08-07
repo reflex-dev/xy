@@ -81,6 +81,13 @@ def _matrix_include_entries(job_text: str) -> list[dict[str, str]]:
             break
         else:
             continue
+        if current is not None and item.startswith("{") and item.endswith("}"):
+            inline = item[1:-1]
+            for match in re.finditer(
+                r"([A-Za-z0-9_-]+):\s*(\"[^\"]*\"|'[^']*'|[^,}]+)", inline
+            ):
+                current[match.group(1)] = match.group(2).strip()
+            continue
         match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)", item)
         if match and current is not None:
             current[match.group(1)] = match.group(2)
@@ -559,6 +566,20 @@ def _step_run_lines(step_block: str) -> list[str]:
                 commands.append(stripped)
         return commands
     return []
+
+
+def _require_step_run_contains(
+    errors: list[str], job_text: str, step: str, description: str, *needles: str
+) -> None:
+    """Require commands in a named step's active ``run`` value only."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    run_text = "\n".join(_step_run_lines(block))
+    missing = _missing_needles(run_text, needles)
+    if missing:
+        errors.append(f"CI step {step!r} missing {description}: {missing}")
 
 
 def _require_step_runs_exactly(
@@ -1251,7 +1272,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wheels",
         "release",
-        "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
+        "runtime-verified wheel matrix (Linux, macOS, Windows), verification, and upload",
         "dtolnay/rust-toolchain@",
         "astral-sh/setup-uv@",
         "actions/setup-node@",
@@ -1261,19 +1282,42 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "uv build --wheel",
         "XY_REQUIRE_CARGO",
         "XY_WHEEL_PLATFORM",
-        "musllinux_1_2_x86_64",
-        "win_arm64",
+        "manylinux_2_17_x86_64",
+        "macosx_11_0_arm64",
+        "win_amd64",
         "scripts/verify_wheel.py",
         "--expect-native",
+        "--expect-platform",
+        "--require-symbol xy_abi_version",
+        "--require-linkage",
         "Install-size budget (<= 15 MB)",
         '"reflex>=0.9.6"',
-        "import importlib.metadata as m, reflex_xy",
-        "assert reflex_xy.__version__ == m.version('xy')",
-        "assert k.BACKEND=='native'",
         "actions/upload-artifact@",
         "dist/*.whl",
     )
     wheels_job = jobs.get("wheels", "")
+    _require_step_run_contains(
+        errors,
+        wheels_job,
+        "Verify the wheel installs and loads the native core",
+        "native wheel smoke command",
+        '"$py" scripts/wheel_smoke.py',
+    )
+    _require_step_run_contains(
+        errors,
+        wheels_job,
+        "Verify the wheel installs and loads the native core",
+        "native wheel smoke command",
+        '"$py" scripts/wheel_smoke.py',
+    )
+    matrix_entries = _matrix_include_entries(wheels_job)
+    if not matrix_entries or any(
+        entry.get("native", "").strip().strip("\"'").lower() != "true"
+        for entry in matrix_entries
+    ):
+        errors.append(
+            "release wheels job must not publish a target without an install/load smoke"
+        )
     if "continue-on-error:" in wheels_job:
         errors.append(
             "release wheels job must block publishing when any native wheel build or "
