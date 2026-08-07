@@ -1288,7 +1288,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     )
     wheels_job = jobs.get("wheels", "")
     matrix_entries = _matrix_include_entries(wheels_job)
-    if any(
+    if not matrix_entries or any(
         entry.get("native", "").strip().strip("\"'").lower() != "true"
         for entry in matrix_entries
     ):
