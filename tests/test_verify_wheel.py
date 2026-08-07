@@ -146,6 +146,49 @@ def test_native_binary_rejects_missing_exported_abi_symbol() -> None:
         verify_wheel._require_exported_symbols("native", binary, {"xy_abi_version"})
 
 
+def test_native_binary_accepts_exported_elf_abi_symbol() -> None:
+    data = bytearray(1024)
+    data[:4] = b"\x7fELF"
+    data[4:8] = bytes([2, 1, 1, 0])
+    struct.pack_into("<H", data, 18, 62)
+    struct.pack_into("<Q", data, 40, 512)
+    struct.pack_into("<H", data, 58, 64)
+    struct.pack_into("<H", data, 60, 3)
+    struct.pack_into("<H", data, 62, 0)
+    # The dynamic symbol table links to the following string-table section.
+    struct.pack_into("<I", data, 512 + 64 + 4, 11)
+    struct.pack_into("<Q", data, 512 + 64 + 24, 128)
+    struct.pack_into("<Q", data, 512 + 64 + 32, 24)
+    struct.pack_into("<I", data, 512 + 64 + 40, 2)
+    struct.pack_into("<Q", data, 512 + 64 + 56, 24)
+    struct.pack_into("<I", data, 512 + 128 + 4, 3)
+    struct.pack_into("<Q", data, 512 + 128 + 24, 256)
+    struct.pack_into("<Q", data, 512 + 128 + 32, 16)
+    struct.pack_into("<IBBH", data, 128, 1, 0x10, 0, 1)
+    data[256 : 256 + 16] = b"\0xy_abi_version\0"
+
+    verify_wheel._require_exported_symbols("native", bytes(data), {"xy_abi_version"})
+
+
+def test_macho_linkage_rejects_binary_above_wheel_floor() -> None:
+    data = bytearray(48)
+    data[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<I", data, 4, 0x0100000C)
+    struct.pack_into("<I", data, 16, 1)
+    struct.pack_into("<II", data, 32, 0x32, 16)
+    struct.pack_into("<I", data, 44, 12 << 16)
+
+    with pytest.raises(AssertionError, match="above 11.0"):
+        verify_wheel._require_macho_linkage("native", bytes(data), "macosx_11_0_arm64")
+
+
+def test_linkage_validation_requires_platform() -> None:
+    with pytest.raises(AssertionError, match="requires an expected wheel platform"):
+        verify_wheel.verify_wheel(
+            Path("missing.whl"), expect_native=True, require_linkage=True
+        )
+
+
 def _elf_linkage_fixture(interpreter: bytes, dependency: bytes, version: bytes = b"") -> bytes:
     data = bytearray(512)
     data[:4] = b"\x7fELF"

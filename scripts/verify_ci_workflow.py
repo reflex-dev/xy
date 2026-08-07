@@ -81,6 +81,13 @@ def _matrix_include_entries(job_text: str) -> list[dict[str, str]]:
             break
         else:
             continue
+        if current is not None and item.startswith("{") and item.endswith("}"):
+            inline = item[1:-1]
+            for match in re.finditer(
+                r"([A-Za-z0-9_-]+):\s*(\"[^\"]*\"|'[^']*'|[^,}]+)", inline
+            ):
+                current[match.group(1)] = match.group(2).strip()
+            continue
         match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)", item)
         if match and current is not None:
             current[match.group(1)] = match.group(2)
@@ -1280,7 +1287,11 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "dist/*.whl",
     )
     wheels_job = jobs.get("wheels", "")
-    if "native: false" in wheels_job:
+    matrix_entries = _matrix_include_entries(wheels_job)
+    if any(
+        entry.get("native", "").strip().strip("\"'").lower() != "true"
+        for entry in matrix_entries
+    ):
         errors.append(
             "release wheels job must not publish a target without an install/load smoke"
         )

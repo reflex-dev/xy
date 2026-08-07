@@ -140,7 +140,7 @@ def _inspect_native_binary(name: str, data: bytes) -> NativeBinaryInfo:
         b"\xfe\xed\xfa\xcf",
         b"\xcf\xfa\xed\xfe",
     }:
-        prefix = ">" if data[:4] == b"\xfe\xed\xfa\xce" else "<"
+        prefix = ">" if data[:4] in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf"} else "<"
         cputype = struct.unpack_from(prefix + "I", data, 4)[0]
         if cputype not in _MACHO_CPU_TYPES:
             raise AssertionError(f"{name} has unsupported Mach-O CPU type {cputype}")
@@ -189,7 +189,7 @@ def _elf_exported_symbols(name: str, data: bytes, prefix: str, bits: int) -> fro
     if not section_offset or not section_count or not section_header_size:
         return frozenset()
 
-    sections: list[tuple[int, int, int, int]] = []
+    sections: list[tuple[int, int, int, int, int]] = []
     for index in range(section_count):
         offset = section_offset + index * section_header_size
         if offset + section_header_size > len(data):
@@ -206,25 +206,32 @@ def _elf_exported_symbols(name: str, data: bytes, prefix: str, bits: int) -> fro
             prefix + ("Q" if bits == 64 else "I"), data, offset + section_fields[3]
         )[0]
         sections.append(
-            (section_type, section_file_offset, section_length, section_link or section_entry_size)
+            (
+                section_type,
+                section_file_offset,
+                section_length,
+                section_link,
+                section_entry_size,
+            )
         )
 
     dynamic_index = next((i for i, section in enumerate(sections) if section[0] == 11), None)
     if dynamic_index is None:
         return frozenset()
-    _, symbol_offset, symbol_length, string_index = sections[dynamic_index]
+    _, symbol_offset, symbol_length, string_index, entry_size = sections[dynamic_index]
     if string_index >= len(sections):
         raise AssertionError(f"{name} has an invalid ELF dynamic string-table link")
-    _, string_offset, string_length, _ = sections[string_index]
+    _, string_offset, string_length, _, _ = sections[string_index]
     symbol_size = 24 if bits == 64 else 16
-    entry_size = sections[dynamic_index][3] or symbol_size
+    entry_size = entry_size or symbol_size
     if entry_size < symbol_size or symbol_offset + symbol_length > len(data):
         raise AssertionError(f"{name} has an invalid ELF dynamic symbol table")
     if string_offset + string_length > len(data):
         raise AssertionError(f"{name} has a truncated ELF dynamic string table")
     strings = data[string_offset : string_offset + string_length]
     exported: set[str] = set()
-    for offset in range(symbol_offset, symbol_offset + symbol_length, entry_size):
+    symbol_end = symbol_offset + symbol_length - (symbol_length % entry_size)
+    for offset in range(symbol_offset, symbol_end, entry_size):
         if bits == 64:
             string_name, info, section_index = (
                 struct.unpack_from(prefix + "I", data, offset)[0],
@@ -426,10 +433,8 @@ def _require_native_target(name: str, data: bytes, platform: str) -> None:
 
 
 def _require_exported_symbols(name: str, data: bytes, required: set[str]) -> None:
-    """Require ABI symbols when the binary format has a supported export table."""
+    """Require ABI symbols from the binary's export table."""
     info = _inspect_native_binary(name, data)
-    if info.format != "ELF":
-        raise AssertionError(f"exported-symbol inspection is not implemented for {info.format}")
     missing = sorted(required - info.exported_symbols)
     if missing:
         raise AssertionError(f"{name} is missing exported ABI symbols: {missing}")
@@ -532,8 +537,10 @@ def _require_elf_linkage(name: str, data: bytes, platform: str) -> None:
         raise AssertionError(f"{name} has an invalid ELF class")
     interpreter, dependencies = _elf_linkage(name, data, prefix, bits)
     if platform.startswith("manylinux_"):
-        if "ld-linux" not in interpreter:
+        if interpreter and "ld-linux" not in interpreter:
             raise AssertionError(f"{name} is not linked against glibc: interpreter={interpreter!r}")
+        if not interpreter and "libc.so.6" not in dependencies:
+            raise AssertionError(f"{name} has no detectable glibc linkage")
         unexpected = sorted(set(dependencies) - _ELF_ALLOWED_GLIBC)
         if unexpected:
             raise AssertionError(f"{name} has unsupported glibc dependencies: {unexpected}")
@@ -542,7 +549,8 @@ def _require_elf_linkage(name: str, data: bytes, platform: str) -> None:
             for match in re.finditer(rb"GLIBC_(\d+)\.(\d+)", data)
         }
         if versions and max(versions) > (2, 17):
-            raise AssertionError(f"{name} requires glibc {max(versions)}, above manylinux_2_17")
+            version = ".".join(map(str, max(versions)))
+            raise AssertionError(f"{name} requires glibc {version}, above manylinux_2_17")
     elif platform.startswith("musllinux_"):
         if "musl" not in interpreter:
             raise AssertionError(f"{name} is not linked against musl: interpreter={interpreter!r}")
@@ -575,14 +583,16 @@ def _require_macho_linkage(name: str, data: bytes, platform: str) -> None:
     if unexpected:
         raise AssertionError(f"{name} has unsupported macOS dependencies: {unexpected}")
     expected_floor = (11, 0) if platform.endswith("arm64") else (10, 12)
-    if minimum is not None and minimum < expected_floor:
+    if minimum is None:
+        raise AssertionError(f"{name} has no macOS deployment target")
+    if minimum > expected_floor:
         raise AssertionError(
-            f"{name} targets macOS {minimum[0]}.{minimum[1]}, below {expected_floor[0]}.{expected_floor[1]}"
+            f"{name} targets macOS {minimum[0]}.{minimum[1]}, above {expected_floor[0]}.{expected_floor[1]}"
         )
 
 
 def _require_pe_linkage(name: str, data: bytes) -> None:
-    if len(data) < 2 or data[:2] != b"MZ":
+    if len(data) < 0x40 or data[:2] != b"MZ":
         raise AssertionError(f"{name} is not a PE binary for Windows linkage validation")
     pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
     if pe_offset + 26 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
@@ -591,6 +601,8 @@ def _require_pe_linkage(name: str, data: bytes) -> None:
     if optional_magic not in {0x10B, 0x20B}:
         raise AssertionError(f"{name} has an invalid PE optional-header magic")
     imports = _pe_imports(name, data, pe_offset, optional_magic)
+    if not imports:
+        raise AssertionError(f"{name} has no Windows import table")
     unexpected = sorted(
         dependency
         for dependency in imports
@@ -818,6 +830,8 @@ def verify_wheel(
     required_symbols: Optional[set[str]] = None,
     require_linkage: bool = False,
 ) -> None:
+    if require_linkage and expect_platform is None:
+        raise AssertionError("linkage validation requires an expected wheel platform tag")
     with zipfile.ZipFile(path) as zf:
         _require_unique_archive_members(zf.infolist())
         names = set(zf.namelist())
@@ -932,14 +946,20 @@ def verify_wheel(
         if required_symbols:
             with zipfile.ZipFile(path) as zf:
                 _require_exported_symbols(native_libs[0], zf.read(native_libs[0]), required_symbols)
-        if require_linkage and expect_platform is not None:
+        if expect_platform is not None or required_symbols:
             with zipfile.ZipFile(path) as zf:
+                native_data = zf.read(native_libs[0])
+            if expect_platform is not None:
+                _require_native_target(native_libs[0], native_data, expect_platform)
+            if required_symbols:
+                _require_exported_symbols(native_libs[0], native_data, required_symbols)
+            if require_linkage:
                 if expect_platform.startswith(("manylinux_", "musllinux_")):
-                    _require_elf_linkage(native_libs[0], zf.read(native_libs[0]), expect_platform)
+                    _require_elf_linkage(native_libs[0], native_data, expect_platform)
                 elif expect_platform.startswith("macosx_"):
-                    _require_macho_linkage(native_libs[0], zf.read(native_libs[0]), expect_platform)
-                elif expect_platform.startswith("win_"):
-                    _require_pe_linkage(native_libs[0], zf.read(native_libs[0]))
+                    _require_macho_linkage(native_libs[0], native_data, expect_platform)
+                elif expect_platform.startswith("win_") or expect_platform == "win32":
+                    _require_pe_linkage(native_libs[0], native_data)
                 else:
                     raise AssertionError(
                         f"linkage inspection is not implemented for wheel platform {expect_platform!r}"
@@ -993,7 +1013,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             required_symbols=set(args.require_symbol),
             require_linkage=args.require_linkage,
         )
-    except (AssertionError, KeyError, zipfile.BadZipFile) as e:
+    except (AssertionError, KeyError, struct.error, zipfile.BadZipFile) as e:
         print(f"wheel verification failed for {args.wheel}: {e}", file=sys.stderr)
         return 1
     print(f"wheel verification OK: {args.wheel}")
