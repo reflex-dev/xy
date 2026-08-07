@@ -1802,7 +1802,7 @@ provides-extras = ["reflex"]
 [package.metadata.requires-dev]
 codspeed = [{ name = "pytest-codspeed", specifier = ">=5,<6" }]
 dev = [
-    { name = "aiohttp", specifier = ">=3.9" },
+    { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "hypothesis", specifier = ">=6" },
     { name = "pillow", specifier = ">=10" },
     { name = "pyarrow", specifier = ">=15" },
