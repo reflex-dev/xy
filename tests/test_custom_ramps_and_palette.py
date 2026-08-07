@@ -405,6 +405,33 @@ def test_object_factorization_matches_fixed_width_string_semantics():
     np.testing.assert_array_equal(object_result[2], unicode_result[2])
 
 
+def test_object_factorization_preserves_nul_distinct_categories():
+    """NUL-containing strings retain Python equality semantics."""
+    categories, codes, counts = channels._factorize_categories(
+        np.array(["a", "a\x00", "a", "a\x00"], dtype=object)
+    )
+
+    assert categories == ["a", "a\x00"]
+    np.testing.assert_array_equal(codes, [0, 1, 0, 1])
+    assert counts is None
+
+
+def test_near_unique_object_strings_do_not_run_full_width_scan(monkeypatch):
+    """Near-unique object columns are rejected before full normalization."""
+    values = np.array([f"id-{i}" for i in range(5000)], dtype=object)
+    original = channels._object_string_width
+    calls: list[bool] = []
+
+    def record(arr, *, sample=False):
+        calls.append(sample)
+        return original(arr, sample=sample)
+
+    monkeypatch.setattr(channels, "_object_string_width", record)
+    channels._factorize_categories(values)
+
+    assert calls == [True]
+
+
 @pytest.mark.parametrize(
     "values",
     [
