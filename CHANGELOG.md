@@ -8,6 +8,31 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- Data-bound chart components for Reflex: `@reflex_xy.data` publishes typed
+  column vars, and `reflex_xy.scatter_chart(data=State.points, x="x", y="y")` —
+  one factory per mark kind, plus the composed `reflex_xy.chart(*nodes, data=...)`
+  — binds them. Chart structure is validated at `reflex run`, so a bad mark name,
+  kwarg, colormap, or column name fails there instead of showing up as a blank
+  chart in the browser. Reconnects and multi-worker deployments recover these
+  charts without a central store. `examples/reflex` is ported to the new API.
+- Chart vars are now typed handles: `@reflex_xy.figure`, `register()`, and
+  `inline()` return a `FigureHandle`, and the component takes a `figure=` prop,
+  so passing the wrong var or a raw string fails at page evaluation. Positional
+  live spellings still work with a deprecation warning; `chart(Chart)` for static
+  figures is unchanged.
+- `@reflex_xy.figure` builders are run once at compile against a default state,
+  raising `FigureProbeError` with the state class, var, and source location
+  instead of failing in the browser. Opt out with `probe=False` (the default for
+  async builders).
+- `xy.structural_probe()`: a build mode where a mark with no data validates its
+  configuration and draws nothing, rather than refusing zero rows or aggregating.
+
+### Fixed
+- A reconnect now resets the `err{resync}` retry budget alongside the resubscribe
+  it already triggers, so a chart whose backend recovers after five failed
+  attempts no longer needs a remount.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added
