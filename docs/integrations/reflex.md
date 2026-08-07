@@ -121,7 +121,7 @@ class Dashboard(rx.State):
 
     @rx.event
     def record_hover(self, event: rxy.PointHoverEvent):
-        self.hovered = event.get("data", {})
+        self.hovered = {**event.get("data", {}), **event.get("datum", {})}
 
 
 def index() -> rx.Component:

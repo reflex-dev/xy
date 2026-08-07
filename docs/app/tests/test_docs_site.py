@@ -2800,7 +2800,13 @@ def test_reflex_integration_renders_the_state_backed_data_example() -> None:
     assert len(live_blocks) == 2
     state_backed = next(block for block in live_blocks if "@rxy.data" in block.content)
     assert "rxy.scatter_chart(" in state_backed.content
-    assert "XYChart" in str(render_xy_markdown_page(page))
+    state_rendered = str(
+        XyDocsMarkdownTransformer(
+            virtual_filepath=str(page.source_path.resolve()),
+            filename=str(page.source_path),
+        ).code_block(state_backed)
+    )
+    assert "XYChart" in state_rendered
 
 
 @pytest.mark.parametrize(
