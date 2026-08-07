@@ -392,7 +392,7 @@ Before tagging a release:
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
-  `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel
+  `Provides-Extra: reflex` and `reflex>=0.9.6,<0.10` guarded by that extra. The wheel
   must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
   archive file exactly once with matching `sha256` and size fields. Wheels
   and the sdist remain distribution/build-input-only: docs, tests, benchmarks,
@@ -405,8 +405,12 @@ Every `xy` release carries the `reflex_xy` Python package and JSX wrapper. The
 wrapper links to the render client in the same installed distribution, so
 client, kernel, and framework bridge share one version. Plain `xy` must not
 install Reflex; `xy[reflex]` must install the declared supported floor.
-Release smoke tests install Reflex, import `reflex_xy`, and assert that its
-reported version matches the `xy` distribution version.
+The supported Reflex window is `>=0.9.6,<0.10`. CI runs the component compile
+and state-event rebuild smokes against both the minimum `0.9.6` and the newest
+released `0.9.8` in that window. Widen the extra only after adding the new
+released version to that matrix and passing both smokes. Release smoke tests
+install the bounded extra, import `reflex_xy`, and assert that its reported
+version matches the `xy` distribution version.
 
 ## Hardening Backlog
 

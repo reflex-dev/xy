@@ -32,9 +32,11 @@ REQUIRED_CI_JOBS = {
     "sdist",
     "wheels",
     "install_without_rust",
+    "reflex_compatibility",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+REFLEX_REQUIREMENT = "reflex>=0.9.6,<0.10"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -873,6 +875,29 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_job_contains(
         errors,
         jobs,
+        "reflex_compatibility",
+        "CI",
+        "minimum and maximum released Reflex compatibility matrix",
+        "fail-fast: false",
+        'reflex-version: ["0.9.6", "0.9.8"]',
+        'reflex==${{ matrix.reflex-version }}',
+        "<0.10,>=0.9.6",
+        "test_component.py::test_component_compiles_with_events",
+        "test_state_bridge.py::test_rebuild_reads_session_state",
+    )
+    try:
+        project_metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot read project metadata for Reflex compatibility gate: {exc}")
+    else:
+        if f'"{REFLEX_REQUIREMENT}"' not in project_metadata:
+            errors.append(
+                "pyproject.toml must bound the xy[reflex] extra to "
+                f"{REFLEX_REQUIREMENT!r}"
+            )
+    _require_job_contains(
+        errors,
+        jobs,
         "browser_conformance",
         "CI",
         "accessibility and three-engine conformance gate",
@@ -1120,7 +1145,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Rust-backed sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_REQUIREMENT}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
@@ -1266,7 +1291,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/verify_wheel.py",
         "--expect-native",
         "Install-size budget (<= 15 MB)",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_REQUIREMENT}"',
         "import importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "assert k.BACKEND=='native'",
@@ -1331,7 +1356,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "Rust-backed release sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_REQUIREMENT}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',

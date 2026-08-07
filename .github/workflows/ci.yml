@@ -238,6 +238,43 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
+  reflex_compatibility:
+    name: Reflex compatibility (${{ matrix.reflex-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0.9.6 is the declared floor; 0.9.8 is the newest released version
+        # in the supported <0.10 compatibility window.
+        reflex-version: ["0.9.6", "0.9.8"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install exact Reflex compatibility target
+        run: |
+          npm ci
+          uv venv .venv
+          uv pip install -p .venv/bin/python \
+            "reflex==${{ matrix.reflex-version }}" \
+            "numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"
+          uv pip install -p .venv/bin/python -e . --no-deps
+      - name: Verify exact Reflex target and metadata window
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'"
+          .venv/bin/python -c "from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '<0.10,>=0.9.6'"
+      - name: Component compile and event smoke
+        run: .venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events
+      - name: State event and rebuild smoke
+        run: .venv/bin/pytest -q tests/reflex_adapter/test_state_bridge.py::test_rebuild_reads_session_state
+
   browser_conformance:
     name: Accessibility + cross-browser conformance
     runs-on: ubuntu-latest
@@ -645,7 +682,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv smoke-native
-          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          uv pip install --no-cache -p smoke-native dist/*.tar.gz numpy anywidget "reflex>=0.9.6,<0.10"
           ./smoke-native/bin/python - <<'PY'
           import importlib.metadata as metadata
 
@@ -666,7 +703,7 @@ jobs:
           XY_SKIP_CARGO: "1"
         run: |
           uv venv smoke-no-rust
-          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6"
+          uv pip install --no-cache -p smoke-no-rust dist/*.tar.gz numpy anywidget "reflex>=0.9.6,<0.10"
           ./smoke-no-rust/bin/python - <<'PY'
           import importlib.metadata as metadata
 
