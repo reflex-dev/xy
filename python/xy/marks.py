@@ -852,12 +852,9 @@ def funnel(
     if stroke_value is not None and not stroke_width_value:
         # `stroke=` with no width drew nothing: every renderer skips a
         # zero-width stroke. The other mark builders imply 1px in exactly this
-        # case, so a documented option is never silently inert.
-        stroke_width_value = 1.0
-    if stroke_value is not None and not stroke_width_value:
-        # `stroke=` with no width drew nothing: every renderer skips a
-        # zero-width stroke. The other mark builders imply 1px in exactly this
-        # case, so a documented option is not silently inert.
+        # case, so a documented option is never silently inert. Like them, an
+        # explicit `stroke_width=0` is indistinguishable from the default and
+        # also takes the 1px — "outline me, zero wide" has no other reading.
         stroke_width_value = 1.0
 
     stage_dim = "y" if orientation == "vertical" else "x"

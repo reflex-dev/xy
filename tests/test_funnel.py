@@ -1000,10 +1000,29 @@ def test_funnel_append_matching_downgrades_to_index_pairs() -> None:
 
 def test_stroke_without_width_still_draws_an_outline() -> None:
     """Every renderer skips a zero-width stroke, so `stroke=` alone drew
-    nothing. The other mark builders imply 1px in exactly this case."""
-    doc = xy.funnel_chart(["a", "b"], [4.0, 2.0], stroke="#ff0000").figure().to_svg()
+    nothing. The other mark builders imply 1px in exactly this case, and the
+    implication happens at BUILD time — so it ships on the wire and both
+    static exporters honour it, not just the client."""
+    from test_png_export import _decode_rgba
+
+    chart = xy.funnel_chart(
+        ["a", "b"],
+        [4.0, 2.0],
+        geometry="bar",
+        labels=False,
+        color="#ffffff",
+        stroke="#ff0000",
+        width=400,
+        height=300,
+    )
+    spec, _ = chart.figure().build_payload()
+    assert spec["traces"][0]["style"]["stroke_width"] == 1.0
+    doc = chart.figure().to_svg()
     assert 'stroke="#ff0000"' in doc
     assert 'stroke-width="1"' in doc
+    pixels = _decode_rgba(chart.figure().to_image(format="png", scale=1))
+    reds = ((pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 90) & (pixels[:, :, 2] < 90)).sum()
+    assert reds > 0, "raster dropped the implied 1px outline"
 
 
 def test_tooltip_rows_carry_the_prior_value_text() -> None:
