@@ -85,9 +85,12 @@ in the README).
   public documentation heading outlines from skipping levels.
 
 ### Security
-- Documentation and application dependencies, including PostCSS, were updated
-  to patched versions, with the associated Python and JavaScript lockfiles
-  refreshed.
+- The active root environment now resolves `aiohttp==3.14.3`, patched for
+  CVE-2026-69244. Dependabot alert #12 names a lockfile from the
+  retired `python/reflex-xy` project, which is deleted from the repository and
+  excluded from the distribution. Other documentation and application
+  dependencies, including PostCSS, were updated to patched versions, with the
+  associated Python and JavaScript lockfiles refreshed.
 
 ## [0.0.5] - 2026-07-31
 
