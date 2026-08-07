@@ -4768,7 +4768,12 @@ def _annotation_svg(
 
     for ann in annotations:
         style = ann.get("style") or {}
-        color = escape(_css(style.get("color"), default_text))
+        # SHAPE paint (rule strokes, band fills, arrows, markers) keeps its own
+        # neutral default — only the LABEL falls back to the theme text colour,
+        # which is what the client's
+        # var(--chart-annotation-text, var(--chart-text, inherit)) governs.
+        # Widening this to shapes diverged SVG from the raster and the client.
+        color = escape(_css(style.get("color"), "#667085"))
         opacity = float(style.get("opacity", 1.0))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
         end = max(start, min(1.0, float(style.get("span_end", 1.0))))
@@ -4933,8 +4938,14 @@ def _annotation_svg(
                     style.get("opacity", 1.0) if kind == "text" else 1.0,
                 )
             )
-            # A callout's `color` paints its arrow; the label prefers its own.
-            label_color = escape(_css(style.get("label_color"), "")) or color
+            # A callout's `color` paints its arrow; the label prefers its own,
+            # then the theme text colour (the client resolves the same chain
+            # through var(--chart-annotation-text, var(--chart-text, …))).
+            label_color = (
+                escape(_css(style.get("label_color"), ""))
+                or (escape(_css(style.get("color"), "")) if style.get("color") else "")
+                or escape(default_text)
+            )
             labels.extend(
                 _svg_text_box(style, lines, x_text, y_text, line_height, font_size, anchor)
             )
@@ -5672,7 +5683,14 @@ def _funnel_marks(
         if stroke_width > 0:
             paint_css = stroke_paint if stroke_paint is not None else rgb(intrinsic[i])
             edge_op = stroke_op * (1.0 if stroke_paint is not None else float(intrinsic[i][3]))
-            attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
+            # round joins: the native rasterizer's stroke is a distance field
+            # with round caps/joins by construction (src/raster.rs), so an SVG
+            # miter would spike where a taper meets its neck while the PNG
+            # stayed round — parity is identity, so say it explicitly.
+            attrs += (
+                f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}"'
+                ' stroke-linejoin="round" '
+            )
             if edge_op < 1:
                 attrs += f'stroke-opacity="{_num(edge_op)}" '
         out.append(f'<path d="{d}" {attrs}/>')

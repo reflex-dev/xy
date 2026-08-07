@@ -82,9 +82,10 @@ def funnel_geometry_demo():
 
 Increasing stages are legal and drawn honestly: `Re-engage` is wider than
 `Invite`, its conversion is above one, and its boundary label reads `+9%`.
-Negative and missing values are refused by stage name; a zero stage draws
-nothing (or a floor sliver — see `min_width`) but keeps its labels, tooltip,
-and keyboard stop.
+Negative and missing values are refused by stage name. A zero stage draws
+nothing and keeps its label and its keyboard stop, but with no drawn area
+there is nothing for the pointer to land on — give it `min_width` to make it
+hoverable as a floor sliver.
 
 ## Run the Funnel Horizontally
 
@@ -256,13 +257,19 @@ segment in the same colour across every chart that names that stage.
 Hover reads the full arithmetic for a stage, and because a segment covers an
 area rather than a point, the tooltip follows the cursor within it. Clicking
 emits `xy:click` carrying the stage name, value, prior value, overall share,
-conversion, and drop-off — the same semantic row the tooltip shows, with
-ratios over a zero denominator arriving as `null` rather than infinity. Box
+conversion, and drop-off — the same semantic row the tooltip shows. Ratios
+over a zero denominator arrive as `null` in events and print as an em dash
+(—) in the tooltip, so a stage after a zero reads as "no meaningful number"
+rather than as missing data. Box
 and lasso selection are deliberately absent rather than approximate.
 
-Stable `key=` identities opt segments into key-matched animation. Keyboard
-navigation walks the stages in declared order — arrow keys move stage to
-stage, `Home`/`End` jump to the ends, `Enter` activates, `Escape` dismisses —
-and the screen-reader announcement reads "Stage 2 of 5" followed by that
-stage's conversion arithmetic, so the funnel is heard as the ordered process
-it is.
+With `animation=` configured, a funnel enters by growing out of its spine
+(the way bars grow from their baseline), and data updates morph each
+segment's geometry to its new shape. Stable `key=` identities plus
+`xy.animation(match="key")` keep a stage's segment continuous across updates
+even when stages are added or removed; without keys, stages match by
+position. Keyboard navigation walks the *visible* stages in declared order —
+arrow keys move stage to stage, `Home`/`End` jump to the ends, `Enter`
+activates, `Escape` dismisses — and the screen-reader announcement reads
+"Stage 2 of 5" followed by that stage's conversion arithmetic, so the funnel
+is heard as the ordered process it is.

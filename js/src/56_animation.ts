@@ -88,7 +88,7 @@ Object.assign(ChartView.prototype, {
 
   _defaultEntrance(kind) {
     if (kind === "line" || kind === "area" || kind === "error_band") return "reveal";
-    if (kind === "bar" || kind === "column") return "grow";
+    if (kind === "bar" || kind === "column" || kind === "funnel") return "grow";
     if (kind === "scatter" || kind === "errorbar") return "scale";
     return "none";
   },
@@ -118,7 +118,8 @@ Object.assign(ChartView.prototype, {
     if (enter === "scale") {
       if (g.trace.kind === "scatter") g._transitionScale = p;
       else if (g.trace.kind === "errorbar") g._transitionScale = p;
-      else if (g.trace.kind === "bar" || g.trace.kind === "column") g._transitionGrow = p;
+      else if (g.trace.kind === "bar" || g.trace.kind === "column" ||
+               g.trace.kind === "funnel") g._transitionGrow = p;
       else if (g.trace.kind === "line" || g.trace.kind === "area" ||
                g.trace.kind === "error_band") g._transitionReveal = p;
     }
@@ -139,6 +140,12 @@ Object.assign(ChartView.prototype, {
     delete g._transitionPrevValue1Values;
     delete g._transitionPrevValue0Values;
     delete g._transitionPrevWidth;
+    if (g._transitionPrevFunnelValues) {
+      delete g._transitionPrevFunnelValues;
+      // The live buffers hold the last mixed frame; the next _drawFunnels
+      // re-uploads the settled geometry once.
+      g._funnelGeomMixed = true;
+    }
     delete g._transitionPositionInterpolated;
     this._deleteBuffers(g, [
       "_transitionPrevXBuf", "_transitionPrevYBuf",
@@ -332,6 +339,9 @@ Object.assign(ChartView.prototype, {
     if (["bar", "column"].includes(next.trace.kind)) {
       return this._prepareBarPositionInterpolation(previous, next, match);
     }
+    if (next.trace.kind === "funnel") {
+      return this._prepareFunnelPositionInterpolation(previous, next, match);
+    }
     if (!["scatter", "line"].includes(next.trace.kind)) return false;
     if (!previous._cpu || !next._cpu || next.n !== next._cpu.x.length ||
         previous.n !== previous._cpu.x.length) {
@@ -446,6 +456,47 @@ Object.assign(ChartView.prototype, {
     next._transitionPrevValue1Values = startValue1;
     next._transitionPrevValue0Values = startValue0;
     next._transitionPrevWidth = previousWidth;
+    next._transitionPositionProgress = 0;
+    next._transitionPositionInterpolated = true;
+    previous._transitionSkipExit = true;
+    return true;
+  },
+
+  // Funnel update interpolation runs on the CPU: one quad per stage, so
+  // mixing six little arrays and re-uploading them per frame costs less than
+  // a second attribute set would, and the shader stays untouched. Start
+  // values are the OLD trace's currently DISPLAYED geometry (mid-flight
+  // retargets included), re-encoded into the new columns' metas; unmatched
+  // stages start at their destination.
+  _prepareFunnelPositionInterpolation(previous, next, match) {
+    const oldF = previous._cpuFunnel;
+    const newF = next._cpuFunnel;
+    if (!oldF || !newF || previous.orientation !== next.orientation) {
+      match.fallback ||= "snap:layout-mismatch";
+      return false;
+    }
+    const names = ["pos0", "pos1", "lo0", "hi0", "lo1", "hi1"];
+    const decode = (value, meta) => value / (Number(meta.scale) || 1) + (Number(meta.offset) || 0);
+    const encode = (value, meta) => (value - (Number(meta.offset) || 0)) * (Number(meta.scale) || 1);
+    const starts = {};
+    for (const name of names) starts[name] = new Float32Array(newF[name].subarray(0, newF.n));
+    const prevStarts = previous._transitionPrevFunnelValues;
+    const prevProgress = previous._transitionPositionProgress;
+    for (const [oldIndex, newIndex] of match.pairs) {
+      if (oldIndex >= oldF.n || newIndex >= newF.n) continue;
+      for (const name of names) {
+        const meta = oldF.metas[name];
+        let displayed = decode(oldF[name][oldIndex], meta);
+        if (prevStarts && Number.isFinite(prevProgress)) {
+          const from = decode(prevStarts[name][oldIndex], meta);
+          displayed = from + (displayed - from) * prevProgress;
+        }
+        if (Number.isFinite(displayed)) {
+          starts[name][newIndex] = encode(displayed, newF.metas[name]);
+        }
+      }
+    }
+    next._transitionPrevFunnelValues = starts;
     next._transitionPositionProgress = 0;
     next._transitionPositionInterpolated = true;
     previous._transitionSkipExit = true;

@@ -471,11 +471,25 @@ Object.assign(ChartView.prototype, {
   _a11yPointGroups() {
     // stageNav marks (funnel) traverse their per-stage centers in data order,
     // which for a funnel is the declared stage order — the ordered process a
-    // screen reader should hear.
+    // screen reader should hear. Legend-hidden series draw nothing and are
+    // not announced either; a category filter narrows the walk through
+    // _a11yGroupCount/_a11yGroupRow below.
     return (this.gpuTraces || []).filter((g) =>
       (markOf(g.trace.kind).pointPick || markOf(g.trace.kind).stageNav) &&
-      g.tier !== "density" && g._cpu &&
-      g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+      g.tier !== "density" && !g._legendHidden && g._cpu &&
+      g._cpu.x && g._cpu.y && this._a11yGroupCount(g) > 0);
+  },
+
+  // Keyboard traversal walks what is DRAWN: a legend category filter narrows
+  // the group to its visible rows, and the row index it reports stays in
+  // SHIPPED space (what tooltip_rows and the kernel exact-pick speak).
+  _a11yGroupCount(g) {
+    if (g._visMap) return g._visMap.length;
+    return Math.min(g._cpu.x.length, g._cpu.y.length);
+  },
+
+  _a11yGroupRow(g, offset) {
+    return g._visMap ? g._visMap[offset] : offset;
   },
 
   _onA11yKey(e) {
@@ -542,7 +556,7 @@ Object.assign(ChartView.prototype, {
     // density handoff, or animated tier frame.
     if (this._interactionTransitionActive()) return;
     const groups = this._a11yPointGroups();
-    const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+    const total = groups.reduce((sum, g) => sum + this._a11yGroupCount(g), 0);
     if (!total) return;
     // Traversal intentionally follows trace/series data order, not visual x
     // order: sorting would change source-row identity and make streamed appends
@@ -556,15 +570,16 @@ Object.assign(ChartView.prototype, {
     let offset = flat;
     let g = groups[0];
     for (const candidate of groups) {
-      const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+      const n = this._a11yGroupCount(candidate);
       if (offset < n) { g = candidate; break; }
       offset -= n;
     }
-    const hit = { trace: g.trace.id, index: offset, g };
+    const row = this._a11yGroupRow(g, offset);
+    const hit = { trace: g.trace.id, index: row, g };
     // Use the encoded numeric coordinates for positioning; _localRow may have
     // already converted categorical coordinates into display strings.
-    const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
-    const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
+    const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, row);
+    const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, row);
     const [chartX, chartY] = this._projectDataPoint(
       g.xAxis || "x",
       g.yAxis || "y",

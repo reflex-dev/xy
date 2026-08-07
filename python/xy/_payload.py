@@ -261,6 +261,7 @@ class PayloadMixin(_Host):
             return r
 
         self._validate_coords()
+        self._validate_funnel_axes()
         spec_traces = []
         for t in self.traces:
             xr = axis_range(t.x_axis)

@@ -742,11 +742,12 @@ def funnel(
     else:
         # Numeric stages are legal input (quarter numbers, ordinal codes) but
         # a funnel's stage axis is categorical by contract, so they become
-        # labels in the declared order.
-        stage_names = [
-            channels.category_label(raw)
-            for raw in np.asarray(self._materialize_sequence(stage)).reshape(-1)
-        ]
+        # labels in the declared order. 1-D only: silently flattening a 2-D
+        # array would invent a stage order the caller never declared.
+        stage_arr = np.asarray(self._materialize_sequence(stage))
+        if stage_arr.ndim != 1:
+            raise ValueError(f"funnel stage must be 1-D, got shape {stage_arr.shape}")
+        stage_names = [channels.category_label(raw) for raw in stage_arr]
     values_arr = self._as_1d_float(value, "funnel value")
     layout = _funnel.compute_layout(
         stage_names,
@@ -780,7 +781,26 @@ def funnel(
             palette=self.palette,
         )
         lookup = dict(zip(resolved.categories or [], resolved.palette or [], strict=True))
-        stage_css = [lookup[name] for name in stage_names]
+        if all(name in lookup for name in stage_names):
+            stage_css = [lookup[name] for name in stage_names]
+        else:
+            # The resolver reads a column of CSS colors as per-point PAINT
+            # rather than as category labels, so stage names that are
+            # themselves colors ("#ff0000") come back as direct RGBA with no
+            # categories to reorder. The map is still keyed by stage name, so
+            # apply it here and take the spare-color rule for the rest.
+            pinned = {str(key): str(value) for key, value in self.palette.items()}
+            spare = [c for c in DEFAULT_PALETTE if c not in set(pinned.values())] or list(
+                DEFAULT_PALETTE
+            )
+            unmapped = 0
+            stage_css = []
+            for name in stage_names:
+                if name in pinned:
+                    stage_css.append(pinned[name])
+                else:
+                    stage_css.append(spare[unmapped % len(spare)])
+                    unmapped += 1
     else:
         stage_css = [self.palette_color(i) for i in range(n)]
 
@@ -818,19 +838,26 @@ def funnel(
     stroke_width_value = 0.0 if width_constant is None else float(width_constant)
 
     stage_dim = "y" if orientation == "vertical" else "x"
-    # Category positions come from the axis registry so a funnel layered onto
-    # an axis that already holds categories lands after them instead of on top
-    # of them; on a fresh axis they are exactly 0..n-1.
-    centers = self._axis_positions(stage_names, stage_dim)
-    pos0 = np.array([centers[q.stage] + (q.pos0 - q.stage) for q in layout.quads], dtype=np.float64)
-    pos1 = np.array([centers[q.stage] + (q.pos1 - q.stage) for q in layout.quads], dtype=np.float64)
-    lo0 = np.array([q.lo0 for q in layout.quads], dtype=np.float64)
-    hi0 = np.array([q.hi0 for q in layout.quads], dtype=np.float64)
-    lo1 = np.array([q.lo1 for q in layout.quads], dtype=np.float64)
-    hi1 = np.array([q.hi1 for q in layout.quads], dtype=np.float64)
-
+    # The checkpoint is taken BEFORE the stage names commit to the axis
+    # registry: a later failure (a bad value_format in the label pass, for
+    # example) must roll the categories back too, or the next valid funnel on
+    # this axis starts its positions after the ghost of the failed one.
     checkpoint = self._checkpoint()
     try:
+        # Category positions come from the axis registry so a funnel layered
+        # onto an axis that already holds categories lands after them instead
+        # of on top of them; on a fresh axis they are exactly 0..n-1.
+        centers = self._axis_positions(stage_names, stage_dim)
+        pos0 = np.array(
+            [centers[q.stage] + (q.pos0 - q.stage) for q in layout.quads], dtype=np.float64
+        )
+        pos1 = np.array(
+            [centers[q.stage] + (q.pos1 - q.stage) for q in layout.quads], dtype=np.float64
+        )
+        lo0 = np.array([q.lo0 for q in layout.quads], dtype=np.float64)
+        hi0 = np.array([q.hi0 for q in layout.quads], dtype=np.float64)
+        lo1 = np.array([q.lo1 for q in layout.quads], dtype=np.float64)
+        hi1 = np.array([q.hi1 for q in layout.quads], dtype=np.float64)
         posc0, posc1 = self.store.ingest(pos0), self.store.ingest(pos1)
         loc0, hic0 = self.store.ingest(lo0), self.store.ingest(hi0)
         loc1, hic1 = self.store.ingest(lo1), self.store.ingest(hi1)
@@ -901,6 +928,11 @@ def funnel(
             for s in layout.stages
         ]
         if labels:
+            # Inside-label contrast is judged against the fill each segment
+            # ACTUALLY wears: the constant `color=` when given, else the
+            # per-stage palette. Judging the palette while painting a constant
+            # put near-white labels on a white funnel.
+            drawn_css = [color] * n if color is not None else stage_css
             plot_w = self.width if isinstance(self.width, int) else 640
             plot_h = self.height if isinstance(self.height, int) else 400
             specs = _funnel.decide_labels(
@@ -920,10 +952,18 @@ def funnel(
                 pos = centers[spec.stage] + (spec.pos - spec.stage)
                 if orientation == "vertical":
                     x_anchor, y_anchor = spec.cross, pos
+                    # Vertical outside labels run into the side margin, and a
+                    # boundary label sits half a stage above its stage's own,
+                    # so the two never share a line.
                     dx, dy = (0.0, 0.0) if inside else (8.0, 0.0)
                 else:
                     x_anchor, y_anchor = pos, spec.cross
-                    dx, dy = (0.0, 0.0) if inside else (0.0, -8.0)
+                    # Horizontal outside labels all sit ABOVE their segment, so
+                    # a stage's own value and the boundary label beside it would
+                    # land on one line and overprint. Boundary labels take a
+                    # second row.
+                    row = 1.4 * label_size if spec.kind == "dropoff" else 0.0
+                    dx, dy = (0.0, 0.0) if inside else (0.0, -8.0 - row)
                 self.text(
                     x_anchor,
                     y_anchor,
@@ -931,7 +971,7 @@ def funnel(
                     dx=dx,
                     dy=dy,
                     anchor="middle" if inside else spec.anchor,
-                    color=_funnel_label_color(stage_css[spec.stage]) if inside else None,
+                    color=_funnel_label_color(drawn_css[spec.stage]) if inside else None,
                     style={"font_size": label_size},
                     # A funnel label describes one stage's geometry, so a
                     # legend toggle must hide the two together — an orphaned
@@ -949,16 +989,19 @@ def funnel(
 def _funnel_label_color(css: str) -> Optional[str]:
     """Contrast color for a label inside a segment of fill `css`.
 
-    WCAG relative-luminance threshold; None (theme default) when the fill is
-    not statically parseable (a CSS variable), which keeps the label legible
-    in whichever theme resolves the variable.
+    WCAG relative-luminance threshold, or None (the theme's own text color)
+    when the fill only resolves in a browser — a `var()`/`oklch()`/
+    `color-mix()` entry has no luminance XY can read, and guessing from the
+    exporters' substitute blue put a light label on a fill that resolves
+    white on screen. `_parse_color` cannot report this: it silently returns
+    the substitute, so the check has to happen against the CSS grammar.
     """
-    try:
-        from ._raster import _parse_color
+    from . import kernels
 
-        r, g, b, _a = _parse_color(css)
-    except Exception:
+    status, rgba = kernels.css_check(kernels.CSS_COLOR, str(css))
+    if status != 1 or rgba is None:
         return None
+    r, g, b = (round(c * 255) for c in rgba[:3])
 
     def channel(v: int) -> float:
         c = v / 255.0

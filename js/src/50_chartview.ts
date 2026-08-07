@@ -3080,6 +3080,11 @@ export class ChartView {
           for (const s of this._densityOverlays(g)) {
             this._dimLut(s, t.color.palette, item.cat, bg);
           }
+        } else if (g._cpuFunnel) {
+          // A funnel carries resolved RGBA rows, not a palette LUT, so the
+          // sibling dim recolors the rows themselves with the same blend
+          // rule _paletteLutDimmed applies to LUT entries.
+          this._dimFunnelPaint(g, item.cat, bg);
         } else {
           this._dimLut(g, t.color.palette, item.cat, bg);
         }
@@ -3124,6 +3129,27 @@ export class ChartView {
     s.lut = this._paletteLutDimmed(palette, keepIdx, bg);
   }
 
+  // Legend-hover sibling dim for a funnel: the hovered stage keeps its full
+  // color, every other stage blends toward the backdrop by the same
+  // LEGEND_DIM_OPACITY weight the LUT path uses. Rebuilt from the retained
+  // full rows, uploaded through the shared filter-aware path.
+  _dimFunnelPaint(g, keepCode, bg) {
+    const full = g._funnelRgbaFull;
+    const codes = g._funnelCodes;
+    if (!full || !codes) return;
+    const rows = new Uint8Array(full.length);
+    for (let i = 0; i * 4 < full.length; i++) {
+      const keep = Math.round(codes[i]) === keepCode;
+      const w = keep ? 1 : LEGEND_DIM_OPACITY;
+      rows[i * 4] = full[i * 4] * w + bg[0] * 255 * (1 - w);
+      rows[i * 4 + 1] = full[i * 4 + 1] * w + bg[1] * 255 * (1 - w);
+      rows[i * 4 + 2] = full[i * 4 + 2] * w + bg[2] * 255 * (1 - w);
+      rows[i * 4 + 3] = full[i * 4 + 3];
+    }
+    g._funnelHoverDim = true;
+    this._uploadFunnelPaint(g, rows);
+  }
+
   // Undo any hover LUT swap on a trace and its density sample overlays,
   // and put back the plane's original texture if hover dimmed it.
   _restoreLegendLuts(g) {
@@ -3142,6 +3168,10 @@ export class ChartView {
       this.gl.deleteTexture(g._legendHoverTex);
       g._legendHoverTex = null;
       g._legendHoverPrevTex = null;
+    }
+    if (g._funnelHoverDim) {
+      delete g._funnelHoverDim;
+      this._uploadFunnelPaint(g);
     }
   }
 
@@ -3312,17 +3342,7 @@ export class ChartView {
       this._deleteBuffers(g, [slot + "Buf"]);
       g[slot + "Buf"] = this._upload(values);
     }
-    if (g._funnelRgbaFull || g.rgbaBuf) {
-      const full = g._funnelRgbaFull;
-      if (full) {
-        const rows = g._visMap
-          ? Uint8Array.from({ length: visible.length * 4 }, (_v, k) =>
-            full[visible[(k / 4) | 0] * 4 + (k % 4)])
-          : full;
-        this._deleteBuffers(g, ["rgbaBuf"]);
-        g.rgbaBuf = this._upload(rows);
-      }
-    }
+    this._uploadFunnelPaint(g);
   }
 
   // Filter a scatter-shaped gpu entry's vertex buffers down to the rows whose
@@ -3405,6 +3425,10 @@ export class ChartView {
         // view request must re-bin under the mask, not stand on it.
         g._filterDirty = true;
         if (g.sampleOverlay) this._filterScatterRows(g.sampleOverlay, cats);
+      } else if (g._cpuFunnel) {
+        // _filterScatterRows is gated on CPU color codes a funnel does not
+        // have — routing a rebuilt funnel there silently un-hid its stages.
+        this._filterFunnelStages(g, cats);
       } else {
         this._filterScatterRows(g, cats);
       }
@@ -4628,12 +4652,13 @@ export class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform1i(u("u_segments"), RIBBON_STEPS);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
     const stroke = g.stroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
     // A flat band must mix toward ITS OWN colour, so a per-band source buffer
     // with no target buffer binds the source buffer to both attributes —
     // mixing toward the constant fallback painted every node's right edge
@@ -4768,7 +4793,12 @@ export class ChartView {
   // no LUT texture. Build stashes codes+palette on the record; refreshColor
   // re-runs this with buffer=null to re-resolve against the new theme.
   _funnelPaint(g, t, buffer) {
-    const n = g.n;
+    // Always resolved over the FULL stage count, never g.n: after a legend
+    // filter g.n is the visible count, and a theme refresh that rebuilt the
+    // cache at that length recolored the survivors by their DRAWN index and
+    // lost the hidden stages' rows for good — restoring a stage then drew
+    // garbage. The filter is applied at upload time instead.
+    const full = g._cpuFunnel ? g._cpuFunnel.n : g.n;
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     const channel = t.color || {};
     if (buffer !== null && Number.isInteger(channel.buf)) {
@@ -4783,25 +4813,110 @@ export class ChartView {
       const palette = Array.isArray(channel.palette) && channel.palette.length
         ? channel.palette : ["#4c78a8"];
       const table = palette.map((css) => parseColor(this.root, css, [0.3, 0.47, 0.66, 1]));
-      rgba = new Uint8Array(n * 4);
-      for (let i = 0; i < n; i++) {
+      rgba = new Uint8Array(full * 4);
+      for (let i = 0; i < full; i++) {
         const c = table[Math.round(g._funnelCodes[i]) % table.length];
         rgba.set([c[0] * 255, c[1] * 255, c[2] * 255, c[3] * 255], i * 4);
       }
     } else if (channel.mode === "direct_rgba" && g._funnelRgba) {
       rgba = g._funnelRgba;
     }
-    if (g.rgbaBuf) this._deleteBuffers(g, ["rgbaBuf"]);
-    // Full-length rows kept for the legend filter, which rebuilds the visible
-    // subset from them rather than reading the GPU buffer back.
+    // Full-length rows kept for the legend filter and hover dim, which build
+    // their visible/dimmed subsets from them rather than reading the GPU back.
     g._funnelRgbaFull = rgba || null;
-    if (rgba) g.rgbaBuf = this._upload(rgba);
+    this._uploadFunnelPaint(g);
+  }
+
+  // Upload the paint rows the current legend filter leaves visible. The one
+  // place rgbaBuf is (re)created, so a theme refresh, a filter toggle, and a
+  // legend-hover dim can never disagree about row order.
+  _uploadFunnelPaint(g, rows = null) {
+    if (g.rgbaBuf) this._deleteBuffers(g, ["rgbaBuf"]);
+    const full = rows || g._funnelRgbaFull;
+    if (!full) return;
+    let out = full;
+    if (g._visMap) {
+      out = new Uint8Array(g._visMap.length * 4);
+      for (let k = 0; k < g._visMap.length; k++) {
+        const i = g._visMap[k];
+        out.set(full.subarray(i * 4, i * 4 + 4), k * 4);
+      }
+    }
+    g.rgbaBuf = this._upload(out);
+  }
+
+  // Mix the six per-stage geometry columns for the current animation frame
+  // and write them into the LIVE buffers in place (same WebGLBuffer objects,
+  // so the VAO signature holds). Small-N by contract, so the per-frame CPU
+  // mix is cheaper than a second attribute set and the shader stays as-is.
+  // Covers the update interpolation (prev -> current by progress), the
+  // enter grow (cross edges expand from the segment spine), and the settled
+  // re-upload after either finishes.
+  _mixFunnelGeometry(g) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const prev = g._transitionPrevFunnelValues;
+    const progress = g._transitionPositionProgress;
+    const grow = g._transitionGrow ?? 1;
+    const mixing = (prev && Number.isFinite(progress) && progress < 1) || grow < 1;
+    if (!mixing) {
+      if (!g._funnelGeomMixed) return;
+      delete g._funnelGeomMixed;
+    }
+    const gl = this.gl;
+    const slots = { pos0: "x0", pos1: "x1", lo0: "y0", hi0: "y1", lo1: "x2", hi1: "y2" };
+    const rows = g._visMap;
+    const count = rows ? rows.length : f.n;
+    const scratch = (g._funnelMixScratch ||= {});
+    const mixed = {};
+    for (const name of Object.keys(slots)) {
+      const out = scratch[name] && scratch[name].length === count
+        ? scratch[name]
+        : (scratch[name] = new Float32Array(count));
+      const cur = f[name];
+      const start = prev && prev[name];
+      for (let k = 0; k < count; k++) {
+        const i = rows ? rows[k] : k;
+        let value = cur[i];
+        if (start && Number.isFinite(progress) && progress < 1) {
+          value = start[i] + (value - start[i]) * progress;
+        }
+        out[k] = value;
+      }
+      mixed[name] = out;
+    }
+    if (grow < 1) {
+      // Grow from the spine: both cross edges of each end expand from their
+      // midpoint, so a vertical funnel widens out of its centerline exactly
+      // as a bar grows out of its baseline. Encoded space is fine — the two
+      // edges share a meta per column pair only after decoding, so mix the
+      // DECODED midpoint per end via the metas.
+      const dec = (name, v) => v / (f.metas[name].scale || 1) + (f.metas[name].offset || 0);
+      const enc = (name, v) => (v - (f.metas[name].offset || 0)) * (f.metas[name].scale || 1);
+      for (let k = 0; k < count; k++) {
+        for (const [lo, hi] of [["lo0", "hi0"], ["lo1", "hi1"]]) {
+          const a = dec(lo, mixed[lo][k]);
+          const b = dec(hi, mixed[hi][k]);
+          const mid = (a + b) / 2;
+          mixed[lo][k] = enc(lo, mid + (a - mid) * grow);
+          mixed[hi][k] = enc(hi, mid + (b - mid) * grow);
+        }
+      }
+    }
+    for (const [name, slot] of Object.entries(slots)) {
+      const buf = g[slot + "Buf"];
+      if (!buf) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, mixed[name], gl.DYNAMIC_DRAW);
+    }
+    if (mixing) g._funnelGeomMixed = true;
   }
 
   _drawFunnels(g, xm, ym) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.funnelProg;
+    this._mixFunnelGeometry(g);
     gl.useProgram(prog);
     const u = (name) => uniformOf(gl, prog, name);
     const horizontal = g.orientation === 1;
@@ -8045,6 +8160,10 @@ export class ChartView {
     const polarGeom = this._polarGeometry();
     for (const g of this.gpuTraces) {
       if (g.tier === "density") continue;
+      // A legend-hidden series draws nothing, so it must not answer hover
+      // either (interaction spec §10) — before this guard every CPU-hover
+      // kind (bar, rect, ribbon, funnel) kept reporting invisible geometry.
+      if (g._legendHidden) continue;
       const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
       if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) continue;
       if (g.heatmap && g._cpuHeatmap) {

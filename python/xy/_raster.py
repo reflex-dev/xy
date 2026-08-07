@@ -2031,7 +2031,14 @@ def _trace_paint_rgba(
     elif mode == "categorical":
         codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
         palette = channel.get("palette") or DEFAULT_PALETTE
-        table = np.asarray([_parse_color(value) for value in palette], dtype=np.float64) / 255.0
+        # Per-index resolution (channels.palette_rows_rgba8), not _parse_color
+        # per entry: browser-only entries (var(--…)) must degrade to DISTINCT
+        # built-in colors — parsing each alone collapsed every var() category
+        # onto the same fallback, so a PNG painted two stages one color while
+        # SVG/PDF kept them apart.
+        from . import channels as _pal_channels
+
+        table = _pal_channels.palette_rows_rgba8(palette, len(palette)).astype(np.float64) / 255.0
         rgba[:] = table[codes % len(table)]
     else:
         rgba[:] = (

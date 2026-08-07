@@ -7150,15 +7150,18 @@ def funnel_chart(
     horizontal ones — and shows the stage names as its tick labels. The cross
     axis is layout, not data (segments are centered on zero), so it is hidden;
     keyword arguments that belong to `xy.funnel` (``orientation``,
-    ``geometry``, ``gap``, ``neck``, ``min_width``, ``colors``,
+    ``geometry``, ``gap``, ``neck``, ``min_width``, ``colors``, ``name``,
     ``show_dropoff``, …) are forwarded there, and everything else (``width``,
-    ``height``, ``title``, …) styles the chart.
+    ``height``, ``title``, …) styles the chart. ``style=`` stays chart-level
+    (the DOM container, as on every ``*_chart``); segment styling goes through
+    ``xy.funnel(style=...)`` or the forwarded ``stroke``/``opacity`` keywords.
     """
     mark_keys = (
         "data",
         "stage",
         "value",
         "key",
+        "name",
         "orientation",
         "geometry",
         "gap",
@@ -7190,12 +7193,41 @@ def funnel_chart(
             if "value" in mark_kwargs:
                 raise ValueError("funnel_chart got positional values and value=")
             mark_kwargs["value"] = rest.pop(0)
-    if mark_kwargs or not any(isinstance(child, Mark) and child.kind == "funnel" for child in rest):
+    child_funnels = [c for c in rest if isinstance(c, Mark) and c.kind == "funnel"]
+    if child_funnels and not (
+        "stage" in mark_kwargs or "value" in mark_kwargs or "data" in mark_kwargs
+    ):
+        # The funnel came as an explicit child; forwarded keywords with no
+        # data of their own would build a second, empty funnel. Refuse by
+        # name instead of failing later inside that ghost mark.
+        if mark_kwargs:
+            raise ValueError(
+                f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
+                "xy.funnel(...) child; set these on the mark itself"
+            )
+    elif child_funnels and "stage" not in mark_kwargs and "value" not in mark_kwargs:
+        # Chart-level data= with an explicit funnel child: the data belongs to
+        # the chart (the applier resolves the child's column names against
+        # it), not to a second implicit mark.
+        props["data"] = mark_kwargs.pop("data")
+        if mark_kwargs:
+            raise ValueError(
+                f"funnel_chart got {sorted(mark_kwargs)} alongside an explicit "
+                "xy.funnel(...) child; set these on the mark itself"
+            )
+    else:
         marks.append(funnel(**mark_kwargs))
-    orientation = mark_kwargs.get("orientation", "vertical")
-    for child in rest:
-        if isinstance(child, Mark) and child.kind == "funnel":
-            orientation = child.props.get("orientation", orientation)
+    orientations = {str(child.props.get("orientation", "vertical")) for child in child_funnels}
+    if marks:
+        orientations.add(str(mark_kwargs.get("orientation", "vertical")))
+    if len(orientations) > 1:
+        # Axis defaults (which axis hides, which reverses) are per
+        # orientation; last-child-wins silently mangled the other funnel.
+        raise ValueError(
+            "funnel_chart cannot mix vertical and horizontal funnels in one "
+            "chart; use two charts or facet_chart"
+        )
+    orientation = next(iter(orientations), "vertical")
     # The cross axis is layout, not data (segments center on zero), so it is
     # hidden with a symmetric margin that keeps the widest stage — and the
     # outside/drop-off labels beside it — clear of the plot edges. The legend

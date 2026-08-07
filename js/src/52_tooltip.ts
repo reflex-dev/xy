@@ -331,7 +331,11 @@ Object.assign(ChartView.prototype, {
       // those and never invents a format of its own.
       const field = (label, text, numeric) => {
         if (typeof text === "string") {
-          if (text !== "—") items.push({ kind: "field", label, value: text });
+          // The em dash IS the readout for an undefined ratio (a stage after
+          // a zero): dropping the row made the tooltip shape change between
+          // stages, which reads as missing data rather than "no meaningful
+          // number here".
+          items.push({ kind: "field", label, value: text });
           return;
         }
         if (numeric !== undefined && numeric !== null && Number.isFinite(Number(numeric))) {

@@ -63,7 +63,9 @@ def test_categorical_axes_announce_categories_instead_of_numeric_padding() -> No
 def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
     required = (
         'this._listen(c, "keydown", (e) => this._onA11yKey(e))',
-        "const hit = { trace: g.trace.id, index: offset, g }",
+        # `row` (not the flat traversal offset) so a legend-filtered mark
+        # still reports the SHIPPED row the kernel and tooltip_rows speak.
+        "const hit = { trace: g.trace.id, index: row, g }",
         "this._showTooltip(hit, clientX, clientY)",
         "this._drawKeepPick()",
         "${noun} ${prefix.flat + 1} of ${prefix.total}.",

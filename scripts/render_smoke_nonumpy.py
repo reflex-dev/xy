@@ -1265,7 +1265,49 @@ try{{
     const fnRow=fnHit?vFn._localRow(fnHit):null;
     const fnRowOk=(fnRow && fnRow.stage==="B" && fnRow.value===6 && fnRow.dropoff===0.4)?1:0;
     const fnNav=vFn._a11yPointGroups().some((g)=>g===gFn)?1:0;
-    const funnel=(fnInk && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav)?1:0;
+    // Review-fix probes (PR #474 round 2), all EXECUTED, not grepped:
+    // (a) legend category filter narrows draw count, hover, and the keyboard
+    //     walk, and the row index stays in shipped space;
+    // (b) a theme-refresh paint rebuild while filtered keeps the FULL rows so
+    //     restoring the stage restores its own color;
+    // (c) a legend-hidden trace answers no hover;
+    // (d) the update interpolation mixes geometry mid-flight (p=0.5 midpoint);
+    // (e) funnel tooltip rows print the shipped *_text (em dash included).
+    vFn._legendOffCats=new Map([[vFn.gpuTraces.indexOf(gFn), new Set([1])]]);
+    vFn._applyCategoryVisibility(vFn.gpuTraces.indexOf(gFn));
+    const fnFilterN=(gFn.n===2 && gFn._visMap && gFn._visMap[1]===2)?1:0;
+    const fnA11y=(vFn._a11yGroupCount(gFn)===2 && vFn._a11yGroupRow(gFn,1)===2)?1:0;
+    const fnHitHidden=vFn._funnelHover(gFn,0,1.0)===null?1:0;
+    vFn._funnelPaint(gFn,gFn.trace,null); // theme-refresh path while filtered
+    const fullRows=gFn._funnelRgbaFull;
+    const fnPaintFull=(fullRows && fullRows.length===3*4 && fullRows[4+1]>150)?1:0; // stage 1 green
+    vFn._legendOffCats=new Map();
+    vFn._applyCategoryVisibility(vFn.gpuTraces.indexOf(gFn));
+    const fnRestored=(gFn.n===3 && !gFn._visMap)?1:0;
+    gFn._legendHidden=true;
+    const fnHiddenHover=vFn._hoverAt(100,80)===null?1:0;
+    delete gFn._legendHidden;
+    // Hand-stepped interpolation: prev = every cross edge doubled, p=0.5 must
+    // draw the midpoint (1.5x). Exercises _mixFunnelGeometry's real path.
+    const fPrev={{}};
+    for (const nm of ["pos0","pos1","lo0","hi0","lo1","hi1"]) {{
+      fPrev[nm]=Float32Array.from(gFn._cpuFunnel[nm], (v)=>nm.startsWith("pos")?v:v*2);
+    }}
+    gFn._transitionPrevFunnelValues=fPrev;
+    gFn._transitionPositionProgress=0.5;
+    vFn._drawNow();
+    const mixHi=gFn._funnelMixScratch && gFn._funnelMixScratch.hi0;
+    const fnMix=(mixHi && Math.abs(mixHi[0]-gFn._cpuFunnel.hi0[0]*1.5)<1e-3)?1:0;
+    delete gFn._transitionPrevFunnelValues;
+    delete gFn._transitionPositionProgress;
+    gFn._funnelGeomMixed=true; vFn._drawNow(); // settled re-upload path
+    const fnItems=vFn._defaultTooltipItems({{trace:gFn.trace.id,index:2,stage:"C",value:2,
+      value_text:"2",share:0.2,share_text:"20%",conversion:null,conversion_text:"—",
+      dropoff:null,dropoff_text:"—"}},{{}},{{}});
+    const fnDash=(fnItems.length===5 && fnItems[3].value==="—" && fnItems[4].value==="—")?1:0;
+    const funnel=(fnInk && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav
+      && fnFilterN && fnA11y && fnHitHidden && fnPaintFull && fnRestored
+      && fnHiddenHover && fnMix && fnDash)?1:0;
     vFn.destroy();holderFn.remove();
     const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} funnel=${{funnel}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;

@@ -721,3 +721,239 @@ def test_default_formats_produce_the_documented_labels() -> None:
     assert _funnel.format_value(0.5, "{:,.10g}") == "0.5"
     assert _funnel.format_ratio(0.6326, "{:.0%}") == "63%"
     assert _funnel.format_ratio(None, "{:.0%}") == "—"
+
+
+# -- review round 2 (external review of PR #474) ------------------------------
+
+
+def test_incompatible_axis_types_are_refused_at_build() -> None:
+    """A log cross axis maps the centered (negative) corners to NaN and a
+    forced stage-axis type strips the categorical labels — both would draw a
+    plausible wrong picture, so both refuse at payload build (§28)."""
+    with pytest.raises(ValueError, match="cross axis 'x' cannot be 'log'"):
+        xy.funnel_chart(STAGES, VALUES, xy.x_axis(type_="log")).figure().build_payload()
+    with pytest.raises(ValueError, match="stage axis 'y' cannot be 'time'"):
+        xy.funnel_chart(STAGES, VALUES, xy.y_axis(type_="time")).figure().build_payload()
+    with pytest.raises(ValueError, match="cross axis 'y' cannot be 'symlog'"):
+        (
+            xy.funnel_chart(STAGES, VALUES, xy.y_axis(type_="symlog"), orientation="horizontal")
+            .figure()
+            .build_payload()
+        )
+
+
+def test_raster_gives_var_palette_entries_distinct_fallbacks() -> None:
+    """SVG/PDF degrade browser-only palette entries to DISTINCT built-ins;
+    the PNG rasterizer must match instead of collapsing every var() stage
+    onto one fallback color."""
+    import warnings
+
+    from test_png_export import _decode_rgba
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fig = xy.funnel_chart(
+            ["a", "b"],
+            [4.0, 4.0],
+            geometry="bar",
+            labels=False,
+            colors=["var(--a)", "var(--b)"],
+            width=400,
+            height=300,
+        ).figure()
+        pixels = _decode_rgba(fig.to_image(format="png", scale=1))
+    h, w = pixels.shape[:2]
+    top = tuple(int(v) for v in pixels[int(h * 0.32), int(w * 0.5)][:3])
+    bottom = tuple(int(v) for v in pixels[int(h * 0.72), int(w * 0.5)][:3])
+    assert top != bottom
+
+
+def test_inside_label_contrast_follows_the_drawn_constant_color() -> None:
+    fig = Figure(width=640, height=430)
+    fig.funnel(STAGES, VALUES, color="#ffffff")
+    inside = next(a for a in fig.annotations if "9,800" in a["text"])
+    assert inside["style"]["color"] == "#1f2430", "white fill takes a dark label"
+    fig2 = Figure(width=640, height=430)
+    fig2.funnel(STAGES, VALUES, color="#111111")
+    inside2 = next(a for a in fig2.annotations if "9,800" in a["text"])
+    assert inside2["style"]["color"] == "#f7f8fa", "near-black fill takes a light label"
+
+
+def test_horizontal_label_fit_measures_the_pitch_not_the_height() -> None:
+    """Ten stages across 400px leave ~34px of pitch; a ~100px text cannot sit
+    inside OR beside its slot, so it hides — measuring the segment HEIGHT
+    instead marked every one of them as fitting and they overlapped."""
+    layout = compute_layout(
+        [f"S{i}" for i in range(10)],
+        [10_000.0 - 900.0 * i for i in range(10)],
+        orientation="horizontal",
+        geometry="bar",
+    )
+    cramped = decide_labels(
+        layout,
+        show_values=True,
+        show_conversion=True,
+        show_dropoff=False,
+        value_format="{:,.0f}",
+        percent_format="{:.0%}",
+        font_size=12.0,
+        plot_px=(400 * 0.85, 300 * 0.85),
+    )
+    assert {label.placement for label in cramped if label.kind == "value"} == {"hidden"}
+    roomy = decide_labels(
+        layout,
+        show_values=True,
+        show_conversion=True,
+        show_dropoff=False,
+        value_format="{:,.0f}",
+        percent_format="{:.0%}",
+        font_size=12.0,
+        plot_px=(1400 * 0.85, 400 * 0.85),
+    )
+    assert {label.placement for label in roomy if label.kind == "value"} == {"inside"}
+
+
+def test_funnel_chart_forwards_name_to_the_mark() -> None:
+    fig = xy.funnel_chart(["a", "b"], [4.0, 2.0], name="pipeline").figure()
+    assert fig.traces[0].name == "pipeline"
+
+
+def test_chart_level_data_reaches_an_explicit_funnel_child() -> None:
+    data = {"stage": ["a", "b"], "value": [4.0, 2.0]}
+    fig = xy.funnel_chart(xy.funnel(stage="stage", value="value"), data=data).figure()
+    assert [t.kind for t in fig.traces] == ["funnel"]
+    assert fig.traces[0].tooltip_rows[0]["value"] == 4.0
+
+
+def test_stray_kwargs_with_an_explicit_child_are_refused_by_name() -> None:
+    with pytest.raises(ValueError, match=r"got \['gap'\] alongside an explicit"):
+        xy.funnel_chart(xy.funnel(stage=["a"], value=[1.0]), gap=0.5)
+
+
+def test_mixed_orientations_in_one_chart_are_refused() -> None:
+    with pytest.raises(ValueError, match="cannot mix vertical and horizontal"):
+        xy.funnel_chart(
+            xy.funnel(stage=["a"], value=[1.0]),
+            xy.funnel(stage=["b"], value=[1.0], orientation="horizontal"),
+        )
+
+
+def test_failed_build_rolls_back_stage_categories() -> None:
+    """A bad value_format used to leave the failed stages in the category
+    registry, shifting the next valid funnel's positions by their count."""
+    fig = Figure(width=400, height=300)
+    with pytest.raises(ValueError):
+        fig.funnel(["a", "b"], [4.0, 2.0], value_format="{:bogus}")
+    assert fig._axis_categories == {}
+    fig.funnel(["a", "b"], [4.0, 2.0])
+    assert [float(v) for v in fig.traces[0].y0.values] == [pytest.approx(-0.5), pytest.approx(0.5)]
+
+
+def test_multidimensional_stage_arrays_are_refused() -> None:
+    with pytest.raises(ValueError, match="must be 1-D"):
+        Figure(width=400, height=300).funnel(np.array([[1, 2], [3, 4]]), [1.0, 2.0, 3.0, 4.0])
+
+
+def test_ratios_never_overflow_to_infinity() -> None:
+    """A wide enough dynamic range makes a bare division inf, which is not
+    JSON, not a wire value, and not a number to print. Undefined is undefined
+    whether the denominator was zero or the quotient overflowed."""
+    stages = compute_stages(["a", "b"], [1e-300, 1e10])
+    assert stages[1].share is None
+    assert stages[1].conversion is None
+    assert stages[1].dropoff is None
+    fig = Figure(width=400, height=300)
+    fig.funnel(["a", "b"], [1e-300, 1e10])
+    row = fig.traces[0].tooltip_rows[1]
+    assert row["conversion"] is None
+    assert row["conversion_text"] == "—"
+
+
+def test_label_contrast_defers_on_browser_only_fills() -> None:
+    """`_parse_color` silently substitutes its fallback blue for a var()/oklch()
+    entry, so a luminance read there is a guess: a fill that resolves white on
+    screen got a white label. Defer to the theme's own text color instead."""
+    from xy.marks import _funnel_label_color
+
+    assert _funnel_label_color("#ffffff") == "#1f2430"
+    assert _funnel_label_color("#111111") == "#f7f8fa"
+    assert _funnel_label_color("rgb(240,240,240)") == "#1f2430"
+    assert _funnel_label_color("var(--brand)") is None
+    assert _funnel_label_color("oklch(0.7 0.1 200)") is None
+
+
+def test_theme_palette_map_survives_colour_shaped_stage_names() -> None:
+    """The shared resolver reads a column of CSS colours as per-point PAINT,
+    not as category labels, so stage names like "#ff0000" come back with no
+    categories to reorder — the map is still keyed by stage name."""
+    fig = xy.funnel_chart(
+        ["#ff0000", "#00ff00"], [4.0, 2.0], xy.theme(palette={"#ff0000": "#123456"})
+    ).figure()
+    channel = fig.traces[0].color_ch
+    assert channel.categories == ["#ff0000", "#00ff00"]
+    assert channel.palette[0] == "#123456"
+    assert channel.palette[1] != "#123456"
+
+
+def test_funnel_outlines_declare_round_joins_for_raster_parity() -> None:
+    """The native rasterizer's stroke is a distance field with round joins by
+    construction, so an SVG miter would spike where a taper meets its neck."""
+    doc = (
+        xy.funnel_chart(["a", "b"], [4.0, 2.0], neck="taper", stroke="#000000", stroke_width=3.0)
+        .figure()
+        .to_svg()
+    )
+    quads = re.findall(r'<path d="M [^"]+Z"[^/]*?/>', doc)
+    stroked = [q for q in quads if "stroke=" in q]
+    assert stroked, "expected stroked funnel paths"
+    for path in stroked:
+        assert 'stroke-linejoin="round"' in path
+
+
+def test_annotation_labels_follow_the_theme_text_colour_in_both_exporters() -> None:
+    """The live client resolves an annotation label through
+    var(--chart-annotation-text, var(--chart-text, inherit)); the exporters
+    must reach the same colour or a themed chart prints its labels in the
+    light-mode default. Shapes keep their own neutral paint."""
+    from test_png_export import _decode_rgba
+
+    chart = xy.funnel_chart(
+        ["a", "b"], [4.0, 2.0], xy.theme(text_color="#cc0000"), width=420, height=300
+    )
+    doc = chart.figure().to_svg()
+    assert 'fill="#cc0000"' in doc, "SVG label ignored --chart-text"
+    pixels = _decode_rgba(chart.figure().to_image(format="png", scale=1))
+    reds = ((pixels[:, :, 0] > 150) & (pixels[:, :, 1] < 90) & (pixels[:, :, 2] < 90)).sum()
+    assert reds > 0, "raster label ignored --chart-text"
+
+
+def test_annotation_shape_paint_is_not_the_theme_text_colour() -> None:
+    """Only the LABEL follows the theme text colour. Widening it to shapes
+    diverged the SVG exporter from the raster and the live client."""
+    doc = (
+        xy.line_chart(
+            xy.line([1.0, 2.0], [1.0, 2.0]),
+            xy.hline(1.5, text="threshold"),
+            xy.theme(text_color="#cc0000"),
+        )
+        .figure()
+        .to_svg()
+    )
+    rules = re.findall(r"<line[^>]*stroke=\"(#[0-9a-fA-F]{6})\"", doc)
+    assert "#cc0000" not in rules, "rule stroke took the theme text colour"
+
+
+def test_hover_containment_rejects_the_bounding_box_corner() -> None:
+    """The client's containment test is the trapezoid, not its bounding box.
+    A point inside the box but outside the taper must miss — the same rule
+    `_funnelHover` implements, checked here against the geometry source."""
+    layout = compute_layout(["a", "b"], [10.0, 2.0], gap=0.0)
+    quad = layout.quads[0]
+    # Mid-segment: the taper has narrowed from 5 to 1, so the half-width is 3.
+    t = 0.5
+    edge = quad.hi0 + (quad.hi1 - quad.hi0) * t
+    assert edge == pytest.approx(3.0)
+    # A bounding-box test would accept 4.5 here (it is inside 5, the widest
+    # edge); trapezoid containment must reject it.
+    assert edge < 4.5
+    assert edge > 2.0

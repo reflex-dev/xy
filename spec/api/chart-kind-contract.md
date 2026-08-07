@@ -176,7 +176,7 @@ renderers only ever see quads plus semantics:
 | `lo1`, `hi1` | cross-axis edges at `pos1` — internally these ride the trace's generic `x`/`y` slots, which is why `_range_columns` has a funnel branch |
 | `n_marks` | quad count (= stage count) |
 | `color` | per-stage paint channel: `constant`, `categorical` (codes + palette, categories in DECLARED stage order — the funnel factory builds this by hand because generic factorization sorts labels alphabetically), or `direct_rgba` |
-| `tooltip_rows` | one semantic row per stage: `stage`, `value`, `prior`, `share`, `conversion`, `dropoff`. Ratios over a zero denominator are `null`, never `inf`. Small-N readouts, not geometry, per §29's raw-buffer rule |
+| `tooltip_rows` | one semantic row per stage. Numeric fields — `stage`, `value`, `prior`, `share`, `conversion`, `dropoff` — are the EVENT payload; `value_text`, `share_text`, `conversion_text`, `dropoff_text` are their preformatted twins and are what a tooltip prints. The kernel owns `value_format`/`percent_format` because the client has no `str.format`, so a label, a tooltip and a static export cannot disagree. A ratio whose denominator is zero — or which would overflow to infinity — is `null` numerically and an em dash in its `*_text`. Small-N readouts, not geometry, per §29's raw-buffer rule |
 
 **Geometry.** Corners run A=(`lo0`@`pos0`) B=(`hi0`@`pos0`) C=(`hi1`@`pos1`)
 D=(`lo1`@`pos1`), transposed per orientation. Edges are STRAIGHT in
@@ -203,6 +203,16 @@ containment path, so box/lasso selection is absent rather than wrong, as for
 ribbon. The registry entry sets `stageNav`: the per-stage centers join the
 keyboard traversal groups, so arrow keys walk the declared order and the
 announcement reads "Stage i of n" plus the stage's semantic row.
+
+**Animation.** Update interpolation and the grow entrance run on the CPU:
+one quad per stage means mixing six small arrays and re-writing the live
+buffers per frame (`_mixFunnelGeometry`) costs less than a second attribute
+set, and the shader stays untouched. `_preparePositionInterpolation`
+dispatches `funnel` to its own prep, which re-encodes the OLD trace's
+currently displayed geometry (mid-flight retargets included) into the new
+columns' metas; unmatched stages start at their destination. The default
+entrance is `grow` — cross edges expand out of the segment spine, the bar
+family's baseline rule transposed.
 
 Deferred, recorded in the roadmap: GPU picking, box/lasso selection, and
 multi-series comparison grouping (facets are the current answer).

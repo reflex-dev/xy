@@ -134,26 +134,41 @@ def _validated_values(names: Sequence[str], values: Sequence[float]) -> list[flo
     return out
 
 
+def _ratio(numerator: float, denominator: float) -> Optional[float]:
+    """A conversion ratio, or None where one is not defined.
+
+    Zero denominators have no ratio, and neither does an overflow: a wide
+    enough dynamic range (1e-300 -> 1e10) makes a bare division inf, which is
+    not JSON, not a wire value, and not a number any reader wants printed.
+    Both are the same answer to the same question — "no meaningful ratio
+    here" — and both render as the em dash.
+    """
+    if denominator <= 0.0:
+        return None
+    value = numerator / denominator
+    return value if math.isfinite(value) else None
+
+
 def compute_stages(names: Sequence[str], values: Sequence[float]) -> list[FunnelStage]:
     """Validate stage values and resolve conversion arithmetic.
 
     Increasing values are allowed (re-entry and net-growth funnels are real)
     and produce conversion > 1 with a negative drop-off; negative and missing
-    values are refused by stage name. Ratios against a zero denominator are
-    None, never inf.
+    values are refused by stage name. A ratio with a zero denominator — or one
+    that overflows to infinity — is None, never inf.
     """
     vals = _validated_values(names, values)
     first = vals[0]
     stages: list[FunnelStage] = []
     prior: Optional[float] = None
     for index, (name, value) in enumerate(zip(names, vals, strict=True)):
-        share = (value / first) if first > 0.0 else None
+        share = _ratio(value, first)
         if index == 0:
             conversion: Optional[float] = None
             dropoff: Optional[float] = None
-        elif prior is not None and prior > 0.0:
-            conversion = value / prior
-            dropoff = 1.0 - conversion
+        elif prior is not None:
+            conversion = _ratio(value, prior)
+            dropoff = None if conversion is None else 1.0 - conversion
         else:
             conversion = None
             dropoff = None
@@ -291,17 +306,21 @@ def decide_labels(
     For each stage the value label (value, plus overall conversion when
     ``show_conversion``) tries, in order:
 
-    1. **inside** — centered in the segment, when the text fits the segment's
-       cross width and the stage pitch fits the line height;
-    2. **outside** — beside the segment on the positive cross side, when only
-       the cross width fails;
-    3. **hidden** — when the stage pitch cannot hold a text line (the tooltip
-       and events still carry every number).
+    1. **inside** — centered in the segment, when the text fits the box the
+       segment actually offers: cross width × stage pitch for a vertical
+       funnel, stage pitch × cross height for a horizontal one (text always
+       runs horizontally, so the axis it is measured against transposes with
+       the orientation);
+    2. **outside** — beside a vertical segment on the positive cross side, or
+       above a horizontal one, when the segment's box fails but the stage
+       pitch can still hold the text without hitting the neighbours;
+    3. **hidden** — when even the outside slot cannot hold the text (the
+       tooltip and events still carry every number).
 
     Drop-off labels (``show_dropoff``) sit outside at the boundary between a
     stage and its predecessor, formatted as the signed change
     (``-38%`` for a drop, ``+12%`` for growth), and inherit the same
-    pitch-or-hidden rule. Placement is estimated against the figure's
+    outside-or-hidden rule. Placement is estimated against the figure's
     configured pixel size at build time; a responsive chart keeps the
     build-time decision.
     """
@@ -315,29 +334,44 @@ def decide_labels(
         # Every stage is zero-valued with no floor: nothing has drawable
         # width, so nothing fits "inside" and every label falls outside.
         cross_full = 1.0
-    if layout.orientation == "vertical":
-        cross_px_per_unit = plot_w / (cross_full * 1.1)
-        pitch_px = plot_h / max(n, 1)
-    else:
+    horizontal = layout.orientation == "horizontal"
+    if horizontal:
         cross_px_per_unit = plot_h / (cross_full * 1.1)
         pitch_px = plot_w / max(n, 1)
+    else:
+        cross_px_per_unit = plot_w / (cross_full * 1.1)
+        pitch_px = plot_h / max(n, 1)
     line_px = font_size * 1.4
 
     labels: list[FunnelLabelSpec] = []
     for stage, quad in zip(layout.stages, layout.quads, strict=True):
         mid_pos = (quad.pos0 + quad.pos1) / 2.0
         mid_half = (quad.hi0 + quad.hi1) / 2.0
+        seg_pitch_px = pitch_px * (quad.pos1 - quad.pos0)
+        seg_cross_px = mid_half * 2.0 * cross_px_per_unit
         if show_values:
             text = format_value(stage.value, value_format)
             if show_conversion:
                 text += f"  {format_ratio(stage.share, percent_format)}"
             width_px = _fontmetrics.advance(text, font_size)
-            if not _fits(line_px, pitch_px):
-                placement, cross, anchor = "hidden", 0.0, "middle"
-            elif _fits(width_px, mid_half * 2.0 * cross_px_per_unit * 0.92):
+            # The box a horizontally-running text line must fit: along the
+            # text, the segment's HORIZONTAL extent (cross width when the
+            # funnel is vertical, stage pitch when it is horizontal); across
+            # the text, the segment's vertical extent.
+            along_px = seg_pitch_px if horizontal else seg_cross_px
+            across_px = seg_cross_px if horizontal else seg_pitch_px
+            # An outside label still occupies the stage's slot along the
+            # pitch axis for a horizontal funnel (it sits above its own
+            # segment), so a text wider than the pitch collides with the
+            # neighbours' labels and hides instead. Vertical outside labels
+            # extend into the margin and only need their line height.
+            outside_ok = _fits(width_px, pitch_px) if horizontal else _fits(line_px, pitch_px)
+            if _fits(width_px, along_px * 0.92) and _fits(line_px, across_px):
                 placement, cross, anchor = "inside", 0.0, "middle"
-            else:
+            elif outside_ok:
                 placement, cross, anchor = "outside", mid_half, "start"
+            else:
+                placement, cross, anchor = "hidden", 0.0, "middle"
             labels.append(
                 FunnelLabelSpec(
                     stage=stage.index,
@@ -360,7 +394,16 @@ def decide_labels(
             boundary = stage.index - 0.5
             prev_quad = layout.quads[stage.index - 1]
             edge = max(prev_quad.hi1, quad.hi0)
-            placement = "outside" if _fits(line_px, pitch_px) else "hidden"
+            drop_px = _fontmetrics.advance(text, font_size)
+            # Same transposition as the value labels: a horizontal funnel's
+            # boundary labels sit side by side along the pitch axis, so their
+            # WIDTH is what collides; a vertical funnel stacks them and only
+            # the line height competes for the pitch.
+            placement = (
+                "outside"
+                if (_fits(drop_px, pitch_px) if horizontal else _fits(line_px, pitch_px))
+                else "hidden"
+            )
             labels.append(
                 FunnelLabelSpec(
                     stage=stage.index,
