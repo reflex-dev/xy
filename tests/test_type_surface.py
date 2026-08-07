@@ -11,134 +11,25 @@ import pytest
 import xy
 import xy._figure as figure_module
 import xy.components as components
+from _public_api_test_utils import load_public_api_module
 from xy.export import Engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
-MARK_FACTORIES = (
-    "scatter",
-    "ribbon",
-    "sankey",
-    "line",
-    "area",
-    "histogram",
-    "hist",
-    "bar",
-    "column",
-    "heatmap",
-    "error_band",
-    "errorbar",
-    "box",
-    "violin",
-    "ecdf",
-    "hexbin",
-    "contour",
-    "step",
-    "stairs",
-    "stem",
-    "segments",
-    "triangle_mesh",
-)
-ANNOTATION_FACTORIES = (
-    "arrow",
-    "callout",
-    "label",
-    "marker",
-    "threshold",
-    "threshold_zone",
-    "vline",
-    "hline",
-    "x_band",
-    "y_band",
-    "text",
-)
-AXIS_FACTORIES = (
-    "x_axis",
-    "y_axis",
-    "theta_axis",
-    "r_axis",
-)
-CHART_FACTORIES = (
-    "chart",
-    "scatter_chart",
-    "polar_chart",
-    "radar_chart",
-    "polar_bar_chart",
-    "pie_chart",
-    "wind_rose",
-    "line_chart",
-    "area_chart",
-    "histogram_chart",
-    "bar_chart",
-    "column_chart",
-    "heatmap_chart",
-    "error_band_chart",
-    "errorbar_chart",
-    "box_chart",
-    "violin_chart",
-    "ecdf_chart",
-    "hexbin_chart",
-    "contour_chart",
-    "step_chart",
-    "stairs_chart",
-    "stem_chart",
-    "segments_chart",
-    "triangle_mesh_chart",
-)
-CHROME_FACTORIES = (
-    "legend",
-    "tooltip",
-    "colorbar",
-    "modebar",
-    "theme",
-    "interaction_config",
-)
-CHART_READOUTS = (
-    "figure",
-    "widget",
-    "show",
-    "to_html",
-    "html",
-    "_repr_html_",
-    "to_svg",
-    "to_png",
-    "memory_report",
-    "chrome_components",
-    "reflex_components",
-    "append",
-    "pick",
-    "select_range",
-)
-FIGURE_BUILDERS = (
-    "line",
-    "scatter",
-    "area",
-    "histogram",
-    "hist",
-    "bar",
-    "column",
-    "heatmap",
-    "error_band",
-    "errorbar",
-    "box",
-    "violin",
-    "ecdf",
-    "hexbin",
-    "contour",
-    "step",
-    "stairs",
-    "stem",
-    "arrow",
-    "callout",
-    "label",
-    "marker",
-    "threshold",
-    "threshold_zone",
-    "vline",
-    "hline",
-    "x_band",
-    "y_band",
-    "text",
+
+PUBLIC_API_INVENTORY = load_public_api_module(
+    "_xy_test_check_public_api"
+).build_public_api_inventory(xy, components)
+MARK_FACTORIES = PUBLIC_API_INVENTORY.mark_factories
+ANNOTATION_FACTORIES = PUBLIC_API_INVENTORY.annotation_factories
+AXIS_FACTORIES = PUBLIC_API_INVENTORY.axis_factories
+CHART_FACTORIES = PUBLIC_API_INVENTORY.chart_factories
+CHROME_FACTORIES = PUBLIC_API_INVENTORY.chrome_factories
+SUPPORT_FACTORIES = PUBLIC_API_INVENTORY.support_factories
+CHART_READOUTS = PUBLIC_API_INVENTORY.chart_methods
+REGISTERED_MARK_FACTORIES = tuple(name for name in MARK_FACTORIES if name != "mark")
+FIGURE_BUILDERS = tuple(
+    name for name in (*MARK_FACTORIES, *ANNOTATION_FACTORIES) if hasattr(figure_module.Figure, name)
 )
 FIGURE_READOUTS = (
     "build_payload",
@@ -277,6 +168,7 @@ def test_public_factories_are_typed_root_exports() -> None:
         *AXIS_FACTORIES,
         *CHROME_FACTORIES,
         *CHART_FACTORIES,
+        *SUPPORT_FACTORIES,
     ):
         root_fn = getattr(xy, name)
         component_fn = getattr(components, name)
@@ -293,6 +185,7 @@ def test_composition_alpha_contract_is_explicitly_exported() -> None:
         *CHART_FACTORIES,
         *CHROME_FACTORIES,
         *AXIS_FACTORIES,
+        *SUPPORT_FACTORIES,
     }
 
     for name in sorted(contract):
@@ -318,7 +211,10 @@ def test_public_component_factories_have_typed_signatures() -> None:
         "theme": components.Theme,
         "interaction_config": components.Interaction,
         **{name: components.Chart for name in CHART_FACTORIES},
+        "animation": components.Animation,
+        "export_config": components.ExportConfig,
         "facet_chart": components.FacetChart,
+        "spring": components.Spring,
     }
     for name, expected_return in expected_returns.items():
         fn = getattr(components, name)
@@ -330,7 +226,7 @@ def test_public_component_factories_have_typed_signatures() -> None:
 
 
 def test_mark_factory_kinds_are_registered_with_typed_appliers() -> None:
-    factory_kinds = {getattr(components, name)().kind for name in MARK_FACTORIES}
+    factory_kinds = {getattr(components, name)().kind for name in REGISTERED_MARK_FACTORIES}
     applier_kinds = set(components._MARK_APPLIERS)
 
     assert factory_kinds == applier_kinds
@@ -389,7 +285,7 @@ def test_chart_factories_construct_named_lazy_charts() -> None:
             chart = getattr(components, name)()
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        if name not in {"radar_chart", "wind_rose", "pie_chart"}:
+        if name not in {"radar_chart", "wind_rose", "pie_chart", "sankey_chart"}:
             assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None
@@ -494,3 +390,9 @@ def test_selection_callback_payload_types_are_specific() -> None:
     xy_return = get_type_hints(figure_module.Selection.xy)["return"]
     assert get_origin(xy_return) is tuple
     assert get_args(xy_return) == (np.ndarray, np.ndarray)
+
+    rows_hints = get_type_hints(figure_module.Selection.rows)
+    assert rows_hints["limit"] == int | None
+    rows_return = rows_hints["return"]
+    assert get_origin(rows_return) is list
+    assert get_args(rows_return) == (dict[str, Any],)

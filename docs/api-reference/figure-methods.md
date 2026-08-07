@@ -19,8 +19,10 @@ code should build charts through components and call the public methods below.
 | `chart.figure()` | Build or return the cached internal engine figure. |
 
 In a compatible notebook, leaving a chart as the final cell expression invokes
-its display hook automatically. Python callbacks require the live widget or a
-framework adapter.
+its display hook automatically. In `display="auto"` mode, controlled by
+`XY_NOTEBOOK_DISPLAY`, supported notebooks use the live widget and HTML mode
+uses `_repr_html_()` as the standalone-HTML path. Python callbacks require the
+live widget or a framework adapter.
 
 ## HTML and Static Export
 
@@ -105,6 +107,27 @@ selection: xy.Selection = chart.select_range(x0, x1, y0, y1, trace_id=None)
 
 Streaming has additional channel and monotonic-line constraints documented in
 [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/).
+
+## View and Selection State
+
+~~~python
+chart.set_view(ranges, animate=True, history=True)
+chart.reset_view(axes=None)
+chart.select(range=(x0, x1, y0, y1), history=True)
+chart.clear_selection()
+state: dict = chart.view_state()
+~~~
+
+- `set_view()` applies explicit axis ranges to the live chart state.
+- `reset_view()` navigates axes to their home ranges; `axes=None` uses the
+  configured `reset_axes`.
+- `select()` accepts one of `range=`, `polygon=`, or `rows=`. Geometric forms
+  follow the browser gesture state path; rows resolve kernel-side and are
+  non-durable.
+- `clear_selection()` clears the current selection, including range, polygon,
+  and row selections.
+- `view_state()` returns the last client-confirmed viewport and selection state;
+  reads after writes are eventually consistent.
 
 ## Framework Chrome
 
