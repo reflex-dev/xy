@@ -183,9 +183,16 @@ def test_macho_linkage_rejects_binary_above_wheel_floor() -> None:
 
 
 def test_linkage_validation_requires_platform() -> None:
-    with pytest.raises(AssertionError, match="requires an expected wheel platform"):
+    with pytest.raises(AssertionError, match="requires an expected native wheel platform"):
         verify_wheel.verify_wheel(
             Path("missing.whl"), expect_native=True, require_linkage=True
+        )
+
+
+def test_linkage_validation_requires_native_wheel() -> None:
+    with pytest.raises(AssertionError, match="requires an expected native wheel platform"):
+        verify_wheel.verify_wheel(
+            Path("missing.whl"), expect_native=None, expect_platform="win_amd64", require_linkage=True
         )
 
 

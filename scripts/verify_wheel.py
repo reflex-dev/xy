@@ -830,8 +830,10 @@ def verify_wheel(
     required_symbols: Optional[set[str]] = None,
     require_linkage: bool = False,
 ) -> None:
-    if require_linkage and expect_platform is None:
-        raise AssertionError("linkage validation requires an expected wheel platform tag")
+    if require_linkage and (expect_native is not True or expect_platform is None):
+        raise AssertionError(
+            "linkage validation requires an expected native wheel platform tag"
+        )
     with zipfile.ZipFile(path) as zf:
         _require_unique_archive_members(zf.infolist())
         names = set(zf.namelist())
@@ -940,12 +942,6 @@ def verify_wheel(
             raise AssertionError("native wheel must set Root-Is-Purelib: false")
         if any(tag == "py3-none-any" for tag in wheel.tags):
             raise AssertionError(f"native wheel must not use a pure tag: {wheel.tags}")
-        if expect_platform is not None:
-            with zipfile.ZipFile(path) as zf:
-                _require_native_target(native_libs[0], zf.read(native_libs[0]), expect_platform)
-        if required_symbols:
-            with zipfile.ZipFile(path) as zf:
-                _require_exported_symbols(native_libs[0], zf.read(native_libs[0]), required_symbols)
         if expect_platform is not None or required_symbols:
             with zipfile.ZipFile(path) as zf:
                 native_data = zf.read(native_libs[0])

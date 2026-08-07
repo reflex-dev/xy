@@ -104,8 +104,8 @@ jobs:
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget "reflex>=0.9.6"
-          ./smoke/bin/python -c "import importlib.metadata as m, numpy as np, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); codes, unique = k.factorize_fixed(np.asarray(['a', 'b', 'a'], dtype='S1')); assert codes.tolist() == [0, 1, 0] and unique.tolist() == [0, 1]; print('native', k.__file__)" \
-            || ./smoke/Scripts/python.exe -c "import importlib.metadata as m, numpy as np, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); codes, unique = k.factorize_fixed(np.asarray(['a', 'b', 'a'], dtype='S1')); assert codes.tolist() == [0, 1, 0] and unique.tolist() == [0, 1]; print('native', k.__file__)"
+          if [ -f ./smoke/bin/python ]; then py=./smoke/bin/python; else py=./smoke/Scripts/python.exe; fi
+          "$py" scripts/wheel_smoke.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.plat }}

@@ -1278,11 +1278,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "--require-linkage",
         "Install-size budget (<= 15 MB)",
         '"reflex>=0.9.6"',
-        "import importlib.metadata as m",
-        "reflex_xy",
-        "assert reflex_xy.__version__ == m.version('xy')",
-        "assert k.BACKEND=='native'",
-        "factorize_fixed",
+        "scripts/wheel_smoke.py",
         "actions/upload-artifact@",
         "dist/*.whl",
     )
