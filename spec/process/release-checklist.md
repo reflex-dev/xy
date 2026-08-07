@@ -41,7 +41,7 @@ any existing tag points and whether the release has assets before changing it.
 
 ## 2. Prepare the release commit
 
-- Add a dated `## [X.Y.Z] — YYYY-MM-DD` entry to `CHANGELOG.md`.
+- Add a dated `## [X.Y.Z] - YYYY-MM-DD` entry to `CHANGELOG.md`.
 - Confirm the changelog describes every user-visible change since the previous
   release.
 - Refresh benchmark reports, or record why the previous report still applies.
@@ -87,8 +87,9 @@ must:
 - import `xy` and `reflex_xy` without NumPy, Reflex, or the native core being
   loaded eagerly;
 - report matching versions; and
-- raise the documented native-core `ImportError` only when compute is
-  requested.
+- raise the documented native-core `ImportError` when `xy.kernels` is imported
+  (when the compute layer is touched), never at `import xy` or
+  `import reflex_xy` itself.
 
 Representative local installation:
 
@@ -163,7 +164,7 @@ Create a new environment outside the repository so the checkout cannot shadow
 the installed package:
 
 ```bash
-TMP_DIR=$(mktemp -d /private/tmp/xy-release-smoke.XXXXXX)
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/xy-release-smoke.XXXXXX")
 UV_CACHE_DIR="$TMP_DIR/uv-cache" uv venv "$TMP_DIR/.venv" --python 3.12
 UV_CACHE_DIR="$TMP_DIR/uv-cache" uv pip install \
   --python "$TMP_DIR/.venv/bin/python" \
