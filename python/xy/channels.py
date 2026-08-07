@@ -371,6 +371,25 @@ def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
     return distinct < near_unique * len(probe)
 
 
+def _normalize_object_strings(arr: np.ndarray) -> Optional[np.ndarray]:
+    """Return object-backed strings as fixed-width Unicode when safe.
+
+    Object arrays can contain values with display-label semantics that cannot
+    be represented by a simple Unicode cast. Restrict this path to exact
+    Python strings so mixed objects, missing values, and custom ``__str__``
+    implementations retain the canonical fallback behavior.
+    """
+    if arr.dtype.kind != "O" or arr.size == 0:
+        return None
+    values = arr.reshape(-1)
+    width = 0
+    for value in values:
+        if type(value) is not str:
+            return None
+        width = max(width, len(value))
+    return np.asarray(arr, dtype=f"<U{max(width, 1)}")
+
+
 def _factorize_categories(
     arr: np.ndarray,
 ) -> tuple[
@@ -388,15 +407,19 @@ def _factorize_categories(
     strings/bytes/bools can identify equal records in Rust without creating N
     Python objects; only their compact unique set crosses the label-policy path.
     """
-    if arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(arr):
+    normalized = _normalize_object_strings(arr)
+    factorizer_arr = arr if normalized is None else normalized
+    if factorizer_arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(
+        factorizer_arr
+    ):
         compact = (
-            kernels.factorize_unicode1_u8_counts(arr, MAX_CATEGORIES)
-            if arr.dtype.kind == "U" and arr.dtype.itemsize == 4
-            else kernels.factorize_fixed_u8_counts(arr, MAX_CATEGORIES)
+            kernels.factorize_unicode1_u8_counts(factorizer_arr, MAX_CATEGORIES)
+            if factorizer_arr.dtype.kind == "U" and factorizer_arr.dtype.itemsize == 4
+            else kernels.factorize_fixed_u8_counts(factorizer_arr, MAX_CATEGORIES)
         )
         if compact is not None:
             raw_codes, unique_indices, raw_counts = compact
-            unique_labels = [category_label(value) for value in arr[unique_indices]]
+            unique_labels = [category_label(value) for value in factorizer_arr[unique_indices]]
             categories = sorted(set(unique_labels))
             index = {label: i for i, label in enumerate(categories)}
             remap = np.fromiter(
@@ -412,8 +435,8 @@ def _factorize_categories(
                 counts[index[label]] += count
             return categories, raw_codes, counts
 
-        raw_codes, unique_indices = kernels.factorize_fixed(arr)
-        unique_labels = [category_label(value) for value in arr[unique_indices]]
+        raw_codes, unique_indices = kernels.factorize_fixed(factorizer_arr)
+        unique_labels = [category_label(value) for value in factorizer_arr[unique_indices]]
         categories = sorted(set(unique_labels))
         index = {label: i for i, label in enumerate(categories)}
         dtype = _category_code_dtype(len(categories))

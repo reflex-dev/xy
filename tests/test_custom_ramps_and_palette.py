@@ -375,6 +375,53 @@ def test_the_literal_color_probe_does_not_materialize_category_columns():
     assert channels._literal_color_rgba(column) is None
 
 
+def test_homogeneous_object_categories_use_native_factorization(monkeypatch):
+    """Object strings use the native path without an N-entry label list."""
+    values = np.array(["group-a", "group-b", "group-a", "group-c"] * 250, dtype=object)
+    seen: list[object] = []
+    original = channels.category_label
+
+    def record(value: object) -> str:
+        seen.append(value)
+        return original(value)
+
+    monkeypatch.setattr(channels, "category_label", record)
+    categories, codes, counts = channels._factorize_categories(values)
+
+    assert categories == ["group-a", "group-b", "group-c"]
+    np.testing.assert_array_equal(codes[:4], [0, 1, 0, 2])
+    np.testing.assert_array_equal(counts, [500, 250, 250])
+    assert len(seen) == len(categories)
+
+
+def test_object_factorization_matches_fixed_width_string_semantics():
+    """The object fast path preserves category order, codes, and counts."""
+    values = np.array(["beta", "alpha", "beta", "gamma", "alpha"], dtype=object)
+    object_result = channels._factorize_categories(values)
+    unicode_result = channels._factorize_categories(values.astype("U5"))
+
+    assert object_result[0] == unicode_result[0]
+    np.testing.assert_array_equal(object_result[1], unicode_result[1])
+    np.testing.assert_array_equal(object_result[2], unicode_result[2])
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.array(["a", None, "a"], dtype=object),
+        np.array(["a", 1, "a"], dtype=object),
+        np.array([b"a", b"b", b"a"], dtype=object),
+    ],
+)
+def test_mixed_object_categories_keep_the_fallback(values):
+    """Values without exact string semantics remain on the safe fallback."""
+    categories, codes, counts = channels._factorize_categories(values)
+
+    assert len(categories) == len(set(categories))
+    assert len(codes) == len(values)
+    assert counts is None
+
+
 def test_the_probe_still_reads_a_column_that_actually_looks_like_paint():
     column = np.array(["#ff0000", "#00ff00", "#0000ff"])
     rgba = channels._literal_color_rgba(column)
