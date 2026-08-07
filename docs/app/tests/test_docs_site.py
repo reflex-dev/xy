@@ -2788,7 +2788,9 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
 
 def test_reflex_integration_renders_the_state_backed_data_example() -> None:
     """Keep the primary @rxy.data example visible as a live chart demo."""
-    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/integrations/reflex/")
+    page = next(
+        page for page in discover_docs(DOCS_CONFIG) if page.route == "/integrations/reflex/"
+    )
     live_blocks = [
         block
         for block in parse_document(page.content).blocks
