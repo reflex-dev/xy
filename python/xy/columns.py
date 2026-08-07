@@ -205,6 +205,11 @@ class Column:
     # consecutive append payloads keep byte-identical prefixes — the client's
     # tail-only GPU upload depends on it (wire-protocol §4).
     _ship_offset: float | None = field(default=None, init=False, repr=False, compare=False)
+    # Cached whole-column f32 encoding: (offset, scale, n, base_ptr, buffer).
+    # A rebuildable derived cache (§27); see `encoded_f32`.
+    _enc_cache: tuple[float, float, int, int, npt.NDArray[np.float32]] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __len__(self) -> int:
         return len(self.values)
@@ -261,6 +266,49 @@ class Column:
         self._ship_offset = mid
         return mid
 
+    @property
+    def encode_cache_bytes(self) -> int:
+        """Bytes held by the whole-column f32 encode cache (0 when cold)."""
+        return int(self._enc_cache[4].nbytes) if self._enc_cache is not None else 0
+
+    def encoded_f32(self, offset: float, scale: float) -> npt.NDArray[np.float32]:
+        """Whole-column relative-f32 encoding `(v - offset) * scale`, cached.
+
+        The sticky ship offset (`suggest_offset`) keeps the encoding
+        prefix-stable across appends, so a streaming tick only encodes the
+        appended tail — O(rows appended), not O(N) — into a capacity-doubling
+        f32 buffer that mirrors the canonical growth buffer (+4 B/point,
+        itemized in `memory_report`). Invalidation is conservative: an
+        offset/scale change, a shrink, or a rebinding/growth-buffer migration
+        (detected by the values base pointer) re-encodes fully into a *fresh*
+        buffer — previously shipped split payloads hold zero-copy views of the
+        old one, so it is never written again past its shipped length. The
+        cache trusts the canonical contract that column values are only ever
+        extended via `append`, never mutated in place (§27 rule 1).
+        """
+        n = len(self.values)
+        ptr = int(self.values.__array_interface__["data"][0])
+        cache = self._enc_cache
+        if cache is not None and cache[0] == offset and cache[1] == scale:
+            n_old, buf = cache[2], cache[4]
+            if cache[3] == ptr and n_old <= n:
+                if buf.shape[0] < n:
+                    grown = np.empty(max(n, buf.shape[0] * 2), dtype=np.float32)
+                    grown[:n_old] = buf[:n_old]
+                    buf = grown
+                if n > n_old:
+                    buf[n_old:n] = kernels.encode_f32(self.values[n_old:], offset, scale)
+                self._enc_cache = (offset, scale, n, ptr, buf)
+                return buf[:n]
+        # Cold path: adopt the encode output itself as the cache buffer, so a
+        # first build costs exactly one encode and one exact-size allocation —
+        # identical to the uncached path (first-paint latency is benchmarked;
+        # CodSpeed flagged the extra alloc+copy of a slack buffer here). The
+        # doubling slack starts on the first append instead.
+        buf = kernels.encode_f32(self.values, offset, scale)
+        self._enc_cache = (offset, scale, n, ptr, buf)
+        return buf
+
     def append(self, data: Any) -> None:
         """Streaming append (design dossier §5, Phase-0 Python-side).
 
@@ -285,6 +333,7 @@ class Column:
             return
         n_old = len(self.values)
         n_new = n_old + len(arr)
+        old_ptr = int(self.values.__array_interface__["data"][0])
         grow = getattr(self, "_grow", None)
         if grow is None or grow.shape[0] < n_new:
             cap = max(n_new, n_old * 2, 1024)
@@ -294,6 +343,18 @@ class Column:
             self.ingest_copies += 1  # the migration is the O(N) event
         self._grow[n_old:n_new] = arr
         self.values = self._grow[:n_new]
+        # A growth-buffer migration moves the base pointer but preserves the
+        # prefix byte-for-byte, so the f32 encode cache stays valid — re-key it
+        # to the new pointer. A cache keyed to some *other* pointer means the
+        # values were rebound outside this method; drop it (full re-encode is
+        # always correct).
+        cache = self._enc_cache
+        if cache is not None:
+            if cache[3] == old_ptr and cache[2] <= n_old:
+                new_ptr = int(self.values.__array_interface__["data"][0])
+                self._enc_cache = (cache[0], cache[1], cache[2], new_ptr, cache[4])
+            else:
+                self._enc_cache = None
         # Recompute only the tail: the last (possibly partial) old chunk plus
         # everything new. Slicing at a chunk boundary keeps alignment with a
         # full recompute, so autorange/pruning consumers see identical maps.
@@ -476,10 +537,17 @@ class ColumnStore:
         report totals them as ``canonical_capacity_bytes`` — equal to
         ``canonical_bytes`` for every never-appended figure, and the number the
         resident total is built from (channels already report their own growth
-        buffers this way)."""
+        buffers this way).
+
+        Shipped geometry keeps a whole-column f32 encode cache (tail-only
+        re-encode on streaming append; `Column.encoded_f32`). That is +4 B per
+        point of resident RAM per shipped column, itemized per column and
+        totaled as ``encode_cache_bytes`` — always RAM, even for memmapped
+        canonical columns."""
         resident = 0
         resident_capacity = 0
         mapped = 0
+        encode_cache = 0
         columns = []
         for c in self._columns:
             nbytes = int(c.values.nbytes)
@@ -490,6 +558,9 @@ class ColumnStore:
             else:
                 resident += nbytes
                 resident_capacity += capacity
+            # The f32 encode cache is resident RAM regardless of the canonical
+            # backing (encoding a memmapped column still materializes f32).
+            encode_cache += c.encode_cache_bytes
             columns.append(
                 {
                     "id": c.id,
@@ -497,6 +568,7 @@ class ColumnStore:
                     "len": len(c),
                     "bytes": nbytes,
                     "capacity_bytes": capacity,
+                    "encode_cache_bytes": c.encode_cache_bytes,
                     "backing": "memmap" if memmapped else "ram",
                     "ingest_copies": c.ingest_copies,
                     "null_count": c.zone.null_count,
@@ -506,6 +578,7 @@ class ColumnStore:
             "canonical_bytes": resident,
             "canonical_capacity_bytes": resident_capacity,
             "canonical_mapped_bytes": mapped,
+            "encode_cache_bytes": encode_cache,
             "columns": columns,
         }
 
