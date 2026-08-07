@@ -1,6 +1,8 @@
 """Validate human-facing documentation routes."""
 
 import re
+from collections import Counter
+from html.parser import HTMLParser
 from pathlib import Path
 
 from reflex_site_shared.docs import discover_docs
@@ -16,6 +18,52 @@ INLINE_SVG_PREVIEW_COUNT = 34
 XY_PAYLOAD_PATTERN = re.compile(r'["\'](?P<url>/docs/xy/xy/[a-f0-9]+\.xyf)["\']')
 XY_PAYLOAD_MAGIC = b"XYBF"
 LLMS_DIRECTIVE = "For AI agents: the complete XY documentation index is at"
+
+
+class _ElementIdParser(HTMLParser):
+    """Collect element IDs from prerendered HTML, including inline SVG."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ids: list[str] = []
+
+    def _collect_ids(self, attrs: list[tuple[str, str | None]]) -> None:
+        """Record non-empty IDs from one start tag."""
+        self.ids.extend(value for name, value in attrs if name == "id" and value)
+
+    def handle_starttag(
+        self,
+        _tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        """Collect IDs from a normal start tag."""
+        self._collect_ids(attrs)
+
+    def handle_startendtag(
+        self,
+        _tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        """Collect IDs from a self-closing start tag."""
+        self._collect_ids(attrs)
+
+
+def duplicate_html_ids(source: str) -> tuple[str, ...]:
+    """Return duplicate element IDs from a complete prerendered document."""
+    parser = _ElementIdParser()
+    parser.feed(source)
+    parser.close()
+    return tuple(element_id for element_id, count in Counter(parser.ids).items() if count > 1)
+
+
+def validate_unique_html_ids(page_route: str, html_path: Path, source: str) -> None:
+    """Reject repeated IDs anywhere in a complete prerendered route."""
+    duplicates = duplicate_html_ids(source)
+    if duplicates:
+        msg = (
+            f"Prerendered route has duplicate element IDs {duplicates}: {page_route} ({html_path})"
+        )
+        raise RuntimeError(msg)
 
 
 def route_html_paths(route: str) -> tuple[Path, ...]:
@@ -115,7 +163,11 @@ def main() -> None:
             msg = f"Missing prerendered documentation route: {html_paths!r}"
             raise RuntimeError(msg)
         for html_path in html_paths:
-            if html_path.is_file() and LLMS_DIRECTIVE not in html_path.read_text(encoding="utf-8"):
+            if not html_path.is_file():
+                continue
+            source = html_path.read_text(encoding="utf-8")
+            validate_unique_html_ids(page.route, html_path, source)
+            if LLMS_DIRECTIVE not in source:
                 msg = f"Prerendered route omits the llms.txt directive: {html_path}"
                 raise RuntimeError(msg)
 
@@ -128,6 +180,13 @@ def main() -> None:
         if not any(path.is_file() for path in html_paths):
             msg = f"Missing prerendered redirect route: {html_paths!r}"
             raise RuntimeError(msg)
+        for html_path in html_paths:
+            if html_path.is_file():
+                validate_unique_html_ids(
+                    route,
+                    html_path,
+                    html_path.read_text(encoding="utf-8"),
+                )
 
 
 if __name__ == "__main__":

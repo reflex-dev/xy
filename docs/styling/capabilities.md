@@ -34,7 +34,7 @@ built — one renderer never silently ignores what another draws.
 | `wedge-gap` | xy | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `marker-shape` | xy | `scatter` | full | full | full | shipped |
 
-### Notes
+### Mark style notes
 
 - **`opacity`** — Multiplies the mark's own alpha in every renderer.
 - **`fill`** — A plain color compiles to the mark's paint; a `linear-gradient(...)` compiles to a gradient and is accepted only by area and rect kinds, which are the ones with a gradient program.
@@ -105,7 +105,7 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `axis_title` | full | partial | partial |
 | `annotation_label` | full | none | none |
 
-### Notes
+### Chrome slot notes
 
 - **`root`** (via `chart style=`) — `styles={'root': ...}` is browser-only, but the chart-level `style=` token bag targets the same element and every renderer reads it (`spec['dom']['style']`). Prefer it for anything that must survive export.
 - **`title`** (via `styles={'title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
