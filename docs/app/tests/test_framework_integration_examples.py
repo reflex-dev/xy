@@ -41,7 +41,7 @@ def _python_examples() -> dict[str, str]:
             continue
         if line.startswith("#"):
             heading = line.lstrip("#").strip()
-        elif line in {"```python", "~~~python"}:
+        elif line.startswith(("```python", "~~~python")):
             fence = line[:3]
             source = []
 

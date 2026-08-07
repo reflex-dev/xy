@@ -61,7 +61,7 @@ Pass concrete columns through `data=` when they do not depend on state. The
 adapter compiles a content-addressed binary asset during the frontend build, so
 the result works with `reflex export` and needs no backend connection.
 
-~~~python
+~~~python demo exec
 import numpy as np
 import reflex as rx
 import reflex_xy as rxy
@@ -94,7 +94,7 @@ running the data method. At runtime the computed var holds only a typed handle;
 numeric columns travel as binary frames over the app's existing websocket
 rather than through Reflex state JSON.
 
-~~~python
+~~~python demo exec
 from typing import TypedDict
 
 import numpy as np
