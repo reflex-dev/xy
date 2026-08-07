@@ -46,7 +46,7 @@
 // v12: polar angular axes carry `sector`/`grid_shape`, and radial axes carry
 // `hole`/`r_origin`. A v11 client would accept those fields but silently draw
 // full circular, centre-origin geometry.
-export const PROTOCOL = 12;
+export const PROTOCOL = 13;
 
 // Every GL buffer field a built trace — or a drill / sample-overlay clone of
 // one — can own. Teardown reads this list instead of a hand-kept subset: the

@@ -420,9 +420,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 12` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 13` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 12` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 13` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -469,7 +469,10 @@ Two independent version constants:
   v11 client would silently draw a full circular, centre-origin view and route
   those grid/segment traces through their Cartesian paths. The v12 handshake
   rejects that stale bundle before any of those compatible-looking wrong
-  pictures can appear.
+  pictures can appear. v13 adds the `style_snapshot_request` /
+  `style_snapshot` capture pair (§8): a cached v12 client silently ignores
+  the request, so the kernel's awaited capture dies as a slow timeout
+  instead of the loud handshake failure the version exists to produce.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.
@@ -482,3 +485,69 @@ installed `xy` distribution, repairing a stale link if the install moved. The
 JS that renders a payload is therefore always the build that shipped with the
 Python that produced it. The protocol check exists for the case that survives
 this: a browser holding a cached bundle against a restarted kernel.
+
+## 8. Resolved style snapshot (schema v1)
+
+`python/xy/styling/resolved.py` defines the renderer-neutral styling IR —
+the `ResolvedStyleSnapshot` — and `js/src/14_style_snapshot.ts` is its
+generated TypeScript mirror (`scripts/gen_style_snapshot_types.py`; the test
+suite fails when the two drift).
+
+Transport (v13): the kernel sends `style_snapshot_request { request_id,
+style_epoch }`; the client settles (fonts.ready plus two macrotask ticks —
+setTimeout, not rAF, because headless hosts throttle rAF on unfocused
+pages), captures the live cascade (`js/src/16_style_capture.ts`: every
+rendered `data-xy-slot` element's allowlisted computed properties, interned;
+hidden state-gated chrome has no boxes and is skipped), and replies
+`style_snapshot { request_id, snapshot }` — or `{ request_id, error }` on a
+capture failure, so the kernel's awaited future never dangles (§28).
+`FigureWidget.capture_style_snapshot()` is asynchronous by contract (a
+synchronous wait inside the kernel deadlocks against its own comm) and
+validates the reply through `resolved.snapshot_from_payload` at the
+boundary, so an out-of-contract capture raises rather than becoming
+renderer-facing IR. A standalone document exposes the same capture as
+`window.xy.captureStyleSnapshot` — no kernel, same payload shape — which is
+also the browser-oracle path the smoke test uses.
+
+The schema is versioned independently (`STYLE_SNAPSHOT_VERSION = 1`),
+because a snapshot can outlive a session: it is cacheable and supplyable to
+an unmounted export, so a consumer may meet one produced by another build.
+A consumer that sees a version it does not know refuses; it never guesses.
+
+Shape (JSON-safe; spelled-out keys at snapshot level, one-letter keys on
+instances because instances are the part that repeats with chart density):
+
+```text
+{
+  version: 1,
+  style_epoch: int,                  # producer's style generation counter
+  environment: { width, height, dpr, color_scheme },   # resolution inputs
+  tokens: { name: value, ... },      # resolved chart tokens (open names)
+  states: [ "hover", ... ],          # export states included, if any
+  unrepresentable: [ property, ... ],# values with no target representation
+  declarations: [ { property: value, ... }, ... ],     # interned, deduped
+  instances: [ { s: slot, d: decl_index,
+                 q?: [qualifiers], g?: [x,y,w,h], c?: text }, ... ]
+}
+```
+
+Three contract properties, all enforced at construction on both ends of the
+eventual wire:
+
+- **Concrete values only.** No `var()`/`calc()`/`env()`/`inherit`, no
+  relative units (`em`, `%`, `vw`, …): a value that still depends on a
+  cascade or on metrics the consumer would re-derive is rejected loudly
+  (§28). This is what lets every renderer consume one shape without a CSS
+  engine.
+- **Interned declarations, canonically ordered.** Each distinct declaration
+  is stored once; instances reference it by index and carry only identity
+  (`q`, e.g. `["y","major","3"]`), geometry, and content. The builder emits
+  declarations sorted by content and instances sorted by identity, so
+  logically identical styling serializes byte-identically regardless of
+  production order — instance order carries no meaning. A dense-axis
+  fixture (460 instances, 2 declarations, ~39 KB) pins the spec's 50 KB
+  uncompressed budget in `tests/test_resolved_style_snapshot.py`.
+- **Closed vocabulary per version.** Schema v1's property list is the
+  generated constant in both languages; growing it is a
+  `STYLE_SNAPSHOT_VERSION` bump, so a snapshot's vocabulary is always
+  recoverable from its version field alone.

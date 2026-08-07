@@ -40,7 +40,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from os import PathLike
-from typing import Any, Literal, Optional, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, Union
+
+if TYPE_CHECKING:
+    from .styling.preflight import StyleCompatibilityReport
 
 import numpy as np
 
@@ -4128,6 +4131,17 @@ class Chart(Component):
         """Last committed durable view state (kernel-side cache)."""
         return self.widget().view_state()
 
+    async def capture_style_snapshot(self, *, timeout: float = 10.0) -> Any:
+        """The mounted chart's live cascade as a `ResolvedStyleSnapshot`.
+
+        Asynchronous by contract (the reply rides the same comm the request
+        leaves on); pass the result to `to_png(style_snapshot=...)` and the
+        native writers reproduce what the browser resolved — host theme,
+        classes, dark mode — with no browser in the export path. See
+        `FigureWidget.capture_style_snapshot`.
+        """
+        return await self.widget().capture_style_snapshot(timeout=timeout)
+
     def _ipython_display_(self) -> None:
         from IPython.display import display  # type: ignore[import-not-found]
 
@@ -4170,15 +4184,56 @@ class Chart(Component):
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
 
+    def style_compatibility_report(
+        self,
+        target: str = "png",
+        *,
+        engine: Optional[export.Engine | str] = None,
+        custom_css: Optional[str] = None,
+    ) -> StyleCompatibilityReport:
+        """What of this chart's styling survives an export to ``target``.
+
+        Report-only preflight: lists the styling sources present, how each
+        styled slot routes for the target and engine, and exactly which
+        declarations would not survive — before any bytes exist. Mirrors the
+        export path's behavior (including its refusals) rather than
+        re-deciding it; see `spec/api/export.md` §9.
+        """
+        return self.figure().style_compatibility_report(
+            target,
+            engine=engine,
+            custom_css=custom_css,
+        )
+
     def to_svg(
         self,
         path: Optional[str] = None,
         *,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> str:
-        """A static SVG render of the chart (written to ``path`` if given)."""
-        return self.figure().to_svg(path, width=width, height=height)
+        """A static SVG render of the chart (written to ``path`` if given).
+
+        ``compatibility`` stages the styling contract: ``"warn"`` surfaces
+        any declaration this export would drop, ``"strict"`` refuses to drop
+        one; the default preserves current behavior. ``style_snapshot``
+        feeds a captured live cascade to the vector writer.
+        """
+        return self.figure().to_svg(
+            path,
+            width=width,
+            height=height,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
+        )
 
     def to_png(
         self,
@@ -4192,12 +4247,18 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """A PNG render of the chart, returned as bytes.
 
         ``scale`` multiplies the pixel density; ``engine`` picks the
         raster path (native or headless Chromium). Written to ``path``
-        when given.
+        when given. ``compatibility`` stages the styling contract
+        (``"legacy"``/``"warn"``/``"strict"``).
         """
         return self.figure().to_png(
             path,
@@ -4209,6 +4270,11 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def _export_defaults(
@@ -4258,14 +4324,23 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
 
         Omitted width/height/scale/background/quality fall back to the
         chart's `export_config` defaults; explicit arguments override them.
-        See `export.to_image` for the full format/engine/background policy."""
+        See `export.to_image` for the full format/engine/background policy
+        and `compatibility=` for the staged styling contract."""
         fmt = export._normalize_format(format)
-        resolved = export._resolve_image_engine(engine, fmt, custom_css)
+        # native_cascade consumes custom_css itself; the defaults pre-resolution
+        # must not route it to a browser the export will never use.
+        precheck_css = None if style_source == "native_cascade" else custom_css
+        resolved = export._resolve_image_engine(engine, fmt, precheck_css)
         return self.figure().to_image(
             format,
             engine=engine,
@@ -4273,6 +4348,11 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
             **self._export_defaults(
                 fmt,
                 width,
@@ -4299,6 +4379,11 @@ class Chart(Component):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (.png/.jpg/
         .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
@@ -4309,7 +4394,8 @@ class Chart(Component):
             else export._infer_format(path)
         )
         if fmt != "html":
-            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+            precheck_css = None if style_source == "native_cascade" else custom_css
+            resolved = export._resolve_image_engine(engine, fmt, precheck_css)
             defaults = self._export_defaults(
                 fmt,
                 width,
@@ -4336,6 +4422,7 @@ class Chart(Component):
                 custom_css=custom_css,
                 sandbox=sandbox,
                 gl=gl,
+                compatibility=compatibility,
             )
         return self.figure().write_image(
             path,
@@ -4345,6 +4432,11 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
             **defaults,
         )
 

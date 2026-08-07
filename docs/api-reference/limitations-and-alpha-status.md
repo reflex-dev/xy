@@ -85,16 +85,12 @@ implementation. The bullets below are the boundaries that page's rows imply.
 - **Styling does not survive every export path equally, and the boundary is
   published rather than left to be discovered.** Mark, axis, and chart-level
   `style=` reach all three renderers. Per-slot `styles={slot: {...}}` reaches
-  them for the nine slots that name chrome a static file contains — `title`,
-  `axis_title`, `tick_label`, the three legend slots, and the three colorbar
-  slots — carrying `font-size`, `font-weight`, `font-style`, `font-family`,
-  `letter-spacing`, `opacity`, and the text paint. The remaining slots are live
-  chrome (`tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*`) with
-  nothing in a file to paint, and `class_names={slot: "..."}` cannot apply in a
-  file at all: a class selects a rule out of a stylesheet an exported file does
-  not have. The native raster's baked atlas is one face, so PNG/JPEG/WebP honor
-  a slot's size and paint but not its typeface. `xy.colorbar(style=...)` still
-  has no native channel — use the `colorbar_*` slots. The full matrix is
+  them for the seventeen slots that name chrome a static file contains — the box
+  slots `root`, `chrome`, `canvas` and `title` (background, border, radius,
+  opacity; `chrome` is background/opacity only), `annotation_label` with the
+  same box subset under its own `style=`, `annotation_layer` (opacity +
+  background) and `labels` (container defaults), plus `axis_title`,
+  `tick_label`, the three legend slots, and the three colorbar slots carrying
   [Static export §9](https://github.com/reflex-dev/xy/blob/main/spec/api/export.md),
   pinned by `tests/test_export_style_survival.py`.
 - Native PNG cannot apply author `custom_css`, and neither can native SVG, PDF,

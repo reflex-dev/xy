@@ -248,17 +248,69 @@ vector** (`_svg.to_svg`, and `_pdf.svg_to_pdf` on top of it).
 | `style={...}` on a mark | yes | yes | yes | validated CSS subset, `styles.compile_mark_style` |
 | `style={...}` on an axis | yes | yes | yes | validated vocabulary, `styles.compile_axis_style` |
 | `style={...}` on the chart (token bag) | yes | yes | yes | `spec["dom"]["style"]`, read at `_svg.py:767,1481` and `_raster.py:662` |
-| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
-| `class_names={slot: "..."}` | yes, all 48 slots | **dropped** | **dropped** | silent — the SVG writer emits no `class` at all |
+| `styles={slot: {...}}` (per-slot inline) | yes, all 48 slots | text/box subset, 19 slots | text/box subset, 19 slots | `_svg.STATIC_STYLED_SLOTS`; the rest is live-only chrome |
+| `class_names={slot: "..."}` | yes, all 48 slots | **dropped** (or resolved via `style_source="native_cascade"` / a captured `style_snapshot=`) | same | silent by default during migration; both opt-in routes are lossless for the published profile |
 | `custom_css="..."` | yes (HTML + Chromium capture) | **raises** | **raises** | `_resolve_image_engine`, `export.py:812` |
-| `xy.legend(style=...)` | yes | 6 keys | 6 keys | merged with the slot and the theme token before the writers see it |
+| `xy.legend(style=...)` | yes | box vocabulary | box vocabulary | merged with the slot and the theme token before the writers see it (`_svg.LEGEND_BOX_PROPS`, both spellings) |
 | `xy.colorbar(style=...)` | yes | **dropped** | **dropped** | no native channel; use `styles={"colorbar_title"/"colorbar_tick": ...}` |
+
+### Exporting what the browser resolved: `style_snapshot=`
+
+`to_png` / `to_svg` / `to_image` / `write_image` accept `style_snapshot=` —
+the `ResolvedStyleSnapshot` a mounted chart's `capture_style_snapshot()`
+returned (or its payload dict; a cached snapshot round-trips through JSON).
+The native writers then consume the captured cascade: host theme, classes,
+Tailwind, dark mode — resolved by the real browser once, exported natively
+ever after. A supplied snapshot is the lossless remedy the compatibility
+modes recommend, so `strict` passes with one where it refuses without one;
+the Chromium engine rejects the combination (it renders the live cascade
+itself, so feeding it a capture is a contradiction). Snapshots overlay
+per-slot for now — first instance per slot — until the chrome-parity work
+gives the writers per-instance geometry. `scripts/style_capture_smoke.py`
+is the browser-oracle loop: capture in headless Chromium, validate through
+the schema, reproduce natively, assert the exact color.
+
+### Asking a chart, not the table
+
+`chart.style_compatibility_report(target=..., engine=..., custom_css=...)` is
+this section applied to one concrete chart, before any bytes exist. It lists
+which styling sources the chart carries and routes every declared slot style
+into exactly one of four outcomes — `survives`, `native-subset` (with the kept
+and lost property names), `browser-only`, or `state-gated` — and mirrors the
+export path's refusals (`custom_css` with a pinned native engine, Chromium
+SVG) rather than re-deciding them. It is report-only: computing it never
+changes an export. The staged `compatibility=` modes act on this report:
+`legacy` (the default — today's behavior, one string comparison of cost),
+`warn` (one `StyleCompatibilityWarning` naming every loss), and `strict`
+(`StyleCompatibilityError` before emission, report attached). `"lossless"`
+is reserved and rejected until preflight routing exists. Modes never
+re-route an explicit engine, and the default only flips on the schedule in
+`spec/process/style-compatibility-migration.md`.
+
+Two properties are load-bearing. First, the report is constant-time when
+there is nothing to route: no `class_names`, no per-slot `styles`, and no
+`custom_css` means no slot walk — preflight is free exactly where exports are
+hot. Second, *state-gated is not lost*. The capability registry tags every
+slot with an applicability — present in a clean static export, or gated by an
+export state (`hover`, `selection`, `crosshair`, `modebar`, `view` for the
+reduction badges). A clean static file contains no tooltip, so a styled
+tooltip is recorded with its gating state and does not count against
+losslessness; counting it would overstate the parity gap by exactly the
+chrome a static file never contains. `tests/test_capability_registry.py`
+pins the partition (24 static, 24 state-gated today) and
+`tests/test_style_compatibility_report.py` pins the routing.
 
 ### Why two of those rows are silent, and why that is the right default
 
 `custom_css` raises because it is an author stylesheet: there is no honest
 partial application of it, and the caller can switch to `Engine.chromium` in one
-edit. The message says so. SVG rejects it for *every* engine, because a browser
+edit — or keep the export native with `style_source="native_cascade"`, which
+resolves the published CSS profile through the optional `xy-cascade` extension
+(Lightning CSS parsing; class/slot/descendant selectors, custom properties,
+`em`/`rem`, `prefers-color-scheme`) and reports every out-of-profile construct
+through the compatibility modes instead of guessing. The browser remains the
+oracle: `scripts/cascade_differential_smoke.py` asserts the cascade and a live
+Chromium agree on the shared profile. The message says so. SVG rejects it for *every* engine, because a browser
 screenshot cannot produce vector output — that row is a hard "never", not a
 default.
 
@@ -271,19 +323,32 @@ and an exported file has no stylesheet to select from.
 ### Which per-slot styles reach a file, and why only those
 
 A slot reaches the native writers when it names chrome a static file actually
-contains. `_svg.STATIC_STYLED_SLOTS` is that list: `title`, `axis_title`,
-`tick_label`, `legend`, `legend_title`, `legend_label`, `colorbar`,
-`colorbar_title`, and `colorbar_tick`. The remaining slots are live-only chrome
-— `tooltip*`, `modebar*`, `crosshair_*`, `selection`, `badge*` — or containers
-with no painted text of their own; there is nothing in a PNG for them to style.
+contains. `_svg.STATIC_STYLED_SLOTS` is that list: `root`, `chrome`, `canvas`, `title`, `axis_line`, `tick_mark`, `axis_title`, `tick_label`, `legend`, `legend_title`, `legend_label`, `legend_item`, `legend_swatch`, `colorbar`, `colorbar_title`, `colorbar_tick`, `annotation_label`, `annotation_layer`, `labels`.
+`root`, `chrome`, `canvas` and `title` additionally carry the chrome-box
+subset (`_svg.SLOT_BOX_PROPS_BY_SLOT`); `annotation_label` carries it under
+the annotation's own `style=`; `annotation_layer` takes background/opacity
+and `labels` the container defaults. The
+remaining slots are live-only chrome — `tooltip*`, `modebar*`, `crosshair_*`,
 
-Within a supported slot the writers read a property subset, not a cascade:
-`font-size`, `font-weight`, `font-style`, `font-family`, `letter-spacing`,
-`opacity`, and the text paint (`fill`, or `color`). The native raster's atlas is
-a single baked face, so it honors size and paint and leaves the typeface
-properties to the vector writers — the one documented divergence, and
-`tests/test_export_style_survival.py` pins it. A declaration outside the subset
-stays browser-only.
+Within a supported slot the writers read a property subset, not a cascade.
+Text slots take `font-size`, `font-weight`, `font-style`, `font-family`,
+`letter-spacing`, `opacity`, and the text paint (`fill`, or `color`); the
+raster atlas carries regular/bold/italic faces, so weight and style survive
+there while `font-family`, `letter-spacing`, and `opacity` remain
+vector-only — the one documented text divergence, pinned by
+`tests/test_export_style_survival.py`. Box slots (`root`, `chrome`, `canvas`,
+plus the `title`'s box under its text) take the chrome-box vocabulary
+(`_svg.SLOT_BOX_PROPS_BY_SLOT`, drawn through the shared `xy._chromebox`
+lowering in both writers; `chrome` is background/opacity only, and the
+raster's rect-only clip makes a `canvas` radius/opacity a named raster loss,
+`tests/test_chrome_parity_p1.py`). A declaration outside a slot's subsets
+stays browser-only, and the preflight names it.
+
+The `root` and `canvas` slot backgrounds are part of the painted backdrop the
+unified export `background=` override replaces: `apply_export_background`
+silences both alongside the theme token pair, so the precedence — export
+override > slot declaration > theme token — is defined once and holds in
+every writer.
 
 Where two surfaces name the same chrome, the narrower selector wins: an axis's
 own `label_color` beats `styles={"axis_title": ...}`, which beats the
@@ -297,4 +362,16 @@ block — token, then slot, then component, narrowest last — before either nat
 writer sees it (`_svg.legend_options_with_slot`), so spellings that agree in the
 browser agree in a PNG. An explicit `background` paints **opaque**, matching the
 browser's `background:var(--chart-legend-bg, …)`; `--xy-legend-frame-alpha`
-remains the separate knob for the default grey frame.
+remains the separate knob for the default grey frame, whose alpha dims its
+border with it. Every box property in the merged block is honored in BOTH
+spellings — `border-color` and `borderColor`, `border-radius` and
+`borderRadius` — because both reach the same block; honoring only one was how
+the preflight came to promise a channel the writers did not have.
+
+Legend geometry (`padding` and its longhands, `row-gap`/`gap`, `font-size`) is
+accepted in resolved px and in the legend's historical `em` multipliers alike.
+The px spellings are what let legend declarations leave
+`DeclaredStyling.writer_domain` for the snapshot; `em` keeps working through
+the writer view. One geometry (`_svg._legend_layout`) serves four consumers —
+both writers plus pyplot's anchored-legend reservation and its `loc="best"`
+scoring — so the drawn frame and the room reserved for it move together.

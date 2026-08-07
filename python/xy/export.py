@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
-from contextlib import suppress
+from contextlib import contextmanager, nullcontext, suppress
 from enum import StrEnum
 from os import PathLike
 from pathlib import Path
@@ -41,6 +41,19 @@ class Engine(StrEnum):
     auto = "auto"
     default = "default"
     chromium = "chromium"
+
+
+def __getattr__(name: str) -> object:
+    # StyleCompatibilityError / StyleCompatibilityWarning are catchable from
+    # the module users already import for `Engine`, but resolved lazily: the
+    # preflight chain reaches the native library via the writers' constants,
+    # and importing this module must stay exactly as heavy as it was before
+    # the compatibility modes existed.
+    if name in ("StyleCompatibilityError", "StyleCompatibilityWarning"):
+        from .styling import preflight as _preflight
+
+        return getattr(_preflight, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Warn above this payload size; base64 carries a stated ~33% tax (§29).
@@ -649,6 +662,7 @@ def write_images(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
 ) -> list[bytes]:
     """Export many figures through ONE amortized pipeline (mixed formats OK).
 
@@ -665,7 +679,17 @@ def write_images(
     exactly as in `Chart.to_image`. Writes are atomic per file; on error,
     files already exported remain. Other options match `to_image`; quality
     applies to JPEG and Chromium WebP and is ignored by the other formats
-    (native WebP stays lossless), so mixed batches stay ergonomic."""
+    (native WebP stays lossless), so mixed batches stay ergonomic.
+    `compatibility=` applies per figure while the plan is resolved, so a
+    strict batch refuses whole — before any file is written — rather than
+    after a partial export. Its vocabulary is validated once up front, so an
+    invalid mode fails even an all-HTML batch; HTML entries themselves are
+    exempt from the mode, because a document that renders the full cascade
+    has nothing to check."""
+    if compatibility != "legacy":
+        from .styling.preflight import validate_compatibility
+
+        validate_compatibility(compatibility)
     if figures is not None:
         if figs is not None:
             raise ValueError("pass figs positionally or figures=, not both")
@@ -709,6 +733,9 @@ def write_images(
             plan.append((fig, path, fmt, "html", {}, None, None))
             continue
         resolved = _resolve_image_engine(engine, fmt, custom_css)
+        # Per figure, up front with the rest of the plan: a strict batch
+        # fails whole before any file is written, never after a partial one.
+        _enforce_compatibility(fig, fmt, resolved, custom_css, compatibility)
         if callable(getattr(obj, "_export_defaults", None)):
             settings = obj._export_defaults(
                 fmt,
@@ -792,6 +819,11 @@ def to_png(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -818,13 +850,48 @@ def to_png(
     scale = _positive_finite_float(scale, "PNG scale")
     optimize = _bool_option(optimize, "PNG optimize")
     sandbox = _bool_option(sandbox, "PNG sandbox")
+    if style_source not in ("declared", "native_cascade"):
+        raise ValueError(
+            f'style_source must be "declared" or "native_cascade", got {style_source!r}'
+        )
+    if style_source == "native_cascade":
+        if style_snapshot is not None:
+            raise ValueError(
+                "style_snapshot and style_source='native_cascade' are two sources "
+                "for the same values; pass one"
+            )
+        if engine not in (Engine.auto, "auto", None, Engine.default, "default"):
+            raise ValueError(
+                "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
+            )
+        style_snapshot = _cascade_snapshot(
+            fig, custom_css, compatibility, tuple(stylesheets), tailwind_profile
+        )
+        custom_css = None  # consumed by the cascade, not by a browser
+    elif stylesheets or tailwind_profile is not None:
+        raise ValueError(
+            "stylesheets/tailwind_profile are native-cascade inputs; pass "
+            'style_source="native_cascade"'
+        )
     resolved_engine = _png_engine(engine)
+    # Resolution errors precede and outrank mode logic (the migration spec's
+    # contract): the custom_css/native refusal must stay a ValueError in
+    # every mode, so it fires before enforcement can warn or raise.
+    if resolved_engine == "native" and custom_css is not None:
+        raise ValueError("custom_css requires engine=Engine.chromium")
+    snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
+    if snapshot is not None and resolved_engine != "native":
+        raise ValueError(
+            "style_snapshot feeds the native writers; the Chromium engine renders "
+            "the live cascade itself — drop one of the two"
+        )
+    if snapshot is None:
+        _enforce_compatibility(fig, "png", resolved_engine, custom_css, compatibility)
     if resolved_engine == "native":
-        if custom_css is not None:
-            raise ValueError("custom_css requires engine=Engine.chromium")
         from . import _raster
 
-        data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
+        with _snapshot_styles(fig, snapshot) if snapshot is not None else nullcontext():
+            data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
         doc = to_html(fig, custom_css=custom_css, animation_progress=1.0)
         data = html_to_png(
@@ -897,6 +964,128 @@ def _infer_format(path: str | PathLike[str]) -> str:
             f"{', '.join('.' + f for f in (*IMAGE_FORMATS, 'jpg', 'html'))}, "
             "or pass format= explicitly"
         ) from None
+
+
+def _coerce_style_snapshot(value: object) -> Any:
+    """A validated ResolvedStyleSnapshot from either accepted spelling.
+
+    Accepts the object a capture returned, or its payload dict (a cached
+    snapshot round-trips through JSON); anything else is refused by the
+    schema's own validator, so an out-of-contract snapshot never reaches a
+    writer.
+    """
+    from .styling.resolved import ResolvedStyleSnapshot, snapshot_from_payload
+
+    if isinstance(value, ResolvedStyleSnapshot):
+        return value
+    if isinstance(value, dict):
+        # Keys come from JSON, so the mapping is dict[Unknown, Unknown] to a
+        # checker; the schema validates every key and value on the way in.
+        return snapshot_from_payload(cast("dict[str, Any]", value))
+    raise ValueError(
+        "style_snapshot must be a ResolvedStyleSnapshot (from "
+        "capture_style_snapshot()) or its payload dict"
+    )
+
+
+@contextmanager
+def _snapshot_styles(fig: "Figure", snapshot: Any) -> "Iterator[None]":
+    """Feed a captured snapshot to the native writers for one export.
+
+    The writers read per-slot styling from the figure's chrome_styles (via
+    the declared resolver), so the snapshot overlays there for the duration
+    of the render: captured declarations win over declared ones — computed
+    values ARE the declared values after the cascade the user asked to
+    capture — and the token bag gains the snapshot's tokens the same way.
+    Per-slot granularity for now: multiple instances of one slot use the
+    first instance's declaration until the chrome-parity work gives writers
+    per-instance geometry. Restored on exit; exports are synchronous, and a
+    figure is not shared across threads mid-export.
+    """
+    slot_overlay: dict[str, dict[str, Any]] = {}
+    for inst in snapshot.instances:
+        if inst.slot not in slot_overlay:
+            slot_overlay[inst.slot] = dict(snapshot.declarations[inst.declaration])
+    saved_styles = fig.chrome_styles
+    saved_style = fig.style
+    fig.chrome_styles = {**saved_styles, **slot_overlay}
+    fig.style = {**saved_style, **dict(snapshot.tokens)}
+    try:
+        yield
+    finally:
+        fig.chrome_styles = saved_styles
+        fig.style = saved_style
+
+
+def _cascade_snapshot(
+    fig: "Figure",
+    custom_css: Optional[str],
+    compatibility: str,
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
+) -> Any:
+    """Resolve classes + author CSS through the native cascade for export.
+
+    The cascade is the CSS engine here, so `custom_css` is consumed by it —
+    not routed to Chromium — and its `unsupported` report goes through the
+    compatibility contract: strict refuses on any unsupported construct,
+    every other mode surfaces the list as one StyleCompatibilityWarning.
+    A brand-new surface has no legacy silence to preserve (§28).
+    """
+    import warnings as _warnings
+
+    from .styling import cascade as _cascade
+    from .styling.preflight import StyleCompatibilityError, StyleCompatibilityWarning
+
+    snapshot, unsupported = _cascade.resolve_for_figure(
+        fig,
+        custom_css=custom_css or "",
+        stylesheets=tuple(stylesheets),
+        tailwind_profile=tailwind_profile,
+    )
+    if unsupported:
+        summary = "; ".join(unsupported)
+        if compatibility == "strict":
+            from .styling.preflight import route_resolved
+
+            raise StyleCompatibilityError(
+                f"native cascade could not honor: {summary}",
+                route_resolved(fig, fmt="png", resolved_engine="native", custom_css=None),
+            )
+        _warnings.warn(
+            StyleCompatibilityWarning(f"native cascade could not honor: {summary}"),
+            stacklevel=2,
+        )
+    return snapshot
+
+
+def _enforce_compatibility(
+    fig: "Figure",
+    fmt: str,
+    resolved_engine: str,
+    custom_css: Optional[str],
+    compatibility: str,
+) -> None:
+    """Apply the staged compatibility mode to one already-resolved export.
+
+    The literal-"legacy" short-circuit is the whole performance contract:
+    the default export path does one string comparison and never imports the
+    preflight machinery. Everything else — mode validation, the constant-time
+    unstyled path, warning versus refusing — lives in
+    `styling.preflight.enforce`. Modes never re-route an engine; they decide
+    whether to proceed, warn, or refuse on the engine the caller resolved.
+    """
+    if compatibility == "legacy":
+        return
+    from .styling import preflight as _preflight
+
+    _preflight.enforce(
+        fig,
+        fmt=fmt,
+        resolved_engine=resolved_engine,
+        custom_css=custom_css,
+        compatibility=compatibility,
+    )
 
 
 def _resolve_image_engine(engine: object, fmt: str, custom_css: Optional[str]) -> str:
@@ -1137,6 +1326,11 @@ def to_image(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Render `fig` to image bytes in the requested `format`.
 
@@ -1153,7 +1347,40 @@ def to_image(
     PDF keeps text/axes/marks as vectors; density and heatmap layers embed as
     bounded rasters (the documented hybrid-vector policy)."""
     fmt = _normalize_format(format)
+    if style_source not in ("declared", "native_cascade"):
+        raise ValueError(
+            f'style_source must be "declared" or "native_cascade", got {style_source!r}'
+        )
+    if style_source == "native_cascade":
+        if style_snapshot is not None:
+            raise ValueError(
+                "style_snapshot and style_source='native_cascade' are two sources for the same values; pass one"
+            )
+        if engine not in (Engine.auto, "auto", None, Engine.default, "default"):
+            raise ValueError(
+                "style_source='native_cascade' is a native path; drop engine=Engine.chromium"
+            )
+        style_snapshot = _cascade_snapshot(
+            fig, custom_css, compatibility, tuple(stylesheets), tailwind_profile
+        )
+        custom_css = None  # consumed by the cascade, not by a browser
+    elif stylesheets or tailwind_profile is not None:
+        raise ValueError(
+            "stylesheets/tailwind_profile are native-cascade inputs; pass "
+            'style_source="native_cascade"'
+        )
     resolved_engine = _resolve_image_engine(engine, fmt, custom_css)
+    snapshot = _coerce_style_snapshot(style_snapshot) if style_snapshot is not None else None
+    if snapshot is not None and resolved_engine == "browser":
+        raise ValueError(
+            "style_snapshot feeds the native writers; the Chromium engine renders "
+            "the live cascade itself — drop one of the two"
+        )
+    if snapshot is None:
+        # A supplied snapshot IS the lossless remedy the modes recommend:
+        # the captured cascade carries what class_names would drop, so there
+        # is nothing left for warn/strict to catch on this export.
+        _enforce_compatibility(fig, fmt, resolved_engine, custom_css, compatibility)
     quality = _validated_quality(quality, fmt, resolved_engine)
     background = _validated_background(background, fmt)
     w, h = _export_dimensions(fig, width, height)
@@ -1162,16 +1389,17 @@ def to_image(
     sandbox = _bool_option(sandbox, "export sandbox")
     gl = _gl_option(gl)
     if resolved_engine == "native":
-        return _native_image(
-            fig,
-            fmt,
-            width=w,
-            height=h,
-            scale=scale,
-            background=background,
-            quality=quality,
-            optimize=optimize,
-        )
+        with _snapshot_styles(fig, snapshot) if snapshot is not None else nullcontext():
+            return _native_image(
+                fig,
+                fmt,
+                width=w,
+                height=h,
+                scale=scale,
+                background=background,
+                quality=quality,
+                optimize=optimize,
+            )
     with _browser_session(gl=gl, sandbox=sandbox) as session:
         return _browser_image(
             session,
@@ -1201,6 +1429,11 @@ def write_image(
     custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
+    compatibility: str = "legacy",
+    style_snapshot: Optional[Any] = None,
+    style_source: str = "declared",
+    stylesheets: tuple[str, ...] = (),
+    tailwind_profile: Optional[str] = None,
 ) -> bytes:
     """Export `fig` to `path`, inferring the format from the extension.
 
@@ -1221,6 +1454,10 @@ def write_image(
                 ("background", background, None),
                 ("quality", quality, None),
                 ("optimize", optimize, False),
+                # HTML renders the full cascade in the browser — nothing can
+                # drop, so a compatibility mode has nothing to check and is
+                # rejected like the other options that cannot apply.
+                ("compatibility", compatibility, "legacy"),
             )
             if value != default
         ]
@@ -1246,6 +1483,11 @@ def write_image(
         custom_css=custom_css,
         sandbox=sandbox,
         gl=gl,
+        compatibility=compatibility,
+        style_snapshot=style_snapshot,
+        style_source=style_source,
+        stylesheets=stylesheets,
+        tailwind_profile=tailwind_profile,
     )
     _atomic_write_bytes(path, data)
     return data

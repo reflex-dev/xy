@@ -8,6 +8,85 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- The versioned Tailwind-core manifest (`tailwind_profile="core-v1"`):
+  `chart.to_png(style_source="native_cascade", tailwind_profile="core-v1")`
+  resolves the core utilities natively — the full default color palette
+  (vendored from tailwindcss@3.4.17 with provenance, never hand-typed
+  hexes), the spacing/type/weight/radius/border/tracking scales in their
+  published rem/em/px values, resolved through the cascade's own font-size
+  chain. Project Tailwind builds ride `stylesheets=`; unmatched utilities
+  are reported, never guessed.
+- Axis chrome joins static-export styling (parity phase 2): `axis_line` and
+  `tick_mark` accept the shared box vocabulary (background, border, radius,
+  offset shadow, opacity) in SVG, PNG and PDF, `tick_label` and `axis_title`
+  additionally draw padded boxes with the axis gutters growing to fit, and a
+  rotated y-title box lowers to PDF-legal pre-rotated geometry. Emission is
+  strictly declaration-gated (unstyled bytes are untouched), one shared
+  producer feeds both writers and the declared snapshot (per-tick
+  qualifiers + geometry), and `axis_band` is recorded as navigation-gated
+  live chrome rather than drawn. The preflight, capability registry and
+  matrix moved in the same change.
+- The mount-free native cascade (optional `xy-cascade` extension, ~3.8 MB
+  cdylib built from the same workspace): `chart.to_png(custom_css=css,
+  style_source="native_cascade")` resolves classes and self-contained author
+  CSS natively — Lightning CSS parsing; class/slot/descendant selectors,
+  `!important`/specificity/order, custom properties with fallbacks,
+  `em`/`rem` against the font-size cascade, `prefers-color-scheme` — and
+  exports with no browser in the path. Every out-of-profile construct is
+  reported through the compatibility modes (warn by default, refusal in
+  strict), never guessed. `scripts/cascade_differential_smoke.py` pins the
+  cascade against a live Chromium oracle.
+- Live style capture and snapshot-fed export (wire protocol v13). A mounted
+  chart's `await chart.capture_style_snapshot()` returns the browser's
+  resolved cascade as a validated `ResolvedStyleSnapshot` (the client
+  captures every rendered slot's allowlisted computed properties after
+  fonts/layout settle; replies are validated through the schema at the
+  boundary). Passing it to `to_png(style_snapshot=...)` / `to_svg` /
+  `to_image` / `write_image` makes the native writers reproduce what the
+  browser resolved — host theme, classes, dark mode — with no browser in
+  the export path; `compatibility="strict"` passes with a snapshot where it
+  refuses without one. Standalone documents expose the same capture as
+  `window.xy.captureStyleSnapshot`, and
+  `scripts/style_capture_smoke.py` pins the browser-oracle loop end to end.
+- The declared-styling resolver (`xy.styling.declared`): the writers' slot
+  view now derives from the same pass that builds the interned
+  `ResolvedStyleSnapshot`, byte-equivalently, with the legend's em-domain
+  values as a named, tested residue.
+- The renderer-neutral styling IR: `xy.styling.resolved` defines the
+  versioned, interned `ResolvedStyleSnapshot` (schema v1 — concrete values
+  only, declarations deduped, instances referencing them by index), with a
+  generated TypeScript mirror (`js/src/14_style_snapshot.ts`) that the test
+  suite pins to the Python schema. Wire shape and reserved message names:
+  `spec/design/wire-protocol.md` §8; nothing rides the wire yet, so
+  `PROTOCOL_VERSION` is unchanged.
+- Every chart-, figure-, and module-level image-export API (`to_png`,
+  `to_svg`, `to_image`, `write_image`, `export.write_images`) accepts
+  `compatibility=` — facet-grid exports deliberately do not yet (their
+  per-panel preflight is tracked in the migration document): `"legacy"`
+  (default —
+  behavior unchanged), `"warn"` (one `StyleCompatibilityWarning` naming each
+  declaration the export would drop), or `"strict"`
+  (`StyleCompatibilityError` before emission, preflight report attached).
+  Modes never re-route an explicit engine; `"lossless"` is reserved and
+  rejected until preflight routing exists. The default flips only on the
+  published schedule in `spec/process/style-compatibility-migration.md`
+  (warn in 0.0.7, strict in 0.1.0, legacy removed in 0.2.0).
+- `chart.style_compatibility_report(target=..., engine=..., custom_css=...)`:
+  a report-only export preflight that routes every declared slot style into
+  `survives`, `native-subset` (naming the kept and lost properties per
+  format family), `browser-only`, or `state-gated`, mirrors the export
+  path's refusals, and short-circuits in constant time for charts with no
+  class or per-slot declarations. The programmatic answer to
+  `spec/api/export.md` §9.
+- The capability registry now tags every chrome slot with an
+  **applicability** — present in a clean static export, or gated by an
+  export state (`hover`, `selection`, `crosshair`, `modebar`, `view`) — and
+  the generated capability matrices gained the *applicable in* column and
+  applicable-slot counts (24 static / 24 state-gated of 48). Live-only
+  chrome a static file never contains is no longer counted as missing from
+  static export parity.
+
 ## [0.0.5] - 2026-07-31
 
 ### Added

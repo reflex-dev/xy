@@ -1,5 +1,6 @@
 import { payloadBuffers } from "./00_header";
 import { buildLutData } from "./10_colormaps";
+import { captureStyleSnapshot, styleCaptureSettled } from "./16_style_capture";
 import { parseColor } from "./20_theme";
 import {
   lodAggregateStands, lodAggregateStepWindow, lodApplyDensityUpdate, lodApplyDrill,
@@ -908,6 +909,30 @@ Object.assign(ChartView.prototype, {
       if (msg.op === "reset") this._navReset(msg.axes);
     } else if (msg.type === "selection_rows") {
       this._applyRowsSelection(msg, buffers);
+    } else if (msg.type === "style_snapshot_request") {
+      this._replyStyleSnapshot(msg);
+    }
+  },
+
+  // Capture the live cascade and reply (wire-protocol §8). Explicitly
+  // requested only — never on the hover or animation path — and settled
+  // first: fonts.ready plus two macrotask ticks, so the values are the
+  // document's, not a mid-layout frame's. Errors reply as errors: a request
+  // must never dangle a kernel-side future (§28: the outcome is said).
+  async _replyStyleSnapshot(msg) {
+    try {
+      await styleCaptureSettled(this.root.ownerDocument);
+      if (this._destroyed) return;
+      const snapshot = captureStyleSnapshot(this.root, {
+        styleEpoch: typeof msg.style_epoch === "number" ? msg.style_epoch : 0,
+      });
+      this.comm.send({ type: "style_snapshot", request_id: msg.request_id, snapshot });
+    } catch (err) {
+      this.comm.send({
+        type: "style_snapshot",
+        request_id: msg.request_id,
+        error: String((err && (err as Error).message) || err),
+      });
     }
   },
 

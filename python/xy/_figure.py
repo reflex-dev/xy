@@ -14,7 +14,10 @@ import warnings
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Optional, TypeAlias, Union
+
+if TYPE_CHECKING:
+    from .styling.preflight import StyleCompatibilityReport
 
 import numpy as np
 
@@ -2244,19 +2247,65 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Notebook HTML repr isolated from the host document's styles."""
         return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
 
+    def style_compatibility_report(
+        self,
+        target: str = "png",
+        *,
+        engine: Optional[export.Engine | str] = None,
+        custom_css: Optional[str] = None,
+    ) -> StyleCompatibilityReport:
+        """Route every declared style for one export target, without exporting.
+
+        The programmatic answer to export.md §9: which styling sources this
+        figure carries, how each styled slot routes under `target`/`engine`,
+        and exactly what would not survive — including the export path's own
+        refusals, mirrored rather than re-decided. Report-only: computing it
+        never changes an export."""
+        from .styling.preflight import preflight
+
+        return preflight(self, target=target, engine=engine, custom_css=custom_css)
+
     def to_svg(
         self,
         path: Optional[str | PathLike[str]] = None,
         *,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> str:
         """Static SVG (_svg.py): a pure-Python render of the same decimated
         payload the browser client consumes — resolution-independent, tiny
         (screen-bounded regardless of source size), and dependency-free.
-        `width`/`height` override the figure's pixel size."""
+        `width`/`height` override the figure's pixel size. `compatibility`
+        stages the styling contract: "warn" surfaces any declaration this
+        vector export would drop, "strict" refuses to drop one."""
         from . import _svg
 
+        if style_source not in ("declared", "native_cascade"):
+            raise ValueError(
+                f'style_source must be "declared" or "native_cascade", got {style_source!r}'
+            )
+        if style_source == "native_cascade":
+            if style_snapshot is not None:
+                raise ValueError(
+                    "style_snapshot and style_source='native_cascade' are two "
+                    "sources for the same values; pass one"
+                )
+            # Classes-only here: to_svg carries no custom_css parameter, so
+            # author stylesheets ride to_image("svg", custom_css=...,
+            # style_source="native_cascade") instead.
+            style_snapshot = export._cascade_snapshot(
+                self, None, compatibility, tuple(stylesheets), tailwind_profile
+            )
+        if style_snapshot is not None:
+            snapshot = export._coerce_style_snapshot(style_snapshot)
+            with export._snapshot_styles(self, snapshot):
+                return _svg.to_svg(self, path, width=width, height=height)
+        export._enforce_compatibility(self, "svg", "native", None, compatibility)
         return _svg.to_svg(self, path, width=width, height=height)
 
     def to_png(
@@ -2271,6 +2320,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
@@ -2292,6 +2346,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def to_image(
@@ -2308,13 +2367,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
 
         `engine=Engine.auto` is deterministic — the browser-free native path
         for every format, Chromium only when `custom_css` needs a real CSS
         engine. See `export.to_image` for the format, quality, and background
-        policies."""
+        policies, and `compatibility=` ("legacy"/"warn"/"strict") for the
+        staged styling contract."""
         return export.to_image(
             self,
             format,
@@ -2328,6 +2393,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def write_image(
@@ -2345,6 +2415,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
+        compatibility: str = "legacy",
+        style_snapshot: Optional[Any] = None,
+        style_source: str = "declared",
+        stylesheets: tuple[str, ...] = (),
+        tailwind_profile: Optional[str] = None,
     ) -> bytes:
         """Atomic file export with extension-inferred format (export.py):
         .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
@@ -2362,6 +2437,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+            compatibility=compatibility,
+            style_snapshot=style_snapshot,
+            style_source=style_source,
+            stylesheets=stylesheets,
+            tailwind_profile=tailwind_profile,
         )
 
     def memory_report(self) -> dict[str, Any]:

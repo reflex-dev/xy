@@ -12,7 +12,7 @@ and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against.
 
 - **11** mark style properties across **21** mark kinds, drawn by all three renderers.
-- **48** stable chrome slots for CSS and Tailwind in the browser.
+- **48** stable chrome slots for CSS and Tailwind in the browser — **23** of them in a clean static export, **25** gated by an interaction or view state.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
 ## Mark style properties
@@ -54,69 +54,85 @@ raster and vector writers have no cascade, so per-slot styling is a browser
 mechanism; put anything that must survive export in the chart-level `style=`
 token bag or in mark and axis `style=`, which every renderer reads.
 
-| slot | browser | native raster | native vector |
-|---|---|---|---|
-| `root` | full | partial | partial |
-| `title` | full | partial | partial |
-| `chrome` | full | none | none |
-| `canvas` | full | none | none |
-| `annotation_layer` | full | none | none |
-| `labels` | full | none | none |
-| `legend` | full | partial | partial |
-| `legend_title` | full | partial | partial |
-| `legend_item` | full | none | none |
-| `legend_swatch` | full | none | none |
-| `legend_label` | full | partial | partial |
-| `colorbar` | full | partial | partial |
-| `colorbar_bar` | full | none | none |
-| `colorbar_extension` | full | none | none |
-| `colorbar_line` | full | none | none |
-| `colorbar_tick` | full | partial | partial |
-| `colorbar_minor_tick` | full | none | none |
-| `colorbar_title` | full | partial | partial |
-| `tooltip` | full | none | none |
-| `tooltip_title` | full | none | none |
-| `tooltip_row` | full | none | none |
-| `tooltip_label` | full | none | none |
-| `tooltip_value` | full | none | none |
-| `modebar` | full | none | none |
-| `modebar_drag_handle` | full | none | none |
-| `modebar_control_group` | full | none | none |
-| `modebar_separator` | full | none | none |
-| `modebar_button` | full | none | none |
-| `modebar_icon` | full | none | none |
-| `modebar_zoom_value` | full | none | none |
-| `modebar_indicator` | full | none | none |
-| `modebar_selection_icon` | full | none | none |
-| `modebar_menu` | full | none | none |
-| `modebar_menu_separator` | full | none | none |
-| `modebar_menu_icon` | full | none | none |
-| `modebar_menu_label` | full | none | none |
-| `modebar_history_controls` | full | none | none |
-| `selection` | full | none | none |
-| `crosshair_x` | full | none | none |
-| `crosshair_y` | full | none | none |
-| `badge` | full | none | none |
-| `badge_item` | full | none | none |
-| `axis_band` | full | none | none |
-| `axis_line` | full | none | none |
-| `tick_mark` | full | none | none |
-| `tick_label` | full | partial | partial |
-| `axis_title` | full | partial | partial |
-| `annotation_label` | full | none | none |
+The *applicable in* column says which export contains the slot at all: a clean
+static export has no tooltip, modebar, crosshair, selection overlay, or
+reduction badge, so styling one is not lost in such a file — it simply is not
+there. Ask `chart.style_compatibility_report(target=...)` for the per-chart
+answer: it routes every declared style for a target and names anything that
+would not survive, before any bytes exist.
+
+| slot | applicable in | browser | native raster | native vector |
+|---|---|---|---|---|
+| `root` | clean static | full | partial | partial |
+| `title` | clean static | full | partial | partial |
+| `chrome` | clean static | full | partial | partial |
+| `canvas` | clean static | full | partial | partial |
+| `annotation_layer` | clean static | full | partial | partial |
+| `labels` | clean static | full | partial | partial |
+| `legend` | clean static | full | partial | partial |
+| `legend_title` | clean static | full | partial | partial |
+| `legend_item` | clean static | full | partial | partial |
+| `legend_swatch` | clean static | full | partial | partial |
+| `legend_label` | clean static | full | partial | partial |
+| `colorbar` | clean static | full | partial | partial |
+| `colorbar_bar` | clean static | full | none | none |
+| `colorbar_extension` | clean static | full | none | none |
+| `colorbar_line` | clean static | full | none | none |
+| `colorbar_tick` | clean static | full | partial | partial |
+| `colorbar_minor_tick` | clean static | full | none | none |
+| `colorbar_title` | clean static | full | partial | partial |
+| `tooltip` | hover state | full | none | none |
+| `tooltip_title` | hover state | full | none | none |
+| `tooltip_row` | hover state | full | none | none |
+| `tooltip_label` | hover state | full | none | none |
+| `tooltip_value` | hover state | full | none | none |
+| `modebar` | modebar state | full | none | none |
+| `modebar_drag_handle` | modebar state | full | none | none |
+| `modebar_control_group` | modebar state | full | none | none |
+| `modebar_separator` | modebar state | full | none | none |
+| `modebar_button` | modebar state | full | none | none |
+| `modebar_icon` | modebar state | full | none | none |
+| `modebar_zoom_value` | modebar state | full | none | none |
+| `modebar_indicator` | modebar state | full | none | none |
+| `modebar_selection_icon` | modebar state | full | none | none |
+| `modebar_menu` | modebar state | full | none | none |
+| `modebar_menu_separator` | modebar state | full | none | none |
+| `modebar_menu_icon` | modebar state | full | none | none |
+| `modebar_menu_label` | modebar state | full | none | none |
+| `modebar_history_controls` | modebar state | full | none | none |
+| `selection` | selection state | full | none | none |
+| `crosshair_x` | crosshair state | full | none | none |
+| `crosshair_y` | crosshair state | full | none | none |
+| `badge` | view state | full | none | none |
+| `badge_item` | view state | full | none | none |
+| `axis_band` | navigation state | full | none | none |
+| `axis_line` | clean static | full | partial | partial |
+| `tick_mark` | clean static | full | partial | partial |
+| `tick_label` | clean static | full | partial | partial |
+| `axis_title` | clean static | full | partial | partial |
+| `annotation_label` | clean static | full | partial | partial |
 
 ### Notes
 
-- **`root`** (via `chart style=`) — `styles={'root': ...}` is browser-only, but the chart-level `style=` token bag targets the same element and every renderer reads it (`spec['dom']['style']`). Prefer it for anything that must survive export.
-- **`title`** (via `styles={'title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`legend`** (via `styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg`) — The frame box. Both spellings and the theme token now converge on one merged declaration block before the writers see it, so what agrees in the browser agrees in a PNG. `background`, `boxShadow`, `borderRadius`, `--xy-legend-frame-alpha`, and `padding`/`rowGap` in `em` are honored; an explicit background paints opaque, as it does in the browser.
-- **`legend_title`** (via `styles={'legend_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`legend_label`** (via `styles={'legend_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`colorbar`** (via `styles={'colorbar': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`colorbar_tick`** (via `styles={'colorbar_tick': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`colorbar_title`** (via `styles={'colorbar_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`tick_label`** (via `styles={'tick_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
-- **`axis_title`** (via `styles={'axis_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`). The raster writer's glyph primitive takes a size and one RGBA paint and nothing else, so it honors font-size and the paint only — font-weight, font-style, font-family, letter-spacing and opacity are vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`root`** (via `styles={'root': ...} / chart style=`) — Box slot: both writers honor background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, opacity and fill-opacity through the shared chrome-box lowering (`xy._chromebox.lower_box`); everything it cannot draw is a named loss in the preflight, never silent (§28). The root box is the figure patch: its fill replaces the `theme(background=)` token when both are set (same element, one background property, matching the browser), and an export `background=` override silences it (`_svg.apply_export_background` is the one precedence definition). box-shadow would fall outside the canvas and is a named loss; text properties have no root text to style. The chart-level `style=` token bag still reaches every renderer.
+- **`title`** (via `styles={'title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only. The title also takes the full box vocabulary (`_svg.SLOT_BOX_PROPS`): a box under the text, sized to the measured block plus padding, with the title band growing to fit. Per-entry `xy.title(style=...)` box properties are native-only (KNOWN_RENDERER_DIVERGENCES `title_entry_box_allowlist`).
+- **`chrome`** (via `styles={'chrome': ...}`) — Background and opacity only (parity plan §8 flag G): one full-canvas backdrop above the root and plot fills, below the grid. The rest of the box vocabulary is a named preflight loss, and the browser's own stacking of this slot against titles diverges by design (KNOWN_RENDERER_DIVERGENCES `chrome_slot_title_stacking`).
+- **`canvas`** (via `styles={'canvas': ...}`) — Box slot: both writers honor background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, opacity and fill-opacity through the shared chrome-box lowering (`xy._chromebox.lower_box`); everything it cannot draw is a named loss in the preflight, never silent (§28). Painted at the above-grid seam, so a canvas background hides the grid exactly as the browser's marks canvas does; border-radius clips the marks through a dedicated clipPath in SVG/PDF and opacity rides the marks group there. The raster display list clips rectangles only and has no group compositing, so border-radius and opacity are named raster losses (`_svg.SLOT_BOX_RASTER_UNSUPPORTED`) until the rounded-clip opcode lands. An export `background=` override silences a canvas background like the plot token.
+- **`annotation_layer`** (via `styles={'annotation_layer': ...}`) — The annotation-shape overlay. `opacity` dims every annotation shape as a group (never the labels, which live in the labels container): SVG/PDF as real group opacity on a `<g>`, raster folded into each shape's RGBA because the display list has no group compositing — overlapping translucent shapes double-blend there, a recorded approximation (§28). `background` paints under the shapes, plot-clipped; the live overlay is full-bleed, a divergence recorded in KNOWN_RENDERER_DIVERGENCES. Everything else stays browser-only.
+- **`labels`** (via `styles={'labels': ...}`) — The label container. Its color is the default under the live chain `var(--chart-text, inherit)` for every contained text (tick labels, axis titles, annotation labels): the theme token wins, then the container color, then the writer default — the axis's own colors and the specific slots stay narrower and win. Typography folds under the contained slots exactly where the live stylesheet leaves the property un-ruled (font-size/weight cascade into tick labels only; style/family/letter-spacing into all three). `background` paints full-bleed under the axis rules and every label text, the live order; the residual sibling stacking difference is in KNOWN_RENDERER_DIVERGENCES. `opacity` rides the SVG label group (vector-only); live it also dims the contained axis rules and the container background — recorded here rather than approximated.
+- **`legend`** (via `styles={'legend': ...} / xy.legend(style=...) / --chart-legend-bg`) — The frame box, drawn through the shared chrome-box lowering (`xy._chromebox.lower_box`) in both writers. All three sources converge on one merged declaration before the writers see it, in the CSS and the camelCase spelling alike, so what agrees in the browser agrees in a PNG: `background`, `border-color`/`border-width`/`border-style`, `border-radius` (the authored value, not a pinned 4), `box-shadow`, `opacity`, `--xy-legend-frame-alpha`, and `padding`/`row-gap`/`gap` in resolved px or the legend's historical `em`. Padding and row-gap resize the frame in the exports, in pyplot's anchored-legend room reservation and in its best-location scoring together — one geometry, four consumers. An explicit background paints opaque, as it does in the browser, and `background: transparent` drops the frame entirely (Matplotlib `frameon=False`). A `box-shadow` carrying blur or spread draws the writers' offset-rect approximation and records the blur as a named loss (§28); the frame's alpha dims its border with it, matching the single translucent element the browser paints.
+- **`legend_title`** (via `styles={'legend_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`legend_item`** (via `styles={'legend_item': ...}`) — The per-row cell of the legend, one instance per visible entry, drawn under that row's swatch and label and over the frame and title. Box vocabulary only (`_svg.SLOT_BOX_PROPS`): the row has no text of its own, and its size comes from the legend layout, so `padding` is refused rather than accepted and ignored.
+- **`legend_swatch`** (via `styles={'legend_swatch': ...}`) — The handle cell of a legend row. On a patch entry the swatch IS the patch, so a declared background or border wins over the trace's own paint (browser precedence: the slot rule is applied after the per-entry paint variables) and a declared border-radius replaces the historical `rx=2`; on a marker or line entry the box paints behind the handle, which keeps its own ink. Box vocabulary only, padding excluded for the same reason as `legend_item`.
+- **`legend_label`** (via `styles={'legend_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`colorbar`** (via `styles={'colorbar': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`colorbar_tick`** (via `styles={'colorbar_tick': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`colorbar_title`** (via `styles={'colorbar_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only.
+- **`axis_line`** (via `styles={'axis_line': ...}`) — Spines as boxes when box properties are declared: background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, offset box-shadow (blur/spread recorded unrepresentable), opacity and fill-opacity. The spine keeps its axis_color ink unless the slot declares a background (an explicit transparent erases it, as in the browser). Writers center the box on the plot edge where the unstyled stroke ran; the browser insets right/bottom spines (see KNOWN_RENDERER_DIVERGENCES). Polar spines stay strokes — the browser shares the limit (DIV spines cannot express a circle).
+- **`tick_mark`** (via `styles={'tick_mark': ...}`) — Tick marks as boxes when box properties are declared: background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, offset box-shadow (blur/spread recorded unrepresentable), opacity and fill-opacity. Geometry is the centered stroke's own coverage — the same pixels as the browser's rect. Marks exist only where an axis authors tick_length > 0; a zero-length tick draws nothing (and casts no shadow) — the preflight carries the note rather than a length being invented. tick_color stays the narrower paint selector; polar has no cartesian tick marks (recorded).
+- **`tick_label`** (via `styles={'tick_label': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only. Additionally a per-label box: background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, offset box-shadow (blur/spread recorded unrepresentable), opacity and fill-opacity, with padding growing the axis gutters so the box stays on the canvas (cartesian; the polar label ring keeps its flat 30px allowance). Box geometry is measured with the writers' DejaVu metrics, so an authored font-family renders its own glyphs inside a DejaVu-measured box (recorded misfit); letter-spacing is likewise outside the gutter measurement. On the raster writer a declared opacity reaches the box, not the glyphs (the atlas blit has no alpha channel).
+- **`axis_title`** (via `styles={'axis_title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only. Additionally a per-title box: background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, offset box-shadow (blur/spread recorded unrepresentable), opacity and fill-opacity; a rotated y-title box is pre-rotated to a polygon (radius 0) or an arc path (radius > 0), staying inside the PDF closed subset. The axis's own label_* keys win per property over the slot (label_color, label_font_family/style/weight); font-size runs the other way — the slot's font-size wins over label_size (pre-existing, documented in spec/api/styling.md). DejaVu-measured box vs authored-family text and raster box-not-glyph opacity are recorded exactly as for tick_label.
+- **`annotation_label`** (via `styles={'annotation_label': ...}`) — The per-slot text subset plus the shared chrome-box model (`xy._svg.SLOT_BOX_PROPS`): background, border — with solid/dashed/dotted lowered to a dash pattern and other border styles drawn solid and recorded (§28) — border-radius, CSS 1-4 value padding, offset box-shadow (blur/spread recorded unrepresentable), and whole-label opacity. The annotation's own `style=` is the narrower selector and wins per property group, matching the browser's slot-then-inline order. em font sizes resolve against the label's own 11px default. Vertical (rotation 90/270) labels keep only size and paint in SVG — a pre-existing limit of the rotated text path.
 
 ## Extension points
 
@@ -136,6 +152,14 @@ an undocumented difference reads as a bug; a documented one is a contract.
 | what | browser | svg | native png | visible when |
 |---|---|---|---|---|
 | Interior vertices of a wide polyline | the notch two overlapping segment quads leave | round (the writer names it explicitly) | round (the capsule distance field fills the vertex) | stroke-width above ~4px at a sharp angle |
+| A styled `chrome` slot background against the title text and the plot fill | the chrome canvas is appended AFTER the title divs (js/src/50_chartview.ts) and its CSS background paints under its own bitmap, so the backdrop covers titles and sits below --chart-bg | one rect between the backgrounds and the grid group: above the root and plot fills, below every grid line and all chrome text | same seam as SVG (after the plot fill, before the plot clip) | styles={'chrome': {'background': ...}} overlaps a title, or is combined with a --chart-bg plot fill |
+| Box styling authored on a per-entry title `style=` (not the title slot) | dropped: the client copies only color/font-family/font-size/font-style/font-weight from an entry's style onto the title div (js/src/50_chartview.ts entry-style allowlist) | honored: `_title_metrics` merges entry style over the slot, box included | honored, same merge (the two writers share the title placement) | xy.title(style={'background': ...}) or another per-entry box property |
+| The annotation_layer slot's background extent | full-bleed (the overlay canvas is inset:0 over the whole chart) | plot rect, inside the marks clip (the only seam above traces and below shapes) | plot rect, under the active marks clip (same seam as SVG) | styles={'annotation_layer': {'background': ...}} is declared |
+| Where the labels-container background sits among its siblings (flag D) | over the chart title (the container is a later DOM sibling), under the axis rules and label texts it contains | under the axis rules and label texts (the resolved flag-D order), and under the title/legend/colorbar chrome, which joins later | same as SVG: filled after the marks, before the chrome text phase | styles={'labels': {'background': ...}} on a chart with a title, legend or colorbar |
+| How the annotation_layer slot's opacity composites overlapping shapes | group opacity: the overlay canvas is dimmed once as a whole | group opacity on the wrapping <g>, PDF-legal, same as live | folded into each shape's RGBA (no group compositing opcode): overlapping translucent shapes double-blend | the slot declares opacity below 1 over overlapping annotation shapes |
+| How a legend slot's `opacity` composites its box | group opacity: the element and its children fade once, together | `opacity` on the box element, PDF-legal, same as live | premultiplied into the box's own RGBA (the display list has no group-compositing opcode), so a translucent frame does not also fade the swatches and labels drawn over it, and overlapping translucent boxes double-blend | styles={'legend'|'legend_item'|'legend_swatch': {'opacity': <1}} |
+| Whether the legend frame's alpha also dims its border (flag B) | one translucent element: the border fades with the fill | `stroke-opacity` carries the frame alpha, matching live | the same alpha folded into the border RGBA | the default grey frame, or --xy-legend-frame-alpha below 1 |
+| Where an axis spine's box sits relative to the plot edge | right/bottom spines inset by their own width (DIVs laid inside the box) | centered on the plot edge, where the unstyled stroke has always run | centered on the plot edge (same shared box producer as SVG) | axis_width above ~2px, or a styled axis_line box under a magnifier |
 
 For what is still alpha, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).
