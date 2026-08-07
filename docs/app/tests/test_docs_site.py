@@ -2762,7 +2762,9 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
         "/styling/themes-and-tokens/": ("xy.theme",),
         "/integrations/reflex/": (
             "reflex_xy.chart",
+            "reflex_xy.data",
             "reflex_xy.figure",
+            "reflex_xy.scatter_chart",
             "reflex_xy.inline",
             "reflex_xy.append",
         ),
