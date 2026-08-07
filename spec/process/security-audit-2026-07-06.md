@@ -273,3 +273,13 @@ sandbox cannot initialize. Container/worker isolation is therefore the load-
 bearing control, not the sandbox flag. Follow-up pending (same item as
 XY-SEC-2026-03): make the fallback opt-in, or at minimum warn on the downgrade,
 so a sandbox loss is observable.
+
+#### Follow-up status as of 2026-08-05
+
+The export contract is now fail-closed: `html_to_png` and persistent browser
+sessions never retry a failed sandboxed launch with `--no-sandbox`. Callers
+must pass `sandbox=False` explicitly when they accept an unsandboxed browser.
+The repository also has a scheduled dependency-audit workflow covering the
+root and docs Python environments, Rust locks, npm, Bun, and the benchmark
+requirements lock. `scripts/verify_dependency_lock_inventory.py` fails when a
+new committed dependency lock is not added to that audit inventory.

@@ -21,7 +21,7 @@ help:
 		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run documentation examples' \
 		'  make check-examples   run canonical API examples and Reflex asset registry checks' \
-		'  make check-security   run standalone HTML safety and client text-sink checks' \
+		'  make check-security   run export safety and dependency lock inventory checks' \
 		'  make check-errors     run public error, LOD, and mutation-safety tests' \
 		'  make check-api        run lazy public API and type-surface checks' \
 		'  make check-import     run import-time and dependency-boundary checks' \
@@ -83,7 +83,7 @@ check-pyplot:
 	$(PYTHON) -m pytest tests/pyplot -q
 
 check-security:
-	$(PYTHON) scripts/verify_local.py --only security_export
+	$(PYTHON) scripts/verify_local.py --only security_export,dependency_lock_inventory
 
 check-errors:
 	$(PYTHON) scripts/verify_local.py --only error_safety

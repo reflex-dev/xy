@@ -187,25 +187,17 @@ end-to-end parity: the two download paths can disagree on the same chart.
 Closing this requires a theme snapshot on the comm channel and a bump of the
 message contract; nothing in the current protocol carries it.
 
-## 7. The `--no-sandbox` auto-fallback
+## 7. Chromium sandbox contract
 
-Chromium launches sandboxed by default. Both browser paths silently downgrade on
-failure:
+Chromium launches sandboxed by default. If the sandboxed launch fails,
+`html_to_png` and persistent browser sessions fail closed; they never retry with
+`--no-sandbox`. This keeps the public contract truthful for arbitrary HTML and
+prevents an implicit security downgrade.
 
-- `html_to_png` (`export.py:509-526`): if the sandboxed run produces no
-  screenshot, it rebuilds the argv with `--no-sandbox` inserted and re-runs
-  before raising. The final error reports both attempts.
-- `_browser_session` (`export.py:926-931`): retries
-  `ChromiumSession(..., sandbox=False)` on `ChromiumError`.
-
-So `--no-sandbox` can appear without the caller requesting it, on input that
-`html_to_png` accepts as arbitrary HTML. This is a known, accepted residual risk
-taken to keep CI and container rasterization working where the sandbox cannot
-initialize — see [XY-SEC-2026-03 and its 2026-07-20 status
-note](../process/security-audit-2026-07-06.md#status-as-of-2026-07-20-xy-sec-2026-03). The
-pending follow-up is to make the fallback opt-in, or at minimum warn, so a
-sandbox loss is observable. `sandbox=False` remains the explicit escape hatch
-for trusted HTML.
+`sandbox=False` remains the explicit escape hatch for trusted HTML in constrained
+CI or container environments that cannot launch a sandboxed browser. The
+security rationale and historical audit are recorded in
+[XY-SEC-2026-03](../process/security-audit-2026-07-06.md#status-as-of-2026-07-20-xy-sec-2026-03).
 
 ## 8. Batch export
 
