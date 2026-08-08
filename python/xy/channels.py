@@ -342,7 +342,18 @@ def _category_code_dtype(category_count: int) -> type[np.uint8] | type[np.uint32
     return np.uint8 if category_count <= MAX_CATEGORIES else np.uint32
 
 
-def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
+def _factorize_probe(arr: np.ndarray) -> np.ndarray:
+    """Return the bounded sample used to select the native factorizer."""
+    n = len(arr)
+    if n <= _FACTORIZE_PROBE_ROWS:
+        return arr
+    rows = np.linspace(0, n - 1, _FACTORIZE_PROBE_ROWS, dtype=np.intp)
+    return arr[rows]
+
+
+def _use_native_fixed_factorizer(
+    arr: np.ndarray, *, normalized_itemsize: Optional[int] = None
+) -> bool:
     """Choose the O(N) hash path unless a bounded global probe says it cannot pay.
 
     The native pass earns its keep by keeping N records out of Python: only the
@@ -356,19 +367,41 @@ def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
     repeats get scarce while narrow ones hold it until the probe is entirely
     distinct. Sampling across the full array keeps the decision independent of N.
     """
-    n = len(arr)
-    if n <= _FACTORIZE_PROBE_ROWS:
-        probe = arr
-    else:
-        rows = np.linspace(0, n - 1, _FACTORIZE_PROBE_ROWS, dtype=np.intp)
-        probe = arr[rows]
+    probe = _factorize_probe(arr)
     distinct = len(np.unique(probe))
     if distinct <= _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES:
         return True
     near_unique = (
-        1.0 if arr.dtype.itemsize <= _FACTORIZE_NARROW_ITEMSIZE else _FACTORIZE_NEAR_UNIQUE_RATIO
+        1.0
+        if (normalized_itemsize or arr.dtype.itemsize) <= _FACTORIZE_NARROW_ITEMSIZE
+        else _FACTORIZE_NEAR_UNIQUE_RATIO
     )
     return distinct < near_unique * len(probe)
+
+
+def _object_string_width(arr: np.ndarray, *, sample: bool = False) -> Optional[int]:
+    """Return the width of safe Python-string values, or ``None``.
+
+    Object arrays can contain values with display-label semantics that cannot
+    be represented by a simple Unicode cast. Restrict this path to exact
+    Python strings so mixed objects, missing values, and custom ``__str__``
+    implementations retain the canonical fallback behavior. NUL codepoints
+    are excluded because NumPy treats them as fixed-width string padding.
+    """
+    if arr.dtype.kind != "O" or arr.size == 0:
+        return None
+    values = _factorize_probe(arr) if sample else arr.reshape(-1)
+    width = 0
+    for value in values:
+        if type(value) is not str or "\x00" in value:
+            return None
+        width = max(width, len(value))
+    return width
+
+
+def _normalize_object_strings(arr: np.ndarray, width: int) -> np.ndarray:
+    """Normalize validated object-backed strings to fixed-width Unicode."""
+    return np.asarray(arr, dtype=f"<U{max(width, 1)}")
 
 
 def _factorize_categories(
@@ -385,18 +418,36 @@ def _factorize_categories(
     not mutually orderable. Chart labels are strings on the client anyway, so
     canonicalize to display labels first, sort those labels for deterministic
     palettes, and then map each row back to its code. Fixed-width NumPy
-    strings/bytes/bools can identify equal records in Rust without creating N
-    Python objects; only their compact unique set crosses the label-policy path.
+    strings/bytes/bools and safe object-backed Python strings can identify equal
+    records in Rust without creating N Python objects; only their compact unique
+    set crosses the label-policy path. Mixed objects, missing values, custom
+    string semantics, and strings containing NUL codepoints retain the Python
+    fallback so display-label behavior is unchanged.
     """
-    if arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(arr):
+    factorizer_arr = arr
+    if arr.dtype.kind == "O":
+        # Probe object strings before the full validation and Unicode copy so
+        # near-unique columns take the existing Python fallback cheaply.
+        sample_width = _object_string_width(arr, sample=True)
+        if sample_width is not None and _use_native_fixed_factorizer(
+            arr, normalized_itemsize=4 * max(sample_width, 1)
+        ):
+            width = _object_string_width(arr)
+            if width is not None and _use_native_fixed_factorizer(
+                arr, normalized_itemsize=4 * max(width, 1)
+            ):
+                factorizer_arr = _normalize_object_strings(arr, width)
+    if factorizer_arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(
+        factorizer_arr
+    ):
         compact = (
-            kernels.factorize_unicode1_u8_counts(arr, MAX_CATEGORIES)
-            if arr.dtype.kind == "U" and arr.dtype.itemsize == 4
-            else kernels.factorize_fixed_u8_counts(arr, MAX_CATEGORIES)
+            kernels.factorize_unicode1_u8_counts(factorizer_arr, MAX_CATEGORIES)
+            if factorizer_arr.dtype.kind == "U" and factorizer_arr.dtype.itemsize == 4
+            else kernels.factorize_fixed_u8_counts(factorizer_arr, MAX_CATEGORIES)
         )
         if compact is not None:
             raw_codes, unique_indices, raw_counts = compact
-            unique_labels = [category_label(value) for value in arr[unique_indices]]
+            unique_labels = [category_label(value) for value in factorizer_arr[unique_indices]]
             categories = sorted(set(unique_labels))
             index = {label: i for i, label in enumerate(categories)}
             remap = np.fromiter(
@@ -412,8 +463,8 @@ def _factorize_categories(
                 counts[index[label]] += count
             return categories, raw_codes, counts
 
-        raw_codes, unique_indices = kernels.factorize_fixed(arr)
-        unique_labels = [category_label(value) for value in arr[unique_indices]]
+        raw_codes, unique_indices = kernels.factorize_fixed(factorizer_arr)
+        unique_labels = [category_label(value) for value in factorizer_arr[unique_indices]]
         categories = sorted(set(unique_labels))
         index = {label: i for i, label in enumerate(categories)}
         dtype = _category_code_dtype(len(categories))
