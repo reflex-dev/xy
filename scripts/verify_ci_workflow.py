@@ -1353,7 +1353,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "publish",
         "release",
         "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
-        "and a tag/version/CHANGELOG agreement gate",
+        "and a release-tag shape gate",
         "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",

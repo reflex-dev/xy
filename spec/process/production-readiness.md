@@ -346,9 +346,16 @@ artifacts, not another package or release.
 
 Before tagging a release:
 
+- Tag as `vX.Y.Z`, optionally with a canonical PEP 440 pre-release suffix
+  (`v0.2.0a1`/`b1`/`rc1`). That shape is the whole release gate
+  (`scripts/check_release_version.py`), because it is the shape
+  uv-dynamic-versioning derives the published version from; `.postN`, `.devN`,
+  local (`+…`), and non-canonical (`-alpha1`) spellings are refused before
+  anything builds.
 - Add a dated `## [X.Y.Z] — YYYY-MM-DD` heading to `CHANGELOG.md` for the
-  version being tagged. This is the one thing the tag cannot vouch for, and the
-  release gate blocks the publish without it.
+  version being tagged. Deliberately not gated: a missing or undated entry is
+  fixed with a follow-up commit, and blocking the publish on it only ever forced
+  a tag to be deleted and re-cut over a documentation edit.
 - Refresh benchmark reports or explicitly document why the previous report still
   applies.
 - Run `make check-full` locally or confirm the equivalent
