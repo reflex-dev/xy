@@ -51,6 +51,14 @@ drop-off. A label that cannot fit inside its segment moves beside it, and a
 stage pitch too short for a text line hides the labels rather than
 overlapping them — the tooltip always carries every number.
 
+Value labels and drop-off labels share the space beside a vertical funnel,
+and because drop-offs sit at the boundaries *between* stages the two rows
+interleave at half the stage pitch. Where that half pitch cannot hold a line
+of text, the drop-off label gives up its row to the value label beside it: a
+short chart keeps the stage values and drops the derived percentages rather
+than printing them on top of each other. Give the chart more height — or set
+`show_dropoff=False`, or a smaller `label_size` — to get them all back.
+
 ## Choose Honest Geometry
 
 `geometry` is explicit because the two classic funnel drawings encode

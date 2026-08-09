@@ -11,6 +11,7 @@ wire columns don't match the rect family's names).
 
 from __future__ import annotations
 
+import itertools
 import re
 from pathlib import Path
 
@@ -787,6 +788,84 @@ def test_inside_label_contrast_follows_the_drawn_constant_color() -> None:
     fig2.funnel(STAGES, VALUES, color="#111111")
     inside2 = next(a for a in fig2.annotations if "9,800" in a["text"])
     assert inside2["style"]["color"] == "#f7f8fa", "near-black fill takes a light label"
+
+
+def _lane_rows(layout, **kwargs):
+    """Positions of the labels sharing the outside lane, in pos order.
+
+    Inside labels are excluded: they are centered on the funnel and a boundary
+    label starts at its edge, so the two only compete when the inside text is
+    wide enough to reach across — which is its own rule, and its own test.
+    """
+    labels = _labels(layout, **kwargs)
+    return sorted(label.pos for label in labels if label.placement == "outside")
+
+
+def test_dropoff_labels_share_the_outside_lane_at_half_the_stage_pitch() -> None:
+    """Value labels sit at the stage centers and drop-off labels at the
+    boundaries between them, so on a vertical funnel the two ladders
+    interleave at HALF the pitch. Gating both on the full pitch let them
+    overlap for every pitch between one and two line heights — the labels
+    piled onto each other while each ladder believed it had room."""
+    layout = compute_layout(
+        [f"S{i}" for i in range(8)],
+        [1_000_000.0, 240_000.0, 210_000.0, 62_000.0, 41_000.0, 33_500.0, 28_900.0, 9_100.0],
+    )
+    font_size = 12.0
+    line_px = font_size * 1.4
+    for plot_h in (120.0, 150.0, 170.0, 190.0, 210.0, 250.0, 300.0, 430.0):
+        rows = _lane_rows(layout, show_dropoff=True, font_size=font_size, plot_px=(544.0, plot_h))
+        pitch_px = plot_h / 8
+        gaps = [(b - a) * pitch_px for a, b in itertools.pairwise(rows)]
+        assert all(gap >= line_px for gap in gaps), (
+            f"plot_h={plot_h}: labels {min(gaps):.1f}px apart, need {line_px:.1f}px"
+        )
+
+
+def test_a_roomy_funnel_still_draws_every_dropoff_label() -> None:
+    """The half-pitch rule must only bite where the rows would actually
+    collide — a funnel with room keeps the full annotation."""
+    layout = compute_layout(STAGES, VALUES)
+    labels = _labels(layout, show_dropoff=True, plot_px=(544.0, 430.0))
+    dropoffs = [label for label in labels if label.kind == "dropoff"]
+    assert len(dropoffs) == 4
+    assert {label.placement for label in dropoffs} == {"outside"}
+
+
+def test_a_wide_inside_label_hides_the_dropoff_it_would_reach_into() -> None:
+    """An inside value label is centered, so a wide one reaches past the
+    segment edge into the lane the boundary label starts in. The value label
+    wins that tie: it is the datum, and the drop-off stays in the tooltip."""
+    layout = compute_layout(
+        ["Impressions", "Clicks", "Signups", "Paid"],
+        [9_876_543_210.0, 120_000.0, 90_000.0, 40_000.0],
+    )
+    labels = _labels(layout, show_dropoff=True, plot_px=(544.0, 120.0))
+    first = next(label for label in labels if label.kind == "value" and label.stage == 0)
+    assert first.placement == "inside"
+    boundary = next(label for label in labels if label.kind == "dropoff" and label.stage == 1)
+    assert boundary.placement == "hidden"
+
+
+def test_horizontal_dropoff_labels_keep_their_own_row() -> None:
+    """A horizontal funnel's value labels ride above their own segment rather
+    than in the boundary lane, so the half-pitch rule must not touch them."""
+    layout = compute_layout(STAGES, VALUES, orientation="horizontal", geometry="bar")
+    labels = _labels(layout, show_dropoff=True, value_format="{:,.0f}", plot_px=(646.0, 300.0))
+    dropoffs = [label for label in labels if label.kind == "dropoff"]
+    assert [label.placement for label in dropoffs] == ["outside"] * 4
+
+
+def test_plot_box_estimate_subtracts_a_fixed_chrome_band() -> None:
+    """The title, tick labels and margins cost a roughly fixed number of
+    pixels, not a fixed fraction. Estimating them as a fraction claimed 153px
+    of a real 92px plot at height 180, and labels that "fit" then overlapped."""
+    assert _funnel.estimate_plot_px(520.0, 180.0)[1] == pytest.approx(90.0)
+    assert _funnel.estimate_plot_px(520.0, 440.0)[1] == pytest.approx(350.0)
+    # Never zero or negative, however small the chart.
+    assert _funnel.estimate_plot_px(40.0, 40.0)[1] > 0.0
+    # Width keeps the fraction — there is no title to pay for across it.
+    assert _funnel.estimate_plot_px(520.0, 440.0)[0] == pytest.approx(442.0)
 
 
 def test_horizontal_label_fit_measures_the_pitch_not_the_height() -> None:
