@@ -477,9 +477,13 @@ def validate_public_api_manifest(
         missing = sorted(expected - actual)
         added = sorted(actual - expected)
         if missing:
-            errors.append(f"public API manifest names missing from discovery ({field_name}): {missing}")
+            errors.append(
+                f"public API manifest names missing from discovery ({field_name}): {missing}"
+            )
         if added:
-            errors.append(f"public API discovery contains unmanifested names ({field_name}): {added}")
+            errors.append(
+                f"public API discovery contains unmanifested names ({field_name}): {added}"
+            )
     return errors
 
 
@@ -493,9 +497,10 @@ def _has_doc_reference(text: str, name: str, *, receiver: str | None = None) -> 
                 f"{receiver}.{name}(",
             )
         )
-    return any(token in text for token in tokens) or re.search(
-        rf"(?<![A-Za-z0-9_]){re.escape(name)}\s*\(", text
-    ) is not None
+    return (
+        any(token in text for token in tokens)
+        or re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}\s*\(", text) is not None
+    )
 
 
 def validate_docs_inventory(
