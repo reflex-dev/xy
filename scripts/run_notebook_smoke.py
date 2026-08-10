@@ -30,6 +30,7 @@ from types import FrameType
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ORACLE = ROOT / "scripts" / "notebook_smoke_pr_oracle.json"
 ORACLE_OUTPUT_KEYS = {"kind", "sha256", "size"}
+DISPLAY_OUTPUT_KINDS = {"repr", "_repr_mimebundle_", "_repr_html_", "_repr_svg_", "_repr_png_"}
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -242,7 +243,7 @@ def _validate_oracle_output(
     kind = output["kind"]
     sha256 = output["sha256"]
     size = output["size"]
-    if not isinstance(kind, str):
+    if not isinstance(kind, str) or kind not in DISPLAY_OUTPUT_KINDS:
         raise ValueError(error)
     if not isinstance(sha256, str) or SHA256_HEX.fullmatch(sha256) is None:
         raise ValueError(error)

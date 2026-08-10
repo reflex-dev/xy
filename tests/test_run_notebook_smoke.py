@@ -123,6 +123,7 @@ Displayed()
         [{"kind": "_repr_html_", "sha256": "g" * 64, "size": 0}],
         [{"kind": "_repr_html_", "sha256": "0" * 64, "size": -1}],
         [{"kind": "_repr_html_", "sha256": "0" * 64, "size": True}],
+        [{"kind": "unsupported", "sha256": "0" * 64, "size": 0}],
         ["not-a-mapping"],
     ],
 )
