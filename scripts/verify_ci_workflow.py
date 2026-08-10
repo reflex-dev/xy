@@ -612,6 +612,49 @@ def _require_job_contains(
         errors.append(f"{workflow_label} {job} job missing {description}: {missing}")
 
 
+def _require_job_timeout_minutes(
+    errors: list[str],
+    jobs: dict[str, str],
+    job: str,
+    workflow_label: str,
+    minutes: int,
+) -> None:
+    block = jobs.get(job)
+    if block is None:
+        return
+    values, unsafe = _direct_yaml_key_values(block, "timeout-minutes", indent=4)
+    if unsafe or values != [str(minutes)]:
+        errors.append(f"{workflow_label} {job} job missing active timeout-minutes: {minutes}")
+
+
+def _require_simple_python_version_matrix(
+    errors: list[str],
+    jobs: dict[str, str],
+    job: str,
+    workflow_label: str,
+    expected: str,
+) -> None:
+    block = jobs.get(job)
+    if block is None:
+        return
+    strategy = _unique_mapping_block(block, "strategy", indent=4)
+    matrix = _unique_mapping_block(strategy or "", "matrix", indent=6)
+    if strategy is None or matrix is None:
+        errors.append(
+            f"{workflow_label} {job} job missing simple Python version matrix: {expected}"
+        )
+        return
+    values, unsafe = _direct_yaml_key_values(matrix, "python-version", indent=8)
+    has_filters = _has_yaml_key(matrix, "include", indent=8) or _has_yaml_key(
+        matrix, "exclude", indent=8
+    )
+    if unsafe or values != [expected] or has_filters:
+        errors.append(
+            f"{workflow_label} {job} job must run the exact Python version matrix "
+            f"{expected} without include/exclude filters"
+        )
+
+
 def _step_block(job_text: str, step_needle: str) -> Optional[str]:
     """The indented block of the step whose `uses:`/`run:` line contains
     `step_needle` — the step's own lines only, so a same-level sibling step
@@ -902,8 +945,6 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "notebook_smoke",
         "CI",
         "deterministic public notebook smoke matrix",
-        "timeout-minutes: 20",
-        'python-version: ["3.11", "3.13"]',
         "dtolnay/rust-toolchain@",
         "actions/setup-python@",
         'node-version: "22"',
@@ -915,6 +956,14 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "matplotlib requests",
         "MPLBACKEND: Agg",
         "XY_NOTEBOOK_DISPLAY: html",
+    )
+    _require_job_timeout_minutes(errors, jobs, "notebook_smoke", "CI", 20)
+    _require_simple_python_version_matrix(
+        errors,
+        jobs,
+        "notebook_smoke",
+        "CI",
+        '["3.11", "3.13"]',
     )
     _require_step_runs_exactly(
         errors,

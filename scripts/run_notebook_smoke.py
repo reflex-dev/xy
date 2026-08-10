@@ -41,6 +41,12 @@ class NotebookResult:
     display_outputs: int
 
 
+@dataclass(frozen=True)
+class CellResult:
+    display_outputs: int
+    displayed_ids: frozenset[int]
+
+
 def _write_gaia_fixture(data_dir: Path, rows: int) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     csv_path = data_dir / f"gaia-dr3-hr-{rows}.csv"
@@ -140,30 +146,43 @@ def _render_display_value(value: object) -> bool:
     return True
 
 
-def _execute_cell(source: str, filename: str, namespace: dict[str, object]) -> int:
+def _execute_cell(source: str, filename: str, namespace: dict[str, object]) -> CellResult:
     module = ast.parse(source, filename=filename, mode="exec")
     if module.body and isinstance(module.body[-1], ast.Expr) and not source.rstrip().endswith(";"):
         prefix = ast.Module(body=module.body[:-1], type_ignores=module.type_ignores)
         ast.fix_missing_locations(prefix)
         exec(compile(prefix, filename, "exec"), namespace)
         value = eval(compile(ast.Expression(module.body[-1].value), filename, "eval"), namespace)
-        return int(_render_display_value(value))
+        rendered = _render_display_value(value)
+        return CellResult(int(rendered), frozenset({id(value)} if rendered else ()))
     exec(compile(module, filename, "exec"), namespace)
-    return 0
+    return CellResult(0, frozenset())
 
 
-def _flush_xy_pyplot_figures() -> int:
+def _close_matplotlib_figures() -> None:
+    pyplot = sys.modules.get("matplotlib.pyplot")
+    close = getattr(pyplot, "close", None) if pyplot is not None else None
+    if callable(close):
+        close("all")
+
+
+def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> int:
     pyplot = sys.modules.get("xy.pyplot")
     if pyplot is None:
+        _close_matplotlib_figures()
         return 0
     all_figures = getattr(pyplot, "all_figures", None)
     close = getattr(pyplot, "close", None)
     if not callable(all_figures) or not callable(close):
+        _close_matplotlib_figures()
         return 0
     figures = list(all_figures())
-    rendered = sum(1 for figure in figures if _render_display_value(figure))
+    rendered = sum(
+        1 for figure in figures if id(figure) not in skip_ids and _render_display_value(figure)
+    )
     if figures:
         close("all")
+    _close_matplotlib_figures()
     return rendered
 
 
@@ -195,8 +214,9 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResul
                 filename = f"{display_path}:cell-{index}"
                 try:
                     with _cell_timeout(cell_timeout):
-                        display_outputs += _execute_cell(source, filename, namespace)
-                        display_outputs += _flush_xy_pyplot_figures()
+                        result = _execute_cell(source, filename, namespace)
+                        display_outputs += result.display_outputs
+                        display_outputs += _flush_xy_pyplot_figures(skip_ids=result.displayed_ids)
                 except Exception as exc:
                     print(
                         f"FAIL {case.name}: {filename}: {exc.__class__.__name__}: {exc}",

@@ -121,6 +121,63 @@ def test_execute_notebook_flushes_xy_pyplot_figures(
     assert result == notebook_smoke.NotebookResult(code_cells=1, display_outputs=1)
 
 
+def test_execute_notebook_deduplicates_final_expression_pyplot_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = tmp_path / "dedupe.ipynb"
+    marker = tmp_path / "renders.txt"
+
+    class Figure:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def _repr_html_(self) -> str:
+            self.count += 1
+            marker.write_text(str(self.count), encoding="utf-8")
+            return "<div>figure</div>"
+
+    figure = Figure()
+    fake_pyplot = SimpleNamespace(
+        figure=figure,
+        all_figures=lambda: [figure],
+        close=lambda target: None,
+    )
+    monkeypatch.setitem(sys.modules, "xy.pyplot", fake_pyplot)
+    _write_notebook(
+        notebook,
+        [
+            """
+import sys
+fig = sys.modules["xy.pyplot"].figure
+fig
+""",
+        ],
+    )
+    case = notebook_smoke.NotebookCase("dedupe", notebook, {})
+
+    result = notebook_smoke._execute_notebook(case, cell_timeout=5)
+
+    assert marker.read_text(encoding="utf-8") == "1"
+    assert result == notebook_smoke.NotebookResult(code_cells=1, display_outputs=1)
+
+
+def test_execute_notebook_closes_matplotlib_figures_after_each_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = tmp_path / "mpl.ipynb"
+    closed: list[str] = []
+    fake_matplotlib = SimpleNamespace(close=lambda target: closed.append(target))
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", fake_matplotlib)
+    _write_notebook(notebook, ["value = 1\n", "value += 1\n"])
+
+    case = notebook_smoke.NotebookCase("mpl", notebook, {})
+
+    result = notebook_smoke._execute_notebook(case, cell_timeout=5)
+
+    assert closed == ["all", "all"]
+    assert result == notebook_smoke.NotebookResult(code_cells=2, display_outputs=0)
+
+
 def test_execute_notebook_rejects_incompatible_kernelspec(tmp_path: Path) -> None:
     notebook = tmp_path / "ruby.ipynb"
     _write_notebook(notebook, ["value = 1\n"])

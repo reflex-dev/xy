@@ -94,6 +94,56 @@ def test_ci_workflow_requires_notebook_smoke_timeout(tmp_path: Path) -> None:
     assert any("notebook_smoke" in error and "timeout-minutes" in error for error in errors)
 
 
+def test_ci_workflow_rejects_commented_notebook_smoke_timeout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    timeout-minutes: 20\n", "    # timeout-minutes: 20\n", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error and "timeout-minutes" in error for error in errors)
+
+
+def test_ci_workflow_rejects_filtered_notebook_smoke_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '        python-version: ["3.11", "3.13"]\n',
+            '        python-version: ["3.11", "3.13"]\n'
+            "        exclude:\n"
+            '          - python-version: "3.11"\n'
+            '          - python-version: "3.13"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error and "include/exclude" in error for error in errors)
+
+
+def test_ci_workflow_rejects_commented_notebook_smoke_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '        python-version: ["3.11", "3.13"]\n',
+            '        # python-version: ["3.11", "3.13"]\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error and "Python version matrix" in error for error in errors)
+
+
 def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
