@@ -86,6 +86,8 @@ class Selection:
         """Concatenated selected indices across all traces (single-trace charts
         are the common case, where this is just that trace's indices)."""
         arrs = list(self.per_trace.values())
+        if len(arrs) > 1:
+            arrs = arrs[:-1]
         return np.concatenate(arrs) if arrs else np.empty(0, dtype="uint32")
 
     def __len__(self) -> int:
