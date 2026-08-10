@@ -56,8 +56,9 @@ and because drop-offs sit at the boundaries *between* stages the two rows
 interleave at half the stage pitch. Where that half pitch cannot hold a line
 of text, the drop-off label gives up its row to the value label beside it: a
 short chart keeps the stage values and drops the derived percentages rather
-than printing them on top of each other. Give the chart more height — or set
-`show_dropoff=False`, or a smaller `label_size` — to get them all back.
+than printing them on top of each other. More height, or a smaller
+`label_size`, buys back the room and brings them back; `show_dropoff=False`
+turns them off deliberately rather than leaving it to the fit.
 
 ## Choose Honest Geometry
 
