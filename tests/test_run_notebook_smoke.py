@@ -115,6 +115,25 @@ Displayed()
         notebook_smoke._execute_notebook(case, cell_timeout=5, expected_outputs=expected)
 
 
+@pytest.mark.parametrize(
+    "outputs",
+    [
+        [{"kind": "_repr_html_", "sha256": "0" * 64}],
+        [{"kind": "_repr_html_", "sha256": "not-a-hash", "size": 0}],
+        [{"kind": "_repr_html_", "sha256": "g" * 64, "size": 0}],
+        [{"kind": "_repr_html_", "sha256": "0" * 64, "size": -1}],
+        [{"kind": "_repr_html_", "sha256": "0" * 64, "size": True}],
+        ["not-a-mapping"],
+    ],
+)
+def test_load_oracle_rejects_invalid_display_outputs(tmp_path: Path, outputs: list[object]) -> None:
+    oracle = tmp_path / "oracle.json"
+    oracle.write_text(json.dumps({"case": outputs}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid display-output entry"):
+        notebook_smoke._load_oracle(oracle)
+
+
 def test_execute_notebook_flushes_xy_pyplot_figures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

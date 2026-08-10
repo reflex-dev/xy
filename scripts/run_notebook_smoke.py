@@ -29,6 +29,8 @@ from types import FrameType
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ORACLE = ROOT / "scripts" / "notebook_smoke_pr_oracle.json"
+ORACLE_OUTPUT_KEYS = {"kind", "sha256", "size"}
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -228,6 +230,27 @@ def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> tuple[DisplayOutput
     return outputs
 
 
+def _validate_oracle_output(
+    path: Path,
+    case_name: str,
+    index: int,
+    output: object,
+) -> dict[str, object]:
+    error = f"notebook smoke oracle {path} has invalid display-output entry {case_name}[{index}]"
+    if not isinstance(output, dict) or set(output) != ORACLE_OUTPUT_KEYS:
+        raise ValueError(error)
+    kind = output["kind"]
+    sha256 = output["sha256"]
+    size = output["size"]
+    if not isinstance(kind, str):
+        raise ValueError(error)
+    if not isinstance(sha256, str) or SHA256_HEX.fullmatch(sha256) is None:
+        raise ValueError(error)
+    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+        raise ValueError(error)
+    return {"kind": kind, "sha256": sha256, "size": size}
+
+
 def _load_oracle(path: Path) -> dict[str, list[dict[str, object]]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -236,7 +259,10 @@ def _load_oracle(path: Path) -> dict[str, list[dict[str, object]]]:
     for name, outputs in data.items():
         if not isinstance(name, str) or not isinstance(outputs, list):
             raise ValueError(f"notebook smoke oracle {path} has invalid entry {name!r}")
-        oracle[name] = outputs
+        oracle[name] = [
+            _validate_oracle_output(path, name, index, output)
+            for index, output in enumerate(outputs)
+        ]
     return oracle
 
 
