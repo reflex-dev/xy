@@ -26,6 +26,7 @@ REQUIRED_CI_JOBS = {
     "matplotlib_reference",
     "test",
     "python_floor",
+    "notebook_smoke",
     "benchmark_vs",
     "benchmark_methodology",
     "benchmark",
@@ -318,7 +319,7 @@ def _has_shell_init_environment(text: str) -> bool:
     lines = _yaml_code_lines(text)
     protected_jobs = _job_blocks(text)
     protected_job_text = "\n".join(
-        protected_jobs.get(job, "") for job in ("matplotlib_reference", "test")
+        protected_jobs.get(job, "") for job in ("matplotlib_reference", "test", "notebook_smoke")
     )
     if any(
         re.search(r"\bGITHUB_(?:ENV|PATH)\b", line)
@@ -894,6 +895,26 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         'python-version: "3.11"',
         "scripts/check_python_floor.py",
         "scripts/check_public_api.py",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "notebook_smoke",
+        "CI",
+        "deterministic public notebook smoke matrix",
+        'python-version: ["3.11", "3.13"]',
+        "dtolnay/rust-toolchain@",
+        "actions/setup-python@",
+        'node-version: "22"',
+        "npm ci",
+        "node js/build.mjs",
+        "cargo build --release",
+        "XY_SKIP_CARGO",
+        "--constraint benchmarks/requirements-ci.lock",
+        "matplotlib requests",
+        "scripts/run_notebook_smoke.py --profile pr",
+        "MPLBACKEND: Agg",
+        "XY_NOTEBOOK_DISPLAY: html",
     )
     _require_job_contains(
         errors,

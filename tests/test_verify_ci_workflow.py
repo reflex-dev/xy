@@ -38,6 +38,31 @@ def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_ci_workflow() == []
 
 
+def test_ci_workflow_requires_notebook_smoke_job(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    start = workflow.index("  notebook_smoke:\n")
+    end = workflow.index("\n  benchmark_vs:\n", start)
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow[:start] + workflow[end + 1 :], encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error for error in errors)
+
+
+def test_ci_workflow_requires_notebook_smoke_runner(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("scripts/run_notebook_smoke.py --profile pr", "true"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error and "run_notebook_smoke" in error for error in errors)
+
+
 def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

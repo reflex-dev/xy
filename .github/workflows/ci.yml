@@ -317,6 +317,52 @@ jobs:
       - name: Python 3.11 tests (native core)
         run: .venv/bin/python -m pytest -q
 
+  notebook_smoke:
+    name: Notebook smoke (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Build native core and render client
+        run: |
+          npm ci
+          node js/build.mjs
+          cargo build --release
+
+      - name: Install notebook smoke environment
+        env:
+          XY_SKIP_CARGO: "1"
+        run: |
+          uv venv .venv --python "$(command -v python)"
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock \
+            -e . matplotlib requests
+
+      - name: Execute deterministic public notebooks
+        env:
+          MPLBACKEND: Agg
+          XY_NOTEBOOK_DISPLAY: html
+        run: .venv/bin/python scripts/run_notebook_smoke.py --profile pr
+
   # Cross-library scatter benchmark incl. time-to-first-render (spec/benchmarks/results.md).
   # Each isolated group uses the same deterministic input sizes and runs in
   # parallel. The report job below merges the partial results.
