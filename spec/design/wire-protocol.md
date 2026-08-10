@@ -354,6 +354,15 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   (`python/reflex_xy/namespace.py`) — and on streaming append (§4),
   with no join copy anywhere on a live path.
 
+The browser accepts genuine `ArrayBuffer` objects across JavaScript realm
+boundaries. This matters for notebook hosts such as Databricks, whose widget
+manager can construct the binary comm attachment in a different realm from the
+one evaluating the anywidget module: cross-realm buffers fail JavaScript's
+realm-local `instanceof ArrayBuffer` test despite retaining the same binary
+brand. The client verifies that brand with the intrinsic `byteLength` getter
+and creates a view over the original buffer, preserving the live path's
+no-re-encoding and no-extra-copy contract.
+
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
