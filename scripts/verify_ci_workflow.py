@@ -563,7 +563,12 @@ def _step_run_lines(step_block: str) -> list[str]:
 
 
 def _require_step_runs_exactly(
-    errors: list[str], job_text: str, step: str, description: str, *commands: str
+    errors: list[str],
+    job_text: str,
+    step: str,
+    description: str,
+    *commands: str,
+    allow_job_strategy: bool = False,
 ) -> None:
     """Require the exact active command list in a hard-gate named step."""
     block = _named_step_blocks(job_text).get(step)
@@ -574,14 +579,9 @@ def _require_step_runs_exactly(
     # an uninvoked function body, or one folded argument to another command.
     forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
     has_forbidden_step_key = any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
-    forbidden_job_keys = (
-        "if",
-        "continue-on-error",
-        "defaults",
-        "container",
-        "needs",
-        "strategy",
-    )
+    forbidden_job_keys = ["if", "continue-on-error", "defaults", "container", "needs"]
+    if not allow_job_strategy:
+        forbidden_job_keys.append("strategy")
     has_forbidden_job_key = any(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
@@ -902,6 +902,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "notebook_smoke",
         "CI",
         "deterministic public notebook smoke matrix",
+        "timeout-minutes: 20",
         'python-version: ["3.11", "3.13"]',
         "dtolnay/rust-toolchain@",
         "actions/setup-python@",
@@ -912,9 +913,16 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "XY_SKIP_CARGO",
         "--constraint benchmarks/requirements-ci.lock",
         "matplotlib requests",
-        "scripts/run_notebook_smoke.py --profile pr",
         "MPLBACKEND: Agg",
         "XY_NOTEBOOK_DISPLAY: html",
+    )
+    _require_step_runs_exactly(
+        errors,
+        jobs.get("notebook_smoke", ""),
+        "Execute deterministic public notebooks",
+        "notebook smoke runner command",
+        ".venv/bin/python scripts/run_notebook_smoke.py --profile pr",
+        allow_job_strategy=True,
     )
     _require_job_contains(
         errors,

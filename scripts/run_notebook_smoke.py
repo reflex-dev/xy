@@ -10,6 +10,7 @@ data before executing its cells.
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import json
 import os
@@ -32,6 +33,12 @@ class NotebookCase:
     name: str
     path: Path
     env: dict[str, str]
+
+
+@dataclass(frozen=True)
+class NotebookResult:
+    code_cells: int
+    display_outputs: int
 
 
 def _write_gaia_fixture(data_dir: Path, rows: int) -> None:
@@ -92,6 +99,8 @@ def _patched_environment(values: dict[str, str]) -> Iterator[None]:
 
 @contextmanager
 def _cell_timeout(seconds: int) -> Iterator[None]:
+    if seconds <= 0:
+        raise ValueError("notebook cell timeout must be positive")
     if not hasattr(signal, "SIGALRM"):
         yield
         return
@@ -108,8 +117,59 @@ def _cell_timeout(seconds: int) -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
-def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> None:
+def _validate_kernelspec(case: NotebookCase, notebook: dict[str, object]) -> None:
+    metadata = notebook.get("metadata", {})
+    kernelspec = metadata.get("kernelspec", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(kernelspec, dict):
+        raise ValueError(f"{case.name}: metadata.kernelspec must be a mapping")
+    name = kernelspec.get("name")
+    language = kernelspec.get("language")
+    if name not in {"python", "python3"} or language != "python":
+        raise ValueError(f"{case.name}: unsupported kernelspec {kernelspec!r}; expected Python 3")
+
+
+def _render_display_value(value: object) -> bool:
+    if value is None:
+        return False
+    for method_name in ("_repr_mimebundle_", "_repr_html_", "_repr_svg_", "_repr_png_"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            method()
+            return True
+    repr(value)
+    return True
+
+
+def _execute_cell(source: str, filename: str, namespace: dict[str, object]) -> int:
+    module = ast.parse(source, filename=filename, mode="exec")
+    if module.body and isinstance(module.body[-1], ast.Expr) and not source.rstrip().endswith(";"):
+        prefix = ast.Module(body=module.body[:-1], type_ignores=module.type_ignores)
+        ast.fix_missing_locations(prefix)
+        exec(compile(prefix, filename, "exec"), namespace)
+        value = eval(compile(ast.Expression(module.body[-1].value), filename, "eval"), namespace)
+        return int(_render_display_value(value))
+    exec(compile(module, filename, "exec"), namespace)
+    return 0
+
+
+def _flush_xy_pyplot_figures() -> int:
+    pyplot = sys.modules.get("xy.pyplot")
+    if pyplot is None:
+        return 0
+    all_figures = getattr(pyplot, "all_figures", None)
+    close = getattr(pyplot, "close", None)
+    if not callable(all_figures) or not callable(close):
+        return 0
+    figures = list(all_figures())
+    rendered = sum(1 for figure in figures if _render_display_value(figure))
+    if figures:
+        close("all")
+    return rendered
+
+
+def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResult:
     notebook = json.loads(case.path.read_text(encoding="utf-8"))
+    _validate_kernelspec(case, notebook)
     try:
         display_path = case.path.relative_to(ROOT)
     except ValueError:
@@ -124,6 +184,7 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> None:
         for index, cell in enumerate(notebook.get("cells", []), start=1)
         if cell.get("cell_type") == "code"
     ]
+    display_outputs = 0
     with _patched_environment(case.env):
         old_cwd = Path.cwd()
         os.chdir(ROOT)
@@ -134,7 +195,8 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> None:
                 filename = f"{display_path}:cell-{index}"
                 try:
                     with _cell_timeout(cell_timeout):
-                        exec(compile(source, filename, "exec"), namespace)
+                        display_outputs += _execute_cell(source, filename, namespace)
+                        display_outputs += _flush_xy_pyplot_figures()
                 except Exception as exc:
                     print(
                         f"FAIL {case.name}: {filename}: {exc.__class__.__name__}: {exc}",
@@ -145,7 +207,11 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> None:
         finally:
             os.chdir(old_cwd)
     elapsed = time.monotonic() - started
-    print(f"PASS {case.name}: {len(code_cells)} code cells in {elapsed:.2f}s")
+    print(
+        f"PASS {case.name}: {len(code_cells)} code cells, "
+        f"{display_outputs} display outputs in {elapsed:.2f}s"
+    )
+    return NotebookResult(len(code_cells), display_outputs)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -63,6 +63,37 @@ def test_ci_workflow_requires_notebook_smoke_runner(tmp_path: Path) -> None:
     assert any("notebook_smoke" in error and "run_notebook_smoke" in error for error in errors)
 
 
+def test_ci_workflow_requires_notebook_smoke_runner_as_active_command(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "        run: .venv/bin/python scripts/run_notebook_smoke.py --profile pr",
+            "        run: true\n        # .venv/bin/python scripts/run_notebook_smoke.py --profile pr",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook smoke runner command" in error for error in errors)
+
+
+def test_ci_workflow_requires_notebook_smoke_timeout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    timeout-minutes: 20\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("notebook_smoke" in error and "timeout-minutes" in error for error in errors)
+
+
 def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
