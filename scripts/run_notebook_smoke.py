@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -21,11 +23,12 @@ import time
 import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ORACLE = ROOT / "scripts" / "notebook_smoke_pr_oracle.json"
 
 
 @dataclass(frozen=True)
@@ -36,14 +39,25 @@ class NotebookCase:
 
 
 @dataclass(frozen=True)
+class DisplayOutput:
+    kind: str
+    sha256: str
+    size: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {"kind": self.kind, "sha256": self.sha256, "size": self.size}
+
+
+@dataclass(frozen=True)
 class NotebookResult:
     code_cells: int
     display_outputs: int
+    outputs: tuple[DisplayOutput, ...] = field(default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True)
 class CellResult:
-    display_outputs: int
+    outputs: tuple[DisplayOutput, ...]
     displayed_ids: frozenset[int]
 
 
@@ -134,16 +148,37 @@ def _validate_kernelspec(case: NotebookCase, notebook: dict[str, object]) -> Non
         raise ValueError(f"{case.name}: unsupported kernelspec {kernelspec!r}; expected Python 3")
 
 
-def _render_display_value(value: object) -> bool:
+def _stable_display_bytes(value: object) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except TypeError:
+        return repr(value).encode("utf-8")
+
+
+def _display_output(kind: str, payload: object) -> DisplayOutput:
+    if kind == "repr":
+        payload = re.sub(r"0x[0-9a-fA-F]+", "0x...", str(payload))
+    data = _stable_display_bytes(payload)
+    return DisplayOutput(kind=kind, sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+
+
+def _render_display_value(value: object) -> DisplayOutput | None:
     if value is None:
-        return False
+        return None
     for method_name in ("_repr_mimebundle_", "_repr_html_", "_repr_svg_", "_repr_png_"):
         method = getattr(value, method_name, None)
         if callable(method):
-            method()
-            return True
-    repr(value)
-    return True
+            return _display_output(method_name, method())
+    return _display_output("repr", repr(value))
 
 
 def _execute_cell(source: str, filename: str, namespace: dict[str, object]) -> CellResult:
@@ -153,10 +188,13 @@ def _execute_cell(source: str, filename: str, namespace: dict[str, object]) -> C
         ast.fix_missing_locations(prefix)
         exec(compile(prefix, filename, "exec"), namespace)
         value = eval(compile(ast.Expression(module.body[-1].value), filename, "eval"), namespace)
-        rendered = _render_display_value(value)
-        return CellResult(int(rendered), frozenset({id(value)} if rendered else ()))
+        output = _render_display_value(value)
+        return CellResult(
+            (() if output is None else (output,)),
+            frozenset({id(value)} if output is not None else ()),
+        )
     exec(compile(module, filename, "exec"), namespace)
-    return CellResult(0, frozenset())
+    return CellResult((), frozenset())
 
 
 def _close_matplotlib_figures() -> None:
@@ -166,27 +204,63 @@ def _close_matplotlib_figures() -> None:
         close("all")
 
 
-def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> int:
+def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> tuple[DisplayOutput, ...]:
     pyplot = sys.modules.get("xy.pyplot")
     if pyplot is None:
         _close_matplotlib_figures()
-        return 0
+        return ()
     all_figures = getattr(pyplot, "all_figures", None)
     close = getattr(pyplot, "close", None)
     if not callable(all_figures) or not callable(close):
         _close_matplotlib_figures()
-        return 0
+        return ()
     figures = list(all_figures())
-    rendered = sum(
-        1 for figure in figures if id(figure) not in skip_ids and _render_display_value(figure)
+    outputs = tuple(
+        output
+        for figure in figures
+        if id(figure) not in skip_ids
+        for output in (_render_display_value(figure),)
+        if output is not None
     )
     if figures:
         close("all")
     _close_matplotlib_figures()
-    return rendered
+    return outputs
 
 
-def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResult:
+def _load_oracle(path: Path) -> dict[str, list[dict[str, object]]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"notebook smoke oracle {path} must be a mapping")
+    oracle: dict[str, list[dict[str, object]]] = {}
+    for name, outputs in data.items():
+        if not isinstance(name, str) or not isinstance(outputs, list):
+            raise ValueError(f"notebook smoke oracle {path} has invalid entry {name!r}")
+        oracle[name] = outputs
+    return oracle
+
+
+def _assert_display_outputs_match(
+    case: NotebookCase,
+    actual_outputs: tuple[DisplayOutput, ...],
+    expected_outputs: list[dict[str, object]],
+) -> None:
+    actual = [output.as_dict() for output in actual_outputs]
+    if actual == expected_outputs:
+        return
+    raise AssertionError(
+        f"{case.name}: display output drift\n"
+        f"expected: {json.dumps(expected_outputs, sort_keys=True)}\n"
+        f"actual: {json.dumps(actual, sort_keys=True)}"
+    )
+
+
+def _execute_notebook(
+    case: NotebookCase,
+    *,
+    cell_timeout: int,
+    expected_outputs: list[dict[str, object]] | None = None,
+) -> NotebookResult:
     notebook = json.loads(case.path.read_text(encoding="utf-8"))
     _validate_kernelspec(case, notebook)
     try:
@@ -203,7 +277,7 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResul
         for index, cell in enumerate(notebook.get("cells", []), start=1)
         if cell.get("cell_type") == "code"
     ]
-    display_outputs = 0
+    display_outputs: list[DisplayOutput] = []
     with _patched_environment(case.env):
         old_cwd = Path.cwd()
         os.chdir(ROOT)
@@ -215,8 +289,10 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResul
                 try:
                     with _cell_timeout(cell_timeout):
                         result = _execute_cell(source, filename, namespace)
-                        display_outputs += result.display_outputs
-                        display_outputs += _flush_xy_pyplot_figures(skip_ids=result.displayed_ids)
+                        display_outputs.extend(result.outputs)
+                        display_outputs.extend(
+                            _flush_xy_pyplot_figures(skip_ids=result.displayed_ids)
+                        )
                 except Exception as exc:
                     print(
                         f"FAIL {case.name}: {filename}: {exc.__class__.__name__}: {exc}",
@@ -226,12 +302,15 @@ def _execute_notebook(case: NotebookCase, *, cell_timeout: int) -> NotebookResul
                     raise
         finally:
             os.chdir(old_cwd)
+    captured_outputs = tuple(display_outputs)
+    if expected_outputs is not None:
+        _assert_display_outputs_match(case, captured_outputs, expected_outputs)
     elapsed = time.monotonic() - started
     print(
         f"PASS {case.name}: {len(code_cells)} code cells, "
-        f"{display_outputs} display outputs in {elapsed:.2f}s"
+        f"{len(captured_outputs)} display outputs in {elapsed:.2f}s"
     )
-    return NotebookResult(len(code_cells), display_outputs)
+    return NotebookResult(len(code_cells), len(captured_outputs), captured_outputs)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -243,11 +322,35 @@ def main(argv: list[str] | None = None) -> int:
         help="Notebook profile to execute.",
     )
     parser.add_argument("--cell-timeout", type=int, default=60)
+    parser.add_argument("--oracle", type=Path, default=DEFAULT_ORACLE)
+    parser.add_argument(
+        "--update-oracle",
+        action="store_true",
+        help="Rewrite the smoke profile display-output oracle from the current run.",
+    )
     args = parser.parse_args(argv)
 
+    oracle = {} if args.update_oracle else _load_oracle(args.oracle)
+    updated_oracle: dict[str, list[dict[str, object]]] = {}
     with tempfile.TemporaryDirectory(prefix="xy-notebook-smoke-") as tmp:
         for case in smoke_cases(Path(tmp)):
-            _execute_notebook(case, cell_timeout=args.cell_timeout)
+            expected_outputs = None
+            if not args.update_oracle:
+                expected_outputs = oracle.get(case.name)
+                if expected_outputs is None:
+                    raise ValueError(f"notebook smoke oracle missing case {case.name!r}")
+            result = _execute_notebook(
+                case,
+                cell_timeout=args.cell_timeout,
+                expected_outputs=expected_outputs,
+            )
+            updated_oracle[case.name] = [output.as_dict() for output in result.outputs]
+    if args.update_oracle:
+        args.oracle.write_text(
+            json.dumps(updated_oracle, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Updated notebook smoke oracle: {args.oracle}")
     return 0
 
 

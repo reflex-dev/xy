@@ -93,6 +93,28 @@ Displayed()
     assert result == notebook_smoke.NotebookResult(code_cells=1, display_outputs=1)
 
 
+def test_execute_notebook_rejects_display_output_drift(tmp_path: Path) -> None:
+    notebook = tmp_path / "display.ipynb"
+    _write_notebook(
+        notebook,
+        [
+            """
+class Displayed:
+    def _repr_html_(self):
+        return "<b>changed</b>"
+
+Displayed()
+""",
+        ],
+    )
+
+    case = notebook_smoke.NotebookCase("display", notebook, {})
+    expected = [notebook_smoke._display_output("_repr_html_", "<b>original</b>").as_dict()]
+
+    with pytest.raises(AssertionError, match="display output drift"):
+        notebook_smoke._execute_notebook(case, cell_timeout=5, expected_outputs=expected)
+
+
 def test_execute_notebook_flushes_xy_pyplot_figures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

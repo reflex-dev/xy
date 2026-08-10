@@ -1,0 +1,188 @@
+{
+  "basic-xy": [
+    {
+      "kind": "_repr_html_",
+      "sha256": "32948ca725e9a48a2c146dc9c3fa37efddad8e2c71f0d954761723214ed86717",
+      "size": 453331
+    }
+  ],
+  "pdsh-matplotlib-shim": [
+    {
+      "kind": "_repr_html_",
+      "sha256": "1fa4017618eb5b923ba98ddc0e832fa2cc94253b5000aad856f0f25e0eca0263",
+      "size": 452910
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "1fa4017618eb5b923ba98ddc0e832fa2cc94253b5000aad856f0f25e0eca0263",
+      "size": 452910
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "43c614dceb9980358bf04ab0fe59d3facabc62ff58516316ac7b356f89f951c2",
+      "size": 464467
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "729ce1a70252d929180ce387b9348e88029c875ae96017c07297a4844ff9ca9f",
+      "size": 464279
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "43c614dceb9980358bf04ab0fe59d3facabc62ff58516316ac7b356f89f951c2",
+      "size": 464467
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "729ce1a70252d929180ce387b9348e88029c875ae96017c07297a4844ff9ca9f",
+      "size": 464279
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "335319a249a04f4848e2235523465b016cb6ae446897004d379fd5b48bffbd8e",
+      "size": 475810
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "5df34244280196fd91bb0340d0ed552844aa9067397c8c37054af0add441d81f",
+      "size": 475612
+    },
+    {
+      "kind": "repr",
+      "sha256": "6152722ba8866dafeff93f6731a30986f037e57191fc2979598a64caab5d53f4",
+      "size": 43
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "d196093ae573f3c7b7e1711144a337452280521d13649b5c235912968ea235bf",
+      "size": 521103
+    },
+    {
+      "kind": "repr",
+      "sha256": "cb9b59b6542ec9b004af385aa8a8338d61ebf5ea0ed3b633a542413ecb57ab36",
+      "size": 45
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "97c61bdec7cf771c2e5a6dd0a9f4d48c64df7035f3a28400545b55dbff198b87",
+      "size": 520925
+    },
+    {
+      "kind": "repr",
+      "sha256": "6152722ba8866dafeff93f6731a30986f037e57191fc2979598a64caab5d53f4",
+      "size": 43
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "d6e9959f18264fcf645ac0f065fc3c3837689f03f4a5c2175f04b221c628783d",
+      "size": 543639
+    },
+    {
+      "kind": "repr",
+      "sha256": "cb9b59b6542ec9b004af385aa8a8338d61ebf5ea0ed3b633a542413ecb57ab36",
+      "size": 45
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "a35b7a73f3b6185938caab9e87a031ec3e51934a1afeca4e26b74508807573f6",
+      "size": 543647
+    },
+    {
+      "kind": "repr",
+      "sha256": "6152722ba8866dafeff93f6731a30986f037e57191fc2979598a64caab5d53f4",
+      "size": 43
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "fed9b4474a1bdc5683dabd09b7e33d087aa04500fd23c2265760ac9cc7fe2f1e",
+      "size": 498239
+    },
+    {
+      "kind": "repr",
+      "sha256": "cb9b59b6542ec9b004af385aa8a8338d61ebf5ea0ed3b633a542413ecb57ab36",
+      "size": 45
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "207b453e2505575b8a03a00f7f98ea35b800e83bb5911be88978a87b85895018",
+      "size": 498225
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "6d2c5986f8f5cf9c21c7726ce1e5a949a4aaf35a5114f9a734f12678ddaf1dde",
+      "size": 464319
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "45b9329d931eb610c4b912797c6711f55916759361910940e1b13551626ddc05",
+      "size": 464311
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "c9e288cfaffb27240893385ceefab256d1372b6f5410a40cab1415b9a98b5d39",
+      "size": 464414
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "6295b660443a92941e97f1dc442907d30c54c0d4a93e561eba38a804b3990810",
+      "size": 464406
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "43c614dceb9980358bf04ab0fe59d3facabc62ff58516316ac7b356f89f951c2",
+      "size": 464467
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "6ebd1ed058d23e1cfa2a7d70f09d0157912c0099321e19cda0fa10d84c753845",
+      "size": 464459
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "43c614dceb9980358bf04ab0fe59d3facabc62ff58516316ac7b356f89f951c2",
+      "size": 464467
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "2148c64486ba05fe93e02ec422a9275430de299243ab029284a32b6c933c8bd3",
+      "size": 464451
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "13a11af3ec9ed5c265b48994a42975b4ab4d4f28a38f29eb5a5f69a75bb1cfdb",
+      "size": 464738
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "c90f206396ab2da5576aac81d1e08d06d187b045bfd7e26112f676d4b9155d76",
+      "size": 464606
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "6994c103a917c8f956bb956bebbffc89a319643927ee45f57df4e9089a084c80",
+      "size": 475794
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "98fd69d80ed8838f98a147d640615b7fed79a6e4eb36f47a3a0063515c2bab13",
+      "size": 476646
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "cdfd74a3ad4ec778fbdd2b2849e47475f57742a4f26e27fe51f14ba76d309629",
+      "size": 464588
+    },
+    {
+      "kind": "_repr_html_",
+      "sha256": "949f9e4203b982a8134cb3d0566df92fdff5c688ff9a47ae3a193ca02ee25309",
+      "size": 464639
+    }
+  ],
+  "real-world-gaia-reduced": [
+    {
+      "kind": "_repr_html_",
+      "sha256": "b1b033a8c6fbf985b014df2582d1d68da72fca4aec4e3430c1e507ee913e8001",
+      "size": 1767870
+    }
+  ]
+}
