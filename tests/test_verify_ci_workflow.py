@@ -54,6 +54,39 @@ def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
     assert any("uv sync --locked --extra reflex --group dev" in error for error in errors)
 
 
+def test_reflex_compatibility_gate_requires_named_active_steps(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "- name: Install exact Reflex compatibility target",
+        "- name: Unrelated install step",
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("Install exact Reflex compatibility target" in error for error in errors)
+
+
+def test_reflex_extra_check_reads_the_optional_dependency_table(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.optional-dependencies]\n"
+        'reflex = ["reflex>=0.9.6"]\n'
+        'other = ["reflex>=0.9.6,<0.10"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(verify_ci_workflow, "ROOT", tmp_path)
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("pyproject.toml must bound" in error for error in errors)
+
+
 def test_locked_reflex_environment_must_be_in_named_install_step(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     required = "          uv sync --locked --extra reflex --group dev"

@@ -6,7 +6,7 @@ import re
 from email.message import Message
 
 BASE_DEPENDENCY_FLOORS = (("anywidget", "0.9"), ("numpy", "1.24"))
-REFLEX_REQUIREMENT = "Requires-Dist: reflex>=0.9.6; extra == 'reflex'"
+REFLEX_REQUIREMENT = "Requires-Dist: reflex<0.10,>=0.9.6; extra == 'reflex'"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -32,10 +32,10 @@ def _is_valid_base_requirement(requirement: str, package: str, minimum: str) -> 
 
 
 def _is_exact_reflex_extra(requirement: str) -> bool:
-    """Accept whitespace/quote normalization, but no extra constraints."""
+    """Accept the bounded Reflex window in either metadata ordering."""
     return bool(
         re.fullmatch(
-            r"\s*reflex\s*>=\s*0\.9\.6\s*;\s*extra\s*==\s*['\"]reflex['\"]\s*",
+            r"\s*reflex\s*(?:(?:>=\s*0\.9\.6\s*,\s*<\s*0\.10)|(?:<\s*0\.10\s*,\s*>=\s*0\.9\.6))\s*;\s*extra\s*==\s*['\"]reflex['\"]\s*",
             requirement,
             flags=re.IGNORECASE,
         )

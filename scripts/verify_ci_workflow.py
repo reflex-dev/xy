@@ -13,6 +13,7 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -36,7 +37,7 @@ REQUIRED_CI_JOBS = {
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
-REFLEX_REQUIREMENT = "reflex>=0.9.6,<0.10"
+REFLEX_OPTIONAL_DEPENDENCY = "reflex>=0.9.6,<0.10"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -596,6 +597,33 @@ def _require_step_runs_exactly(
         errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
+def _require_step_runs_containing(
+    errors: list[str], job_text: str, step: str, description: str, *commands: str
+) -> None:
+    """Require commands in one active, named hard-gate step."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
+    forbidden_job_keys = (
+        "if",
+        "continue-on-error",
+        "defaults",
+        "container",
+        "needs",
+    )
+    run_lines = _step_run_lines(block)
+    missing = [command for command in commands if not any(command in line for line in run_lines)]
+    if (
+        missing
+        or _direct_yaml_key_count(block, "run", indent=8) != 1
+        or any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
+        or any(_has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys)
+    ):
+        errors.append(f"CI step {step!r} missing {description}: {missing or list(commands)!r}")
+
+
 def _require_job_contains(
     errors: list[str],
     jobs: dict[str, str],
@@ -880,9 +908,35 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "minimum and maximum released Reflex compatibility matrix",
         "fail-fast: false",
         'reflex-version: ["0.9.6", "0.9.8"]',
-        'reflex==${{ matrix.reflex-version }}',
-        "<0.10,>=0.9.6",
+    )
+    reflex_job = jobs.get("reflex_compatibility", "")
+    _require_step_runs_containing(
+        errors,
+        reflex_job,
+        "Install exact Reflex compatibility target",
+        "exact Reflex installation",
+        '"reflex==${{ matrix.reflex-version }}"',
+    )
+    _require_step_runs_containing(
+        errors,
+        reflex_job,
+        "Verify exact Reflex target and metadata window",
+        "Reflex version and metadata assertions",
+        "m.version('reflex') == '${{ matrix.reflex-version }}'",
+        "str(req.specifier) == '<0.10,>=0.9.6'",
+    )
+    _require_step_runs_containing(
+        errors,
+        reflex_job,
+        "Component compile and event smoke",
+        "component compile and event smoke",
         "test_component.py::test_component_compiles_with_events",
+    )
+    _require_step_runs_containing(
+        errors,
+        reflex_job,
+        "State event and rebuild smoke",
+        "state event and rebuild smoke",
         "test_state_bridge.py::test_rebuild_reads_session_state",
     )
     try:
@@ -890,10 +944,15 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     except OSError as exc:
         errors.append(f"cannot read project metadata for Reflex compatibility gate: {exc}")
     else:
-        if f'"{REFLEX_REQUIREMENT}"' not in project_metadata:
+        try:
+            project = tomllib.loads(project_metadata).get("project", {})
+            optional_dependencies = project.get("optional-dependencies", {})
+            reflex_dependencies = optional_dependencies.get("reflex")
+        except (tomllib.TOMLDecodeError, AttributeError):
+            reflex_dependencies = None
+        if reflex_dependencies != [REFLEX_OPTIONAL_DEPENDENCY]:
             errors.append(
-                "pyproject.toml must bound the xy[reflex] extra to "
-                f"{REFLEX_REQUIREMENT!r}"
+                f"pyproject.toml must bound the xy[reflex] extra to {REFLEX_OPTIONAL_DEPENDENCY!r}"
             )
     _require_job_contains(
         errors,
@@ -1145,7 +1204,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Rust-backed sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        f'"{REFLEX_REQUIREMENT}"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
@@ -1291,7 +1350,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/verify_wheel.py",
         "--expect-native",
         "Install-size budget (<= 15 MB)",
-        f'"{REFLEX_REQUIREMENT}"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "assert k.BACKEND=='native'",
@@ -1356,7 +1415,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "Rust-backed release sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        f'"{REFLEX_REQUIREMENT}"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
