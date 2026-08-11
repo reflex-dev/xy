@@ -597,10 +597,10 @@ def _require_step_runs_exactly(
         errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
-def _require_step_runs_containing(
+def _require_matrix_step_runs_exactly(
     errors: list[str], job_text: str, step: str, description: str, *commands: str
 ) -> None:
-    """Require commands in one active, named hard-gate step."""
+    """Require the complete active command list in one matrix step."""
     block = _named_step_blocks(job_text).get(step)
     if block is None:
         errors.append(f"missing required CI step {step!r}")
@@ -613,15 +613,13 @@ def _require_step_runs_containing(
         "container",
         "needs",
     )
-    run_lines = _step_run_lines(block)
-    missing = [command for command in commands if command not in run_lines]
     if (
-        missing
+        _step_run_lines(block) != list(commands)
         or _direct_yaml_key_count(block, "run", indent=8) != 1
         or any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
         or any(_has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys)
     ):
-        errors.append(f"CI step {step!r} missing {description}: {missing or list(commands)!r}")
+        errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
 def _require_job_contains(
@@ -915,7 +913,9 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         errors.append("CI reflex_compatibility job must test exactly Reflex 0.9.6 and 0.9.8")
     if _has_yaml_key(reflex_job, "exclude", indent=8):
         errors.append("CI reflex_compatibility job must not exclude compatibility versions")
-    _require_step_runs_containing(
+    if _has_yaml_key(reflex_job, "include", indent=8):
+        errors.append("CI reflex_compatibility job must not include additional versions")
+    _require_matrix_step_runs_exactly(
         errors,
         reflex_job,
         "Install exact Reflex compatibility target",
@@ -927,7 +927,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         '"numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"',
         "uv pip install -p .venv/bin/python -e . --no-deps",
     )
-    _require_step_runs_containing(
+    _require_matrix_step_runs_exactly(
         errors,
         reflex_job,
         "Verify exact Reflex target and metadata window",
@@ -935,14 +935,14 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         ".venv/bin/python -c \"import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'\"",
         ".venv/bin/python -c \"from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '<0.10,>=0.9.6'\"",
     )
-    _require_step_runs_containing(
+    _require_matrix_step_runs_exactly(
         errors,
         reflex_job,
         "Component compile and event smoke",
         "component compile and event smoke",
         ".venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
     )
-    _require_step_runs_containing(
+    _require_matrix_step_runs_exactly(
         errors,
         reflex_job,
         "State event and rebuild smoke",

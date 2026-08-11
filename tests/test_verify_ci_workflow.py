@@ -89,6 +89,23 @@ def test_reflex_compatibility_gate_rejects_echoed_commands(tmp_path: Path) -> No
     assert any("component compile and event smoke" in error for error in errors)
 
 
+def test_reflex_compatibility_gate_rejects_heredoc_commands(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "        run: .venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
+        "        run: |\n"
+        "          python - <<'PY'\n"
+        "          .venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events\n"
+        "          PY",
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("component compile and event smoke" in error for error in errors)
+
+
 def test_reflex_compatibility_gate_rejects_excluded_versions(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     workflow = workflow.replace(
@@ -104,6 +121,22 @@ def test_reflex_compatibility_gate_rejects_excluded_versions(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
     assert any("must not exclude" in error for error in errors)
+
+
+def test_reflex_compatibility_gate_rejects_included_versions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        '        reflex-version: ["0.9.6", "0.9.8"]\n',
+        '        reflex-version: ["0.9.6", "0.9.8"]\n'
+        "        include:\n"
+        '          - reflex-version: "0.10"\n',
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("must not include" in error for error in errors)
 
 
 def test_reflex_extra_check_reads_the_optional_dependency_table(
