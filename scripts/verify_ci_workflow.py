@@ -614,7 +614,7 @@ def _require_step_runs_containing(
         "needs",
     )
     run_lines = _step_run_lines(block)
-    missing = [command for command in commands if not any(command in line for line in run_lines)]
+    missing = [command for command in commands if command not in run_lines]
     if (
         missing
         or _direct_yaml_key_count(block, "run", indent=8) != 1
@@ -910,34 +910,44 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         'reflex-version: ["0.9.6", "0.9.8"]',
     )
     reflex_job = jobs.get("reflex_compatibility", "")
+    matrix_values, matrix_unsafe = _direct_yaml_key_values(reflex_job, "reflex-version", indent=8)
+    if matrix_values != ['["0.9.6", "0.9.8"]'] or matrix_unsafe:
+        errors.append("CI reflex_compatibility job must test exactly Reflex 0.9.6 and 0.9.8")
+    if _has_yaml_key(reflex_job, "exclude", indent=8):
+        errors.append("CI reflex_compatibility job must not exclude compatibility versions")
     _require_step_runs_containing(
         errors,
         reflex_job,
         "Install exact Reflex compatibility target",
         "exact Reflex installation",
-        '"reflex==${{ matrix.reflex-version }}"',
+        "npm ci",
+        "uv venv .venv",
+        "uv pip install -p .venv/bin/python \\",
+        '"reflex==${{ matrix.reflex-version }}" \\',
+        '"numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"',
+        "uv pip install -p .venv/bin/python -e . --no-deps",
     )
     _require_step_runs_containing(
         errors,
         reflex_job,
         "Verify exact Reflex target and metadata window",
         "Reflex version and metadata assertions",
-        "m.version('reflex') == '${{ matrix.reflex-version }}'",
-        "str(req.specifier) == '<0.10,>=0.9.6'",
+        ".venv/bin/python -c \"import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'\"",
+        ".venv/bin/python -c \"from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '<0.10,>=0.9.6'\"",
     )
     _require_step_runs_containing(
         errors,
         reflex_job,
         "Component compile and event smoke",
         "component compile and event smoke",
-        "test_component.py::test_component_compiles_with_events",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
     )
     _require_step_runs_containing(
         errors,
         reflex_job,
         "State event and rebuild smoke",
         "state event and rebuild smoke",
-        "test_state_bridge.py::test_rebuild_reads_session_state",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_state_bridge.py::test_rebuild_reads_session_state",
     )
     try:
         project_metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

@@ -6,7 +6,10 @@ import re
 from email.message import Message
 
 BASE_DEPENDENCY_FLOORS = (("anywidget", "0.9"), ("numpy", "1.24"))
-REFLEX_REQUIREMENT = "Requires-Dist: reflex<0.10,>=0.9.6; extra == 'reflex'"
+REFLEX_MINIMUM = "0.9.6"
+REFLEX_MAXIMUM = "0.10"
+REFLEX_SPECIFIER = f"reflex>={REFLEX_MINIMUM},<{REFLEX_MAXIMUM}"
+REFLEX_REQUIREMENT = f"Requires-Dist: {REFLEX_SPECIFIER}; extra == 'reflex'"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -35,7 +38,7 @@ def _is_exact_reflex_extra(requirement: str) -> bool:
     """Accept the bounded Reflex window in either metadata ordering."""
     return bool(
         re.fullmatch(
-            r"\s*reflex\s*(?:(?:>=\s*0\.9\.6\s*,\s*<\s*0\.10)|(?:<\s*0\.10\s*,\s*>=\s*0\.9\.6))\s*;\s*extra\s*==\s*['\"]reflex['\"]\s*",
+            rf"\s*reflex\s*(?:(?:>=\s*{re.escape(REFLEX_MINIMUM)}\s*,\s*<\s*{re.escape(REFLEX_MAXIMUM)})|(?:<\s*{re.escape(REFLEX_MAXIMUM)}\s*,\s*>=\s*{re.escape(REFLEX_MINIMUM)}))\s*;\s*extra\s*==\s*['\"]reflex['\"]\s*",
             requirement,
             flags=re.IGNORECASE,
         )

@@ -56,16 +56,54 @@ def test_ci_workflow_requires_locked_reflex_environment(tmp_path: Path) -> None:
 
 def test_reflex_compatibility_gate_requires_named_active_steps(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    cases = {
+        "renamed": workflow.replace(
+            "- name: Install exact Reflex compatibility target",
+            "- name: Unrelated install step",
+        ),
+        "disabled": workflow.replace(
+            "      - name: Install exact Reflex compatibility target\n",
+            "      - name: Install exact Reflex compatibility target\n        if: false\n",
+        ),
+    }
+    for name, mutated in cases.items():
+        path = tmp_path / f"ci-{name}.yml"
+        path.write_text(mutated, encoding="utf-8")
+
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+
+        assert any("Install exact Reflex compatibility target" in error for error in errors)
+
+
+def test_reflex_compatibility_gate_rejects_echoed_commands(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     workflow = workflow.replace(
-        "- name: Install exact Reflex compatibility target",
-        "- name: Unrelated install step",
+        "        run: .venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
+        '        run: echo \\".venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events\\"',
     )
     path = tmp_path / "ci.yml"
     path.write_text(workflow, encoding="utf-8")
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("Install exact Reflex compatibility target" in error for error in errors)
+    assert any("component compile and event smoke" in error for error in errors)
+
+
+def test_reflex_compatibility_gate_rejects_excluded_versions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        '        reflex-version: ["0.9.6", "0.9.8"]\n',
+        '        reflex-version: ["0.9.6", "0.9.8"]\n'
+        "        exclude:\n"
+        '          - reflex-version: "0.9.6"\n'
+        '          - reflex-version: "0.9.8"\n',
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow, encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("must not exclude" in error for error in errors)
 
 
 def test_reflex_extra_check_reads_the_optional_dependency_table(
