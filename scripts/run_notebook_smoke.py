@@ -207,15 +207,21 @@ def _close_matplotlib_figures() -> None:
         close("all")
 
 
+def _close_notebook_figures() -> None:
+    """Release figures after a notebook while preserving cross-cell state."""
+    pyplot = sys.modules.get("xy.pyplot")
+    close = getattr(pyplot, "close", None) if pyplot is not None else None
+    if callable(close):
+        close("all")
+    _close_matplotlib_figures()
+
+
 def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> tuple[DisplayOutput, ...]:
     pyplot = sys.modules.get("xy.pyplot")
     if pyplot is None:
-        _close_matplotlib_figures()
         return ()
     all_figures = getattr(pyplot, "all_figures", None)
-    close = getattr(pyplot, "close", None)
-    if not callable(all_figures) or not callable(close):
-        _close_matplotlib_figures()
+    if not callable(all_figures):
         return ()
     figures = list(all_figures())
     outputs = tuple(
@@ -225,9 +231,6 @@ def _flush_xy_pyplot_figures(*, skip_ids: frozenset[int]) -> tuple[DisplayOutput
         for output in (_render_display_value(figure),)
         if output is not None
     )
-    if figures:
-        close("all")
-    _close_matplotlib_figures()
     return outputs
 
 
@@ -329,6 +332,7 @@ def _execute_notebook(
                     raise
         finally:
             os.chdir(old_cwd)
+            _close_notebook_figures()
     captured_outputs = tuple(display_outputs)
     if expected_outputs is not None:
         _assert_display_outputs_match(case, captured_outputs, expected_outputs)

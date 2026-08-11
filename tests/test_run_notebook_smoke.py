@@ -203,7 +203,46 @@ fig
     assert result == notebook_smoke.NotebookResult(code_cells=1, display_outputs=1)
 
 
-def test_execute_notebook_closes_matplotlib_figures_after_each_cell(
+def test_execute_notebook_preserves_xy_pyplot_figures_between_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notebook = tmp_path / "cross_cell.ipynb"
+    marker = tmp_path / "renders.txt"
+
+    class Figure:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def _repr_html_(self) -> str:
+            self.count += 1
+            marker.write_text(str(self.count), encoding="utf-8")
+            return "<div>figure</div>"
+
+    figure = Figure()
+    closed: list[str] = []
+    fake_pyplot = SimpleNamespace(
+        all_figures=lambda: [figure],
+        close=lambda target: closed.append(target),
+    )
+    monkeypatch.setitem(sys.modules, "xy.pyplot", fake_pyplot)
+    _write_notebook(
+        notebook,
+        [
+            'import sys\nfig = sys.modules["xy.pyplot"].all_figures()[0]\n',
+            "fig\n",
+        ],
+    )
+
+    case = notebook_smoke.NotebookCase("cross_cell", notebook, {})
+
+    result = notebook_smoke._execute_notebook(case, cell_timeout=5)
+
+    assert marker.read_text(encoding="utf-8") == "2"
+    assert closed == ["all"]
+    assert result == notebook_smoke.NotebookResult(code_cells=2, display_outputs=2)
+
+
+def test_execute_notebook_closes_figures_after_each_notebook(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     notebook = tmp_path / "mpl.ipynb"
@@ -216,7 +255,7 @@ def test_execute_notebook_closes_matplotlib_figures_after_each_cell(
 
     result = notebook_smoke._execute_notebook(case, cell_timeout=5)
 
-    assert closed == ["all", "all"]
+    assert closed == ["all"]
     assert result == notebook_smoke.NotebookResult(code_cells=2, display_outputs=0)
 
 
