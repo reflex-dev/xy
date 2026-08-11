@@ -352,7 +352,11 @@ def _factorize_probe(arr: np.ndarray) -> np.ndarray:
 
 
 def _use_native_fixed_factorizer(
-    arr: np.ndarray, *, normalized_itemsize: Optional[int] = None
+    arr: np.ndarray,
+    *,
+    normalized_itemsize: Optional[int] = None,
+    probe: Optional[np.ndarray] = None,
+    distinct: Optional[int] = None,
 ) -> bool:
     """Choose the O(N) hash path unless a bounded global probe says it cannot pay.
 
@@ -367,8 +371,8 @@ def _use_native_fixed_factorizer(
     repeats get scarce while narrow ones hold it until the probe is entirely
     distinct. Sampling across the full array keeps the decision independent of N.
     """
-    probe = _factorize_probe(arr)
-    distinct = len(np.unique(probe))
+    probe = _factorize_probe(arr) if probe is None else probe
+    distinct = len(np.unique(probe)) if distinct is None else distinct
     if distinct <= _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES:
         return True
     near_unique = (
@@ -428,13 +432,23 @@ def _factorize_categories(
     if arr.dtype.kind == "O":
         # Probe object strings before the full validation and Unicode copy so
         # near-unique columns take the existing Python fallback cheaply.
+        probe = distinct = None
         sample_width = _object_string_width(arr, sample=True)
+        if sample_width is not None:
+            probe = _factorize_probe(arr)
+            distinct = len(np.unique(probe))
         if sample_width is not None and _use_native_fixed_factorizer(
-            arr, normalized_itemsize=4 * max(sample_width, 1)
+            arr,
+            normalized_itemsize=4 * max(sample_width, 1),
+            probe=probe,
+            distinct=distinct,
         ):
             width = _object_string_width(arr)
             if width is not None and _use_native_fixed_factorizer(
-                arr, normalized_itemsize=4 * max(width, 1)
+                arr,
+                normalized_itemsize=4 * max(width, 1),
+                probe=probe,
+                distinct=distinct,
             ):
                 factorizer_arr = _normalize_object_strings(arr, width)
     if factorizer_arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(

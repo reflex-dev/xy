@@ -432,6 +432,23 @@ def test_near_unique_object_strings_do_not_run_full_width_scan(monkeypatch):
     assert calls == [True]
 
 
+def test_object_factorization_reuses_the_bounded_probe(monkeypatch):
+    """Object-string eligibility gates share one bounded distinct-count probe."""
+    values = np.array(["group-a", "group-b", "group-a", "group-c"] * 250, dtype=object)
+    original = channels.np.unique
+    object_probe_calls: list[np.ndarray] = []
+
+    def record(arr, *args, **kwargs):
+        if arr.dtype.kind == "O":
+            object_probe_calls.append(arr)
+        return original(arr, *args, **kwargs)
+
+    monkeypatch.setattr(channels.np, "unique", record)
+    channels._factorize_categories(values)
+
+    assert len(object_probe_calls) == 1
+
+
 @pytest.mark.parametrize(
     "values",
     [
