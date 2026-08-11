@@ -1,4 +1,4 @@
-import { payloadBuffers } from "./00_header";
+import { payloadBuffers, wireColumnDtype } from "./00_header";
 import { buildLutData } from "./10_colormaps";
 import { parseColor } from "./20_theme";
 import {
@@ -411,6 +411,9 @@ Object.assign(ChartView.prototype, {
   _applyAppend(msg, buffers) {
     const spec = msg.spec;
     if (!spec || !spec.traces) return;
+    if (Array.isArray(spec.columns)) {
+      spec.columns.forEach((meta, index) => wireColumnDtype(meta, `append column ${index}`));
+    }
     const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
     if (raw == null) return;
     const payload = payloadBuffers(spec, raw);
@@ -551,7 +554,9 @@ Object.assign(ChartView.prototype, {
       const om = Number.isInteger(a) ? oldCols[a] : null;
       const nm = Number.isInteger(b) ? newCols[b] : null;
       if (!om || !nm) return null;
-      if ((om.dtype || "f32") !== (nm.dtype || "f32")) return null;
+      const oldDtype = wireColumnDtype(om, `previous append column ${a}`);
+      const newDtype = wireColumnDtype(nm, `append column ${b}`);
+      if (oldDtype.name !== newDtype.name) return null;
       if ((om.offset ?? null) !== (nm.offset ?? null)) return null;
       if ((om.scale ?? null) !== (nm.scale ?? null)) return null;
       if (!(nm.len >= om.len)) return null;
@@ -732,9 +737,11 @@ Object.assign(ChartView.prototype, {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
         const gl = this.gl;
-        const xArr = this._asF32(buffers[upd.x.buf]);
-        const yArr = this._asF32(buffers[upd.y.buf]);
-        const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
+        const xArr = this._wireColumnView(buffers[upd.x.buf], upd.x, "tier update x");
+        const yArr = this._wireColumnView(buffers[upd.y.buf], upd.y, "tier update y");
+        const bArr = upd.base && g.baseBuf
+          ? this._wireColumnView(buffers[upd.base.buf], upd.base, "tier update base")
+          : null;
         let n = Math.min(upd.x.len, upd.y.len);
         if (bArr) n = Math.min(n, upd.base.len);
         // curve:"smooth" traces re-smooth every refined window, so the curve

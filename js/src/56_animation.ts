@@ -1,4 +1,4 @@
-import { FUNNEL_SLOTS, PROTOCOL } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL, wireColumnDtype } from "./00_header";
 import { ChartView } from "./50_chartview";
 
 // Declarative data animation: one browser clock, bounded previous/next GPU
@@ -517,6 +517,9 @@ Object.assign(ChartView.prototype, {
 
   updatePayload(spec, buffer) {
     if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
+    if (Array.isArray(spec.columns)) {
+      spec.columns.forEach((meta, index) => wireColumnDtype(meta, `column ${index}`));
+    }
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
     this._dataAnimRaf = null;
     if (this._dataAnim) {

@@ -367,6 +367,14 @@ Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
 
+The client resolves column-like dtypes through one exhaustive definition used
+by coherence checks, first-paint decoding, streaming append, and incremental
+LOD/sample channel replies. Incremental replies may spell the default as
+explicit `"f32"`; every other explicit value is a fatal protocol error that
+names the offending dtype and column/channel context. In particular, an
+unknown four-byte dtype never inherits the f32 byte width or typed-array view
+merely because its span happens to fit.
+
 Decimated line/area trace entries additionally record `decimation_px`, the px
 width their M4 pass was computed for (§28: every decimation decision is
 recorded, never silent). The client reads it to skip a redundant at-home
