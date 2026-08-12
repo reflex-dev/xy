@@ -5398,6 +5398,18 @@ export class ChartView {
       return [mul, add];
     }
     const axis = this._axis(axisId);
+    // For linear axes the shader applies the map directly to encoded values (§4/§16):
+    //   encoded * mul + add  where  encoded = (v - offset) * scale
+    // Fold the column offset into the affine constants here in f64 so the shader
+    // never reconstructs the large absolute coordinate in f32.
+    if (this._axisMode(axisId) === 0) {
+      if (!Number.isFinite(hi - lo) || hi === lo) return [0, -2];
+      const scale = (meta && meta.scale) ? meta.scale : 1;
+      const offset = (meta && Number.isFinite(meta.offset)) ? meta.offset : 0;
+      const mul = 2 / ((hi - lo) * scale);
+      const add = ((offset - lo) / (hi - lo)) * 2 - 1;
+      return [mul, add];
+    }
     const c0 = this._axisCoord(axis, lo);
     const c1 = this._axisCoord(axis, hi);
     if (![c0, c1].every(Number.isFinite) || c1 === c0) return [0, -2];

@@ -129,6 +129,13 @@ float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   return value;
 }
 float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
+  // For linear axes (mode 0) the CPU has already folded the column offset into
+  // the affine constants (map.x, map.y) in f64 (§4/§16). Apply them directly to
+  // the offset-encoded value to avoid reconstructing the large absolute coordinate
+  // in f32, which would discard low bits for high-magnitude axes (e.g. ms-since-
+  // epoch datetime).  Non-linear axes decode first because their transforms are
+  // not affine.
+  if (mode == 0) return encoded * map.x + map.y;
   return xyAxisCoord(encoded, meta, mode, constant) * map.x + map.y;
 }
 float xyViewCoord(float value, int mode, float constant) {
