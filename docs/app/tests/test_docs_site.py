@@ -501,9 +501,8 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
     assert rendered_page.count("Start Building Now!") == demo_count
-    assert rendered_page.count('to:"https://build.reflex.dev/"') == demo_count
-    assert rendered_page.count('target:"_blank"') >= demo_count
-    assert rendered_page.count('rel:"noopener noreferrer"') >= demo_count
+    secure_build_action = 'rel:"noopener noreferrer",target:"_blank",to:"https://build.reflex.dev/"'
+    assert rendered_page.count(secure_build_action) == demo_count
     assert (
         rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
         == demo_count
