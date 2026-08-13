@@ -1,4 +1,4 @@
-import { TRACE_GPU_BUFFERS } from "./00_header";
+import { TRACE_GPU_BUFFERS, wireColumnDtype } from "./00_header";
 import { parseColor } from "./20_theme";
 
 // ---------------------------------------------------------------------------
@@ -805,6 +805,19 @@ export function lodPromoteCachedDrill(view, g, x0, x1, y0, y1) {
 // (channels restored). Build/refresh a direct-shaped sibling on the tiered
 // trace; the tier draw uses it until the kernel switches back.
 export function lodApplyDrill(view, g, upd, buffers) {
+  wireColumnDtype(upd.x, "drill x");
+  wireColumnDtype(upd.y, "drill y");
+  for (const [name, meta] of [
+    ["color", upd.color],
+    ["size", upd.size],
+    ["stroke", upd.stroke],
+    ["density_val", upd.density_val],
+  ]) {
+    if (meta && meta.buf !== undefined) wireColumnDtype(meta, `drill ${name}`);
+  }
+  for (const [name, meta] of Object.entries(upd.channels || {})) {
+    if (meta && (meta as any).buf !== undefined) wireColumnDtype(meta, `drill ${name}`);
+  }
   const gl = view.gl;
   g._stepReqWin = null; // real points supersede any outstanding ladder step
   const win = {
@@ -834,8 +847,8 @@ export function lodApplyDrill(view, g, upd, buffers) {
   d.trace = { ...g.trace, style: upd.style || g.trace.style || {} };
   d.xAxis = g.xAxis;
   d.yAxis = g.yAxis;
-  const xs = view._asF32(buffers[upd.x.buf]);
-  const ys = view._asF32(buffers[upd.y.buf]);
+  const xs = view._wireColumnView(buffers[upd.x.buf], upd.x, "drill x");
+  const ys = view._wireColumnView(buffers[upd.y.buf], upd.y, "drill y");
   gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
   gl.bufferData(gl.ARRAY_BUFFER, xs, gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
@@ -873,9 +886,9 @@ export function lodApplyDrill(view, g, upd, buffers) {
   if (upd.color && upd.color.buf !== undefined) {
     d.colorMode = upd.color.mode === "continuous" ? 1 :
       (upd.color.mode === "categorical" ? 2 : 3);
-    const colorValues = upd.color.dtype === "u8"
-      ? view._asU8(buffers[upd.color.buf])
-      : view._asF32(buffers[upd.color.buf]);
+    const colorValues = view._wireColumnView(
+      buffers[upd.color.buf], upd.color, "drill color",
+    );
     if (d.colorMode === 3) d._cpu.rgba = colorValues;
     else d._cpu.color = colorValues;
     const colorBufferName = d.colorMode === 3 ? "rgbaBuf" : "cBuf";
@@ -894,9 +907,9 @@ export function lodApplyDrill(view, g, upd, buffers) {
   d.sizeRange = [2, 18];
   if (upd.size && upd.size.mode === "continuous") {
     d.sizeMode = 1;
-    const sizeValues = upd.size.dtype === "u8"
-      ? view._asU8(buffers[upd.size.buf])
-      : view._asF32(buffers[upd.size.buf]);
+    const sizeValues = view._wireColumnView(
+      buffers[upd.size.buf], upd.size, "drill size",
+    );
     d._cpu.size = sizeValues;
     if (!d.sBuf) d.sBuf = gl.createBuffer();
     view._tagChannelBuf(d.sBuf, sizeValues, true);
@@ -918,9 +931,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
     const copy = (name, component, scale = 1) => {
       const spec = styleChannel(name);
       if (!spec) return;
-      const source = spec.dtype === "u8"
-        ? view._asU8(buffers[spec.buf])
-        : view._asF32(buffers[spec.buf]);
+      const source = view._wireColumnView(buffers[spec.buf], spec, `drill ${name}`);
       const components = spec.components || 1;
       for (let i = 0; i < d.n; i++) values[i * 4 + component] = source[i * components] * scale;
     };
@@ -939,7 +950,7 @@ export function lodApplyDrill(view, g, upd, buffers) {
     gl.bufferData(gl.ARRAY_BUFFER, values, gl.STATIC_DRAW);
   }
   if (upd.stroke && upd.stroke.mode === "direct_rgba") {
-    const values = view._asU8(buffers[upd.stroke.buf]);
+    const values = view._wireColumnView(buffers[upd.stroke.buf], upd.stroke, "drill stroke");
     d._cpuStroke = values;
     if (!d.strokeBuf) d.strokeBuf = gl.createBuffer();
     d.strokeBuf._fcType = gl.UNSIGNED_BYTE;
@@ -956,9 +967,9 @@ export function lodApplyDrill(view, g, upd, buffers) {
   // surfaces keep the ramp (their texture still wears the log tone curve).
   const meanColorSurface = !!(g.density && g.density.rgba);
   if (!meanColorSurface && upd.density_val && upd.density_val.buf !== undefined) {
-    const dvalValues = upd.density_val.dtype === "u8"
-      ? view._asU8(buffers[upd.density_val.buf])
-      : view._asF32(buffers[upd.density_val.buf]);
+    const dvalValues = view._wireColumnView(
+      buffers[upd.density_val.buf], upd.density_val, "drill density_val",
+    );
     if (!d.dBuf) d.dBuf = gl.createBuffer();
     view._tagChannelBuf(d.dBuf, dvalValues, true);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);

@@ -1,4 +1,4 @@
-import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, wireColumnDtype, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
@@ -482,6 +482,9 @@ export class ChartView {
         `xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
         "Update the xy package and restart the kernel.";
       throw new Error("protocol mismatch");
+    }
+    if (Array.isArray(spec.columns)) {
+      spec.columns.forEach((meta, index) => wireColumnDtype(meta, `column ${index}`));
     }
     this.spec = spec;
     // Title y/pad placement is a binary geometry column, so it must be
@@ -4263,6 +4266,20 @@ export class ChartView {
       this._refreshReductionBadges();
       return;
     }
+    wireColumnDtype(sample.x, "density sample x");
+    wireColumnDtype(sample.y, "density sample y");
+    for (const [name, meta] of [
+      ["color", sample.color],
+      ["size", sample.size],
+      ["stroke", sample.stroke],
+    ]) {
+      if (meta && meta.buf !== undefined) wireColumnDtype(meta, `density sample ${name}`);
+    }
+    for (const [name, meta] of Object.entries(sample.channels || {})) {
+      if (meta && (meta as any).buf !== undefined) {
+        wireColumnDtype(meta, `density sample ${name}`);
+      }
+    }
     const gl = this.gl;
     const trace = {
       id: g.trace.id,
@@ -4299,8 +4316,8 @@ export class ChartView {
       size: (sample.size && sample.size.size) || 4.0,
       sizeRange: [2, 18],
     };
-    const xValues = this._asF32(buffers[sample.x.buf]);
-    const yValues = this._asF32(buffers[sample.y.buf]);
+    const xValues = this._wireColumnView(buffers[sample.x.buf], sample.x, "density sample x");
+    const yValues = this._wireColumnView(buffers[sample.y.buf], sample.y, "density sample y");
     s._cpu = { x: xValues, y: yValues, xMeta: s.xMeta, yMeta: s.yMeta };
     gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
     gl.bufferData(gl.ARRAY_BUFFER, xValues, gl.STATIC_DRAW);
@@ -4309,9 +4326,9 @@ export class ChartView {
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 :
         (sample.color.mode === "categorical" ? 2 : 3);
-      const colorValues = sample.color.dtype === "u8"
-        ? this._asU8(buffers[sample.color.buf])
-        : this._asF32(buffers[sample.color.buf]);
+      const colorValues = this._wireColumnView(
+        buffers[sample.color.buf], sample.color, "density sample color",
+      );
       if (s.colorMode === 3) s._cpu.rgba = colorValues;
       else s._cpu.color = colorValues;
       const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
@@ -4327,9 +4344,9 @@ export class ChartView {
     }
     if (sample.size && sample.size.mode === "continuous") {
       s.sizeMode = 1;
-      const sizeValues = sample.size.dtype === "u8"
-        ? this._asU8(buffers[sample.size.buf])
-        : this._asF32(buffers[sample.size.buf]);
+      const sizeValues = this._wireColumnView(
+        buffers[sample.size.buf], sample.size, "density sample size",
+      );
       s._cpu.size = sizeValues;
       s.sBuf = gl.createBuffer();
       this._tagChannelBuf(s.sBuf, sizeValues, true);
@@ -4351,9 +4368,9 @@ export class ChartView {
       const copy = (name, component, scale = 1) => {
         const spec = channel(name);
         if (!spec) return;
-        const source = spec.dtype === "u8"
-          ? this._asU8(buffers[spec.buf])
-          : this._asF32(buffers[spec.buf]);
+        const source = this._wireColumnView(
+          buffers[spec.buf], spec, `density sample ${name}`,
+        );
         const components = spec.components || 1;
         for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
       };
@@ -4368,7 +4385,9 @@ export class ChartView {
       s._styleDpr = this.dpr;
     }
     if (sample.stroke && sample.stroke.mode === "direct_rgba") {
-      s._cpuStroke = this._asU8(buffers[sample.stroke.buf]);
+      s._cpuStroke = this._wireColumnView(
+        buffers[sample.stroke.buf], sample.stroke, "density sample stroke",
+      );
       s.strokeBuf = this._upload(s._cpuStroke);
     }
     this._pointMarkStyle(s, trace);
@@ -5252,7 +5271,7 @@ export class ChartView {
   // lifecycle live in 45_lod.js — chart-agnostic so future tiered kinds
   // (heatmap, histogram) reuse them instead of copy-pasting.
 
-  _columnView(buffer, meta) {
+  _columnView(buffer, meta, context = null) {
     // Packed layout: one blob, columns addressed by global byte_offset.
     // Split layout (§29 first paint): `buffer` is a list of per-column
     // buffers and the column entry carries `buf`, its list index. A
@@ -5273,14 +5292,15 @@ export class ChartView {
         !Number.isSafeInteger(length) || length < 0) {
       throw new RangeError("column offset/length must be non-negative safe integers");
     }
-    const bytesPerElement = meta.dtype === "u8" ? 1 : 4;
+    const dtypeContext = context || (Number.isInteger(meta.buf)
+      ? `column buffer ${meta.buf}`
+      : `column at byte_offset ${meta.byte_offset}`);
+    const { bytesPerElement, ArrayType } = wireColumnDtype(meta, dtypeContext);
     const absoluteOffset = span.byteOffset + relativeOffset;
     const end = relativeOffset + length * bytesPerElement;
     if (end > span.byteLength) throw new RangeError("column extends past chart payload");
     if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
-    if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
-    if (meta.dtype === "u32") return new Uint32Array(span.buffer, absoluteOffset, length);
-    return new Float32Array(span.buffer, absoluteOffset, length);
+    return new ArrayType(span.buffer, absoluteOffset, length);
   }
 
   _upload(view) {
@@ -8440,6 +8460,13 @@ export class ChartView {
       return new Uint32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
     }
     return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  }
+
+  _wireColumnView(buffer, meta, context = "column") {
+    const { name } = wireColumnDtype(meta, context);
+    if (name === "u8") return this._asU8(buffer);
+    if (name === "u32") return this._asU32(buffer);
+    return this._asF32(buffer);
   }
 
   _applyTheme() {
