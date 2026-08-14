@@ -7245,10 +7245,6 @@ class Axes(PlotTypeMixin):
                 pad = (hi - lo) * 1e-9
                 ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
             auto_log = is_log
-        # A minor locator alone must not pin the majors. `ticks` is still needed
-        # below to subdivide between them, but authoring `tick_values` here would
-        # freeze an otherwise automatic axis: the renderer filters authored
-        # positions to the visible window, so zooming past them drops the labels.
         majors_are_auto = (
             locator is None
             and formatter is None
@@ -7256,8 +7252,6 @@ class Axes(PlotTypeMixin):
             and not is_log
             and "tick_values" not in props
         )
-        if not majors_are_auto:
-            props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if formatter is not None:
             props["tick_labels"] = _formatter_tick_labels(
                 formatter,
@@ -7275,11 +7269,13 @@ class Axes(PlotTypeMixin):
             props["tick_labels"] = [f"{value:g}" for value in ticks]
         else:
             props.pop("tick_labels", None)
-        if not majors_are_auto:
-            if len(ticks):
-                props["tick_count"] = len(ticks)
-            else:
-                props.pop("tick_count", None)
+        # Authoring positions freezes an automatic axis; labels need them anyway.
+        if not majors_are_auto or "tick_labels" in props:
+            props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
+        if len(ticks):
+            props["tick_count"] = len(ticks)
+        else:
+            props.pop("tick_count", None)
         if promoted_minor:
             props.pop("minor_tick_values", None)
             props["style"] = {
