@@ -19,18 +19,42 @@ LLMS_DIRECTIVE = "For AI agents: the complete XY documentation index is at"
 
 
 def route_html_paths(route: str) -> tuple[Path, ...]:
-    """Return the canonical trailing-slash HTML path for a route.
+    """Return supported prerendered HTML paths for a route.
 
     Args:
         route: Public documentation route.
 
     Returns:
-        The directory-index HTML path served for the canonical URL.
+        Current flat-file and legacy directory-index HTML paths.
     """
     route_path = route.strip("/")
     if not route_path:
-        return (BUILD_ROOT / "index.html",)
-    return (BUILD_ROOT / route_path / "index.html",)
+        return (
+            BUILD_ROOT.with_suffix(".html"),
+            BUILD_ROOT / "index.html",
+        )
+    return (
+        BUILD_ROOT / f"{route_path}.html",
+        BUILD_ROOT / route_path / "index.html",
+    )
+
+
+def fallback_html_paths() -> tuple[Path, ...]:
+    """Return current and legacy Reflex SPA fallback paths."""
+    return (
+        BUILD_ROOT / "404.html",
+        BUILD_ROOT / "__spa-fallback.html",
+    )
+
+
+def prerender_layout_index() -> int:
+    """Return the active Reflex export layout's candidate index."""
+    fallbacks = fallback_html_paths()
+    layout_index = next((index for index, path in enumerate(fallbacks) if path.is_file()), None)
+    if layout_index is None:
+        msg = f"Missing SPA fallback: {fallbacks!r}"
+        raise RuntimeError(msg)
+    return layout_index
 
 
 def route_module_path(route: str) -> Path:
@@ -95,10 +119,7 @@ def validate_inline_svg_gallery(page_route: str, module_path: Path) -> None:
 
 def main() -> None:
     """Check every generated docs route."""
-    fallback = BUILD_ROOT / "__spa-fallback.html"
-    if not fallback.is_file():
-        msg = f"Missing SPA fallback: {fallback}"
-        raise RuntimeError(msg)
+    layout_index = prerender_layout_index()
 
     pages = discover_docs(DOCS_CONFIG)
     for page in pages:
@@ -111,22 +132,22 @@ def main() -> None:
         if any(marker in page.content for marker in LIVE_PREVIEW_MARKERS):
             validate_live_preview(page.route, module_path)
         html_paths = route_html_paths(page.route)
-        if not any(path.is_file() for path in html_paths):
-            msg = f"Missing prerendered documentation route: {html_paths!r}"
+        html_path = html_paths[layout_index]
+        if not html_path.is_file():
+            msg = f"Missing prerendered documentation route: {html_path}"
             raise RuntimeError(msg)
-        for html_path in html_paths:
-            if html_path.is_file() and LLMS_DIRECTIVE not in html_path.read_text(encoding="utf-8"):
-                msg = f"Prerendered route omits the llms.txt directive: {html_path}"
-                raise RuntimeError(msg)
+        if LLMS_DIRECTIVE not in html_path.read_text(encoding="utf-8"):
+            msg = f"Prerendered route omits the llms.txt directive: {html_path}"
+            raise RuntimeError(msg)
 
     for route in DOCS_REDIRECTS:
         module_path = route_module_path(route)
         if not module_path.is_file():
             msg = f"Missing compiled redirect route: {module_path}"
             raise RuntimeError(msg)
-        html_paths = route_html_paths(route)
-        if not any(path.is_file() for path in html_paths):
-            msg = f"Missing prerendered redirect route: {html_paths!r}"
+        html_path = route_html_paths(route)[layout_index]
+        if not html_path.is_file():
+            msg = f"Missing prerendered redirect route: {html_path}"
             raise RuntimeError(msg)
 
 

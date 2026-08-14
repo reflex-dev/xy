@@ -10,6 +10,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
@@ -500,6 +501,9 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert rendered_page.count('value:"data"') == data_demos * 2
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
+    assert rendered_page.count("Start Building Now!") == demo_count
+    secure_build_action = 'rel:"noopener noreferrer",target:"_blank",to:"https://build.reflex.dev/"'
+    assert rendered_page.count(secure_build_action) == demo_count
     assert (
         rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
         == demo_count
@@ -2409,6 +2413,77 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
+    assert "AlgoliaSearch" in rendered
+    assert "Inkeep" not in rendered
+
+
+def test_prerendered_route_paths_support_current_and_legacy_reflex_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the production validator compatible across Reflex export layouts."""
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", tmp_path)
+
+    assert check_html_routes.route_html_paths("/charts/scatter/") == (
+        tmp_path / "charts/scatter.html",
+        tmp_path / "charts/scatter/index.html",
+    )
+    assert check_html_routes.route_html_paths("/") == (
+        tmp_path.with_suffix(".html"),
+        tmp_path / "index.html",
+    )
+    assert check_html_routes.fallback_html_paths() == (
+        tmp_path / "404.html",
+        tmp_path / "__spa-fallback.html",
+    )
+
+
+def test_prerendered_route_layout_is_selected_once_for_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not let a stale route from another layout mask missing output."""
+    current_root = tmp_path / "current"
+    current_root.mkdir()
+    (current_root / "404.html").touch()
+    (current_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", current_root)
+    assert check_html_routes.prerender_layout_index() == 0
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    (legacy_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", legacy_root)
+    assert check_html_routes.prerender_layout_index() == 1
+
+
+def test_current_prerender_layout_does_not_accept_a_stale_legacy_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail when current output is missing even if its legacy peer remains."""
+    build_root = tmp_path / "build" / "docs" / "xy"
+    build_root.mkdir(parents=True)
+    (build_root / "404.html").touch()
+    stale_route = build_root / "charts" / "scatter" / "index.html"
+    stale_route.parent.mkdir(parents=True)
+    stale_route.write_text(check_html_routes.LLMS_DIRECTIVE, encoding="utf-8")
+
+    routes_root = tmp_path / "routes"
+    routes_root.mkdir()
+    (routes_root / "[charts].[scatter]._index.jsx").touch()
+
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(
+        check_html_routes,
+        "discover_docs",
+        lambda _config: [SimpleNamespace(route="/charts/scatter/", content="")],
+    )
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {})
+
+    with pytest.raises(RuntimeError, match=r"charts/scatter\.html"):
+        check_html_routes.main()
 
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:

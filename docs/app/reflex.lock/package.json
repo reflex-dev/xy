@@ -6,17 +6,16 @@
     "export": "react-router build"
   },
   "dependencies": {
-    "@base-ui/react": "1.6.0",
+    "@base-ui/react": "1.7.0",
     "@fontsource-variable/instrument-sans": "5.2.8",
     "@fontsource-variable/jetbrains-mono": "5.2.8",
     "@hugeicons/core-free-icons": "4.2.3",
     "@hugeicons/react": "1.1.9",
-    "@inkeep/cxkit-react": "0.5.119",
     "@radix-ui/react-accordion": "1.2.18",
     "@radix-ui/react-dialog": "1.1.21",
     "@radix-ui/react-form": "0.1.14",
     "@radix-ui/themes": "3.3.0",
-    "@react-router/node": "7.18.2",
+    "@react-router/node": "8.3.0",
     "clsx": "2.1.1",
     "clsx-for-tailwind": "1.0.0",
     "es-toolkit": "1.46.1",
@@ -26,8 +25,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-helmet": "6.1.0",
-    "react-router": "7.18.2",
-    "react-router-dom": "7.18.2",
+    "react-router": "8.3.0",
     "shiki": "4.3.1",
     "socket.io-client": "4.8.3",
     "sonner": "2.0.7",
@@ -39,14 +37,14 @@
   },
   "devDependencies": {
     "@emotion/react": "11.14.0",
-    "@react-router/dev": "7.18.2",
-    "@react-router/fs-routes": "7.18.2",
+    "@react-router/dev": "8.3.0",
+    "@react-router/fs-routes": "8.3.0",
     "@tailwindcss/postcss": "4.3.0",
     "autoprefixer": "10.5.4",
     "postcss": "8.5.23",
     "postcss-import": "16.1.1",
     "tailwindcss": "4.3.0",
-    "vite": "8.0.16"
+    "vite": "8.2.0"
   },
   "overrides": {
     "cookie": "1.1.1",

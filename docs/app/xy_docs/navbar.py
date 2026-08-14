@@ -2,8 +2,8 @@
 
 import reflex as rx
 import reflex_components_internal as ui
+from reflex_site_shared.components.algolia import algolia_search
 from reflex_site_shared.components.icons import get_icon
-from reflex_site_shared.components.inkeep import inkeep
 from reflex_site_shared.components.marketing_button import button
 from reflex_site_shared.constants import REFLEX_ASSETS_CDN
 from reflex_site_shared.views.hosting_banner import HostingBannerState
@@ -114,7 +114,7 @@ def _navigation_menu() -> rx.Component:
         ),
         ui.navigation_menu.list(
             ui.navigation_menu.item(
-                inkeep(),
+                algolia_search(),
                 unstyled=True,
                 custom_attrs={"role": "menuitem"},
             ),

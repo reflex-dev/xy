@@ -56,6 +56,12 @@ providing stable accessible names and polite copied/failed announcements. Its
 production-DOM check rejects both unnamed controls and shared-theme generated
 text that would replace the copy/check icon feedback.
 
+Live chart demos reuse the Reflex Build action from `reflex-site-shared`, and
+the documentation navbar uses that package's keyword-only Algolia search. The
+production route gate selects either the current flat-HTML/`404.html` layout or
+the legacy directory-index/`__spa-fallback.html` layout once for the complete
+build, so stale files from the other layout cannot mask missing routes.
+
 CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
 checks those semantics and interactions in every engine, compares WebGL output
 with a coarse per-channel perceptual signature, and compares DOM chrome through

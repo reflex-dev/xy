@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import reflex as rx
+from reflex_site_shared.components.blocks.demo import _reflex_build_action
 
 from xy_docs.code import doccode
 
@@ -22,10 +23,22 @@ main:has(#xy-chart-examples) > div:has(article #xy-chart-examples) {
 # white, covers the seam and opens into the surface below while inactive
 # triggers keep their bottom border. Card and triggers share `border-secondary-4`.
 _EXAMPLE_TAB_LIST_CLASS = (
-    "xy-example-tab-list relative z-10 -mb-px flex w-full items-end justify-end "
+    "xy-example-tab-list relative z-10 -mb-px ml-auto flex items-end justify-end "
     "!gap-0 !border-b-0 !bg-transparent !p-0 !shadow-none "
     "before:!hidden after:!hidden"
 )
+
+
+def _example_demo_header(*triggers: rx.Component) -> rx.Component:
+    """Place the Build action and folder-style tab controls in one header."""
+    return rx.el.div(
+        _reflex_build_action(),
+        rx.tabs.list(*triggers, class_name=_EXAMPLE_TAB_LIST_CLASS),
+        class_name=(
+            "flex w-full flex-wrap items-end justify-between gap-x-2 gap-y-1 sm:flex-nowrap"
+        ),
+    )
+
 
 _EXAMPLE_TAB_CLASS = (
     "xy-example-tab cursor-pointer appearance-none !rounded-none "
@@ -247,7 +260,7 @@ def chart_example_demo(
         panels.append(_example_code_panel(data, "data"))
 
     return rx.tabs.root(
-        rx.tabs.list(*triggers, class_name=_EXAMPLE_TAB_LIST_CLASS),
+        _example_demo_header(*triggers),
         rx.el.div(*panels, class_name=_EXAMPLE_CARD_CLASS),
         default_value="preview",
         id=component_id,
