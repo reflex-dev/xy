@@ -294,3 +294,19 @@ def test_named_annotation_accepts_relative_fontsize() -> None:
     annotation = ax.annotate(text="note", xy=(0, 0), fontsize="small")
 
     assert annotation._entry["kwargs"]["style"]["font_size"] == pytest.approx(8.5)
+
+
+def test_minorticks_on_leaves_automatic_major_ticks_unpinned() -> None:
+    """Enabling minor ticks must not freeze the majors into authored positions.
+
+    Authored `tick_values` are filtered to the visible window by the renderer,
+    so pinning them here makes the tick labels disappear once the view is
+    zoomed past them.
+    """
+    _fig, ax = plt.subplots()
+    ax.plot([0, 10], [0, 10])
+    ax.minorticks_on()
+
+    spec, _blob = ax._build_chart(600, 400).figure().build_payload()
+    assert spec["x_axis"].get("minor_tick_values")
+    assert spec["x_axis"].get("tick_values") is None
