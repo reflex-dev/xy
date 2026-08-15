@@ -1,0 +1,226 @@
+# Promote an already-staged docs image pair to production.
+#
+# Production is never deployed by a push. It is an explicit promotion of an
+# image tag that is *already running in staging*, held behind the `production`
+# environment's approval. By default this workflow reads the tag out of the
+# internal chart's staging values file, so "promote" means the exact images a
+# human just looked at on the staging site — the guarantee the old
+# tag-triggered stage-then-prod chain got from running both halves in one run.
+#
+# Living in its own workflow buys two things that chain could not have:
+#   * a pending production approval no longer sits inside the staging
+#     concurrency group, so it cannot block staging deploys for up to 12 hours;
+#   * rollback is a first-class action — dispatch an older tag and it ships,
+#     without rebuilding anything or re-cutting a release.
+#
+# Promotion is not gated on a library release (see spec/process/docs-deploy.md).
+# The release context of the promoted commit is resolved *before* the approval
+# gate and written to the run summary, so whoever approves can see whether the
+# docs about to go live describe a version users can already `pip install`.
+
+name: Promote XY Docs to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to promote (default: whatever staging runs now)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-xy-docs-prod
+  cancel-in-progress: false
+
+env:
+  HELM_REPO: reflex-dev/helm-charts
+  STG_VALUES: charts/internal/values-stg.yaml
+
+jobs:
+  resolve:
+    name: Resolve Promotion Candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      source_ref: ${{ steps.commit.outputs.source_ref }}
+      source_sha: ${{ steps.commit.outputs.source_sha }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.HELM_BOT_APP_ID }}
+          private-key: ${{ secrets.HELM_BOT_PRIVATE_KEY }}
+          owner: reflex-dev
+          repositories: helm-charts
+
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.53.2
+          YQ_SHA256: d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b
+        run: |
+          tmpfile=$(mktemp)
+          curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o "$tmpfile"
+          echo "${YQ_SHA256}  ${tmpfile}" | sha256sum -c -
+          sudo install -m 0755 "$tmpfile" /usr/local/bin/yq
+          rm -f "$tmpfile"
+
+      - name: Resolve the image tag to promote
+        id: tag
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+          STG_VALUES: ${{ env.STG_VALUES }}
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ -n "$INPUT_TAG" ]]; then
+            IMAGE_TAG="$INPUT_TAG"
+            echo "::notice::Promoting the explicitly requested tag ${IMAGE_TAG} (rollback path)"
+          else
+            gh api "repos/${HELM_REPO}/contents/${STG_VALUES}" \
+              -H "Accept: application/vnd.github.raw" > /tmp/values-stg.yaml
+            FRONTEND=$(yq -r '.apps.xy.frontend.image.tag // ""' /tmp/values-stg.yaml)
+            BACKEND=$(yq -r '.apps.xy.backend.image.tag // ""' /tmp/values-stg.yaml)
+            if [[ -z "$FRONTEND" || -z "$BACKEND" ]]; then
+              echo "::error::${STG_VALUES} does not set both apps.xy.{frontend,backend}.image.tag"
+              exit 1
+            fi
+            # The two tags are written together by _helm-docs-pr.yml. A split
+            # means staging is mid-deploy or hand-edited, and there is no single
+            # thing to promote — refuse rather than guess which half is live.
+            if [[ "$FRONTEND" != "$BACKEND" ]]; then
+              echo "::error::staging is split (frontend=${FRONTEND}, backend=${BACKEND}); refusing to promote"
+              exit 1
+            fi
+            IMAGE_TAG="$FRONTEND"
+            echo "::notice::Promoting the tag staging currently runs: ${IMAGE_TAG}"
+          fi
+          # Same ceiling the reusable build/helm workflows enforce.
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || (( ${#IMAGE_TAG} > 128 )); then
+            echo "::error::image_tag must match [A-Za-z0-9._-]+ and be <=128 characters"
+            exit 1
+          fi
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the source commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+        run: |
+          # Image tags are `sha-<short>`; older ones are release tags. Either
+          # form resolves through the commits API. A tag whose commit no longer
+          # exists (force-pushed branch, deleted tag) is still promotable — the
+          # images are what ship — so fall back to reporting the tag itself
+          # rather than blocking a rollback on missing git history.
+          CANDIDATE="${IMAGE_TAG#sha-}"
+          SHA=$(gh api "repos/${REPO}/commits/${CANDIDATE}" --jq '.sha' 2>/dev/null || true)
+          if [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+            echo "source_ref=$SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not resolve a commit for ${IMAGE_TAG}; promoting the images anyway"
+            echo "source_sha=" >> "$GITHUB_OUTPUT"
+            echo "source_ref=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Full history and tags: the nearest release tag is what says whether the
+      # docs about to ship describe a published version, and a shallow clone
+      # has neither.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.commit.outputs.source_sha != ''
+        with:
+          ref: ${{ steps.commit.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Advisory, never a gate. Docs deploys are decoupled from releases on
+      # purpose; this only makes the consequence visible at approval time
+      # instead of discovered on the live site.
+      - name: Report release context
+        id: context
+        if: steps.commit.outputs.source_sha != ''
+        env:
+          SOURCE_SHA: ${{ steps.commit.outputs.source_sha }}
+        run: |
+          RELEASE=$(git describe --tags --abbrev=0 --match 'v*' "$SOURCE_SHA" 2>/dev/null || true)
+          if [[ -z "$RELEASE" ]]; then
+            echo "release_note=no \`v*\` release tag is reachable from this commit" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PYPI_VERSION="${RELEASE#v}"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null || true)
+          case "$CODE" in
+            # An unreachable PyPI must not read as "unpublished": this line is
+            # advisory, and a wrong claim is worse than an honest unknown.
+            200) STATE="published on PyPI" ;;
+            404) STATE="**not on PyPI**" ;;
+            *)   STATE="of unknown PyPI status (query returned '${CODE:-no response}')" ;;
+          esac
+          if [[ "$(git rev-list -n1 "$RELEASE" 2>/dev/null)" == "$SOURCE_SHA" ]]; then
+            WHERE="this commit is exactly \`${RELEASE}\`"
+          else
+            AHEAD=$(git rev-list --count "${RELEASE}..${SOURCE_SHA}" 2>/dev/null || echo "?")
+            WHERE="${AHEAD} commit(s) after \`${RELEASE}\` — the docs may describe unreleased code"
+          fi
+          echo "release_note=${WHERE}; \`${RELEASE}\` is ${STATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+          SOURCE_SHA: ${{ steps.commit.outputs.source_sha }}
+          RELEASE_NOTE: ${{ steps.context.outputs.release_note }}
+          REQUESTED: ${{ inputs.image_tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "### XY docs production promotion"
+            echo ""
+            echo "**Image tag:** \`${IMAGE_TAG}\`"
+            if [[ -n "$REQUESTED" ]]; then
+              echo "**Source:** explicitly requested (rollback path)"
+            else
+              echo "**Source:** the tag staging currently runs"
+            fi
+            if [[ -n "$SOURCE_SHA" ]]; then
+              echo "**Commit:** https://github.com/${REPO}/commit/${SOURCE_SHA}"
+            fi
+            if [[ -n "$RELEASE_NOTE" ]]; then
+              echo "**Release context:** ${RELEASE_NOTE}"
+            fi
+            echo ""
+            echo "Awaiting approval on the \`production\` environment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  await-approval:
+    name: Await Production Approval
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - env:
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: echo "Approved for production promotion of ${IMAGE_TAG}"
+
+  helm-pr-prod:
+    name: Update Production Helm Values
+    needs: [resolve, await-approval]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.resolve.outputs.image_tag }}
+      environment: prod
+      source_ref: ${{ needs.resolve.outputs.source_ref }}
+      auto_merge: true
+    secrets: inherit

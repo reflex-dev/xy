@@ -1,21 +1,31 @@
-# Build one versioned image pair, deploy it to staging, wait for production
-# approval, then promote the exact same images to production.
+# Deploy the docs site to staging.
+#
+# Docs deploys are deliberately *not* tied to library releases. A docs change
+# reaches staging on the merge that makes it, not on the next `v*` tag, and
+# production is a separate explicit promotion (deploy-docs-prod.yml) rather
+# than the tail of this workflow.
+#
+# Two entry points, one image-tag scheme (`sha-<short>`, identical to
+# deploy-docs-dev.yml):
+#
+#   * a successful dev deploy — staging promotes the images that run already
+#     built for that commit, with no second build (build once, promote many);
+#   * workflow_dispatch — deploy any branch, tag, or commit on demand, which
+#     builds because nothing may have built that commit yet.
 
-name: Deploy XY Docs to Stage and Prod
+name: Deploy XY Docs to Stage
 
 on:
+  workflow_run:
+    workflows: ["Deploy XY Docs to Dev"]
+    types: [completed]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Existing XY release tag (semver, for example v0.1.0)"
-        required: true
+      ref:
+        description: "Branch, tag, or commit SHA to deploy (default: main)"
+        required: false
+        default: main
         type: string
-  push:
-    # The library's semver release tags — the same `v*` tags release.yml
-    # publishes to PyPI from, so the docs site ships the version it documents.
-    # Deploying an arbitrary commit outside a release is workflow_dispatch's
-    # job (or deploy-docs-dev.yml, which tracks main on every push).
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -27,151 +37,105 @@ concurrency:
 jobs:
   prepare:
     name: Prepare
+    # A dev deploy that failed never pushed images, so there is nothing to
+    # promote. (A dev run that skipped its build because the commit was already
+    # deployed did succeed, and its images are already in the registry.)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.resolve.outputs.version }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
+      needs_build: ${{ steps.resolve.outputs.needs_build }}
     steps:
-      - name: Resolve version and source commit
+      - name: Resolve source commit and image tag
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
-          EVENT_SHA: ${{ github.sha }}
+          REF: ${{ inputs.ref }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |
-          # Loose shape check only: this runs before the repo is on disk, so all
-          # it has to establish is that the value can resolve to a ref and is a
-          # legal image tag. check_release_version.py below is the authority on
-          # what a release tag is. Deliberately PEP 440, not strict SemVer — a
-          # pre-release tags as `v0.2.0rc1`, no dash. Local versions are
-          # excluded because `+` is not a legal Docker tag character and this
-          # value becomes the image tag, and the trailing class cannot end in a
-          # separator. 128 chars is the ceiling the reusable build/helm
-          # workflows enforce.
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9]+)*$ ]]; then
-            echo "::error::version must be a release tag like v0.1.0 or v0.2.0rc1"
-            exit 1
-          fi
-          if (( ${#VERSION} > 128 )); then
-            echo "::error::version must be <=128 characters (Docker tag limit)"
-            exit 1
-          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            SHA=$(gh api "repos/${REPO}/commits/${VERSION}" --jq '.sha')
+            # Loose shape check only: this runs before the repo is on disk, so
+            # all it has to establish is that the value can be handed to the
+            # API as a ref. `..` is excluded so a ref cannot walk out of the
+            # repository's namespace, the leading class keeps `-` from reading
+            # as a flag, and 128 chars is the ceiling the reusable build/helm
+            # workflows enforce.
+            if [[ ! "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]] || [[ "$REF" == *".."* ]]; then
+              echo "::error::ref must be a branch, tag, or commit ([A-Za-z0-9._/-], <=128 characters)"
+              exit 1
+            fi
+            SHA=$(gh api "repos/${REPO}/commits/${REF}" --jq '.sha')
+            # A dispatched ref may name a commit nothing has built yet.
+            NEEDS_BUILD=true
           else
-            SHA="$EVENT_SHA"
+            SHA="$RUN_SHA"
+            # The dev deploy pushed this exact tag. Promoting means pointing
+            # staging at those images, not building a second copy of them.
+            NEEDS_BUILD=false
           fi
           if [[ ! "$SHA" =~ ^[a-f0-9]{40}$ ]]; then
             echo "::error::resolved SHA is not a 40-character hex commit"
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "source_sha=$SHA"
+            echo "image_tag=sha-${SHA:0:7}"
+            echo "needs_build=$NEEDS_BUILD"
+          } >> "$GITHUB_OUTPUT"
 
-      # A semver-shaped tag is not necessarily a releasable one. Run the same
-      # gate release.yml runs, from the tagged tree, so a tag the version
-      # derivation cannot read cannot deploy docs for a library version that can
-      # never be published.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.resolve.outputs.source_sha }}
-          persist-credentials: false
-      - name: Release version gate (tag shape)
+      - name: Summary
         env:
-          VERSION: ${{ steps.resolve.outputs.version }}
-        run: python3 scripts/check_release_version.py --tag "$VERSION"
+          SOURCE_SHA: ${{ steps.resolve.outputs.source_sha }}
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          NEEDS_BUILD: ${{ steps.resolve.outputs.needs_build }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ "$NEEDS_BUILD" == true ]]; then
+            ACTION="building images for this commit"
+          else
+            ACTION="promoting the images the dev deploy already built"
+          fi
+          {
+            echo "### XY docs staging deploy"
+            echo ""
+            echo "**Commit:** https://github.com/${REPO}/commit/${SOURCE_SHA}"
+            echo "**Image tag:** \`${IMAGE_TAG}\`"
+            echo "**Action:** ${ACTION}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: Build Versioned Images
+    name: Build Staging Images
     needs: prepare
+    if: needs.prepare.outputs.needs_build == 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/_build-docs-images.yml
     with:
-      image_tag: ${{ needs.prepare.outputs.version }}
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
       source_ref: ${{ needs.prepare.outputs.source_sha }}
     secrets: inherit
 
   helm-pr-stg:
     name: Update Staging Helm Values
     needs: [prepare, build]
+    # `build` is skipped on the promotion path; a skipped dependency must not
+    # take the deploy with it, but a failed one must.
+    if: >-
+      !cancelled()
+      && needs.prepare.result == 'success'
+      && needs.build.result != 'failure'
     permissions:
       contents: read
     uses: ./.github/workflows/_helm-docs-pr.yml
     with:
-      image_tag: ${{ needs.prepare.outputs.version }}
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
       environment: stg
-      source_ref: ${{ needs.prepare.outputs.source_sha }}
-      auto_merge: true
-    secrets: inherit
-
-  await-prod-approval:
-    name: Await Production Approval
-    needs: helm-pr-stg
-    runs-on: ubuntu-latest
-    timeout-minutes: 720
-    environment: production
-    permissions:
-      contents: read
-    steps:
-      - run: echo "Approved for production promotion"
-
-  # No GitHub Release job here: on a `v*` tag release.yml owns the release
-  # (it gates the tag shape and attaches the Pyodide wheel with generated
-  # notes). A second creator would race it and could win, stamping a
-  # library release with docs-deployment notes. The flip side of not owning it
-  # is that this workflow must confirm it happened before promoting prod.
-  verify-library-release:
-    name: Verify Library Release Published
-    needs: [prepare, await-prod-approval]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      # release.yml runs in parallel on the same tag and its wheel matrix is
-      # slow, so poll rather than sample once. Prod must never document a
-      # version users cannot `pip install`.
-      - name: Await GitHub Release and PyPI availability
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          REPO: ${{ github.repository }}
-        run: |
-          PYPI_VERSION="${VERSION#v}"
-          for attempt in $(seq 1 30); do
-            RELEASED=false
-            PUBLISHED=false
-            if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
-              RELEASED=true
-            fi
-            CODE=$(curl -fsS -o /dev/null -w '%{http_code}' \
-              "https://pypi.org/pypi/xy/${PYPI_VERSION}/json" 2>/dev/null || true)
-            if [[ "$CODE" == "200" ]]; then
-              PUBLISHED=true
-            fi
-            if [[ "$RELEASED" == true && "$PUBLISHED" == true ]]; then
-              echo "::notice::${VERSION} is on GitHub Releases and PyPI"
-              exit 0
-            fi
-            echo "attempt ${attempt}/30 — release=${RELEASED} pypi=${PUBLISHED}; retrying in 60s"
-            sleep 60
-          done
-          echo "::error::${VERSION} did not publish (GitHub Release and/or PyPI missing) — refusing to promote prod"
-          exit 1
-
-  helm-pr-prod:
-    name: Update Production Helm Values
-    needs: [prepare, await-prod-approval, verify-library-release]
-    permissions:
-      contents: read
-    uses: ./.github/workflows/_helm-docs-pr.yml
-    with:
-      image_tag: ${{ needs.prepare.outputs.version }}
-      environment: prod
       source_ref: ${{ needs.prepare.outputs.source_sha }}
       auto_merge: true
     secrets: inherit

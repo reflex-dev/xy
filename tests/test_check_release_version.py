@@ -23,7 +23,7 @@ def test_gate_passes_a_release_tag() -> None:
 
 
 def test_gate_rejects_a_tag_that_is_not_a_release_tag() -> None:
-    # The docs site deploys on CalVer tags (2026.WW.N) that the version
+    # A CalVer-shaped tag (2026.WW.N) is one of the shapes the version
     # derivation deliberately ignores; one must never publish a release.
     errors = check_release_version.check_release("2026.30.1")
 
