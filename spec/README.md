@@ -102,6 +102,9 @@ Release bar, contribution rules, and audit trail.
 - [`rendering-verification.md`](process/rendering-verification.md) — the
   LOD-invariant property tests and golden visual-regression corpus that make
   renderer churn safe.
+- [`docs-deploy.md`](process/docs-deploy.md) — the dev/stg/prod docs-site
+  ladder: commit-driven triggers, build-once-promote-many image tags, and why
+  deployment is independent of the release cadence.
 - [`security-audit-2026-07-06.md`](process/security-audit-2026-07-06.md) —
   scope, findings, and status of the 2026-07-06 source audit.
 - [`tailwind-customizability-audit-2026-07-26.md`](process/tailwind-customizability-audit-2026-07-26.md)

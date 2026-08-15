@@ -8,6 +8,23 @@ in the README).
 
 ## [Unreleased]
 
+### Changed
+- Docs-site deployment is driven by commits instead of release tags. Staging no
+  longer triggers on `push: tags: v*`; it promotes the images a successful dev
+  deploy already built for a `main` commit, or builds any branch/tag/commit on
+  demand via `workflow_dispatch`. A docs fix reaches staging on the merge that
+  makes it rather than on the next version tag.
+- Production promotion moved out of the staging workflow into
+  `deploy-docs-prod.yml`, which ships the tag staging currently runs (read from
+  the internal chart's `values-stg.yaml`) or an explicit tag for rollback. The
+  two workflows hold separate concurrency groups, so a production approval
+  pending for up to 12 hours can no longer queue staging deploys behind it.
+- Promotion no longer blocks on the GitHub Release and PyPI upload for a
+  version. The nearest reachable `v*` tag and its PyPI status are resolved
+  before the approval gate and written to the run summary instead — advisory
+  information for the approver, not a gate. New spec:
+  [`spec/process/docs-deploy.md`](spec/process/docs-deploy.md).
+
 ## [0.0.6] - 2026-08-07
 
 ### Added

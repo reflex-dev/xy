@@ -22,7 +22,10 @@ Tags accept an optional PEP 440 pre-release suffix in its canonical spelling
 be normalized by the derivation (`0.0.1a1`) and could never match their own
 artifacts.
 
-Docs-deploy CalVer tags (2026.WW.N) do not match the release shape.
+Only `v`-prefixed release tags pass. Any other tag shape a repository might
+carry — CalVer-style `2026.WW.N`, deployment or infrastructure markers — is
+rejected, and nothing outside the release path depends on this gate: the docs
+site deploys by commit rather than by tag (`spec/process/docs-deploy.md`).
 Dev/post/local shapes stay rejected: dev versions are the between-tags marker
 and must stay unpublishable.
 """
