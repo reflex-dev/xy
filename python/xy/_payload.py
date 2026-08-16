@@ -60,6 +60,11 @@ class _PayloadWriter:
         # export, streaming-refresh reopen state).
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes | np.ndarray] = []
+        # One retained encoded array per column, aligned with ``columns``.
+        # Legend placement reads this bounded *emitted* geometry before blob
+        # assembly, so an M4-preserved spike cannot be missed by a second,
+        # unrelated sample of the canonical source.
+        self._column_arrays: list[np.ndarray] = []
         self._pos = 0
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
@@ -116,10 +121,12 @@ class _PayloadWriter:
             self.columns.append(
                 {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
             )
+            self._column_arrays.append(enc)
             self._chunks.append(padded)
             self._pos += padded.nbytes
             return index
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         padding = (-self._pos) % 4
@@ -148,6 +155,7 @@ class _PayloadWriter:
         self.borrowed.append(arr)
         index = len(self.columns)
         self.columns.append({"span": span, "byte_offset": 0, "len": int(len(arr)), "dtype": "f64"})
+        self._column_arrays.append(arr)
         return index
 
     def ship_values(
@@ -175,9 +183,45 @@ class _PayloadWriter:
             )
         else:
             self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         return idx
+
+    def decoded_column(self, index: int, budget: Optional[int] = None) -> np.ndarray:
+        """Decode one already-emitted column, optionally with a bounded sample."""
+        values = self._column_arrays[int(index)].reshape(-1)
+        if budget is not None and len(values) > budget:
+            selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
+            values = values[selected]
+        meta = self.columns[int(index)]
+        decoded = np.asarray(values, dtype=np.float64)
+        if "offset" in meta or "scale" in meta:
+            decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(
+                meta.get("offset", 0.0)
+            )
+        return decoded
+
+    def decoded_column_rows(
+        self,
+        index: int,
+        components: int,
+        budget: Optional[int] = None,
+    ) -> np.ndarray:
+        """Decode a bounded row sample from a multi-component emitted column."""
+        if components <= 0:
+            raise ValueError("column components must be positive")
+        values = self._column_arrays[int(index)].reshape(-1, components)
+        if budget is not None and len(values) > budget:
+            selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
+            values = values[selected]
+        meta = self.columns[int(index)]
+        decoded = np.asarray(values, dtype=np.float64)
+        if "offset" in meta or "scale" in meta:
+            decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(
+                meta.get("offset", 0.0)
+            )
+        return decoded
 
     def blob(self) -> bytes:
         return b"".join(
@@ -315,17 +359,12 @@ class PayloadMixin(_Host):
             # `palette_cycle`, not `list(self.palette)`: a `{category: color}`
             # palette would otherwise ship its category NAMES as colors.
             spec["palette"] = self.palette_cycle
-        if self.legend_options:
-            legend = self.legend_options
-            if legend.get("loc") == "best":
-                # Settle `best` here, once, so the client and the two static
-                # writers all receive a concrete location and cannot disagree
-                # about it (§28: the decision ships, it is not re-made
-                # downstream three times).
-                from ._legendfit import resolve_for_figure
-
-                legend = {**legend, "loc": resolve_for_figure(self)}
-            spec["legend"] = legend
+        annotations = self._annotation_specs()
+        if annotations:
+            # Best-legend placement treats annotation geometry as first-class
+            # visible ink, so compile it before the initial location is
+            # resolved. The same list is then shipped unchanged below.
+            spec["annotations"] = annotations
         extra_legends = getattr(self, "extra_legends", None)
         if extra_legends:
             spec["extra_legends"] = extra_legends
@@ -353,11 +392,28 @@ class PayloadMixin(_Host):
         interaction = self._interaction_spec()
         if interaction:
             spec["interaction"] = interaction
-        annotations = self._annotation_specs()
-        if annotations:
-            spec["annotations"] = annotations
         if self.animation_options is not None:
             spec["animation"] = dict(self.animation_options)
+        if self.legend_options:
+            legend = dict(self.legend_options)
+            auto_loc = (
+                self.coords == "cartesian"
+                and legend.get("anchor") is None
+                and legend.get("loc") == "best"
+            )
+            if auto_loc or legend.get("loc") == "best":
+                # Resolve only after the complete layout spec exists: padding,
+                # colorbars, secondary axes, and merged DOM styles can all
+                # change the measured plot or legend footprint.
+                from ._legendfit import resolve_for_figure
+
+                legend["loc"] = resolve_for_figure(self, spec, legend, rendered_columns=pw)
+                if auto_loc:
+                    # Static writers and the first browser frame receive one
+                    # concrete decision. The live renderer retains the intent
+                    # separately and can reconsider it after settled changes.
+                    legend["auto_loc"] = "best"
+            spec["legend"] = legend
         return spec
 
     @staticmethod

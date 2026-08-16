@@ -169,6 +169,86 @@ const LEGEND_DIM_OPACITY = 0.2;
 const LEGEND_DIM_ROW = 0.4;
 // Legend click-toggle (interaction spec §10): opacity of a toggled-off row.
 const LEGEND_OFF_ROW = 0.35;
+// Live ``loc="best"`` placement scores the pixels that were actually painted,
+// not source rows.  The fixed raster makes the pass screen- and data-bounded
+// for direct, decimated, and density tiers alike. Exact minimum overlap wins;
+// canonical candidate order breaks true ties so an empty/symmetric plot has
+// one deterministic answer and even one occupied cell loses to an empty box.
+const LEGEND_BEST_GRID_W = 96;
+const LEGEND_BEST_GRID_H = 72;
+const LEGEND_BEST_INSET_PX = 6;
+const LEGEND_BEST_ORDER = [
+  "upper right",
+  "upper left",
+  "lower left",
+  "lower right",
+  "center right",
+  "center left",
+  "lower center",
+  "upper center",
+  "center",
+];
+
+/** Pick the least-occupied standard legend box from a binary screen raster.
+ * All geometry is normalized to the plot, which keeps this helper independent
+ * of the DOM and makes its tie behavior directly probeable. */
+export function xyLegendBestLocation(
+  occupancy: ArrayLike<number>,
+  gridW: number,
+  gridH: number,
+  boxW: number,
+  boxH: number,
+  insetX = 0,
+  insetY = 0,
+): string {
+  const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
+  const gw = Math.max(1, Math.floor(Number(gridW) || 0));
+  const gh = Math.max(1, Math.floor(Number(gridH) || 0));
+  const bw = clamp(Number(boxW) || 0, 0, 1);
+  const bh = clamp(Number(boxH) || 0, 0, 1);
+  const ix = clamp(Number(insetX) || 0, 0, 0.5);
+  const iy = clamp(Number(insetY) || 0, 0, 0.5);
+  const left = clamp(ix, 0, Math.max(0, 1 - bw));
+  const right = clamp(1 - ix - bw, 0, Math.max(0, 1 - bw));
+  const centerX = Math.max(0, (1 - bw) / 2);
+  const upper = clamp(iy, 0, Math.max(0, 1 - bh));
+  const lower = clamp(1 - iy - bh, 0, Math.max(0, 1 - bh));
+  const centerY = Math.max(0, (1 - bh) / 2);
+  const positions = {
+    "upper right": [right, upper],
+    "upper left": [left, upper],
+    "lower left": [left, lower],
+    "lower right": [right, lower],
+    "center right": [right, centerY],
+    "center left": [left, centerY],
+    "lower center": [centerX, lower],
+    "upper center": [centerX, upper],
+    center: [centerX, centerY],
+  };
+  const scores = new Map<string, number>();
+  let floor = Infinity;
+  for (const loc of LEGEND_BEST_ORDER) {
+    const [x, y] = positions[loc];
+    const x0 = clamp(Math.floor(x * gw), 0, gw);
+    const x1 = clamp(Math.ceil((x + bw) * gw), x0, gw);
+    const y0 = clamp(Math.floor(y * gh), 0, gh);
+    const y1 = clamp(Math.ceil((y + bh) * gh), y0, gh);
+    let occupied = 0;
+    for (let row = y0; row < y1; row++) {
+      const offset = row * gw;
+      for (let col = x0; col < x1; col++) {
+        if (occupancy[offset + col]) occupied += 1;
+      }
+    }
+    const area = Math.max(1, (x1 - x0) * (y1 - y0));
+    const score = occupied / area;
+    scores.set(loc, score);
+    floor = Math.min(floor, score);
+  }
+  return LEGEND_BEST_ORDER.find(
+    (loc) => (scores.get(loc) ?? Infinity) === floor,
+  ) || LEGEND_BEST_ORDER[0];
+}
 // SVG gradient ids resolve document-wide; a module counter keeps every chart
 // instance's legend swatch ramps distinct.
 let legendGradientSeq = 0;
@@ -1484,11 +1564,18 @@ export class ChartView {
   _emitViewChange(source = "view", opts: any = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
+    const phase = opts.phase || "end";
+    // Update-phase frames keep the last settled answer in place.  The one
+    // end-phase event every gesture already emits is the central, coalesced
+    // seam for a fresh rendered-geometry score (pan, wheel, linked, history,
+    // and programmatic writes all pass through here).
+    this._legendBestInteractionActive = phase === "update";
+    if (phase === "end" && this._markBestLegendsDirty()) this.draw();
     this._pendingViewEvent = {
       source,
       broadcast,
       axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
-      phase: opts.phase || "end",
+      phase,
       interaction_id: opts.interactionId ?? ++this._interactionSeq,
     };
     if (this._viewEventRaf) return;
@@ -1807,6 +1894,13 @@ export class ChartView {
       this.seq += 1;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
+      // A loss can cancel the wheel end timer or an in-flight view animation
+      // after its update frame set the private legend gate. There will be no
+      // matching public end event in that case. Clear the gate and retain one
+      // settled score for the first restored frame (which may have snapped to
+      // an animation target that was never rendered before the loss).
+      this._legendBestInteractionActive = false;
+      this._markBestLegendsDirty();
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
@@ -2009,13 +2103,12 @@ export class ChartView {
       snap.height = this.canvas.height;
       snap.style.cssText = this.canvas.style.cssText;
       snap.style.pointerEvents = "none";
-      // Do not copy the default WebGL framebuffer with drawImage(). Contexts
-      // use preserveDrawingBuffer=false, so Chrome may hand the 2D canvas an
-      // already-discarded transparent buffer even though _drawNow() just
-      // submitted the marks. Read the freshly drawn pixels synchronously
-      // before WEBGL_lose_context instead; this keeps governed releases from
-      // showing only the independently painted grid/chrome while scrolling a
-      // many-chart page.
+      // Keep the governed-release snapshot on the direct readPixels path. The
+      // native fallback now requests buffer preservation for settled legend
+      // scoring, but readPixels here is synchronous by contract and also keeps
+      // recovery correct for an older/embedded browser that ignored that
+      // attribute. It prevents a released view from showing only the
+      // independently painted grid/chrome while scrolling a many-chart page.
       const gl = this.gl;
       const w = this.canvas.width;
       const h = this.canvas.height;
@@ -2389,6 +2482,7 @@ export class ChartView {
       const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
       this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
+    this._markBestLegendsDirty();
     this._positionTitles();
     this._positionReductionBadges();
     this._positionColorbar();
@@ -2625,6 +2719,7 @@ export class ChartView {
     // never fires; release any active dim state before dropping the old boxes.
     this._clearLegendHover();
     this._legends = [];
+    this._legendBestDirty = false;
     // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
     // by spec-trace index, and freshly built rows re-adopt it below.
     this._legendOffTraces = this._legendOffTraces || new Set();
@@ -2695,11 +2790,11 @@ export class ChartView {
           ? !!this._legendOffCats.get(it.traces[0])?.has(it.cat)
           : it.traces.every((ti) => this._legendOffTraces.has(ti));
       }
-      if (items.length) this._legendBox(root, items, s.legend || {});
+      if (items.length) this._legendBox(root, items, s.legend || {}, "main");
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
-    for (const extra of s.extra_legends || []) {
+    for (const [extraIndex, extra] of (s.extra_legends || []).entries()) {
       const mapped = (extra.items || []).map((it) => ({
         swatch: it.style && it.style.color,
         name: it.name,
@@ -2707,12 +2802,16 @@ export class ChartView {
         line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
         style: it.style || {},
       }));
-      if (mapped.length) this._legendBox(root, mapped, extra);
+      if (mapped.length) this._legendBox(root, mapped, extra, `extra:${extraIndex}`);
     }
   }
 
-  _legendBox(root, items, options) {
+  _legendBox(root, items, options, source = null) {
     const lg: any = document.createElement("div");
+    // Retain the declarative source across data-only updatePayload swaps. The
+    // chrome DOM stays mounted on that path, but a browser unable to sample
+    // its WebGL surface must still adopt the incoming concrete Python fallback.
+    lg._xyLegendSource = source;
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const horizontal = ncols > 1;
@@ -2740,6 +2839,18 @@ export class ChartView {
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    // Python/static export keeps `loc` concrete for deterministic files and
+    // ships the separate intent bit only when the author requested automatic
+    // placement. Anchors are authored geometry and polar legends own a gutter,
+    // so neither is ever reconsidered here.
+    if (
+      String(options.auto_loc || "").trim().toLowerCase() === "best" &&
+      !Array.isArray(options.anchor) &&
+      this.spec?.coords !== "polar"
+    ) {
+      lg.dataset.xyLegendAutoLoc = "best";
+      this._legendBestDirty = true;
     }
     if (Number.isFinite(Number(options.border_pad))) {
       lg.dataset.xyLegendBorderPad = String(Math.max(0, Number(options.border_pad)));
@@ -3284,6 +3395,7 @@ export class ChartView {
       traces: it.traces.map((ti) => this.spec.traces[ti].id),
       ...(it.cat != null ? { category: it.cat } : {}),
     });
+    this._markBestLegendsDirty();
     this.draw();
   }
 
@@ -3432,6 +3544,288 @@ export class ChartView {
         this._filterScatterRows(g, cats);
       }
     }
+  }
+
+  _markBestLegendsDirty() {
+    const automatic = (this._legends || []).some(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (automatic) this._legendBestDirty = true;
+    return automatic;
+  }
+
+  _bestLegendLiveRasterAvailable() {
+    if (this._destroyed || this._glLost || !this.gl || !this.root?.isConnected) return false;
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return false;
+    if (!(this.plot?.w > 0) || !(this.plot?.h > 0)) return false;
+    return (this._legends || []).every(
+      (legend) =>
+        legend.dataset.xyLegendAutoLoc !== "best" ||
+        legend.dataset.xyLegendAnchor ||
+        legend.getClientRects().length > 0,
+    );
+  }
+
+  _adoptBestLegendFallbacks(spec = this.spec) {
+    if (this._bestLegendLiveRasterAvailable()) return false;
+    let changed = false;
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc !== "best" || legend.dataset.xyLegendAnchor) continue;
+      const source = legend._xyLegendSource;
+      const options = source === "main"
+        ? spec?.legend
+        : typeof source === "string" && source.startsWith("extra:")
+          ? spec?.extra_legends?.[Number(source.slice("extra:".length))]
+          : null;
+      if (
+        String(options?.auto_loc || "").trim().toLowerCase() !== "best" ||
+        Array.isArray(options?.anchor)
+      ) continue;
+      const loc = String(options?.loc || "upper right");
+      if (legend.dataset.xyLegendLoc !== loc) {
+        legend.dataset.xyLegendLoc = loc;
+        this._positionLegend(legend, loc);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  _settleBestLegendInteraction() {
+    if (!this._legendBestInteractionActive) return false;
+    this._legendBestInteractionActive = false;
+    if (this._markBestLegendsDirty()) this.draw();
+    return true;
+  }
+
+  _fillBestLegendRasterRect(raster, rect) {
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return;
+    // DOMRects are visual coordinates (after CSS zoom/transform), so map them
+    // against the marks canvas's visual plot rect rather than adding unscaled
+    // layout offsets to the root rect.
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    if (!(plotRect.width > 0) || !(plotRect.height > 0)) return;
+    const plotLeft = plotRect.left;
+    const plotTop = plotRect.top;
+    const left = Math.max(plotLeft, rect.left);
+    const right = Math.min(plotRect.right, rect.right);
+    const top = Math.max(plotTop, rect.top);
+    const bottom = Math.min(plotRect.bottom, rect.bottom);
+    if (!(right > left) || !(bottom > top)) return;
+    const x0 = Math.max(
+      0,
+      Math.min(raster.w, Math.floor(((left - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const x1 = Math.max(
+      x0,
+      Math.min(raster.w, Math.ceil(((right - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const y0 = Math.max(
+      0,
+      Math.min(raster.h, Math.floor(((top - plotTop) / plotRect.height) * raster.h)),
+    );
+    const y1 = Math.max(
+      y0,
+      Math.min(raster.h, Math.ceil(((bottom - plotTop) / plotRect.height) * raster.h)),
+    );
+    for (let row = y0; row < y1; row++) {
+      raster.occupancy.fill(1, row * raster.w + x0, row * raster.w + x1);
+    }
+  }
+
+  _bestLegendAnnotationPainted(label) {
+    // getClientRects catches display:none, but not an opacity-zero ancestor.
+    // Walk to the chart root so a utility class on the annotation layer does
+    // not reserve an obstacle for pixels the user cannot see.
+    let node: any = label;
+    let labelStyle = null;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (node === label) labelStyle = style;
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) break;
+      node = node.parentElement;
+    }
+    if (!labelStyle) return false;
+
+    // Computed transparent colors are serialized as rgba(..., 0) in current
+    // browsers; slash-alpha color() forms are handled as well. Detect only an
+    // exact zero here. Unknown paint syntaxes remain conservative obstacles.
+    const transparent = (paint) => {
+      const value = String(paint || "").trim().toLowerCase();
+      if (!value || value === "transparent") return true;
+      const zeroAlpha = /(?:,|\/)\s*0(?:\.0+)?%?\s*\)$/;
+      return zeroAlpha.test(value) && (value.startsWith("rgba(") || value.includes("/"));
+    };
+    if (!transparent(labelStyle.color)) return true;
+    if (!transparent(labelStyle.backgroundColor)) return true;
+    for (const side of ["Top", "Right", "Bottom", "Left"]) {
+      if (
+        labelStyle[`border${side}Style`] !== "none" &&
+        (parseFloat(labelStyle[`border${side}Width`]) || 0) > 0 &&
+        !transparent(labelStyle[`border${side}Color`])
+      ) return true;
+    }
+    if (
+      labelStyle.textDecorationLine !== "none" &&
+      !transparent(labelStyle.textDecorationColor)
+    ) return true;
+    // Shadows and generated content are not cheaply decomposable into alpha;
+    // if either is present, retaining the box is the safe visible-paint answer.
+    return labelStyle.textShadow !== "none" || labelStyle.boxShadow !== "none";
+  }
+
+  _bestLegendRaster() {
+    const p = this.plot;
+    if (!(p?.w > 0) || !(p?.h > 0) || !this.canvas || !this.overlay) return null;
+    // Native fallback canvases can only be sampled reliably when the browser
+    // honored the preservation attribute requested at context creation. The
+    // shared host presents into Canvas2D and does not need this gate.
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return null;
+    const scratch = this._legendBestScratch || document.createElement("canvas");
+    this._legendBestScratch = scratch;
+    // Assigning the fixed dimensions clears the prior frame and resets 2D
+    // state. The readback below therefore remains a constant 27 KiB whether
+    // the plotted source has ten rows or ten billion.
+    scratch.width = LEGEND_BEST_GRID_W;
+    scratch.height = LEGEND_BEST_GRID_H;
+    const ctx = scratch.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    try {
+      ctx.clearRect(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H);
+      ctx.imageSmoothingEnabled = true;
+      // The marks surface is plot-local and transparent. The annotation
+      // overlay is chart-local, hence the plot crop in its source rectangle.
+      // Deliberately do not sample `chrome`: its plot background would mark
+      // every cell occupied and grid lines are not data.
+      ctx.drawImage(
+        this.canvas,
+        0,
+        0,
+        this.canvas.width,
+        this.canvas.height,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+      ctx.drawImage(
+        this.overlay,
+        p.x * this.dpr,
+        p.y * this.dpr,
+        p.w * this.dpr,
+        p.h * this.dpr,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+    } catch (_error) {
+      // A browser that cannot snapshot its live WebGL surface keeps the
+      // concrete Python-selected fallback rather than making a blind move.
+      return null;
+    }
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H).data;
+    } catch (_error) {
+      return null;
+    }
+    const occupancy = new Uint8Array(LEGEND_BEST_GRID_W * LEGEND_BEST_GRID_H);
+    for (let i = 0; i < occupancy.length; i++) {
+      // Downsampling can leave a one-device-pixel line at very low alpha. Any
+      // non-rounding alpha is painted geometry; opacity must not make the same
+      // line safe for a legend merely because the author styled it faintly.
+      if (pixels[i * 4 + 3] > 1) occupancy[i] = 1;
+    }
+    const raster = {
+      occupancy,
+      w: LEGEND_BEST_GRID_W,
+      h: LEGEND_BEST_GRID_H,
+      plot: this.canvas.getBoundingClientRect(),
+    };
+    // Annotation text is DOM chrome, not part of either sampled canvas. Treat
+    // its visible box as a solid important obstacle. Fixed/anchored legends
+    // likewise reserve their authored rectangles when an additional automatic
+    // legend is present.
+    for (const label of this.labels.querySelectorAll('[data-xy-slot="annotation_label"]')) {
+      if ((label as HTMLElement).hidden || !label.getClientRects().length) continue;
+      if (!this._bestLegendAnnotationPainted(label)) continue;
+      this._fillBestLegendRasterRect(raster, label.getBoundingClientRect());
+    }
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc === "best") continue;
+      this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
+    }
+    return raster;
+  }
+
+  _bestLegendLocationForRaster(raster, legend) {
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    const plotW = plotRect.width || this.plot.w;
+    const plotH = plotRect.height || this.plot.h;
+    return xyLegendBestLocation(
+      raster.occupancy,
+      raster.w,
+      raster.h,
+      rect.width / plotW,
+      rect.height / plotH,
+      LEGEND_BEST_INSET_PX / this.plot.w,
+      LEGEND_BEST_INSET_PX / this.plot.h,
+    );
+  }
+
+  _maybePositionBestLegends() {
+    const automatic = (this._legends || []).filter(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (!automatic.length || this.spec?.coords === "polar") {
+      this._legendBestDirty = false;
+      return;
+    }
+    // Retain the last settled winner through gestures and every interpolation
+    // frame. Seeing a data/LOD transition makes the eventual settled frame
+    // dirty even if the end-of-gesture score already ran against the covering
+    // overview; fades schedule their own final draw, so the refined rendered
+    // representation gets exactly one follow-up score without a kernel hook.
+    if (
+      this._dataAnim ||
+      this._transitionView ||
+      this._interactionTransitionActive() ||
+      // Drill entry/exit clocks can finish before the aggregate backdrop and
+      // point-intensity easings. Their tick fields reset on the actual final
+      // frame, so this defers exactly through those frames and scores once
+      // against the settled rendered representation.
+      (this.gpuTraces || []).some((g) =>
+        Boolean(g._drillBackdropTick || g._blendTick || g.drill?._blendTick),
+      )
+    ) {
+      this._legendBestDirty = true;
+      return;
+    }
+    if (!this._legendBestDirty || this._legendBestInteractionActive) return;
+    const raster = this._bestLegendRaster();
+    if (!raster) return;
+    let positioned = 0;
+    for (const legend of automatic) {
+      const loc = this._bestLegendLocationForRaster(raster, legend);
+      if (!loc) continue;
+      legend.dataset.xyLegendLoc = loc;
+      this._positionLegend(legend, loc);
+      // Multiple automatic boxes choose in stable DOM order and cannot select
+      // the same empty corner: each settled box becomes an obstacle for the
+      // next one.
+      this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
+      positioned += 1;
+    }
+    this._legendBestDirty = positioned !== automatic.length;
   }
 
   _positionLegend(lg, loc, anchor = null) {
@@ -3798,13 +4192,28 @@ export class ChartView {
       // Stay inside the page's context budget before acquiring (governor
       // fallback): at budget, the least-recently-visible view releases first.
       XY_CONTEXT_GOVERNOR.reserve(this);
+      const needsLegendBestSnapshot = (this._legends || []).some(
+        (legend) =>
+          legend.dataset.xyLegendAutoLoc === "best" &&
+          !legend.dataset.xyLegendAnchor,
+      );
       gl = this.canvas.getContext("webgl2", {
-        antialias: false, premultipliedAlpha: true, alpha: true,
+        antialias: false,
+        premultipliedAlpha: true,
+        alpha: true,
+        // The shared host copies from its own preserved buffer into a 2D
+        // presentation canvas. Only a native chart with an automatic legend
+        // needs its just-drawn pixels retained for the settled drawImage
+        // downsample; fixed/no-legend charts keep WebGL's faster default.
+        preserveDrawingBuffer: needsLegendBestSnapshot,
       });
       if (!gl) {
         XY_CONTEXT_GOVERNOR.cancel(this);
         throw new Error("webgl2 unavailable");
       }
+      this._legendBestCanvasSnapshotReady =
+        needsLegendBestSnapshot &&
+        gl.getContextAttributes()?.preserveDrawingBuffer === true;
       XY_CONTEXT_GOVERNOR.acquired(this);
     }
     this.gl = gl;
@@ -5915,6 +6324,7 @@ export class ChartView {
     if (!this._rafKeepPick) this._pickDirty = true;
     this._rafKeepPick = false;
     this._drawChrome();
+    this._maybePositionBestLegends();
     this._renderLassoSelection?.();
     this._renderBoxSelection?.();
     return rendered;
@@ -8457,6 +8867,7 @@ export class ChartView {
   refreshTheme() {
     if (this._destroyed) return;
     this._applyTheme();
+    this._markBestLegendsDirty();
     this.draw();
   }
 

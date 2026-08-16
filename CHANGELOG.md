@@ -8,6 +8,14 @@ in the README).
 
 ## [Unreleased]
 
+### Changed
+
+- Unanchored Cartesian legends now use content-aware placement when `loc` is
+  set to `"best"`. The initial static decision measures the legend
+  against bounded line, area, scatter, bar, and annotation geometry, while the
+  browser remeasures rendered pixels after responsive resize and settled view
+  changes. Explicit locations, anchors, and polar legends remain fixed.
+
 ## [0.0.6] - 2026-08-07
 
 ### Added

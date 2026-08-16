@@ -7164,6 +7164,60 @@ def _colorbar_body(
     return "".join(rects)
 
 
+def _resolve_auto_legend_locations(
+    fig: Any,
+    spec: dict[str, Any],
+    rendered_columns: Any,
+) -> dict[str, Any]:
+    """Re-resolve automatic legends against a static export's final payload.
+
+    Payload construction has to choose an initial concrete location before the
+    export-only width/height overrides are known. Static writers still have the
+    exact emitted columns at this point, so score those columns against the
+    final layout. Copy on write matters for ``extra_legends``: their payload
+    list is allowed to share dictionaries with the source Figure.
+    """
+    from ._legendfit import resolve_for_figure
+
+    updated: Optional[dict[str, Any]] = None
+
+    def resolved(options: Any) -> Any:
+        if (
+            not isinstance(options, dict)
+            or options.get("auto_loc") != "best"
+            or options.get("anchor") is not None
+            or spec.get("coords", "cartesian") != "cartesian"
+        ):
+            return options
+        concrete = dict(options)
+        concrete["loc"] = resolve_for_figure(
+            fig,
+            spec,
+            concrete,
+            rendered_columns=rendered_columns,
+        )
+        return concrete
+
+    legend = spec.get("legend")
+    concrete_legend = resolved(legend)
+    if concrete_legend is not legend:
+        updated = dict(spec)
+        updated["legend"] = concrete_legend
+
+    extra_legends = spec.get("extra_legends")
+    if isinstance(extra_legends, (list, tuple)):
+        concrete_extras = [resolved(extra) for extra in extra_legends]
+        if any(
+            concrete is not original
+            for concrete, original in zip(concrete_extras, extra_legends, strict=True)
+        ):
+            if updated is None:
+                updated = dict(spec)
+            updated["extra_legends"] = concrete_extras
+
+    return spec if updated is None else updated
+
+
 def to_svg(
     fig: Any,
     path: Optional[str | PathLike[str]] = None,
@@ -7191,6 +7245,15 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
+    dimensions_changed = (width is not None and int(width) != getattr(fig, "width", None)) or (
+        height is not None and int(height) != getattr(fig, "height", None)
+    )
+    if dimensions_changed:
+        # The payload scorer already used the Figure's authored dimensions.
+        # Re-run only when export geometry actually overrides them; otherwise
+        # this would replace pyplot's richer measured initial decision with a
+        # second, different core decision at the exact same size.
+        spec = _resolve_auto_legend_locations(fig, spec, blob)
     apply_export_background(spec, background)
     out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:
