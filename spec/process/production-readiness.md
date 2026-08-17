@@ -325,6 +325,11 @@ Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
 ## Release Checklist
 
+For the ordered maintainer procedure—including PyPI immutability checks, tag
+recovery, release monitoring, and clean-install smoke tests—use the
+[`release operator checklist`](release-checklist.md). The invariants below are
+the release bar that procedure must preserve.
+
 The tag *is* the version. `pyproject.toml` declares `dynamic = ["version"]` and
 uv-dynamic-versioning derives the distribution version from the latest `v*` git
 tag, so cutting a release is `git tag vX.Y.Z && git push --tags` — there is no
