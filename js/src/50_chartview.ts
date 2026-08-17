@@ -171,12 +171,15 @@ const LEGEND_DIM_ROW = 0.4;
 const LEGEND_OFF_ROW = 0.35;
 // Live ``loc="best"`` placement scores the pixels that were actually painted,
 // not source rows.  The fixed raster makes the pass screen- and data-bounded
-// for direct, decimated, and density tiers alike. Exact minimum overlap wins;
-// canonical candidate order breaks true ties so an empty/symmetric plot has
-// one deterministic answer and even one occupied cell loses to an empty box.
+// for direct, decimated, and density tiers alike. The first measurable score
+// takes the exact minimum, with canonical candidate order breaking true ties.
+// Later settled scores retain the live winner across sub-5-point occupancy
+// changes; an empty challenger still always beats an occupied current box.
 const LEGEND_BEST_GRID_W = 96;
 const LEGEND_BEST_GRID_H = 72;
 const LEGEND_BEST_INSET_PX = 6;
+const LEGEND_BEST_HYSTERESIS = 0.05;
+const LEGEND_BEST_SCORE_EPSILON = 1e-12;
 const LEGEND_BEST_ORDER = [
   "upper right",
   "upper left",
@@ -200,6 +203,9 @@ function xyLegendBestLocation(
   boxH: number,
   insetX = 0,
   insetY = 0,
+  currentLoc: string | null = null,
+  hysteresis = 0,
+  blockedLocs: ReadonlySet<string> | null = null,
 ): string {
   const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
   const gw = Math.max(1, Math.floor(Number(gridW) || 0));
@@ -226,7 +232,6 @@ function xyLegendBestLocation(
     center: [centerX, centerY],
   };
   const scores = new Map<string, number>();
-  let floor = Infinity;
   for (const loc of LEGEND_BEST_ORDER) {
     const [x, y] = positions[loc];
     const x0 = clamp(Math.floor(x * gw), 0, gw);
@@ -243,11 +248,34 @@ function xyLegendBestLocation(
     const area = Math.max(1, (x1 - x0) * (y1 - y0));
     const score = occupied / area;
     scores.set(loc, score);
-    floor = Math.min(floor, score);
   }
-  return LEGEND_BEST_ORDER.find(
+  const unblocked = blockedLocs
+    ? LEGEND_BEST_ORDER.filter((loc) => !blockedLocs.has(loc))
+    : LEGEND_BEST_ORDER;
+  // Oversized legends can geometrically intersect a prior box everywhere. In
+  // that unavoidable case, fall back to the ordinary exact occupancy score.
+  const candidates = unblocked.length ? unblocked : LEGEND_BEST_ORDER;
+  const floor = candidates.reduce(
+    (lowest, loc) => Math.min(lowest, scores.get(loc) ?? Infinity),
+    Infinity,
+  );
+  const winner = candidates.find(
     (loc) => (scores.get(loc) ?? Infinity) === floor,
-  ) || LEGEND_BEST_ORDER[0];
+  ) || candidates[0];
+  const currentScore = currentLoc == null ? undefined : scores.get(currentLoc);
+  if (
+    currentLoc == null ||
+    currentScore == null ||
+    !candidates.includes(currentLoc) ||
+    !(hysteresis > 0) ||
+    winner === currentLoc
+  ) return winner;
+  // A truly empty destination is qualitatively better than any overlap. Keep
+  // that sparse-data guarantee even when the fractional improvement is below
+  // the live stability band (for example one occupied cell in a large box).
+  if (floor === 0 && currentScore > 0) return winner;
+  const improvement = currentScore - floor;
+  return improvement + LEGEND_BEST_SCORE_EPSILON < hysteresis ? currentLoc : winner;
 }
 // SVG gradient ids resolve document-wide; a module counter keeps every chart
 // instance's legend swatch ramps distinct.
@@ -3658,12 +3686,10 @@ export class ChartView {
     if (this._destroyed || this._glLost || !this.gl || !this.root?.isConnected) return false;
     if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return false;
     if (!(this.plot?.w > 0) || !(this.plot?.h > 0)) return false;
-    return (this._legends || []).every(
-      (legend) =>
-        legend.dataset.xyLegendAutoLoc !== "best" ||
-        legend.dataset.xyLegendAnchor ||
-        legend.getClientRects().length > 0,
-    );
+    // A temporarily hidden legend does not remove the shared rendered-marks
+    // raster. Preserve its last live result; the visibility observer will
+    // re-arm a score when that individual box becomes measurable again.
+    return true;
   }
 
   _adoptBestLegendFallbacks(spec = this.spec) {
@@ -3681,6 +3707,10 @@ export class ChartView {
         String(options?.auto_loc || "").trim().toLowerCase() !== "best" ||
         Array.isArray(options?.anchor)
       ) continue;
+      // This is a declarative Python fallback, not a rendered-geometry score.
+      // If live rasterization later returns, its first measurable placement
+      // must use the exact minimum rather than inheriting fallback stickiness.
+      legend._xyLegendBestLiveLoc = null;
       const loc = String(options?.loc || "upper right");
       if (legend.dataset.xyLegendLoc !== loc) {
         legend.dataset.xyLegendLoc = loc;
@@ -3865,7 +3895,12 @@ export class ChartView {
     return raster;
   }
 
-  _bestLegendLocationForRaster(raster, legend) {
+  _bestLegendLocationForRaster(
+    raster,
+    legend,
+    allowHysteresis = true,
+    blockedLocs = null,
+  ) {
     const rect = legend.getBoundingClientRect();
     if (!(rect.width > 0) || !(rect.height > 0)) return null;
     const plotRect = raster.plot || this.canvas.getBoundingClientRect();
@@ -3879,6 +3914,13 @@ export class ChartView {
       rect.height / plotH,
       LEGEND_BEST_INSET_PX / this.plot.w,
       LEGEND_BEST_INSET_PX / this.plot.h,
+      allowHysteresis &&
+        typeof legend._xyLegendBestLiveLoc === "string" &&
+        legend.dataset.xyLegendLoc === legend._xyLegendBestLiveLoc
+        ? legend._xyLegendBestLiveLoc
+        : null,
+      LEGEND_BEST_HYSTERESIS,
+      blockedLocs,
     );
   }
 
@@ -3932,15 +3974,49 @@ export class ChartView {
     const raster = this._bestLegendRaster();
     if (!raster) return;
     let positioned = 0;
+    const positionedRects = [];
     for (const legend of visibleAutomatic) {
-      const loc = this._bestLegendLocationForRaster(raster, legend);
+      let loc = this._bestLegendLocationForRaster(raster, legend);
       if (!loc) continue;
       legend.dataset.xyLegendLoc = loc;
       this._positionLegend(legend, loc);
-      // Multiple automatic boxes choose in stable DOM order and cannot select
-      // the same empty corner: each settled box becomes an obstacle for the
-      // next one.
-      this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
+      let rect = legend.getBoundingClientRect();
+      const overlapsPrior = positionedRects.some((prior) =>
+        rect.left < prior.right && rect.right > prior.left &&
+        rect.top < prior.bottom && rect.bottom > prior.top,
+      );
+      if (overlapsPrior) {
+        // Occupancy hysteresis stabilizes small mark-density changes, not box
+        // collisions. Probe the nine bounded candidate rectangles only on this
+        // slow path, then re-run the exact score over non-colliding locations.
+        const blockedLocs = new Set();
+        for (const candidate of LEGEND_BEST_ORDER) {
+          this._positionLegend(legend, candidate);
+          const candidateRect = legend.getBoundingClientRect();
+          if (positionedRects.some((prior) =>
+            candidateRect.left < prior.right && candidateRect.right > prior.left &&
+            candidateRect.top < prior.bottom && candidateRect.bottom > prior.top,
+          )) blockedLocs.add(candidate);
+        }
+        const exactLoc = this._bestLegendLocationForRaster(
+          raster,
+          legend,
+          false,
+          blockedLocs,
+        );
+        if (exactLoc) {
+          loc = exactLoc;
+          legend.dataset.xyLegendLoc = loc;
+          this._positionLegend(legend, loc);
+          rect = legend.getBoundingClientRect();
+        }
+      }
+      legend._xyLegendBestLiveLoc = loc;
+      // Multiple automatic boxes choose in stable DOM order. Each settled box
+      // becomes an obstacle for the next, whose current corner cannot survive
+      // merely because the added box occupies less than the stability band.
+      this._fillBestLegendRasterRect(raster, rect);
+      positionedRects.push(rect);
       positioned += 1;
     }
     this._legendBestDirty = positioned !== visibleAutomatic.length;

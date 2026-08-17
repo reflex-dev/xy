@@ -409,6 +409,15 @@ semantic intent separately; `"best"` authorizes the browser to replace the
 concrete location after measuring rendered geometry on resize or after a view
 settles. Absence of `auto_loc` means the transmitted location is exact.
 
+The initial Python/static location and the browser's first settled live
+location choose the exact minimum score, with the canonical nine-candidate
+order breaking an exact tie. After a live winner is settled, subsequent view,
+resize, and LOD re-scores retain it unless a challenger lowers the normalized
+occupied fraction by at least `0.05`. The exception is an empty challenger,
+which always replaces an occupied current box. This live-only hysteresis keeps
+near-uniform rendered occupancy from moving the legend on every settle without
+blocking a clearly open candidate.
+
 Payload builders omit the field for an explicit concrete `loc`, any legend
 with `anchor`, and polar coordinates. Those are authored placements, not live
 scoring requests. Receivers must likewise ignore `auto_loc` outside an

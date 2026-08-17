@@ -1435,8 +1435,10 @@ entries. With no visible usable geometry the initial location is
 The nine candidates, in deterministic preference and tie-break order, are
 `"upper right"`, `"upper left"`, `"lower left"`, `"lower right"`,
 `"center right"`, `"center left"`, `"lower center"`, `"upper center"`, and
-`"center"`. The order is part of the placement contract: an empty or symmetric
-plot always chooses the same box.
+`"center"`. The initial Python/static decision and the browser's first settled
+live decision choose the exact minimum score; only an exact tie reaches this
+canonical order. The order is therefore part of the placement contract: an
+empty or symmetric plot always chooses the same box.
 
 After layout, the browser measures the real DOM legend footprint and scores a
 fixed **96 × 72** occupancy raster made from the rendered marks and annotation
@@ -1447,9 +1449,14 @@ resize remeasures and re-scores the box. Pan/zoom and programmatic view changes
 keep the last answer throughout update and transition frames, then re-score
 once the view has settled; a moving legend never chases the data during a
 gesture. Legend toggles and settled data/LOD replacements likewise dirty one
-bounded re-score. A candidate with any occupied raster cell loses to an
-otherwise identical empty candidate; only an exact score tie reaches the
-canonical order above.
+bounded re-score. Once the browser has a settled live winner, these re-scores
+are hysteretic: the current location stays unless the best challenger lowers
+the normalized occupied fraction by at least **0.05** (5 percentage points).
+An empty challenger always beats an occupied current box, even when the
+improvement is smaller than that threshold. This prevents near-uniform rasters
+from making the legend hop after each settle while preserving clear-corner
+wins; exact-minimum and canonical-tie selection still govern the first live
+decision.
 
 Static export keeps the initial concrete choice when its dimensions are
 unchanged (including pyplot's more detailed compatibility scorer). When an

@@ -14,7 +14,11 @@ in the README).
   set to `"best"`. The initial static decision measures the legend
   against bounded line, area, scatter, bar, and annotation geometry, while the
   browser remeasures rendered pixels after responsive resize and settled view
-  changes. Explicit locations, anchors, and polar legends remain fixed.
+  changes. Initial/static placement takes the exact minimum with canonical tie
+  order; after the browser establishes a live winner, a five-percentage-point
+  hysteresis keeps near-uniform views from making the legend hop, while an
+  empty candidate still always beats an occupied one. Explicit locations,
+  anchors, and polar legends remain fixed.
 
 ## [0.0.6] - 2026-08-07
 

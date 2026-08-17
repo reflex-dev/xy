@@ -89,6 +89,14 @@ important annotations it actually rendered, then rechecks the choice after a
 responsive resize or a settled pan/zoom. A concrete location such as
 `"upper left"`, an explicit `anchor=`, and polar legend placement remain fixed.
 
+The initial static choice and the browser's first settled choice take the exact
+least-occupied candidate, using the canonical location order to break a tie.
+After that, the browser keeps its settled winner across view, resize, and LOD
+rechecks unless another candidate improves the normalized occupied fraction by
+at least 5 percentage points. An empty challenger always replaces an occupied
+winner, even when that improvement is smaller. This keeps near-uniform plots
+stable without hiding a clearly open corner.
+
 ~~~python demo exec
 import reflex_xy
 import xy

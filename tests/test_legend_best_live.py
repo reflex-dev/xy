@@ -266,6 +266,361 @@ _RESIZE_PROBE = r"""
 """
 
 
+_HYSTERESIS_PROBE = r"""
+<script>
+(() => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    const flush = () => {
+      if (view._raf) cancelAnimationFrame(view._raf);
+      view._raf = null;
+      view._drawNow();
+    };
+    flush();
+    const legends = [...document.querySelectorAll('[data-xy-slot="legend"]')];
+    const legend = legends[0];
+    const hiddenLegend = legends[1];
+    if (!legend || !hiddenLegend) throw new Error("two probe legends never rendered");
+
+    const gridW = 100;
+    const gridH = 100;
+    const plotRect = view.canvas.getBoundingClientRect();
+    const legendRect = legend.getBoundingClientRect();
+    const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
+    const boxW = clamp(legendRect.width / plotRect.width, 0, 1);
+    const boxH = clamp(legendRect.height / plotRect.height, 0, 1);
+    const insetX = clamp(6 / view.plot.w, 0, 0.5);
+    const insetY = clamp(6 / view.plot.h, 0, 0.5);
+    const left = clamp(insetX, 0, Math.max(0, 1 - boxW));
+    const right = clamp(1 - insetX - boxW, 0, Math.max(0, 1 - boxW));
+    const upper = clamp(insetY, 0, Math.max(0, 1 - boxH));
+    const cells = (x, y) => {
+      const x0 = clamp(Math.floor(x * gridW), 0, gridW);
+      const x1 = clamp(Math.ceil((x + boxW) * gridW), x0, gridW);
+      const y0 = clamp(Math.floor(y * gridH), 0, gridH);
+      const y1 = clamp(Math.ceil((y + boxH) * gridH), y0, gridH);
+      const out = [];
+      for (let row = y0; row < y1; row++) {
+        for (let col = x0; col < x1; col++) out.push(row * gridW + col);
+      }
+      return out;
+    };
+    const upperRight = cells(right, upper);
+    const upperLeft = cells(left, upper);
+    const upperLeftSet = new Set(upperLeft);
+    const cornerIntersection = upperRight.filter((cell) => upperLeftSet.has(cell)).length;
+    if (cornerIntersection) throw new Error("probe legend corners unexpectedly overlap");
+
+    // Start other candidates fully occupied, then assign deterministic corner
+    // fractions. The small single-row legend keeps the two corner boxes
+    // disjoint, so both normalized scores can be controlled independently.
+    const makeRaster = (rightFraction, leftFraction) => {
+      const occupancy = new Uint8Array(gridW * gridH);
+      occupancy.fill(1);
+      const writeFraction = (indices, fraction) => {
+        for (const index of indices) occupancy[index] = 0;
+        const count = Math.max(0, Math.min(
+          indices.length,
+          Math.round(indices.length * fraction),
+        ));
+        for (let i = 0; i < count; i++) occupancy[indices[i]] = 1;
+      };
+      writeFraction(upperRight, rightFraction);
+      writeFraction(upperLeft, leftFraction);
+      const score = (indices) =>
+        indices.reduce((total, index) => total + occupancy[index], 0) / indices.length;
+      return {
+        raster: { occupancy, w: gridW, h: gridH, plot: plotRect },
+        scores: { upperRight: score(upperRight), upperLeft: score(upperLeft) },
+      };
+    };
+    const exactLegend = {
+      dataset: {},
+      getBoundingClientRect: () => ({
+        width: legendRect.width,
+        height: legendRect.height,
+      }),
+    };
+
+    // A zero-layout sibling has no box to score, but the shared rendered marks
+    // raster is still available. Temporary CSS visibility must not reset the
+    // visible legend's completed score or adopt a new fallback for either box;
+    // the hidden box will score (exactly, if it has never scored) when shown.
+    const liveBeforeFallback = legend._xyLegendBestLiveLoc === legend.dataset.xyLegendLoc;
+    const visibleBeforeSiblingFallback = legend.dataset.xyLegendLoc;
+    const hiddenBeforeSiblingFallback = hiddenLegend.dataset.xyLegendLoc;
+    const siblingFallbackSpec = structuredClone(view.spec);
+    siblingFallbackSpec.extra_legends[0] = {
+      ...siblingFallbackSpec.extra_legends[0],
+      auto_loc: "best",
+      loc: "lower left",
+    };
+    const siblingFallbackChanged = view._adoptBestLegendFallbacks(siblingFallbackSpec);
+    const visibleAfterSiblingFallback = legend.dataset.xyLegendLoc;
+    const visibleLiveAfterSiblingFallback =
+      legend._xyLegendBestLiveLoc === legend.dataset.xyLegendLoc;
+    const hiddenAfterSiblingFallback = hiddenLegend.dataset.xyLegendLoc;
+    const hiddenLiveAfterSiblingFallback =
+      hiddenLegend._xyLegendBestLiveLoc === hiddenLegend.dataset.xyLegendLoc;
+
+    // A concrete server fallback must not itself become a sticky live result.
+    // Force genuine view-wide capability loss after the chart's initial live
+    // score, then restore raster capability and verify the first score is exact.
+    const fallbackSpec = structuredClone(siblingFallbackSpec);
+    fallbackSpec.legend = {
+      ...(fallbackSpec.legend || {}),
+      auto_loc: "best",
+      loc: "lower right",
+    };
+    const originalAvailability = view._bestLegendLiveRasterAvailable;
+    view._bestLegendLiveRasterAvailable = () => false;
+    const fallbackChanged = view._adoptBestLegendFallbacks(fallbackSpec);
+    view._bestLegendLiveRasterAvailable = originalAvailability;
+    const fallback = legend.dataset.xyLegendLoc;
+    const liveAfterFallback = legend._xyLegendBestLiveLoc === legend.dataset.xyLegendLoc;
+
+    const originalRaster = view._bestLegendRaster;
+    // Uniform occupancy is a true tie: the first measurable live placement
+    // must ignore the noncanonical fallback and take canonical upper-right.
+    let stage = makeRaster(1, 1);
+    const firstExact = view._bestLegendLocationForRaster(stage.raster, exactLegend);
+    view._bestLegendRaster = () => stage.raster;
+    view._markBestLegendsDirty();
+    flush();
+    const firstLive = legend.dataset.xyLegendLoc;
+    const liveAfterFirst = legend._xyLegendBestLiveLoc === legend.dataset.xyLegendLoc;
+
+    // The exact winner reverses after a genuine settled view write, but its
+    // improvement is only about two normalized occupancy points. The current
+    // live corner should therefore remain stable.
+    stage = makeRaster(0.52, 0.50);
+    const nearScores = stage.scores;
+    const nearExact = view._bestLegendLocationForRaster(stage.raster, exactLegend);
+    const stableChangedAxes = view._setView(
+      { ranges: { x: [0.01, 1.0] } },
+      {
+        animate: false,
+        request: false,
+        source: "legend_hysteresis_near",
+        phase: "end",
+        interactionId: 951,
+      },
+    );
+    flush();
+    const stableAfterSettled = legend.dataset.xyLegendLoc;
+
+    // One occupied cell is less than five percentage points for this box, but
+    // a completely empty challenger must still win on the next settled view.
+    stage = makeRaster(1 / upperRight.length, 0);
+    const emptyScores = stage.scores;
+    const emptyExact = view._bestLegendLocationForRaster(stage.raster, exactLegend);
+    const emptyChangedAxes = view._setView(
+      { ranges: { x: [0.02, 1.0] } },
+      {
+        animate: false,
+        request: false,
+        source: "legend_hysteresis_empty",
+        phase: "end",
+        interactionId: 952,
+      },
+    );
+    flush();
+    const movedAfterSettled = legend.dataset.xyLegendLoc;
+
+    // A fully dense raster is a true nine-way tie. Canonical exact scoring
+    // returns upper-right, but a legend with a completed upper-left live score
+    // must not hop on this later settled view merely because tie order differs.
+    stage = makeRaster(1, 1);
+    const uniformExact = view._bestLegendLocationForRaster(stage.raster, exactLegend);
+    const uniformChangedAxes = view._setView(
+      { ranges: { x: [0.03, 1.0] } },
+      {
+        animate: false,
+        request: false,
+        source: "legend_hysteresis_uniform",
+        phase: "end",
+        interactionId: 953,
+      },
+    );
+    flush();
+    const stableOnUniform = legend.dataset.xyLegendLoc;
+
+    // The reverse sparse case proves uniform stickiness is not permanent:
+    // upper-right is now empty and the current upper-left has one occupied
+    // cell, so the empty exception must move immediately on settle.
+    stage = makeRaster(0, 1 / upperLeft.length);
+    const reverseEmptyScores = stage.scores;
+    const reverseEmptyExact = view._bestLegendLocationForRaster(stage.raster, exactLegend);
+    const reverseEmptyChangedAxes = view._setView(
+      { ranges: { x: [0.04, 1.0] } },
+      {
+        animate: false,
+        request: false,
+        source: "legend_hysteresis_reverse_empty",
+        phase: "end",
+        interactionId: 954,
+      },
+    );
+    flush();
+    const movedFromUniform = legend.dataset.xyLegendLoc;
+
+    // Re-arm the hidden automatic sibling and make the first box visually
+    // tiny. Its overlap adds less than the hysteresis band to the second box's
+    // near-uniform current corner: ordinary mark hysteresis would retain that
+    // collision, while the multi-legend collision rule must take the exact
+    // alternative and leave the two live boxes disjoint.
+    hiddenLegend.style.display = "grid";
+    legend.style.transform = "scale(0.1)";
+    for (const candidate of legends) {
+      candidate.dataset.xyLegendLoc = "upper right";
+      candidate._xyLegendBestLiveLoc = "upper right";
+      view._positionLegend(candidate, "upper right");
+    }
+    stage = makeRaster(0.52, 0.50);
+    const collisionRaster = {
+      ...stage.raster,
+      occupancy: stage.raster.occupancy.slice(),
+    };
+    view._fillBestLegendRasterRect(collisionRaster, legend.getBoundingClientRect());
+    const hiddenScorer = {
+      dataset: { xyLegendLoc: "upper right" },
+      _xyLegendBestLiveLoc: "upper right",
+      getBoundingClientRect: () => hiddenLegend.getBoundingClientRect(),
+    };
+    const stickyWithPriorBox = view._bestLegendLocationForRaster(
+      collisionRaster,
+      hiddenScorer,
+    );
+    const exactWithPriorBox = view._bestLegendLocationForRaster(
+      collisionRaster,
+      hiddenScorer,
+      false,
+    );
+    view._markBestLegendsDirty();
+    flush();
+    const multiLocs = legends.map((candidate) => candidate.dataset.xyLegendLoc);
+    const multiLiveLocs = legends.map((candidate) => candidate._xyLegendBestLiveLoc);
+    const multiRects = legends.map((candidate) => candidate.getBoundingClientRect());
+    const multiOverlap =
+      multiRects[0].left < multiRects[1].right &&
+      multiRects[0].right > multiRects[1].left &&
+      multiRects[0].top < multiRects[1].bottom &&
+      multiRects[0].bottom > multiRects[1].top;
+
+    // Pin the strict boundary independently of the measured legend footprint.
+    // At this plot size, a 0.20 x 0.15 fake box covers exactly 20 raster cells
+    // in either upper corner: 6/20 versus 5/20 is exactly 0.30 versus 0.25.
+    // Five points must move, not stick because subtraction lands just below .05.
+    const thresholdOccupancy = new Uint8Array(20 * 20);
+    thresholdOccupancy.fill(1);
+    const thresholdBoxW = 0.20;
+    const thresholdBoxH = 0.15;
+    const thresholdLeftX = clamp(insetX, 0, 1 - thresholdBoxW);
+    const thresholdRightX = clamp(1 - insetX - thresholdBoxW, 0, 1 - thresholdBoxW);
+    const thresholdUpperY = clamp(insetY, 0, 1 - thresholdBoxH);
+    const thresholdCells = (x, y) => {
+      const out = [];
+      const x0 = clamp(Math.floor(x * 20), 0, 20);
+      const x1 = clamp(Math.ceil((x + thresholdBoxW) * 20), x0, 20);
+      const y0 = clamp(Math.floor(y * 20), 0, 20);
+      const y1 = clamp(Math.ceil((y + thresholdBoxH) * 20), y0, 20);
+      for (let row = y0; row < y1; row++) {
+        for (let col = x0; col < x1; col++) out.push(row * 20 + col);
+      }
+      return out;
+    };
+    const thresholdUpperRight = thresholdCells(thresholdRightX, thresholdUpperY);
+    const thresholdUpperLeft = thresholdCells(thresholdLeftX, thresholdUpperY);
+    for (const index of [...thresholdUpperRight, ...thresholdUpperLeft]) {
+      thresholdOccupancy[index] = 0;
+    }
+    for (const index of thresholdUpperRight.slice(0, 6)) thresholdOccupancy[index] = 1;
+    for (const index of thresholdUpperLeft.slice(0, 5)) thresholdOccupancy[index] = 1;
+    const thresholdRaster = {
+      occupancy: thresholdOccupancy,
+      w: 20,
+      h: 20,
+      plot: plotRect,
+    };
+    const thresholdLegend = {
+      dataset: { xyLegendLoc: "upper right" },
+      _xyLegendBestLiveLoc: "upper right",
+      getBoundingClientRect: () => ({
+        width: plotRect.width * thresholdBoxW,
+        height: plotRect.height * thresholdBoxH,
+      }),
+    };
+    const exactThresholdWinner = view._bestLegendLocationForRaster(
+      thresholdRaster,
+      thresholdLegend,
+    );
+    const thresholdScores = {
+      upperRight: thresholdUpperRight.reduce(
+        (total, index) => total + thresholdOccupancy[index], 0,
+      ) / thresholdUpperRight.length,
+      upperLeft: thresholdUpperLeft.reduce(
+        (total, index) => total + thresholdOccupancy[index], 0,
+      ) / thresholdUpperLeft.length,
+    };
+    const thresholdAreas = {
+      upperRight: thresholdUpperRight.length,
+      upperLeft: thresholdUpperLeft.length,
+    };
+    view._bestLegendRaster = originalRaster;
+
+    document.body.setAttribute("data-xy-legend-best-hysteresis", JSON.stringify({
+      cornerIntersection,
+      legendCount: legends.length,
+      liveBeforeFallback,
+      visibleBeforeSiblingFallback,
+      hiddenBeforeSiblingFallback,
+      siblingFallbackChanged,
+      visibleAfterSiblingFallback,
+      visibleLiveAfterSiblingFallback,
+      hiddenAfterSiblingFallback,
+      hiddenLiveAfterSiblingFallback,
+      fallbackChanged,
+      fallback,
+      liveAfterFallback,
+      firstExact,
+      firstLive,
+      liveAfterFirst,
+      nearExact,
+      nearScores,
+      stableChangedAxes,
+      stableAfterSettled,
+      emptyExact,
+      emptyScores,
+      emptyChangedAxes,
+      movedAfterSettled,
+      uniformExact,
+      uniformChangedAxes,
+      stableOnUniform,
+      reverseEmptyScores,
+      reverseEmptyExact,
+      reverseEmptyChangedAxes,
+      movedFromUniform,
+      stickyWithPriorBox,
+      exactWithPriorBox,
+      multiLocs,
+      multiLiveLocs,
+      multiOverlap,
+      exactThresholdWinner,
+      thresholdScores,
+      thresholdAreas,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-legend-best-hysteresis-error",
+      String((err && err.stack) || err),
+    );
+  }
+})();
+</script>
+"""
+
+
 _ISOLATED_MARK_PROBE = r"""
 <script>
 (() => {
@@ -696,6 +1051,8 @@ def test_live_best_raster_contract_is_fixed_size_and_module_private() -> None:
     # of slicing method bodies on indentation-sensitive delimiters.
     assert re.search(r"\bconst\s+LEGEND_BEST_GRID_W\s*=\s*96\s*;", source)
     assert re.search(r"\bconst\s+LEGEND_BEST_GRID_H\s*=\s*72\s*;", source)
+    assert re.search(r"\bconst\s+LEGEND_BEST_HYSTERESIS\s*=\s*0\.05\s*;", source)
+    assert re.search(r"\bconst\s+LEGEND_BEST_SCORE_EPSILON\s*=\s*1e-12\s*;", source)
     assert "LEGEND_BEST_TIE_BAND" not in source
     assert re.search(r"(?m)^function\s+xyLegendBestLocation\s*\(", source)
     assert not re.search(r"\bexport\s+function\s+xyLegendBestLocation\s*\(", source)
@@ -706,6 +1063,10 @@ def test_live_best_raster_contract_is_fixed_size_and_module_private() -> None:
     )
     assert re.search(
         r"\(scores\.get\(loc\)\s*\?\?\s*Infinity\)\s*===\s*floor",
+        source,
+    )
+    assert re.search(
+        r"improvement\s*\+\s*LEGEND_BEST_SCORE_EPSILON\s*<\s*hysteresis",
         source,
     )
     assert re.search(
@@ -743,6 +1104,90 @@ def test_live_best_raster_contract_is_fixed_size_and_module_private() -> None:
         r"g\.drill\?\._blendTick",
         source,
     )
+
+
+def test_live_best_hysteresis_stabilizes_settled_rescores_but_not_empty_boxes(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    document = probe_document(_payload_update_chart(0.5, 0.5), _HYSTERESIS_PROBE)
+    capture = "window.__fcProbeView = xy.renderStandalone("
+    assert capture in document
+    # The hidden automatic sibling pins the lifecycle edge where a CSS-hidden
+    # legend coexists with a visible live winner during a data-only update.
+    document = document.replace(
+        capture,
+        """
+spec.extra_legends = [{
+  items: [{ name: "hidden", kind: "line", style: { color: "#9333ea" } }],
+  loc: "upper right",
+  auto_loc: "best",
+  style: { display: "none" },
+}];
+"""
+        + capture,
+        1,
+    )
+    result = run_browser_probe(
+        chromium,
+        document,
+        tmp_path / "legend_best_hysteresis.html",
+        "data-xy-legend-best-hysteresis",
+        label="automatic legend settled hysteresis probe",
+    )
+
+    assert result["cornerIntersection"] == 0, result
+    assert result["legendCount"] == 2, result
+    assert result["liveBeforeFallback"] is True, result
+    assert result["siblingFallbackChanged"] is False, result
+    assert result["visibleAfterSiblingFallback"] == result["visibleBeforeSiblingFallback"], result
+    assert result["visibleLiveAfterSiblingFallback"] is True, result
+    assert result["hiddenAfterSiblingFallback"] == result["hiddenBeforeSiblingFallback"], result
+    assert result["hiddenLiveAfterSiblingFallback"] is False, result
+
+    assert result["fallbackChanged"] is True, result
+    assert result["fallback"] == "lower right", result
+    assert result["liveAfterFallback"] is False, result
+    assert result["firstExact"] == "upper right", result
+    assert result["firstLive"] == result["firstExact"], result
+    assert result["firstLive"] != result["fallback"], result
+    assert result["liveAfterFirst"] is True, result
+
+    near = result["nearScores"]
+    assert near["upperLeft"] > 0, result
+    assert near["upperRight"] > near["upperLeft"], result
+    assert 0 < near["upperRight"] - near["upperLeft"] < 0.05, result
+    assert result["nearExact"] == "upper left", result
+    assert result["stableChangedAxes"] == ["x"], result
+    assert result["stableAfterSettled"] == "upper right", result
+
+    empty = result["emptyScores"]
+    assert empty["upperLeft"] == 0, result
+    assert 0 < empty["upperRight"] < 0.05, result
+    assert result["emptyExact"] == "upper left", result
+    assert result["emptyChangedAxes"] == ["x"], result
+    assert result["movedAfterSettled"] == "upper left", result
+    assert result["uniformExact"] == "upper right", result
+    assert result["uniformChangedAxes"] == ["x"], result
+    assert result["stableOnUniform"] == "upper left", result
+    reverse_empty = result["reverseEmptyScores"]
+    assert reverse_empty["upperRight"] == 0, result
+    assert 0 < reverse_empty["upperLeft"] < 0.05, result
+    assert result["reverseEmptyExact"] == "upper right", result
+    assert result["reverseEmptyChangedAxes"] == ["x"], result
+    assert result["movedFromUniform"] == "upper right", result
+    assert result["stickyWithPriorBox"] == "upper right", result
+    assert result["exactWithPriorBox"] == "upper left", result
+    assert result["multiLocs"] == ["upper right", "upper left"], result
+    assert result["multiLiveLocs"] == result["multiLocs"], result
+    assert result["multiOverlap"] is False, result
+    assert result["thresholdAreas"] == {"upperRight": 20, "upperLeft": 20}, result
+    assert result["thresholdScores"]["upperRight"] == pytest.approx(0.30), result
+    assert result["thresholdScores"]["upperLeft"] == pytest.approx(0.25), result
+    assert result["exactThresholdWinner"] == "upper left", result
 
 
 def test_live_best_uses_rendered_marks_and_moves_only_after_view_settles(
@@ -1022,7 +1467,11 @@ def test_update_payload_keeps_auto_legend_chrome_and_scores_after_animation(
         pytest.skip("Chromium unavailable")
 
     initial = _payload_update_chart(0.96, 0.96)
-    replacement = _payload_update_chart(0.04, 0.04)
+    # Put the replacement mark under the prior upper-left live winner. Its
+    # empty upper-right challenger must move after the animation settles; a
+    # lower-left point would leave both upper boxes empty and correctly retain
+    # upper-left under live hysteresis, making this settle hook unobservable.
+    replacement = _payload_update_chart(0.04, 0.96)
     initial_spec, _ = initial.figure().build_payload()
     next_spec, next_buffer = replacement.figure().build_payload()
     next_spec["animation"] = xy.animation(
