@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -21,10 +22,7 @@ from xy.export import find_chromium
 
 ROOT = Path(__file__).resolve().parents[1]
 CHARTVIEW = ROOT / "js" / "src" / "50_chartview.ts"
-INTERACTION = ROOT / "js" / "src" / "53_interaction.ts"
 KERNEL = ROOT / "js" / "src" / "54_kernel.ts"
-ANIMATION = ROOT / "js" / "src" / "56_animation.ts"
-WRAPPER = ROOT / "python" / "reflex_xy" / "assets" / "XYChart.jsx"
 
 
 _SETTLED_VIEW_PROBE = r"""
@@ -39,6 +37,9 @@ _SETTLED_VIEW_PROBE = r"""
     const legend = document.querySelector('[data-xy-slot="legend"]');
     if (!legend) throw new Error("legend never rendered");
     const initial = legend.dataset.xyLegendLoc;
+    const initialAnnotationLabels = document.querySelectorAll(
+      '[data-xy-slot="annotation_label"]'
+    ).length;
 
     // Directly probe the pure candidate helper through its ChartView bridge:
     // an empty raster takes the first deterministic candidate, while an
@@ -142,6 +143,54 @@ _SETTLED_VIEW_PROBE = r"""
     const pointerCancel = cancelUpdatedPan("pointercancel", 71);
     const escapeCancel = cancelUpdatedPan("escape", 72);
 
+    const boundedPan = (range, moves, pointerId) => {
+      view._setView(
+        { ranges: { x: range, y: range } },
+        {
+          animate: false,
+          request: false,
+          source: "legend_bounded_pan_reset",
+          phase: "end",
+        },
+      );
+      flush();
+      view.dragMode = "pan";
+      const rect = view.canvas.getBoundingClientRect();
+      const start = { x: rect.left + rect.width * 0.5, y: rect.top + rect.height * 0.5 };
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 1,
+        clientX: start.x, clientY: start.y, bubbles: true,
+      }));
+      const activeDuring = [];
+      let last = start;
+      for (const [dx, dy] of moves) {
+        last = { x: start.x + rect.width * dx, y: start.y + rect.height * dy };
+        view.canvas.dispatchEvent(new PointerEvent("pointermove", {
+          pointerId, pointerType: "mouse", button: 0, buttons: 1,
+          clientX: last.x, clientY: last.y, bubbles: true,
+        }));
+        flush();
+        activeDuring.push(view._legendBestInteractionActive === true);
+      }
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {
+        pointerId, pointerType: "mouse", button: 0, buttons: 0,
+        clientX: last.x, clientY: last.y, bubbles: true,
+      }));
+      flush();
+      return {
+        activeDuring,
+        activeAfter: view._legendBestInteractionActive === true,
+        ranges: view._eventView().ranges,
+      };
+    };
+    // A fully clamped move never emits an update, so there is no private gate
+    // to settle. If an earlier move changed the view, changedAxes accumulates
+    // across later clamped moves and pointerup emits the matching end phase.
+    const fullyClampedPan = boundedPan([0.0, 0.2], [[0.30, -0.30]], 73);
+    const updatedThenClampedPan = boundedPan(
+      [0.4, 0.6], [[0.10, -0.10], [2.50, -2.50], [3.00, -3.00]], 74
+    );
+
     document.body.setAttribute("data-xy-legend-best-live", JSON.stringify({
       autoLoc: legend.dataset.xyLegendAutoLoc || null,
       initial,
@@ -153,11 +202,11 @@ _SETTLED_VIEW_PROBE = r"""
       occupiedWinner,
       pointerCancel,
       escapeCancel,
+      fullyClampedPan,
+      updatedThenClampedPan,
       rasterBytes: view._legendBestScratch.width * view._legendBestScratch.height * 4,
       markKinds: view.spec.traces.map((trace) => trace.kind),
-      annotationLabels: document.querySelectorAll(
-        '[data-xy-slot="annotation_label"]'
-      ).length,
+      annotationLabels: initialAnnotationLabels,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -384,6 +433,202 @@ _UPDATE_PAYLOAD_PROBE = r"""
 """
 
 
+_HIDDEN_LEGEND_PROBE = r"""
+<script>
+(async () => {
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    const flush = () => {
+      if (view._raf) cancelAnimationFrame(view._raf);
+      view._raf = null;
+      view._drawNow();
+    };
+    // A new task runs after MutationObserver delivery. The probe then flushes
+    // the draw it scheduled synchronously, avoiding timing assumptions about
+    // headless requestAnimationFrame throttling.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    flush();
+    const legend = document.querySelector('[data-xy-slot="legend"]');
+    if (!legend) throw new Error("legend never rendered");
+    const initial = legend.dataset.xyLegendLoc;
+    const originalRaster = view._bestLegendRaster.bind(view);
+    const originalVisibility = view._bestLegendIsVisible.bind(view);
+    let rasterCalls = 0;
+    let visibilityChecks = 0;
+    view._bestLegendRaster = (...args) => {
+      rasterCalls += 1;
+      return originalRaster(...args);
+    };
+    view._bestLegendIsVisible = (...args) => {
+      visibilityChecks += 1;
+      return originalVisibility(...args);
+    };
+
+    for (let i = 0; i < 3; i++) flush();
+    const cleanDraws = {
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      visibilityChecks,
+    };
+
+    legend.style.display = "none";
+    await Promise.resolve();
+    view._setView(
+      { ranges: { x: [0.8, 1.0], y: [0.8, 1.0] } },
+      { animate: false, request: false, source: "hidden_legend", phase: "end" },
+    );
+    flush();
+    const callsAfterHiddenView = rasterCalls;
+    // Unrelated draws and fresh dirty signals must remain readback-free while
+    // no automatic legend has a painted box.
+    for (let i = 0; i < 3; i++) {
+      view._markBestLegendsDirty();
+      flush();
+    }
+    const displayHidden = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+    };
+
+    legend.style.display = "";
+    await settle();
+    flush();
+    const displayRestored = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      loc: legend.dataset.xyLegendLoc,
+      width: legend.getBoundingClientRect().width,
+      height: legend.getBoundingClientRect().height,
+    };
+
+    // ResizeObserver reports the unchanged layout box for transforms. The
+    // legend attribute observer must remeasure the visual footprint even when
+    // it stays nonzero and visible on both sides of the mutation.
+    legend.style.transform = "scale(0.5)";
+    await settle();
+    flush();
+    const halfScale = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      width: legend.getBoundingClientRect().width,
+      height: legend.getBoundingClientRect().height,
+    };
+    legend.style.transform = "scale(1)";
+    await settle();
+    flush();
+    const fullScale = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      width: legend.getBoundingClientRect().width,
+      height: legend.getBoundingClientRect().height,
+    };
+
+    // A transformed zero-area box still has a client rect entry in Chromium;
+    // it must be rejected before rasterization by its measured dimensions.
+    legend.style.transform = "scale(0)";
+    await Promise.resolve();
+    view._markBestLegendsDirty();
+    flush();
+    const callsAfterZeroSize = rasterCalls;
+    for (let i = 0; i < 3; i++) {
+      view._markBestLegendsDirty();
+      flush();
+    }
+    const zeroSized = {
+      clientRectCount: legend.getClientRects().length,
+      width: legend.getBoundingClientRect().width,
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+    };
+    legend.style.transform = "";
+    await settle();
+    flush();
+    const zeroSizeRestored = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      loc: legend.dataset.xyLegendLoc,
+    };
+
+    legend.style.visibility = "collapse";
+    await Promise.resolve();
+    view._setView(
+      { ranges: { x: [0.0, 1.0], y: [0.0, 1.0] } },
+      { animate: false, request: false, source: "collapsed_legend", phase: "end" },
+    );
+    flush();
+    const callsAfterCollapsedView = rasterCalls;
+    for (let i = 0; i < 3; i++) {
+      view._markBestLegendsDirty();
+      flush();
+    }
+    const collapsed = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+    };
+
+    legend.style.visibility = "";
+    await settle();
+    flush();
+    const collapseRestored = {
+      visible: view._bestLegendIsVisible(legend),
+      dirty: view._legendBestDirty === true,
+      rasterCalls,
+      loc: legend.dataset.xyLegendLoc,
+    };
+
+    const resizeObserver = view._legendBestResizeObserver;
+    const mutationObserver = view._legendBestMutationObserver;
+    let resizeDisconnected = false;
+    let mutationDisconnected = false;
+    if (resizeObserver) {
+      const disconnect = resizeObserver.disconnect.bind(resizeObserver);
+      resizeObserver.disconnect = () => { resizeDisconnected = true; disconnect(); };
+    }
+    if (mutationObserver) {
+      const disconnect = mutationObserver.disconnect.bind(mutationObserver);
+      mutationObserver.disconnect = () => { mutationDisconnected = true; disconnect(); };
+    }
+    view.destroy();
+
+    document.body.setAttribute("data-xy-legend-best-hidden", JSON.stringify({
+      initial,
+      cleanDraws,
+      callsAfterHiddenView,
+      displayHidden,
+      displayRestored,
+      halfScale,
+      fullScale,
+      callsAfterZeroSize,
+      zeroSized,
+      zeroSizeRestored,
+      callsAfterCollapsedView,
+      collapsed,
+      collapseRestored,
+      resizeDisconnected,
+      mutationDisconnected,
+      observersReleased:
+        view._legendBestResizeObserver === null &&
+        view._legendBestMutationObserver === null,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-legend-best-hidden-error",
+      String((err && err.stack) || err),
+    );
+  }
+})();
+</script>
+"""
+
+
 def _mixed_chart():
     # Every mark and the annotation occupies the home view's upper-right
     # corner. In the 0.8..1.0 viewport they all project into the lower-left.
@@ -393,8 +638,8 @@ def _mixed_chart():
         xy.area([0.82, 0.86], [0.84, 0.86], base=[0.80, 0.80], name="area"),
         xy.bar([0.84], [0.86], base=[0.80], width=0.04, name="bar"),
         xy.text(0.84, 0.84, "important"),
-        xy.x_axis(domain=(0.0, 1.0)),
-        xy.y_axis(domain=(0.0, 1.0)),
+        xy.x_axis(domain=(0.0, 1.0), bounds=(0.0, 1.0)),
+        xy.y_axis(domain=(0.0, 1.0), bounds=(0.0, 1.0)),
         xy.legend(loc="best"),
         width=520,
         height=360,
@@ -442,76 +687,62 @@ def _payload_update_chart(x: float, y: float):
     )
 
 
-def test_live_best_source_contract_is_bounded_and_settled() -> None:
+def test_live_best_raster_contract_is_fixed_size_and_module_private() -> None:
     source = CHARTVIEW.read_text(encoding="utf-8")
-    interaction = INTERACTION.read_text(encoding="utf-8")
-    kernel = KERNEL.read_text(encoding="utf-8")
-    animation = ANIMATION.read_text(encoding="utf-8")
-    wrapper = WRAPPER.read_text(encoding="utf-8")
-    helper = source.split("export function xyLegendBestLocation", 1)[1].split(
-        "// SVG gradient ids", 1
-    )[0]
-    raster = source.split("  _bestLegendRaster()", 1)[1].split("  _bestLegendLocationForRaster", 1)[
-        0
-    ]
 
-    assert "LEGEND_BEST_GRID_W = 96" in source
-    assert "LEGEND_BEST_GRID_H = 72" in source
+    # Keep only stable structural contracts here. Candidate behavior, bounded
+    # scratch bytes, settled gestures, data animation, fallback contexts,
+    # and annotation paint are exercised by the browser probes below instead
+    # of slicing method bodies on indentation-sensitive delimiters.
+    assert re.search(r"\bconst\s+LEGEND_BEST_GRID_W\s*=\s*96\s*;", source)
+    assert re.search(r"\bconst\s+LEGEND_BEST_GRID_H\s*=\s*72\s*;", source)
     assert "LEGEND_BEST_TIE_BAND" not in source
-    assert "(scores.get(loc) ?? Infinity) === floor" in helper
-    assert helper.index('"upper right"') < helper.index('"upper left"')
-    assert "getImageData" in raster
-    assert "this.canvas" in raster and "this.overlay" in raster
-    assert "this.chrome" not in raster
-    assert "._cpu" not in raster
-    assert "this._drawChrome();\n    this._maybePositionBestLegends();" in source
-    assert 'phase === "end" && this._markBestLegendsDirty()' in source
-    assert 'this.spec?.coords !== "polar"' in source
-    assert "!Array.isArray(options.anchor)" in source
-    assert interaction.count("this._settleBestLegendInteraction();") == 2
-    cancelled_animation = interaction.split("  _cancelViewAnimation()", 1)[1].split(
-        "  _setView", 1
-    )[0]
-    assert "const wasActive = !!this._viewAnim;" in cancelled_animation
-    assert "wasActive && this._markBestLegendsDirty?.()" in cancelled_animation
-    native_gl = source.split("    } else {\n      if (!this._governorRegistered)", 1)[1].split(
-        "    }\n    this.gl = gl;", 1
-    )[0]
-    assert "preserveDrawingBuffer: needsLegendBestSnapshot" in native_gl
-    assert 'legend.dataset.xyLegendAutoLoc === "best"' in native_gl
-    assert "gl.getContextAttributes()?.preserveDrawingBuffer === true" in native_gl
-    assert "!this._glHost && this._legendBestCanvasSnapshotReady !== true" in raster
-    context_loss = source.split('this._listen(this.canvas, "webglcontextlost"', 1)[1].split(
-        'this._listen(this.canvas, "webglcontextrestored"', 1
-    )[0]
-    assert "this._legendBestInteractionActive = false;" in context_loss
-    assert "this._markBestLegendsDirty();" in context_loss
-    assert "g._drillBackdropTick || g._blendTick || g.drill?._blendTick" in source
-    assert "this._bestLegendAnnotationPainted(label)" in raster
-    assert "plot: this.canvas.getBoundingClientRect()" in raster
-    assert "(left - plotLeft) / plotRect.width" in source
-    annotation_paint = source.split("  _bestLegendAnnotationPainted", 1)[1].split(
-        "  _bestLegendRaster", 1
-    )[0]
-    assert "getComputedStyle(node)" in annotation_paint
-    assert 'style.visibility === "hidden"' in annotation_paint
-    assert "Number(style.opacity) <= 0" in annotation_paint
-    assert "transparent(labelStyle.color)" in annotation_paint
-    assert kernel.count("if (legendGeometryChanged) this._markBestLegendsDirty();") == 2
-    sample_rebin = kernel.split("  _applySampleRebinGrid", 1)[1].split("  _applyAppend", 1)[0]
-    append = kernel.split("  _applyAppend", 1)[1].split("  _scheduleAppendRefine", 1)[0]
-    assert "this._markBestLegendsDirty();" in sample_rebin
-    assert "this._markBestLegendsDirty();" in append
-    update_payload = animation.split("  updatePayload(spec, buffer)", 1)[1]
-    assert "this._adoptBestLegendFallbacks?.(spec);" in update_payload
-    assert "this.gpuTraces = spec.traces.map" in update_payload
-    assert update_payload.index("this.gpuTraces = spec.traces.map") < update_payload.index(
-        "this._markBestLegendsDirty?.();", update_payload.index("this.gpuTraces = spec.traces.map")
+    assert re.search(r"(?m)^function\s+xyLegendBestLocation\s*\(", source)
+    assert not re.search(r"\bexport\s+function\s+xyLegendBestLocation\s*\(", source)
+    assert re.search(
+        r"LEGEND_BEST_ORDER\s*=\s*\[\s*[\"']upper right[\"']\s*,\s*"
+        r"[\"']upper left[\"']",
+        source,
     )
-    assert "const mountedLegendSpec = (legend, coords) =>" in wrapper
-    assert "const { loc: _concreteFallback, ...mounted } = legend;" in wrapper
-    assert "legend: mountedLegendSpec(spec?.legend, spec?.coords)" in wrapper
-    assert "mountedLegendSpec(legend, spec?.coords)" in wrapper
+    assert re.search(
+        r"\(scores\.get\(loc\)\s*\?\?\s*Infinity\)\s*===\s*floor",
+        source,
+    )
+    assert re.search(
+        r"this\._drawChrome\(\)\s*;\s*this\._maybePositionBestLegends\(\)\s*;",
+        source,
+    )
+
+    kernel = KERNEL.read_text(encoding="utf-8")
+    dirty_hook = r"this\._markBestLegendsDirty\s*\(\s*\)\s*;"
+    for method in ("_applySampleRebinGrid", "_applyAppend"):
+        # Both hooks are deliberately near the start of their methods. A
+        # bounded formatting-tolerant window keeps this structural assertion
+        # scoped without splitting on indentation or a particular next method.
+        assert re.search(
+            rf"\b{method}\s*\([^)]*\)\s*\{{[\s\S]{{0,1800}}?{dirty_hook}",
+            kernel,
+        )
+    for message_type in ("tier_update", "density_update"):
+        # Stop at the next message branch so one branch cannot satisfy the
+        # other's geometry-change contract.
+        assert re.search(
+            rf'msg\.type\s*===\s*"{message_type}"'
+            rf"(?:(?!\bmsg\.type\s*===)[\s\S])*?"
+            rf"if\s*\(\s*legendGeometryChanged\s*\)\s*{dirty_hook}",
+            kernel,
+        )
+    assert re.search(
+        r'webglcontextlost"(?:(?!webglcontextrestored")[\s\S])*?'
+        r"this\._legendBestInteractionActive\s*=\s*false\s*;"
+        r"[\s\S]*?this\._markBestLegendsDirty\s*\(\s*\)\s*;",
+        source,
+    )
+    assert re.search(
+        r"g\._drillBackdropTick\s*\|\|\s*g\._blendTick\s*\|\|\s*"
+        r"g\.drill\?\._blendTick",
+        source,
+    )
 
 
 def test_live_best_uses_rendered_marks_and_moves_only_after_view_settles(
@@ -544,6 +775,14 @@ def test_live_best_uses_rendered_marks_and_moves_only_after_view_settles(
         assert cancellation["activeDuring"] is True, result
         assert cancellation["after"] == "upper left", result
         assert cancellation["activeAfter"] is False, result
+    assert result["fullyClampedPan"]["activeDuring"] == [False], result
+    assert result["fullyClampedPan"]["activeAfter"] is False, result
+    for axis in ("x", "y"):
+        assert result["fullyClampedPan"]["ranges"][axis] == pytest.approx([0, 0.2]), result
+    assert result["updatedThenClampedPan"]["activeDuring"] == [True, True, True], result
+    assert result["updatedThenClampedPan"]["activeAfter"] is False, result
+    for axis in ("x", "y"):
+        assert result["updatedThenClampedPan"]["ranges"][axis] == pytest.approx([0, 0.2]), result
     assert result["rasterBytes"] == 96 * 72 * 4, result
 
 
@@ -690,6 +929,89 @@ def test_live_best_ignores_unpainted_annotation_labels(tmp_path: Path) -> None:
     assert any(
         color.startswith("rgba(") and color.endswith(", 0)") for color in result["colors"]
     ), result
+
+
+def test_hidden_auto_legend_skips_readback_and_rescores_when_visible(
+    tmp_path: Path,
+) -> None:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        probe_document(_mixed_chart(), _HIDDEN_LEGEND_PROBE),
+        tmp_path / "legend_best_hidden.html",
+        "data-xy-legend-best-hidden",
+        label="hidden automatic legend readback probe",
+    )
+
+    assert result["initial"] == "upper left", result
+    assert result["cleanDraws"] == {
+        "dirty": False,
+        "rasterCalls": 0,
+        "visibilityChecks": 0,
+    }, result
+    assert result["callsAfterHiddenView"] == 0, result
+    assert result["displayHidden"] == {
+        "visible": False,
+        "dirty": False,
+        "rasterCalls": 0,
+    }, result
+    display_restored = result["displayRestored"]
+    assert {key: display_restored[key] for key in ("visible", "dirty", "rasterCalls", "loc")} == {
+        "visible": True,
+        "dirty": False,
+        "rasterCalls": 1,
+        "loc": "upper right",
+    }, result
+    assert display_restored["width"] > 0, result
+    assert display_restored["height"] > 0, result
+    assert result["halfScale"]["visible"] is True, result
+    assert result["halfScale"]["dirty"] is False, result
+    assert result["halfScale"]["rasterCalls"] == 2, result
+    assert result["halfScale"]["width"] == pytest.approx(
+        display_restored["width"] * 0.5,
+    ), result
+    assert result["halfScale"]["height"] == pytest.approx(
+        display_restored["height"] * 0.5,
+    ), result
+    assert result["fullScale"]["visible"] is True, result
+    assert result["fullScale"]["dirty"] is False, result
+    assert result["fullScale"]["rasterCalls"] == 3, result
+    assert result["fullScale"]["width"] == pytest.approx(
+        display_restored["width"],
+    ), result
+    assert result["fullScale"]["height"] == pytest.approx(
+        display_restored["height"],
+    ), result
+    assert result["callsAfterZeroSize"] == 3, result
+    assert result["zeroSized"]["clientRectCount"] > 0, result
+    assert result["zeroSized"]["width"] == 0, result
+    assert result["zeroSized"]["visible"] is False, result
+    assert result["zeroSized"]["dirty"] is False, result
+    assert result["zeroSized"]["rasterCalls"] == 3, result
+    assert result["zeroSizeRestored"] == {
+        "visible": True,
+        "dirty": False,
+        "rasterCalls": 4,
+        "loc": "upper right",
+    }, result
+    assert result["callsAfterCollapsedView"] == 4, result
+    assert result["collapsed"] == {
+        "visible": False,
+        "dirty": False,
+        "rasterCalls": 4,
+    }, result
+    assert result["collapseRestored"] == {
+        "visible": True,
+        "dirty": False,
+        "rasterCalls": 5,
+        "loc": "upper left",
+    }, result
+    assert result["resizeDisconnected"] is True, result
+    assert result["mutationDisconnected"] is True, result
+    assert result["observersReleased"] is True, result
 
 
 def test_update_payload_keeps_auto_legend_chrome_and_scores_after_animation(

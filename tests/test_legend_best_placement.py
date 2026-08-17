@@ -123,6 +123,17 @@ def test_best_ships_a_concrete_fallback_with_live_auto_intent() -> None:
     assert spec["legend"]["auto_loc"] == "best"
 
 
+def test_polar_best_ships_only_a_concrete_location() -> None:
+    figure = xy.chart(
+        xy.line([0.0, 1.0], [0.2, 0.8], name="a"),
+        xy.legend(loc="best"),
+        coords="polar",
+    ).figure()
+    spec, _blob = figure.build_payload()
+    assert spec["legend"]["loc"] in _legendfit._CANDIDATE_ORDER
+    assert "auto_loc" not in spec["legend"]
+
+
 def test_an_unspecified_legend_location_keeps_the_compatible_default() -> None:
     figure = xy.line_chart(
         xy.line([0.0, 1.0], [1.0, 0.0], name="a"),
@@ -171,6 +182,29 @@ def test_initial_candidates_use_the_measured_legend_footprint() -> None:
     large = footprint("22px")
     assert large[0] > small[0]
     assert large[1] > small[1]
+
+
+def test_emitted_column_decoding_keeps_blob_and_writer_rows_aligned() -> None:
+    from xy._payload import _PayloadWriter
+
+    writer = _PayloadWriter()
+    geometry = 1e12 + np.arange(5, dtype=np.float64) * 256.0
+    geometry_ref = writer.ship_values(geometry)
+    rgba = np.arange(20, dtype=np.uint8).reshape(5, 4)
+    rgba_ref = writer.ship_u8(rgba)
+    spec = {"columns": writer.columns}
+
+    expected_geometry = geometry[[0, 2, 4]]
+    expected_rgba = rgba[[0, 2, 4]].astype(np.float64)
+    for source in (writer, writer.blob()):
+        np.testing.assert_array_equal(
+            _legendfit._rendered_column(spec, source, geometry_ref, 3),
+            expected_geometry,
+        )
+        np.testing.assert_array_equal(
+            _legendfit._rendered_column_rows(spec, source, rgba_ref, 4, 3),
+            expected_rgba,
+        )
 
 
 def test_best_moves_the_legend_off_the_data_in_the_svg() -> None:
@@ -679,6 +713,41 @@ def test_best_scores_annotation_coordinate_spaces(space: str, x: float, y: float
         height=420,
     ).figure()
     assert _loc(figure) == "upper left"
+
+
+def test_figure_fraction_fallback_stays_in_plot_coordinates(monkeypatch) -> None:
+    from xy import _svg
+
+    def browser_only_layout(*_args, **_kwargs):
+        raise ValueError("layout requires the browser")
+
+    monkeypatch.setattr(_svg, "layout", browser_only_layout)
+    scores = {"probe": 0.0}
+    candidates = (("probe", 0.0, 0.05, 0.0, 0.05),)
+    annotations = (
+        {
+            "kind": "text",
+            "x": 0.10,
+            "y": 0.10,
+            "text": "i",
+            "style": {"coordinate_space": "figure_fraction", "color": "black"},
+        },
+    )
+    axis = ((0.0, 1.0), False, None, 1.0)
+
+    # Figure (0.10, 0.10) maps inside this box in the standard fallback
+    # 640x480 frame's 564x428 plot. Returning the raw pair as axes fractions
+    # misses it entirely.
+    assert _legendfit._score_annotations(
+        scores,
+        candidates,
+        annotations,
+        axis,
+        axis,
+        (564.0, 428.0),
+        {"width": 640, "height": 480},
+    )
+    assert scores["probe"] == 1.0
 
 
 @pytest.mark.parametrize("opacity", ["var(--ann-opacity)", "calc(1 - .2)", "inherit"])

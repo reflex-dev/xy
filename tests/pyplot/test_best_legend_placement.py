@@ -422,25 +422,34 @@ def test_static_export_at_the_same_size_keeps_pyplots_richer_decision(monkeypatc
     # from the core fallback scorer. Re-resolving at unchanged dimensions
     # would silently move the payload's lower-left choice to upper-left.
     rng = np.random.default_rng(10)
+    ax = None
     for index in range(7):
-        _, ax = plt.subplots()
+        fixture, candidate_ax = plt.subplots()
         count = int(rng.integers(1, 40))
-        ax.plot(rng.random(count), rng.random(count), label="a")
+        candidate_ax.plot(rng.random(count), rng.random(count), label="a")
         if index % 3 == 0:
-            ax.text(
+            candidate_ax.text(
                 float(rng.random()),
                 float(rng.random()),
                 "W" * int(rng.integers(1, 30)),
             )
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.legend(loc="best")
+        candidate_ax.set_xlim(0, 1)
+        candidate_ax.set_ylim(0, 1)
+        candidate_ax.legend(loc="best")
+        if index < 6:
+            # The seventh seeded case is the minimal scorer-separating
+            # regression. Earlier cases only advance that deterministic RNG
+            # sequence; release their pyplot state as soon as it is consumed.
+            plt.close(fixture)
+        else:
+            ax = candidate_ax
 
+    assert ax is not None
     core = ax._build_chart(640, 480).figure()
     spec, _ = core.build_payload()
     assert spec["legend"]["loc"] == "lower left"
 
-    from xy import _svg
+    from xy import _raster, _svg
 
     rendered = []
     original = _svg.render_svg
@@ -453,6 +462,13 @@ def test_static_export_at_the_same_size_keeps_pyplots_richer_decision(monkeypatc
     core.to_svg()
     core.to_svg(width=640, height=480)
     assert rendered == ["lower left", "lower left"]
+
+    raster_locs = [
+        _raster._export_payload(core, None, None, None)[0]["legend"]["loc"],
+        _raster._export_payload(core, 640, 480, None)[0]["legend"]["loc"],
+    ]
+    assert raster_locs == ["lower left", "lower left"]
+    plt.close(fixture)
 
 
 def test_unlabeled_entries_do_not_crash_measurement():

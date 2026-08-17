@@ -3624,11 +3624,13 @@ def _export_payload(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    dimensions_changed = (width is not None and int(width) != getattr(fig, "width", None)) or (
-        height is not None and int(height) != getattr(fig, "height", None)
+    spec = _resolve_auto_legend_locations(
+        fig,
+        spec,
+        blob,
+        width=width,
+        height=height,
     )
-    if dimensions_changed:
-        spec = _resolve_auto_legend_locations(fig, spec, blob)
     apply_export_background(spec, background)
     return spec, blob, borrowed
 

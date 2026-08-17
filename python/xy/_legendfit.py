@@ -54,6 +54,10 @@ _FALLBACK = "upper right"
 _PATH_SAMPLE = 1024
 _SCATTER_SAMPLE = 4096
 _LEGEND_INSET_PX = 6.0
+_FALLBACK_PLOT_SIZE = (564.0, 428.0)
+# `_svg.layout`'s non-compact default gutters. They define the figure frame
+# around `_FALLBACK_PLOT_SIZE` when layout itself cannot resolve a spec.
+_FALLBACK_GUTTERS = (10.0, 14.0, 42.0, 62.0)  # top, right, bottom, left
 
 
 def candidate_boxes(
@@ -378,7 +382,7 @@ def _measured_candidates(
 ) -> tuple[tuple[tuple[str, float, float, float, float], ...], tuple[float, float]]:
     """Candidates sized by the same legend layout the static writers use."""
     if spec is None:
-        width, height = 564.0, 428.0
+        width, height = _FALLBACK_PLOT_SIZE
         box_w, box_h = legend_footprint(labels)
         return candidate_boxes(box_w, box_h), (width, height)
     try:
@@ -420,7 +424,7 @@ def _measured_candidates(
         )
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         box_w, box_h = legend_footprint(labels)
-        return candidate_boxes(box_w, box_h), (564.0, 428.0)
+        return candidate_boxes(box_w, box_h), _FALLBACK_PLOT_SIZE
 
 
 def _score_annotations(
@@ -476,9 +480,19 @@ def _score_annotations(
                     (py * height - bottom) / float(plot["h"]),
                 )
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
-                # A responsive/browser-only layout is unresolved here. Axes
-                # fractions are the closest conservative bounded fallback.
-                return px, py
+                # Keep the point in the same normalized *plot* coordinates as
+                # the candidate fallback above. Its 564x428 plot is the
+                # standard 640x480 frame after the 62/14px horizontal and
+                # 10/42px vertical gutters. Returning raw figure fractions
+                # here silently treated them as axes fractions instead.
+                plot_w, plot_h = plot_size
+                top, right, bottom, left = _FALLBACK_GUTTERS
+                width = left + plot_w + right
+                height = top + plot_h + bottom
+                return (
+                    (px * width - left) / plot_w,
+                    (py * height - bottom) / plot_h,
+                )
         return data_point(px, py)
 
     def displayed(style: dict[str, Any]) -> bool:
@@ -704,29 +718,20 @@ def _rendered_column(
         # Borrowed f64 spans are separate from the owned payload blob. Legend
         # geometry never uses them; returning None keeps the fallback honest.
         return None
-    dtype_name = str(meta.get("dtype", "f32"))
-    dtype = {
-        "u8": np.dtype(np.uint8),
-        "u32": np.dtype("<u4"),
-        "f64": np.dtype("<f8"),
-        "f32": np.dtype("<f4"),
-    }.get(dtype_name, np.dtype("<f4"))
+    # Local import avoids a module cycle: payload compilation imports this
+    # scorer only after its writer and wire helpers have been initialized.
+    from ._payload import _decode_emitted_values, _emitted_column_dtype
+
     try:
         values = np.frombuffer(
             source,
-            dtype=dtype,
+            dtype=_emitted_column_dtype(meta),
             count=int(meta.get("len", 0)),
             offset=int(meta.get("byte_offset", 0)),
         )
     except (TypeError, ValueError):
         return None
-    if budget is not None and len(values) > budget:
-        indices = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
-        values = values[indices]
-    decoded = np.asarray(values, dtype=np.float64)
-    if "offset" in meta or "scale" in meta:
-        decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(meta.get("offset", 0.0))
-    return decoded
+    return _decode_emitted_values(values, meta, budget)
 
 
 def _rendered_column_rows(
@@ -754,31 +759,21 @@ def _rendered_column_rows(
     meta = columns[index]
     if int(meta.get("span", 0) or 0) != 0:
         return None
-    dtype = {
-        "u8": np.dtype(np.uint8),
-        "u32": np.dtype("<u4"),
-        "f64": np.dtype("<f8"),
-        "f32": np.dtype("<f4"),
-    }.get(str(meta.get("dtype", "f32")), np.dtype("<f4"))
+    from ._payload import _decode_emitted_values, _emitted_column_dtype
+
     length = int(meta.get("len", 0))
     if length % components:
         return None
     try:
         values = np.frombuffer(
             source,
-            dtype=dtype,
+            dtype=_emitted_column_dtype(meta),
             count=length,
             offset=int(meta.get("byte_offset", 0)),
         ).reshape(-1, components)
     except (TypeError, ValueError):
         return None
-    if budget is not None and len(values) > budget:
-        indices = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
-        values = values[indices]
-    decoded = np.asarray(values, dtype=np.float64)
-    if "offset" in meta or "scale" in meta:
-        decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(meta.get("offset", 0.0))
-    return decoded
+    return _decode_emitted_values(values, meta, budget)
 
 
 def _numeric(value: Any, default: float) -> float:

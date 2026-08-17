@@ -192,7 +192,7 @@ const LEGEND_BEST_ORDER = [
 /** Pick the least-occupied standard legend box from a binary screen raster.
  * All geometry is normalized to the plot, which keeps this helper independent
  * of the DOM and makes its tie behavior directly probeable. */
-export function xyLegendBestLocation(
+function xyLegendBestLocation(
   occupancy: ArrayLike<number>,
   gridW: number,
   gridH: number,
@@ -2718,6 +2718,13 @@ export class ChartView {
     // A chrome rebuild replaces the row nodes mid-hover, so their pointerleave
     // never fires; release any active dim state before dropping the old boxes.
     this._clearLegendHover();
+    // Visibility observers retain their observed nodes. A chrome rebuild can
+    // replace every legend, so disconnect before dropping those nodes and let
+    // `_legendBox` attach the shared observers to the replacements below.
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._legends = [];
     this._legendBestDirty = false;
     // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
@@ -3026,6 +3033,9 @@ export class ChartView {
     lg._xyItemRows = rows;
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
+    if (lg.dataset.xyLegendAutoLoc === "best") {
+      this._observeBestLegendVisibility(lg);
+    }
     return lg;
   }
 
@@ -3554,6 +3564,96 @@ export class ChartView {
     return automatic;
   }
 
+  _bestLegendIsVisible(legend) {
+    if (!legend?.isConnected || legend.hidden || !legend.getClientRects().length) return false;
+    // A transformed/collapsed box can still contribute a DOMRect entry whose
+    // visual width or height is zero. It is no more scoreable than display:none
+    // and would otherwise make `_bestLegendLocationForRaster` return null after
+    // the expensive canvas readback.
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    // `getClientRects` catches display:none/zero layout, but visibility,
+    // content-visibility, and opacity can suppress paint while retaining the
+    // same measurable box. Walk through the root because author utility
+    // classes commonly hide the whole chart or one legend at a breakpoint.
+    let node: any = legend;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        style.contentVisibility === "hidden" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  _syncBestLegendVisibility(remeasure = false) {
+    if (this._destroyed) return;
+    let needsScore = false;
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc !== "best" || legend.dataset.xyLegendAnchor) continue;
+      const wasVisible = legend._xyLegendBestVisible === true;
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      const sizeChanged = remeasure && wasVisible && visible && (
+        rect.width !== legend._xyLegendBestWidth || rect.height !== legend._xyLegendBestHeight
+      );
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      if ((!wasVisible && visible) || sizeChanged) needsScore = true;
+    }
+    if (needsScore && this._markBestLegendsDirty()) this.draw();
+  }
+
+  _observeBestLegendVisibility(legend) {
+    const visible = this._bestLegendIsVisible(legend);
+    const rect = visible ? legend.getBoundingClientRect() : null;
+    legend._xyLegendBestVisible = visible;
+    legend._xyLegendBestWidth = rect?.width ?? 0;
+    legend._xyLegendBestHeight = rect?.height ?? 0;
+
+    // ResizeObserver covers display:none and responsive stylesheet changes:
+    // a zero-sized legend receives a fresh nonzero entry when it participates
+    // in layout again. One observer per view is shared by every auto legend.
+    if (typeof ResizeObserver !== "undefined") {
+      this._legendBestResizeObserver ||= new ResizeObserver(() => {
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestResizeObserver.observe(legend);
+    }
+    // Visibility/collapse/opacity can change without changing box dimensions.
+    // Observe only the legend's paint-affecting attributes; ancestor changes
+    // are already covered by the chart's theme observer, and a document-wide
+    // subtree observer would turn unrelated application churn into chart work.
+    if (typeof MutationObserver !== "undefined") {
+      this._legendBestMutationObserver ||= new MutationObserver(() => {
+        // Class/style mutations can alter the *visual* footprint through a
+        // nonzero CSS transform. ResizeObserver sees the unchanged layout box,
+        // so remeasure here as well as checking hidden/visible transitions.
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestMutationObserver.observe(legend, {
+        attributes: true,
+        attributeFilter: ["class", "hidden", "style"],
+      });
+    }
+    if (!this._legendBestVisibilityEventsArmed) {
+      this._legendBestVisibilityEventsArmed = true;
+      const sync = () => this._syncBestLegendVisibility(true);
+      // Re-evaluate media-query visibility at its natural seams. These
+      // listeners are registered through `_listen`, so destroy removes them.
+      this._listen(window, "resize", sync);
+      this._listen(window, "pageshow", sync);
+      this._listen(document, "visibilitychange", sync);
+    }
+  }
+
   _bestLegendLiveRasterAvailable() {
     if (this._destroyed || this._glLost || !this.gl || !this.root?.isConnected) return false;
     if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return false;
@@ -3811,10 +3911,28 @@ export class ChartView {
       return;
     }
     if (!this._legendBestDirty || this._legendBestInteractionActive) return;
+    // Visibility measurement reads layout/computed style, so keep it behind
+    // both settled-state gates. Clean hover frames and animation/gesture frames
+    // must not pay for geometry that cannot produce a new placement anyway.
+    const visibleAutomatic = automatic.filter((legend) => {
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      return visible;
+    });
+    // A hidden/collapsed legend has no box to score. Treat that settled state
+    // as clean instead of reading the canvases on every unrelated draw; its
+    // observer marks one fresh score when the box becomes measurable again.
+    if (!visibleAutomatic.length) {
+      this._legendBestDirty = false;
+      return;
+    }
     const raster = this._bestLegendRaster();
     if (!raster) return;
     let positioned = 0;
-    for (const legend of automatic) {
+    for (const legend of visibleAutomatic) {
       const loc = this._bestLegendLocationForRaster(raster, legend);
       if (!loc) continue;
       legend.dataset.xyLegendLoc = loc;
@@ -3825,7 +3943,7 @@ export class ChartView {
       this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
       positioned += 1;
     }
-    this._legendBestDirty = positioned !== automatic.length;
+    this._legendBestDirty = positioned !== visibleAutomatic.length;
   }
 
   _positionLegend(lg, loc, anchor = null) {
@@ -8903,6 +9021,10 @@ export class ChartView {
       this._rebinWorker = null;
     }
     this._ro?.disconnect();
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._io?.disconnect();
     this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);

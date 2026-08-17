@@ -7168,15 +7168,27 @@ def _resolve_auto_legend_locations(
     fig: Any,
     spec: dict[str, Any],
     rendered_columns: Any,
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
 ) -> dict[str, Any]:
-    """Re-resolve automatic legends against a static export's final payload.
+    """Re-resolve automatic legends only when an export changes dimensions.
 
     Payload construction has to choose an initial concrete location before the
     export-only width/height overrides are known. Static writers still have the
     exact emitted columns at this point, so score those columns against the
-    final layout. Copy on write matters for ``extra_legends``: their payload
-    list is allowed to share dictionaries with the source Figure.
+    final layout when an override actually changes it. Keeping that trigger in
+    this shared helper prevents SVG and raster export semantics from drifting;
+    in particular, a same-size export must retain pyplot's richer initial
+    decision. Copy on write matters for ``extra_legends``: their payload list
+    is allowed to share dictionaries with the source Figure.
     """
+    dimensions_changed = (width is not None and int(width) != getattr(fig, "width", None)) or (
+        height is not None and int(height) != getattr(fig, "height", None)
+    )
+    if not dimensions_changed:
+        return spec
+
     from ._legendfit import resolve_for_figure
 
     updated: Optional[dict[str, Any]] = None
@@ -7245,15 +7257,13 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    dimensions_changed = (width is not None and int(width) != getattr(fig, "width", None)) or (
-        height is not None and int(height) != getattr(fig, "height", None)
+    spec = _resolve_auto_legend_locations(
+        fig,
+        spec,
+        blob,
+        width=width,
+        height=height,
     )
-    if dimensions_changed:
-        # The payload scorer already used the Figure's authored dimensions.
-        # Re-run only when export geometry actually overrides them; otherwise
-        # this would replace pyplot's richer measured initial decision with a
-        # second, different core decision at the exact same size.
-        spec = _resolve_auto_legend_locations(fig, spec, blob)
     apply_export_background(spec, background)
     out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:

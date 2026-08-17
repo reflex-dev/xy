@@ -36,6 +36,39 @@ else:
 _U32_MAX = (1 << 32) - 1
 
 
+_EMITTED_DTYPES = {
+    "u8": np.dtype(np.uint8),
+    "u32": np.dtype("<u4"),
+    "f64": np.dtype("<f8"),
+    "f32": np.dtype("<f4"),
+}
+
+
+def _emitted_column_dtype(meta: dict[str, Any]) -> np.dtype[Any]:
+    """NumPy dtype named by one emitted column's wire metadata."""
+    return _EMITTED_DTYPES.get(str(meta.get("dtype", "f32")), _EMITTED_DTYPES["f32"])
+
+
+def _decode_emitted_values(
+    values: np.ndarray,
+    meta: dict[str, Any],
+    budget: Optional[int] = None,
+) -> np.ndarray:
+    """Sample emitted rows, then undo their wire offset/scale encoding.
+
+    ``values`` may be a scalar column or a two-dimensional row table. Sampling
+    always selects axis-0 rows, so multi-component channels such as RGBA stay
+    aligned with the geometry sample that consumes them.
+    """
+    if budget is not None and len(values) > budget:
+        selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
+        values = values[selected]
+    decoded = np.asarray(values, dtype=np.float64)
+    if "offset" in meta or "scale" in meta:
+        decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(meta.get("offset", 0.0))
+    return decoded
+
+
 class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
 
@@ -191,16 +224,8 @@ class _PayloadWriter:
     def decoded_column(self, index: int, budget: Optional[int] = None) -> np.ndarray:
         """Decode one already-emitted column, optionally with a bounded sample."""
         values = self._column_arrays[int(index)].reshape(-1)
-        if budget is not None and len(values) > budget:
-            selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
-            values = values[selected]
         meta = self.columns[int(index)]
-        decoded = np.asarray(values, dtype=np.float64)
-        if "offset" in meta or "scale" in meta:
-            decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(
-                meta.get("offset", 0.0)
-            )
-        return decoded
+        return _decode_emitted_values(values, meta, budget)
 
     def decoded_column_rows(
         self,
@@ -212,16 +237,8 @@ class _PayloadWriter:
         if components <= 0:
             raise ValueError("column components must be positive")
         values = self._column_arrays[int(index)].reshape(-1, components)
-        if budget is not None and len(values) > budget:
-            selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
-            values = values[selected]
         meta = self.columns[int(index)]
-        decoded = np.asarray(values, dtype=np.float64)
-        if "offset" in meta or "scale" in meta:
-            decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(
-                meta.get("offset", 0.0)
-            )
-        return decoded
+        return _decode_emitted_values(values, meta, budget)
 
     def blob(self) -> bytes:
         return b"".join(
