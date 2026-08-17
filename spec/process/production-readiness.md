@@ -95,7 +95,7 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6,<0.10` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
@@ -405,7 +405,7 @@ Before tagging a release:
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
-  `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel
+  `Provides-Extra: reflex` and `reflex>=0.9.6,<0.10` guarded by that extra. The wheel
   must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
   archive file exactly once with matching `sha256` and size fields. Wheels
   and the sdist remain distribution/build-input-only: docs, tests, benchmarks,
@@ -418,8 +418,12 @@ Every `xy` release carries the `reflex_xy` Python package and JSX wrapper. The
 wrapper links to the render client in the same installed distribution, so
 client, kernel, and framework bridge share one version. Plain `xy` must not
 install Reflex; `xy[reflex]` must install the declared supported floor.
-Release smoke tests install Reflex, import `reflex_xy`, and assert that its
-reported version matches the `xy` distribution version.
+The supported Reflex window is `>=0.9.6,<0.10`. CI runs the component compile
+and state-event rebuild smokes against both the minimum `0.9.6` and the newest
+released `0.9.8` in that window. Widen the extra only after adding the new
+released version to that matrix and passing both smokes. Release smoke tests
+install the bounded extra, import `reflex_xy`, and assert that its reported
+version matches the `xy` distribution version.
 
 ## Hardening Backlog
 

@@ -13,6 +13,7 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -32,9 +33,11 @@ REQUIRED_CI_JOBS = {
     "sdist",
     "wheels",
     "install_without_rust",
+    "reflex_compatibility",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+REFLEX_OPTIONAL_DEPENDENCY = "reflex>=0.9.6,<0.10"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -594,6 +597,31 @@ def _require_step_runs_exactly(
         errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
 
 
+def _require_matrix_step_runs_exactly(
+    errors: list[str], job_text: str, step: str, description: str, *commands: str
+) -> None:
+    """Require the complete active command list in one matrix step."""
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
+    forbidden_job_keys = (
+        "if",
+        "continue-on-error",
+        "defaults",
+        "container",
+        "needs",
+    )
+    if (
+        _step_run_lines(block) != list(commands)
+        or _direct_yaml_key_count(block, "run", indent=8) != 1
+        or any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
+        or any(_has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys)
+    ):
+        errors.append(f"CI step {step!r} missing {description}: {list(commands)!r}")
+
+
 def _require_job_contains(
     errors: list[str],
     jobs: dict[str, str],
@@ -873,6 +901,72 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     _require_job_contains(
         errors,
         jobs,
+        "reflex_compatibility",
+        "CI",
+        "minimum and maximum released Reflex compatibility matrix",
+        "fail-fast: false",
+        'reflex-version: ["0.9.6", "0.9.8"]',
+    )
+    reflex_job = jobs.get("reflex_compatibility", "")
+    matrix_values, matrix_unsafe = _direct_yaml_key_values(reflex_job, "reflex-version", indent=8)
+    if matrix_values != ['["0.9.6", "0.9.8"]'] or matrix_unsafe:
+        errors.append("CI reflex_compatibility job must test exactly Reflex 0.9.6 and 0.9.8")
+    if _has_yaml_key(reflex_job, "exclude", indent=8):
+        errors.append("CI reflex_compatibility job must not exclude compatibility versions")
+    if _has_yaml_key(reflex_job, "include", indent=8):
+        errors.append("CI reflex_compatibility job must not include additional versions")
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Install exact Reflex compatibility target",
+        "exact Reflex installation",
+        "npm ci",
+        "uv venv .venv",
+        "uv pip install -p .venv/bin/python \\",
+        '"reflex==${{ matrix.reflex-version }}" \\',
+        '"numpy>=1.24" "anywidget>=0.9" "pytest>=8" "aiohttp>=3.9" "uvicorn>=0.23"',
+        "uv pip install -p .venv/bin/python -e . --no-deps",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Verify exact Reflex target and metadata window",
+        "Reflex version and metadata assertions",
+        ".venv/bin/python -c \"import importlib.metadata as m; assert m.version('reflex') == '${{ matrix.reflex-version }}'\"",
+        ".venv/bin/python -c \"from packaging.requirements import Requirement; import importlib.metadata as m; req = next(Requirement(value) for value in m.metadata('xy').get_all('Requires-Dist') if Requirement(value).name == 'reflex'); assert str(req.specifier) == '<0.10,>=0.9.6'\"",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "Component compile and event smoke",
+        "component compile and event smoke",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_component.py::test_component_compiles_with_events",
+    )
+    _require_matrix_step_runs_exactly(
+        errors,
+        reflex_job,
+        "State event and rebuild smoke",
+        "state event and rebuild smoke",
+        ".venv/bin/pytest -q tests/reflex_adapter/test_state_bridge.py::test_rebuild_reads_session_state",
+    )
+    try:
+        project_metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot read project metadata for Reflex compatibility gate: {exc}")
+    else:
+        try:
+            project = tomllib.loads(project_metadata).get("project", {})
+            optional_dependencies = project.get("optional-dependencies", {})
+            reflex_dependencies = optional_dependencies.get("reflex")
+        except (tomllib.TOMLDecodeError, AttributeError):
+            reflex_dependencies = None
+        if reflex_dependencies != [REFLEX_OPTIONAL_DEPENDENCY]:
+            errors.append(
+                f"pyproject.toml must bound the xy[reflex] extra to {REFLEX_OPTIONAL_DEPENDENCY!r}"
+            )
+    _require_job_contains(
+        errors,
+        jobs,
         "browser_conformance",
         "CI",
         "accessibility and three-engine conformance gate",
@@ -1120,7 +1214,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Rust-backed sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
@@ -1266,7 +1360,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/verify_wheel.py",
         "--expect-native",
         "Install-size budget (<= 15 MB)",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "assert k.BACKEND=='native'",
@@ -1331,7 +1425,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "Rust-backed release sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        f'"{REFLEX_OPTIONAL_DEPENDENCY}"',
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
