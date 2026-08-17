@@ -708,6 +708,18 @@ _INVISIBLE_ANNOTATION_PROBE = r"""
     const visibleFixed = {
       loc: legend?.dataset.xyLegendLoc || null,
       visible: view._bestLegendIsVisible(fixedLegend),
+      rect: fixedLegend.getBoundingClientRect().toJSON(),
+    };
+    // Position-only CSS changes keep the same layout dimensions, so they are
+    // invisible to ResizeObserver. The shared attribute observer must compare
+    // the full fixed obstacle rectangle and schedule a fresh score.
+    view._positionLegend(fixedLegend, "upper left");
+    await settle();
+    flush();
+    const movedFixed = {
+      loc: legend?.dataset.xyLegendLoc || null,
+      visible: view._bestLegendIsVisible(fixedLegend),
+      rect: fixedLegend.getBoundingClientRect().toJSON(),
     };
     // The settled draw rebuilds annotation label chrome; inspect the current
     // nodes rather than the detached pre-transition labels.
@@ -717,6 +729,7 @@ _INVISIBLE_ANNOTATION_PROBE = r"""
       legendCount: legends.length,
       hiddenFixed,
       visibleFixed,
+      movedFixed,
       labelCount: labels.length,
       painted: labels.map((label) => view._bestLegendAnnotationPainted(label)),
       opacities: labels.map((label) => getComputedStyle(label).opacity),
@@ -1417,7 +1430,19 @@ spec.extra_legends = [{
     # previously became a false occupancy obstacle.
     assert result["hiddenFixed"]["width"] > 0, result
     assert result["hiddenFixed"]["loc"] == "upper right", result
-    assert result["visibleFixed"] == {"loc": "upper left", "visible": True}, result
+    visible_fixed = result["visibleFixed"]
+    assert {key: visible_fixed[key] for key in ("loc", "visible")} == {
+        "loc": "upper left",
+        "visible": True,
+    }, result
+    moved_fixed = result["movedFixed"]
+    assert {key: moved_fixed[key] for key in ("loc", "visible")} == {
+        "loc": "upper right",
+        "visible": True,
+    }, result
+    assert moved_fixed["rect"]["left"] < visible_fixed["rect"]["left"], result
+    assert moved_fixed["rect"]["width"] == pytest.approx(visible_fixed["rect"]["width"]), result
+    assert moved_fixed["rect"]["height"] == pytest.approx(visible_fixed["rect"]["height"]), result
     assert result["labelCount"] == 2, result
     assert result["painted"] == [False, False], result
     assert result["normalizedLegendWidth"] == pytest.approx(

@@ -3630,13 +3630,19 @@ export class ChartView {
       const sizeChanged = remeasure && wasVisible && visible && (
         rect.width !== legend._xyLegendBestWidth || rect.height !== legend._xyLegendBestHeight
       );
+      const fixedMoved = remeasure && wasVisible && visible &&
+        legend.dataset.xyLegendAutoLoc !== "best" && (
+          rect.left !== legend._xyLegendBestLeft || rect.top !== legend._xyLegendBestTop
+        );
       legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestLeft = rect?.left ?? 0;
+      legend._xyLegendBestTop = rect?.top ?? 0;
       legend._xyLegendBestWidth = rect?.width ?? 0;
       legend._xyLegendBestHeight = rect?.height ?? 0;
       // Fixed/anchored legends are raster obstacles for automatic siblings.
       // Re-score when either kind starts or stops painting; a hidden automatic
       // box can likewise free a candidate for a later automatic sibling.
-      if (wasVisible !== visible || sizeChanged) needsScore = true;
+      if (wasVisible !== visible || sizeChanged || fixedMoved) needsScore = true;
     }
     if (needsScore && this._markBestLegendsDirty()) this.draw();
   }
@@ -3647,6 +3653,8 @@ export class ChartView {
     const visible = this._bestLegendIsVisible(legend);
     const rect = visible ? legend.getBoundingClientRect() : null;
     legend._xyLegendBestVisible = visible;
+    legend._xyLegendBestLeft = rect?.left ?? 0;
+    legend._xyLegendBestTop = rect?.top ?? 0;
     legend._xyLegendBestWidth = rect?.width ?? 0;
     legend._xyLegendBestHeight = rect?.height ?? 0;
 
