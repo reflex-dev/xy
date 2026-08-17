@@ -139,7 +139,8 @@ reports, and sharing a single file, but it has a clear security contract:
   launching Chromium so bad user input produces actionable Python errors, and
   keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
   trusted HTML in constrained CI/container environments that cannot launch a
-  sandboxed browser.
+  sandboxed browser. A failed sandboxed launch does not silently downgrade to
+  an unsandboxed browser.
 - Export tests should include weird strings with `</script>`, HTML entities,
   mixed-case tags, and Unicode line/paragraph separators.
 
