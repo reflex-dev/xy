@@ -3890,6 +3890,7 @@ export class ChartView {
     }
     for (const legend of this._legends || []) {
       if (legend.dataset.xyLegendAutoLoc === "best") continue;
+      if (!this._bestLegendIsVisible(legend)) continue;
       this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
     }
     return raster;

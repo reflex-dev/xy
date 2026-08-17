@@ -690,11 +690,16 @@ _INVISIBLE_ANNOTATION_PROBE = r"""
     if (view._raf) cancelAnimationFrame(view._raf);
     view._raf = null;
     view._drawNow();
-    const legend = document.querySelector('[data-xy-slot="legend"]');
+    const legends = [...document.querySelectorAll('[data-xy-slot="legend"]')];
+    const legend = legends.find((item) => item.dataset.xyLegendAutoLoc === "best");
+    const fixedLegend = legends.find((item) => item.dataset.xyLegendAutoLoc !== "best");
     const labels = [...document.querySelectorAll('[data-xy-slot="annotation_label"]')];
     const raster = view._bestLegendRaster();
     document.body.setAttribute("data-xy-legend-invisible-annotation", JSON.stringify({
       loc: legend?.dataset.xyLegendLoc || null,
+      legendCount: legends.length,
+      fixedLegendVisible: view._bestLegendIsVisible(fixedLegend),
+      fixedLegendWidth: fixedLegend?.getBoundingClientRect().width || 0,
       labelCount: labels.length,
       painted: labels.map((label) => view._bestLegendAnnotationPainted(label)),
       opacities: labels.map((label) => getComputedStyle(label).opacity),
@@ -1337,7 +1342,9 @@ def test_native_fixed_legend_keeps_default_drawing_buffer_policy(tmp_path: Path)
     assert result["snapshotReady"] is False, result
 
 
-def test_live_best_ignores_unpainted_annotation_labels(tmp_path: Path) -> None:
+def test_live_best_ignores_unpainted_annotation_and_fixed_legend_boxes(
+    tmp_path: Path,
+) -> None:
     chromium = find_chromium()
     if chromium is None:
         pytest.skip("Chromium unavailable")
@@ -1364,14 +1371,34 @@ def test_live_best_ignores_unpainted_annotation_labels(tmp_path: Path) -> None:
         width=520,
         height=360,
     )
+    document = probe_document(chart, _INVISIBLE_ANNOTATION_PROBE)
+    capture = "window.__fcProbeView = xy.renderStandalone("
+    assert capture in document
+    document = document.replace(
+        capture,
+        """
+spec.extra_legends = [{
+  items: [{ name: "hidden fixed", kind: "line", style: { color: "#9333ea" } }],
+  loc: "upper right",
+  style: { visibility: "hidden" },
+}];
+"""
+        + capture,
+        1,
+    )
     result = run_browser_probe(
         chromium,
-        probe_document(chart, _INVISIBLE_ANNOTATION_PROBE),
+        document,
         tmp_path / "legend_best_invisible_annotations.html",
         "data-xy-legend-invisible-annotation",
         label="unpainted annotation legend obstacle probe",
     )
 
+    assert result["legendCount"] == 2, result
+    assert result["fixedLegendVisible"] is False, result
+    # Visibility-hidden boxes retain geometry, which is the exact case that
+    # previously became a false occupancy obstacle.
+    assert result["fixedLegendWidth"] > 0, result
     assert result["labelCount"] == 2, result
     assert result["painted"] == [False, False], result
     assert result["loc"] == "upper right", result
