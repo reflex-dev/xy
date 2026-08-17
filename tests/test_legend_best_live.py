@@ -680,26 +680,43 @@ _FIXED_CONTEXT_PROBE = r"""
 
 _INVISIBLE_ANNOTATION_PROBE = r"""
 <script>
-(() => {
+(async () => {
   try {
     const view = window.__fcProbeView;
     if (!view) throw new Error("no probe view captured");
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const flush = () => {
+      if (view._raf) cancelAnimationFrame(view._raf);
+      view._raf = null;
+      view._drawNow();
+    };
     view.root.style.transform = "scale(0.6)";
     view.root.style.transformOrigin = "top left";
     view._markBestLegendsDirty();
-    if (view._raf) cancelAnimationFrame(view._raf);
-    view._raf = null;
-    view._drawNow();
+    flush();
     const legends = [...document.querySelectorAll('[data-xy-slot="legend"]')];
     const legend = legends.find((item) => item.dataset.xyLegendAutoLoc === "best");
     const fixedLegend = legends.find((item) => item.dataset.xyLegendAutoLoc !== "best");
+    const hiddenFixed = {
+      loc: legend?.dataset.xyLegendLoc || null,
+      visible: view._bestLegendIsVisible(fixedLegend),
+      width: fixedLegend?.getBoundingClientRect().width || 0,
+    };
+    fixedLegend.style.visibility = "";
+    await settle();
+    flush();
+    const visibleFixed = {
+      loc: legend?.dataset.xyLegendLoc || null,
+      visible: view._bestLegendIsVisible(fixedLegend),
+    };
+    // The settled draw rebuilds annotation label chrome; inspect the current
+    // nodes rather than the detached pre-transition labels.
     const labels = [...document.querySelectorAll('[data-xy-slot="annotation_label"]')];
     const raster = view._bestLegendRaster();
     document.body.setAttribute("data-xy-legend-invisible-annotation", JSON.stringify({
-      loc: legend?.dataset.xyLegendLoc || null,
       legendCount: legends.length,
-      fixedLegendVisible: view._bestLegendIsVisible(fixedLegend),
-      fixedLegendWidth: fixedLegend?.getBoundingClientRect().width || 0,
+      hiddenFixed,
+      visibleFixed,
       labelCount: labels.length,
       painted: labels.map((label) => view._bestLegendAnnotationPainted(label)),
       opacities: labels.map((label) => getComputedStyle(label).opacity),
@@ -1395,13 +1412,14 @@ spec.extra_legends = [{
     )
 
     assert result["legendCount"] == 2, result
-    assert result["fixedLegendVisible"] is False, result
+    assert result["hiddenFixed"]["visible"] is False, result
     # Visibility-hidden boxes retain geometry, which is the exact case that
     # previously became a false occupancy obstacle.
-    assert result["fixedLegendWidth"] > 0, result
+    assert result["hiddenFixed"]["width"] > 0, result
+    assert result["hiddenFixed"]["loc"] == "upper right", result
+    assert result["visibleFixed"] == {"loc": "upper left", "visible": True}, result
     assert result["labelCount"] == 2, result
     assert result["painted"] == [False, False], result
-    assert result["loc"] == "upper right", result
     assert result["normalizedLegendWidth"] == pytest.approx(
         result["expectedLegendWidth"], abs=0.01
     ), result

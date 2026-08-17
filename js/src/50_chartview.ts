@@ -3061,8 +3061,8 @@ export class ChartView {
     lg._xyItemRows = rows;
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
-    if (lg.dataset.xyLegendAutoLoc === "best") {
-      this._observeBestLegendVisibility(lg);
+    if (this._legends.some((item) => item.dataset.xyLegendAutoLoc === "best")) {
+      for (const item of this._legends) this._observeBestLegendVisibility(item);
     }
     return lg;
   }
@@ -3624,7 +3624,6 @@ export class ChartView {
     if (this._destroyed) return;
     let needsScore = false;
     for (const legend of this._legends || []) {
-      if (legend.dataset.xyLegendAutoLoc !== "best" || legend.dataset.xyLegendAnchor) continue;
       const wasVisible = legend._xyLegendBestVisible === true;
       const visible = this._bestLegendIsVisible(legend);
       const rect = visible ? legend.getBoundingClientRect() : null;
@@ -3634,12 +3633,17 @@ export class ChartView {
       legend._xyLegendBestVisible = visible;
       legend._xyLegendBestWidth = rect?.width ?? 0;
       legend._xyLegendBestHeight = rect?.height ?? 0;
-      if ((!wasVisible && visible) || sizeChanged) needsScore = true;
+      // Fixed/anchored legends are raster obstacles for automatic siblings.
+      // Re-score when either kind starts or stops painting; a hidden automatic
+      // box can likewise free a candidate for a later automatic sibling.
+      if (wasVisible !== visible || sizeChanged) needsScore = true;
     }
     if (needsScore && this._markBestLegendsDirty()) this.draw();
   }
 
   _observeBestLegendVisibility(legend) {
+    if (legend._xyLegendBestObserved) return;
+    legend._xyLegendBestObserved = true;
     const visible = this._bestLegendIsVisible(legend);
     const rect = visible ? legend.getBoundingClientRect() : null;
     legend._xyLegendBestVisible = visible;
@@ -3648,7 +3652,8 @@ export class ChartView {
 
     // ResizeObserver covers display:none and responsive stylesheet changes:
     // a zero-sized legend receives a fresh nonzero entry when it participates
-    // in layout again. One observer per view is shared by every auto legend.
+    // in layout again. One observer per view is shared by every legend that
+    // participates in a chart with at least one automatic legend.
     if (typeof ResizeObserver !== "undefined") {
       this._legendBestResizeObserver ||= new ResizeObserver(() => {
         this._syncBestLegendVisibility(true);
