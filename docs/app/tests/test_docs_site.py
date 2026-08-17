@@ -66,6 +66,7 @@ from xy_docs.gallery import (
 )
 from xy_docs.markdown import (
     XyDocsMarkdownTransformer,
+    _page_virtual_filepath,
     _split_demo_data,
     page_with_api_reference_toc,
     render_xy_markdown_page,
@@ -1251,10 +1252,45 @@ def test_editing_a_page_drops_the_fence_snapshots_keyed_to_its_old_layout(
     # The edit removes the leading copy, renumbering the survivor to occurrence
     # 0 — and revises the trailing fence, as a real edit does, so it is a cache
     # miss and runs against whatever namespace the restore left behind.
-    render_xy_markdown_page(page_of("between = 2", duplicated, "second = (shared, between)"))
+    edited_page = page_of("between = 2", duplicated, "second = (shared, between)")
+    render_xy_markdown_page(edited_page)
 
-    module = _file_modules[str(source_path.resolve())]
+    module = _file_modules[_page_virtual_filepath(edited_page)]
     assert module.__dict__["second"] == (1, 2)
+
+
+def test_exec_module_identity_is_stable_across_build_roots(tmp_path: Path) -> None:
+    """Keep frontend and backend State module names independent of checkout paths."""
+    relative_path = Path("tests/split-build-state.md")
+    content = """~~~python exec
+class SplitBuildSymbol:
+    pass
+~~~"""
+
+    def page_at(build_root: str) -> DocsPage:
+        return DocsPage(
+            source_path=tmp_path / build_root / "docs" / relative_path,
+            relative_path=relative_path,
+            route="/tests/split-build-state/",
+            title="Split build state",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    frontend_page = page_at("home/runner/work/xy/xy")
+    backend_page = page_at("app")
+    assert _page_virtual_filepath(frontend_page) == _page_virtual_filepath(backend_page)
+    render_xy_markdown_page(frontend_page)
+
+    virtual_filepath = _page_virtual_filepath(frontend_page)
+    frontend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+    render_xy_markdown_page(backend_page)
+    backend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+
+    assert frontend_symbol is backend_symbol
+    assert frontend_symbol.__module__ == "_docgen_exec.xy_docs_tests_split_build_state_md"
+    assert str(tmp_path) not in frontend_symbol.__module__
 
 
 def _assigned_names(target: ast.expr) -> set[str]:
@@ -2877,7 +2913,7 @@ def test_reflex_integration_renders_the_state_backed_data_example() -> None:
     assert "rxy.scatter_chart(" in state_backed.content
     state_rendered = str(
         XyDocsMarkdownTransformer(
-            virtual_filepath=str(page.source_path.resolve()),
+            virtual_filepath=_page_virtual_filepath(page),
             filename=str(page.source_path),
         ).code_block(state_backed)
     )
