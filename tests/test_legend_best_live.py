@@ -820,13 +820,16 @@ _HIDDEN_LEGEND_PROBE = r"""
       return originalVisibility(...args);
     };
 
+    const cleanRasterStart = rasterCalls;
+    const cleanVisibilityStart = visibilityChecks;
     for (let i = 0; i < 3; i++) flush();
     const cleanDraws = {
       dirty: view._legendBestDirty === true,
-      rasterCalls,
-      visibilityChecks,
+      readbackDelta: rasterCalls - cleanRasterStart,
+      visibilityDelta: visibilityChecks - cleanVisibilityStart,
     };
 
+    const hiddenRasterStart = rasterCalls;
     legend.style.display = "none";
     await Promise.resolve();
     view._setView(
@@ -834,7 +837,7 @@ _HIDDEN_LEGEND_PROBE = r"""
       { animate: false, request: false, source: "hidden_legend", phase: "end" },
     );
     flush();
-    const callsAfterHiddenView = rasterCalls;
+    const hiddenViewReadbackDelta = rasterCalls - hiddenRasterStart;
     // Unrelated draws and fresh dirty signals must remain readback-free while
     // no automatic legend has a painted box.
     for (let i = 0; i < 3; i++) {
@@ -844,16 +847,17 @@ _HIDDEN_LEGEND_PROBE = r"""
     const displayHidden = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - hiddenRasterStart,
     };
 
+    const displayRestoreRasterStart = rasterCalls;
     legend.style.display = "";
     await settle();
     flush();
     const displayRestored = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - displayRestoreRasterStart,
       loc: legend.dataset.xyLegendLoc,
       width: legend.getBoundingClientRect().width,
       height: legend.getBoundingClientRect().height,
@@ -862,34 +866,36 @@ _HIDDEN_LEGEND_PROBE = r"""
     // ResizeObserver reports the unchanged layout box for transforms. The
     // legend attribute observer must remeasure the visual footprint even when
     // it stays nonzero and visible on both sides of the mutation.
+    const halfScaleRasterStart = rasterCalls;
     legend.style.transform = "scale(0.5)";
     await settle();
     flush();
     const halfScale = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - halfScaleRasterStart,
       width: legend.getBoundingClientRect().width,
       height: legend.getBoundingClientRect().height,
     };
+    const fullScaleRasterStart = rasterCalls;
     legend.style.transform = "scale(1)";
     await settle();
     flush();
     const fullScale = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - fullScaleRasterStart,
       width: legend.getBoundingClientRect().width,
       height: legend.getBoundingClientRect().height,
     };
 
     // A transformed zero-area box still has a client rect entry in Chromium;
     // it must be rejected before rasterization by its measured dimensions.
+    const zeroSizeRasterStart = rasterCalls;
     legend.style.transform = "scale(0)";
     await Promise.resolve();
     view._markBestLegendsDirty();
     flush();
-    const callsAfterZeroSize = rasterCalls;
     for (let i = 0; i < 3; i++) {
       view._markBestLegendsDirty();
       flush();
@@ -899,18 +905,20 @@ _HIDDEN_LEGEND_PROBE = r"""
       width: legend.getBoundingClientRect().width,
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - zeroSizeRasterStart,
     };
+    const zeroSizeRestoreRasterStart = rasterCalls;
     legend.style.transform = "";
     await settle();
     flush();
     const zeroSizeRestored = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - zeroSizeRestoreRasterStart,
       loc: legend.dataset.xyLegendLoc,
     };
 
+    const collapseRasterStart = rasterCalls;
     legend.style.visibility = "collapse";
     await Promise.resolve();
     view._setView(
@@ -918,7 +926,7 @@ _HIDDEN_LEGEND_PROBE = r"""
       { animate: false, request: false, source: "collapsed_legend", phase: "end" },
     );
     flush();
-    const callsAfterCollapsedView = rasterCalls;
+    const collapsedViewReadbackDelta = rasterCalls - collapseRasterStart;
     for (let i = 0; i < 3; i++) {
       view._markBestLegendsDirty();
       flush();
@@ -926,16 +934,17 @@ _HIDDEN_LEGEND_PROBE = r"""
     const collapsed = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - collapseRasterStart,
     };
 
+    const collapseRestoreRasterStart = rasterCalls;
     legend.style.visibility = "";
     await settle();
     flush();
     const collapseRestored = {
       visible: view._bestLegendIsVisible(legend),
       dirty: view._legendBestDirty === true,
-      rasterCalls,
+      readbackDelta: rasterCalls - collapseRestoreRasterStart,
       loc: legend.dataset.xyLegendLoc,
     };
 
@@ -956,15 +965,14 @@ _HIDDEN_LEGEND_PROBE = r"""
     document.body.setAttribute("data-xy-legend-best-hidden", JSON.stringify({
       initial,
       cleanDraws,
-      callsAfterHiddenView,
+      hiddenViewReadbackDelta,
       displayHidden,
       displayRestored,
       halfScale,
       fullScale,
-      callsAfterZeroSize,
       zeroSized,
       zeroSizeRestored,
-      callsAfterCollapsedView,
+      collapsedViewReadbackDelta,
       collapsed,
       collapseRestored,
       resizeDisconnected,
@@ -1394,27 +1402,27 @@ def test_hidden_auto_legend_skips_readback_and_rescores_when_visible(
     assert result["initial"] == "upper left", result
     assert result["cleanDraws"] == {
         "dirty": False,
-        "rasterCalls": 0,
-        "visibilityChecks": 0,
+        "readbackDelta": 0,
+        "visibilityDelta": 0,
     }, result
-    assert result["callsAfterHiddenView"] == 0, result
+    assert result["hiddenViewReadbackDelta"] == 0, result
     assert result["displayHidden"] == {
         "visible": False,
         "dirty": False,
-        "rasterCalls": 0,
+        "readbackDelta": 0,
     }, result
     display_restored = result["displayRestored"]
-    assert {key: display_restored[key] for key in ("visible", "dirty", "rasterCalls", "loc")} == {
+    assert {key: display_restored[key] for key in ("visible", "dirty", "readbackDelta", "loc")} == {
         "visible": True,
         "dirty": False,
-        "rasterCalls": 1,
+        "readbackDelta": 1,
         "loc": "upper right",
     }, result
     assert display_restored["width"] > 0, result
     assert display_restored["height"] > 0, result
     assert result["halfScale"]["visible"] is True, result
     assert result["halfScale"]["dirty"] is False, result
-    assert result["halfScale"]["rasterCalls"] == 2, result
+    assert result["halfScale"]["readbackDelta"] == 1, result
     assert result["halfScale"]["width"] == pytest.approx(
         display_restored["width"] * 0.5,
     ), result
@@ -1423,35 +1431,34 @@ def test_hidden_auto_legend_skips_readback_and_rescores_when_visible(
     ), result
     assert result["fullScale"]["visible"] is True, result
     assert result["fullScale"]["dirty"] is False, result
-    assert result["fullScale"]["rasterCalls"] == 3, result
+    assert result["fullScale"]["readbackDelta"] == 1, result
     assert result["fullScale"]["width"] == pytest.approx(
         display_restored["width"],
     ), result
     assert result["fullScale"]["height"] == pytest.approx(
         display_restored["height"],
     ), result
-    assert result["callsAfterZeroSize"] == 3, result
     assert result["zeroSized"]["clientRectCount"] > 0, result
     assert result["zeroSized"]["width"] == 0, result
     assert result["zeroSized"]["visible"] is False, result
     assert result["zeroSized"]["dirty"] is False, result
-    assert result["zeroSized"]["rasterCalls"] == 3, result
+    assert result["zeroSized"]["readbackDelta"] == 0, result
     assert result["zeroSizeRestored"] == {
         "visible": True,
         "dirty": False,
-        "rasterCalls": 4,
+        "readbackDelta": 1,
         "loc": "upper right",
     }, result
-    assert result["callsAfterCollapsedView"] == 4, result
+    assert result["collapsedViewReadbackDelta"] == 0, result
     assert result["collapsed"] == {
         "visible": False,
         "dirty": False,
-        "rasterCalls": 4,
+        "readbackDelta": 0,
     }, result
     assert result["collapseRestored"] == {
         "visible": True,
         "dirty": False,
-        "rasterCalls": 5,
+        "readbackDelta": 1,
         "loc": "upper left",
     }, result
     assert result["resizeDisconnected"] is True, result
