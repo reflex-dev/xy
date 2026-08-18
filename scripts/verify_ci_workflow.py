@@ -4,7 +4,12 @@
 The workflows are YAML, but this checker intentionally stays stdlib-only so it
 can run before the dev environment is installed. It does not try to be a full
 YAML parser; it checks stable, high-value invariants that are easy to lose when
-editing `.github/workflows/ci.yml` or `.github/workflows/release.yml`.
+editing `.github/workflows/ci.yml` or `.github/workflows/codspeed.yml`.
+
+The release pipeline is deliberately out of scope: those workflows come from
+`reflex-release`, which owns their invariants (tested where the tool lives) and
+ships `sync` to detect drift. Asserting their contents here as well duplicated
+that and went stale the moment the tool changed.
 """
 
 from __future__ import annotations
@@ -19,7 +24,6 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
-DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
     "browser_conformance",
@@ -34,7 +38,6 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -434,30 +437,6 @@ def _unique_mapping_block(text: str, key: str, *, indent: int) -> Optional[str]:
     return "\n".join(raw_lines[start + 1 : end])
 
 
-def _has_safe_release_dry_run_input(text: str) -> bool:
-    """Validate the exact nested manual-release dry-run input mapping."""
-    block = _unique_mapping_block(text, "on", indent=0)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "workflow_dispatch", indent=2)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "inputs", indent=4)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "dry_run", indent=6)
-    if block is None:
-        return False
-    type_values, type_unsafe = _direct_yaml_key_values(block, "type", indent=8)
-    default_values, default_unsafe = _direct_yaml_key_values(block, "default", indent=8)
-    return (
-        not type_unsafe
-        and not default_unsafe
-        and type_values == ["boolean"]
-        and default_values == ["true"]
-    )
-
-
 def _require_unique_workflow_structure(
     errors: list[str],
     text: str,
@@ -633,24 +612,6 @@ def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
     in the job (e.g. a sibling step's dry-run summary)."""
     block = _step_block(job_text, step_needle)
     return block is not None and "if:" in block
-
-
-# The one condition that actually gates a PyPI upload behind the manual
-# dry-run switch. Requiring this exact predicate on the upload step itself —
-# not merely *an* `if:` — is the point: `if: always()` or any unrelated
-# condition would satisfy a mere presence check while gating nothing.
-PYPI_PUBLISH_GATE = (
-    "if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'"
-)
-
-
-def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
-    block = _step_block(job_text, step_needle)
-    if block is None:
-        return False
-    values, unsafe = _direct_yaml_key_values(block, "if", indent=8)
-    expected = PYPI_PUBLISH_GATE.partition(":")[2].strip()
-    return not unsafe and values == [expected]
 
 
 def _require_workflow_contains(
@@ -1222,179 +1183,13 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     return errors
 
 
-def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return [f"cannot read release workflow {path}: {exc}"]
-
-    jobs = _job_blocks(text)
-    errors: list[str] = []
-    _require_unique_workflow_structure(errors, text, "release", REQUIRED_RELEASE_JOBS)
-    _require_trigger_with_direct_option(
-        errors,
-        text,
-        "release",
-        "push",
-        "tags",
-        '["v*"]',
-    )
-    if _workflow_trigger_block(text, "workflow_dispatch") is None:
-        errors.append("release workflow missing workflow_dispatch trigger")
-    _require_unshallow_checkouts(errors, text, "release")
-    missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
-    if missing_jobs:
-        errors.append(f"release workflow missing required jobs: {missing_jobs}")
-
-    _require_job_contains(
-        errors,
-        jobs,
-        "wheels",
-        "release",
-        "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
-        "dtolnay/rust-toolchain@",
-        "astral-sh/setup-uv@",
-        "actions/setup-node@",
-        'node-version: "22"',
-        "npm ci",
-        "cargo-zigbuild",
-        "uv build --wheel",
-        "XY_REQUIRE_CARGO",
-        "XY_WHEEL_PLATFORM",
-        "musllinux_1_2_x86_64",
-        "win_arm64",
-        "scripts/verify_wheel.py",
-        "--expect-native",
-        "Install-size budget (<= 15 MB)",
-        '"reflex>=0.9.6"',
-        "import importlib.metadata as m, reflex_xy",
-        "assert reflex_xy.__version__ == m.version('xy')",
-        "assert k.BACKEND=='native'",
-        "actions/upload-artifact@",
-        "dist/*.whl",
-    )
-    wheels_job = jobs.get("wheels", "")
-    if "continue-on-error:" in wheels_job:
-        errors.append(
-            "release wheels job must block publishing when any native wheel build or "
-            "verification fails"
-        )
-    _require_job_contains(
-        errors,
-        jobs,
-        "wasm",
-        "release",
-        "runtime-verified, PyPI-published PyEmscripten WASM wheel",
-        "permissions:",
-        "contents: read",
-        "toolchain: 1.97.0",
-        "wasm32-unknown-emscripten",
-        'RUSTFLAGS="-C panic=abort"',
-        "pypa/cibuildwheel@294735312765b09d24a2fbec22660ce817587d55",
-        "CIBW_PLATFORM: pyodide",
-        "CIBW_BUILD: cp314-pyodide_wasm32",
-        'CIBW_PYODIDE_VERSION: "314.0.0"',
-        "CIBW_BEFORE_BUILD_PYODIDE",
-        "CIBW_ENVIRONMENT_PYODIDE",
-        "pyemscripten_2026_0_wasm32",
-        "pyodide@314.0.0",
-        "scripts/pyodide_load_smoke.py",
-        "scripts/verify_wheel.py",
-        "--expect-native",
-        "wheelhouse/*.whl",
-        "name: dist-pyemscripten",
-    )
-    wasm_job = jobs.get("wasm", "")
-    if "continue-on-error:" in wasm_job:
-        errors.append("release wasm job must block publishing when the Pyodide runtime probe fails")
-    _require_job_contains(
-        errors,
-        jobs,
-        "sdist",
-        "release",
-        "sdist build, content verification, Rust-backed install smoke, and upload",
-        "astral-sh/setup-uv@",
-        "dtolnay/rust-toolchain@",
-        "actions/setup-node@",
-        'node-version: "22"',
-        "npm ci",
-        "uv build --sdist",
-        "scripts/verify_sdist.py",
-        "actions/upload-artifact@",
-        "dist/*.tar.gz",
-    )
-    release_sdist = jobs.get("sdist", "")
-    _require_step_contains(
-        errors,
-        release_sdist,
-        "Build and load native core from sdist",
-        "Rust-backed release sdist install contract",
-        "XY_REQUIRE_CARGO",
-        "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
-        "import reflex_xy",
-        "import xy.kernels as kernels",
-        'kernels.BACKEND == "native"',
-    )
-    _require_step_contains(
-        errors,
-        release_sdist,
-        "Verify coreless sdist imports reflex_xy",
-        "coreless release sdist import contract",
-        "XY_SKIP_CARGO",
-        "uv pip install --no-cache",
-        "import reflex_xy",
-        "assert reflex_xy.__version__ == version",
-        "native Rust core",
-    )
-    _require_job_contains(
-        errors,
-        jobs,
-        "publish",
-        "release",
-        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
-        "and a release-tag shape gate",
-        "needs: [wheels, sdist, wasm]",
-        "environment: pypi",
-        "id-token: write",
-        "scripts/check_release_version.py",
-        "actions/download-artifact@",
-        "pattern: dist-*",
-        "merge-multiple: true",
-        "dry_run",
-        "pypa/gh-action-pypi-publish@",
-        "packages-dir: dist/",
-        "skip-existing: true",
-    )
-    if not _has_safe_release_dry_run_input(text):
-        errors.append(
-            "release workflow missing a unique boolean workflow_dispatch dry-run input "
-            "defaulting to true, so a manual run never accidentally publishes"
-        )
-    publish = jobs.get("publish", "")
-    if "password:" in publish or "api-token" in publish:
-        errors.append("release publish job should use trusted publishing, not a PyPI token")
-    if "pypa/gh-action-pypi-publish@" in publish and not _step_carries_publish_gate(
-        publish, "pypa/gh-action-pypi-publish@"
-    ):
-        errors.append(
-            "release publish job's PyPI upload step is not gated by the dry-run "
-            f"predicate on the step itself (`{PYPI_PUBLISH_GATE}`) — a missing or "
-            "unrelated condition (e.g. `if: always()`) would let a manual "
-            "dispatch publish unintentionally"
-        )
-    return errors
-
-
 def validate_all_workflows(
     ci_path: Path = DEFAULT_CI_WORKFLOW,
     codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
-    release_path: Path = DEFAULT_RELEASE_WORKFLOW,
 ) -> list[str]:
     return [
         *validate_ci_workflow(ci_path),
         *validate_codspeed_workflow(codspeed_path),
-        *validate_release_workflow(release_path),
     ]
 
 
@@ -1408,15 +1203,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--ci-workflow", type=Path, default=DEFAULT_CI_WORKFLOW)
     parser.add_argument("--codspeed-workflow", type=Path, default=DEFAULT_CODSPEED_WORKFLOW)
-    parser.add_argument("--release-workflow", type=Path, default=DEFAULT_RELEASE_WORKFLOW)
     parser.add_argument("--ci-only", action="store_true")
     parser.add_argument("--codspeed-only", action="store_true")
-    parser.add_argument("--release-only", action="store_true")
     args = parser.parse_args(argv)
 
-    selected_modes = [args.ci_only, args.codspeed_only, args.release_only]
-    if sum(1 for selected in selected_modes if selected) > 1:
-        parser.error("--ci-only, --codspeed-only, and --release-only are mutually exclusive")
+    if args.ci_only and args.codspeed_only:
+        parser.error("--ci-only and --codspeed-only are mutually exclusive")
 
     if args.workflow is not None:
         errors = validate_ci_workflow(args.workflow)
@@ -1427,20 +1219,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.codspeed_only:
         errors = validate_codspeed_workflow(args.codspeed_workflow)
         checked = [args.codspeed_workflow]
-    elif args.release_only:
-        errors = validate_release_workflow(args.release_workflow)
-        checked = [args.release_workflow]
     else:
-        errors = validate_all_workflows(
-            args.ci_workflow,
-            args.codspeed_workflow,
-            args.release_workflow,
-        )
-        checked = [
-            args.ci_workflow,
-            args.codspeed_workflow,
-            args.release_workflow,
-        ]
+        errors = validate_all_workflows(args.ci_workflow, args.codspeed_workflow)
+        checked = [args.ci_workflow, args.codspeed_workflow]
 
     if errors:
         print(

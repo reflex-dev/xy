@@ -105,6 +105,7 @@ uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
 uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
+make news NAME=1234.feature.md        # changelog news fragment (see Releases)
 ```
 
 Before every commit or push, run the repository hooks and Ruff checks across the
@@ -119,6 +120,24 @@ uv run ruff format --check .
 `abi_smoke`, `render_smoke_nonumpy`, and `append_stream_smoke` need neither
 numpy nor PyPI — they verify the Python↔Rust ABI and the render client
 directly, and run first in CI.
+
+## Releases
+
+`CHANGELOG.md` is **generated and is the release trigger** (reflex-release +
+towncrier; `spec/process/production-readiness.md` § Release Checklist). A version
+heading with no matching git tag is what publishes that version, and the tag is
+pushed only after PyPI accepts the artifacts — so never hand-edit a version
+heading, and never cut a release tag. Every change under `python/`, `src/` or
+`js/` adds a news fragment (`make news NAME=<pr>.<type>.md`); CI requires one.
+The four release workflows come from `reflex-release`, which owns their
+invariants — don't re-assert their contents in this repo; regenerate with
+`reflex-release sync` (its `sync --check` runs on every PR). xy owns exactly two
+release workflows, both wired in through `[tool.reflex-release]`:
+`build_release_artifacts.yml`, the wheel/wasm/sdist matrix `publish.yml` calls
+(`custom-build`), and `deploy-docs-stg.yml`, dispatched per published tag
+(`post-release-workflow`). Their contracts are in
+`spec/process/production-readiness.md` §§ Upgrading the release tool, After a
+release.
 
 Never credit Claude in git history: no Claude author or committer identity,
 no `Co-Authored-By: Claude` trailers, no AI attribution in commit messages,

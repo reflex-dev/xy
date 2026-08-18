@@ -115,7 +115,7 @@ def _base_checks(
         ),
         Check(
             "ci_workflow",
-            "CI/release workflow production gates",
+            "CI and CodSpeed workflow production gates",
             (py, "scripts/verify_ci_workflow.py"),
         ),
         Check(

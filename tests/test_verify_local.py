@@ -702,7 +702,7 @@ def test_makefile_exposes_ci_workflow_verification_shortcut() -> None:
     assert "check-ci:" in makefile
     assert "scripts/verify_local.py --only ci_workflow" in makefile
     assert "make check-ci" in makefile
-    assert "CI/release workflow invariant checks" in makefile
+    assert "CI and CodSpeed workflow invariant checks" in makefile
 
 
 def test_node_version_parser_accepts_v_prefixed_versions() -> None:
