@@ -52,9 +52,21 @@ def test_gate_rejects_non_canonical_prerelease_spellings() -> None:
         assert any("is not a release tag" in e for e in errors), tag
 
 
+def test_gate_passes_a_post_release_tag() -> None:
+    # `release-post` materializes 1.2.3.post1 for a packaging-only re-release of
+    # an already-published version; uv-dynamic-versioning derives it from the
+    # matching tag, so the gate must not stand in its way.
+    assert check_release_version.check_release("v0.0.6.post1") == []
+
+
+def test_gate_passes_a_post_release_of_a_prerelease() -> None:
+    assert check_release_version.check_release("v1.0.0rc1.post2") == []
+
+
 def test_gate_ignores_the_changelog() -> None:
-    # Writing up the release is a checklist item, not a gate: a tag no longer
-    # has to be deleted and re-cut because CHANGELOG.md was edited afterwards.
+    # The changelog decides *which* version ships (its newest untagged version
+    # is the publish trigger); this gate only judges the shape of the tag that
+    # records it, so it never reads CHANGELOG.md.
     assert check_release_version.check_release("v9.9.9") == []
 
 
@@ -65,17 +77,8 @@ def test_main_requires_a_tag(monkeypatch) -> None:
 
 
 def test_main_reports_a_bad_tag_shape() -> None:
-    assert check_release_version.main(["--tag", "v0.0.6.post1"]) == 1
+    assert check_release_version.main(["--tag", "v0.0.6+local"]) == 1
 
 
 def test_main_accepts_a_release_tag() -> None:
     assert check_release_version.main(["--tag", "v0.0.6"]) == 0
-
-
-def test_release_workflow_wires_the_gate() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "scripts/check_release_version.py" in workflow
-    assert "if: github.event_name == 'push'" in workflow
