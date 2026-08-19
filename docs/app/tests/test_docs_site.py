@@ -10,6 +10,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
@@ -33,6 +34,8 @@ from reflex_docgen.markdown import (
 )
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
+from reflex_site_shared.docs.markdown import _file_modules
+from reflex_site_shared.docs.models import DocsPage
 from rxconfig import config
 from xy_docs.api_reference import (
     API_REFERENCE_HEADING,
@@ -63,6 +66,7 @@ from xy_docs.gallery import (
 )
 from xy_docs.markdown import (
     XyDocsMarkdownTransformer,
+    _page_virtual_filepath,
     _split_demo_data,
     page_with_api_reference_toc,
     render_xy_markdown_page,
@@ -305,6 +309,26 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
 
 
+def test_benchmark_demo_uses_the_shared_theme() -> None:
+    from xy_docs.demos import benchmark_charts
+
+    from xy._benchmark_theme import (
+        benchmark_chart_class,
+        benchmark_live_theme,
+    )
+
+    assert benchmark_chart_class() == benchmark_charts._CHART_CLASS
+
+    live_theme = benchmark_live_theme()
+    assert benchmark_charts._theme().style == {
+        "background": live_theme["background"],
+        "--chart-bg": live_theme["plot_background"],
+        "--chart-grid": live_theme["grid_color"],
+        "--chart-axis": live_theme["axis_color"],
+        "--chart-text": live_theme["text_color"],
+    }
+
+
 def test_docs_app_does_not_override_the_builtin_toolbar_palette() -> None:
     assert not any(key.startswith("--chart-modebar-") for key in _CHART_STYLE)
 
@@ -478,6 +502,9 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert rendered_page.count('value:"data"') == data_demos * 2
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
+    assert rendered_page.count("Start Building Now!") == demo_count
+    secure_build_action = 'rel:"noopener noreferrer",target:"_blank",to:"https://build.reflex.dev/"'
+    assert rendered_page.count(secure_build_action) == demo_count
     assert (
         rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
         == demo_count
@@ -1135,6 +1162,320 @@ def test_composition_demos_keep_distinct_assets_after_cached_render(
     assert second_payloads == first_payloads
 
 
+def test_repeated_identical_fence_keeps_the_page_namespace_accumulating(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A duplicated fence must not roll the page back to its first occurrence.
+
+    Snapshots are keyed by fence source *and* occurrence: two identical
+    fences are two positions in the page's fence sequence, and the second one
+    restoring the first one's namespace would discard everything the fences
+    between them defined — the shared renderer skips re-execution and lets
+    the namespace keep accumulating, and this seam must not change that.
+    """
+    duplicated = "shared = 1\n"
+    content = "\n".join(
+        (
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "between = 2",
+            "~~~",
+            "",
+            "~~~python exec",
+            duplicated.rstrip("\n"),
+            "~~~",
+            "",
+            "~~~python exec",
+            "def result():",
+            "    return (shared, between)",
+            "~~~",
+        )
+    )
+    virtual_filepath = "tests/docdemo/repeated-fence/page.md"
+
+    def render() -> dict:
+        transformer = XyDocsMarkdownTransformer(
+            virtual_filepath=virtual_filepath,
+            filename=virtual_filepath,
+        )
+        transformer.transform(parse_document(content))
+        return transformer.env
+
+    monkeypatch.chdir(tmp_path)
+    first, second = render(), render()
+    # `between` survives the duplicate fence on the first render and on every
+    # later one; a KeyError here is the regression.
+    assert first["result"]() == (1, 2)
+    assert second["result"]() == (1, 2)
+
+
+def test_editing_a_page_drops_the_fence_snapshots_keyed_to_its_old_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A page edit must not let a fence restore a snapshot from another position.
+
+    Snapshot keys carry the fence's occurrence index, so removing or reordering
+    a duplicated fence renumbers every surviving copy. Without invalidation the
+    renumbered fence adopts the snapshot the *other* copy left behind — a
+    namespace captured before the bindings that now precede it — and the page
+    silently renders from stale data. The dev server re-renders in-process on
+    reload, so this is the live path, not a hypothetical one.
+    """
+    source_path = tmp_path / "editable.md"
+
+    def page_of(*fences: str) -> DocsPage:
+        content = "\n".join(f"~~~python exec\n{body}\n~~~\n" for body in fences)
+        source_path.write_text(content)
+        return DocsPage(
+            source_path=source_path,
+            relative_path=Path("editable.md"),
+            route="/docs/xy/editable",
+            title="Editable",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    duplicated = "shared = 1"
+    monkeypatch.chdir(tmp_path)
+
+    # First layout: the duplicate sits at occurrence 1, after `between`, so
+    # occurrence 0's snapshot is the one captured before `between` existed.
+    render_xy_markdown_page(
+        page_of(duplicated, "between = 2", duplicated, "first = (shared, between)")
+    )
+    # The edit removes the leading copy, renumbering the survivor to occurrence
+    # 0 — and revises the trailing fence, as a real edit does, so it is a cache
+    # miss and runs against whatever namespace the restore left behind.
+    edited_page = page_of("between = 2", duplicated, "second = (shared, between)")
+    render_xy_markdown_page(edited_page)
+
+    module = _file_modules[_page_virtual_filepath(edited_page)]
+    assert module.__dict__["second"] == (1, 2)
+
+
+def test_exec_module_identity_is_stable_across_build_roots(tmp_path: Path) -> None:
+    """Keep frontend and backend State module names independent of checkout paths."""
+    relative_path = Path("tests/split-build-state.md")
+    content = """~~~python exec
+class SplitBuildSymbol:
+    pass
+~~~"""
+
+    def page_at(build_root: str) -> DocsPage:
+        return DocsPage(
+            source_path=tmp_path / build_root / "docs" / relative_path,
+            relative_path=relative_path,
+            route="/tests/split-build-state/",
+            title="Split build state",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    frontend_page = page_at("home/runner/work/xy/xy")
+    backend_page = page_at("app")
+    assert _page_virtual_filepath(frontend_page) == _page_virtual_filepath(backend_page)
+    render_xy_markdown_page(frontend_page)
+
+    virtual_filepath = _page_virtual_filepath(frontend_page)
+    frontend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+    render_xy_markdown_page(backend_page)
+    backend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+
+    assert frontend_symbol is backend_symbol
+    assert frontend_symbol.__module__ == "_docgen_exec.xy_docs_tests_split_build_state_md"
+    assert str(tmp_path) not in frontend_symbol.__module__
+
+
+def _assigned_names(target: ast.expr) -> set[str]:
+    """Every top-level name an assignment target binds, unpacking included."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return {name for element in target.elts for name in _assigned_names(element)}
+    if isinstance(target, ast.Starred):
+        return _assigned_names(target.value)
+    return set()  # attribute/subscript targets rebind no module-level name
+
+
+#: Statements that run at module scope and can hold further bindings in their
+#: bodies. `FunctionDef`/`ClassDef` are deliberately absent: they bind their own
+#: name (handled below) but their bodies are a separate scope, so a name
+#: assigned inside one is not a module-level binding and cannot shadow a
+#: sibling fence's.
+_NESTED_SCOPE_FREE_BODIES = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.If,
+    ast.With,
+    ast.AsyncWith,
+    ast.Try,
+    ast.Match,
+)
+
+
+def _module_bindings(node: ast.AST) -> set[str]:
+    """Module-level names one statement binds, recursing into nested bodies."""
+    bound: set[str] = set()
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            bound |= _assigned_names(target)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        bound.add(node.name)  # the body is another scope; the name is not
+        return bound
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        bound |= {(alias.asname or alias.name).split(".")[0] for alias in node.names}
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        bound |= _assigned_names(node.target)
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        for item in node.items:
+            if item.optional_vars is not None:
+                bound |= _assigned_names(item.optional_vars)
+    if isinstance(node, ast.Try):
+        bound |= {handler.name for handler in node.handlers if handler.name}
+    if isinstance(node, ast.Match):
+        for case in node.cases:
+            bound |= {
+                capture.name
+                for capture in ast.walk(case.pattern)
+                if isinstance(capture, (ast.MatchAs, ast.MatchStar)) and capture.name
+            }
+    if isinstance(node, _NESTED_SCOPE_FREE_BODIES):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.stmt):
+                bound |= _module_bindings(child)
+    # Walrus binds at the enclosing scope wherever the expression appears.
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.NamedExpr):
+            bound |= _assigned_names(inner.target)
+    return bound
+
+
+def _bound_names(body: str) -> set[str]:
+    """Every module-level name one fence binds.
+
+    Plain assignment is not the only way to shadow a name a sibling fence also
+    owns: annotated, augmented and unpacked assignment, `def`/`class`, imports,
+    `for`/`with`/`except`/`match` targets, and walrus all do it — and the
+    compound statements among them nest, so a binding can sit inside a
+    top-level `for` or `if` body. Missing any of those forms under-reports
+    rebound names and silently drops pages from the guarded test, which then
+    still passes while covering less.
+    """
+    return {name for node in ast.parse(body).body for name in _module_bindings(node)}
+
+
+def _names_rebound_across_exec_fences(content: str) -> set[str]:
+    """Top-level names that more than one exec fence of a page binds."""
+    seen: set[str] = set()
+    rebound: set[str] = set()
+    for fence, body in re.findall(r"~~~python([^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
+        if "exec" not in fence:
+            continue
+        bound = _bound_names(body)
+        rebound |= bound & seen
+        seen |= bound
+    return rebound
+
+
+def test_rebound_name_detection_covers_every_binding_form() -> None:
+    """Pin the detector itself: the page filter above is only as complete as
+    the binding forms it recognizes."""
+    fence = "~~~python exec\n{body}\n~~~"
+    declared = (
+        "plain",
+        "annotated",
+        "augmented",
+        "unpacked",
+        "spread",
+        "fn",
+        "Cls",
+        "np",
+        "pi",
+        "looped",
+        "handle",
+        "caught",
+        "matched",
+        "walrus",
+        "nested",
+    )
+    page = "\n".join(
+        fence.format(body=body)
+        for body in (
+            "\n".join(f"{name} = 0" for name in declared),
+            "plain = 2",
+            "annotated: int = 2",
+            "augmented += 2",
+            "unpacked, other = (2, 3)",
+            "*spread, tail = [2, 3]",
+            "def fn():\n    return 2",
+            "class Cls:\n    pass",
+            "import numpy as np",
+            "from math import pi",
+            "for looped in range(2):\n    pass",
+            "with open(__file__) as handle:\n    pass",
+            "try:\n    pass\nexcept ValueError as caught:\n    pass",
+            "match [1]:\n    case [matched]:\n        pass",
+            "if (walrus := 2):\n    pass",
+            # A binding inside a top-level compound body is still module scope.
+            "for _ in range(1):\n    if True:\n        nested = 2",
+            # Neither rebinds a module-level name: attribute/subscript targets,
+            # and names assigned inside a function body (a separate scope).
+            "obj.attr = 2\nmapping['key'] = 2",
+            "def _unrelated():\n    plain = 3\n    return plain",
+        )
+    )
+    assert _names_rebound_across_exec_fences(page) == set(declared)
+
+
+def test_repeated_page_renders_rebuild_every_demo_from_its_own_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep cached fences bound to their own globals, not the page's last ones.
+
+    Pages are evaluated more than once per process — the frontend compile, then
+    the `reflex_xy` worker-startup pass over unevaluated pages — and demos that
+    reuse names such as `months` must not pick up a later demo's arrays on the
+    second pass. Content-addressed payload names make that visible: identical
+    demo data renders identical `.xyf` sources.
+    """
+    monkeypatch.chdir(tmp_path)
+    payload_pattern = re.compile(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"')
+    pages = [
+        page
+        for page in discover_docs(DOCS_CONFIG)
+        if _names_rebound_across_exec_fences(page.content)
+    ]
+
+    assert pages
+    for page in pages:
+        route = page.relative_path.as_posix()
+        virtual_filepath = f"tests/docdemo/repeated-render/{route}"
+        renders = [
+            str(
+                XyDocsMarkdownTransformer(
+                    virtual_filepath=virtual_filepath,
+                    filename=page.source_path.as_posix(),
+                ).transform(parse_document(page.content))
+            )
+            for _ in range(2)
+        ]
+
+        first, second = (payload_pattern.findall(rendered) for rendered in renders)
+        assert first, route
+        assert second == first, route
+
+
 def test_exact_readout_demo_is_backed_by_live_reflex_state() -> None:
     """Keep the readout driven by chart events instead of compiled sample values."""
     source_path = DOCS_ROOT / "core-concepts" / "interactions.md"
@@ -1259,18 +1600,18 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 20
+    assert len(chart_section) == 21
     assert "XYChart" not in rendered
-    assert rendered.count("dangerouslySetInnerHTML") == 34
+    assert rendered.count("dangerouslySetInnerHTML") == 35
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
     assert rendered.count("2xl:grid-cols-3") == 9
-    assert rendered.count("aspect-[320/232]") == 34
-    assert rendered.count("shadow-large") == 34
-    assert rendered.count("transition-bg") == 34
+    assert rendered.count("aspect-[320/232]") == 35
+    assert rendered.count("shadow-large") == 35
+    assert rendered.count("transition-bg") == 35
     assert "--gallery-preview-surface: #fff" in rendered
     assert "--gallery-preview-fill: #efeaff" in rendered
     assert "--gallery-preview-soft: #dccfff" in rendered
@@ -1281,9 +1622,10 @@ def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     assert "object-contain" not in rendered
     assert "object-center" not in rendered
     assert "xy-tailwind-bridge" not in rendered
-    assert rendered.count("size:14") == 34
+    assert rendered.count("size:14") == 35
     assert "size:6" not in rendered
     for chart_type in (
+        "Funnel",
         "Line",
         "Area",
         "Step",
@@ -1352,7 +1694,7 @@ def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
         for item in group.items
     }
 
-    assert len(previews) == 34
+    assert len(previews) == 35
     for svg in previews.values():
         assert 'viewBox="0 0 320 232"' in svg
         assert '<rect x="52" y="62" width="216" height="108" rx="12"' in svg
@@ -1518,7 +1860,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     titles = {item.title for group in _GALLERY_GROUPS for item in group.items}
     section_titles = [group.title for group in _GALLERY_GROUPS]
 
-    assert len(titles) == 34
+    assert len(titles) == 35
     assert section_titles[:3] == [
         "Line and Area",
         "Distributions",
@@ -1546,6 +1888,7 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         ("Stem", "/charts/stem-plot/"),
         ("Segments", "/charts/segments/"),
         ("Sankey", "/charts/sankey/"),
+        ("Funnel", "/charts/funnel-chart/"),
         ("Triangle Mesh", "/components/triangle-mesh/"),
     ]
     assert {"Step + Stairs", "Bar + Column"} <= titles
@@ -1583,7 +1926,19 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
     )
 
     for fragment in (
-        "radial maximum while keeping the radial",
+        "scales the radial maximum",
+        "keeps the radial minimum fixed",
+        # Zoom is off by default on polar (polar-axes.md §8), and the guide has
+        # to carry both halves of that: why, and the exact way back in. Reset
+        # follows the zoom capability, so the page must not promise it either.
+        "**Zoom is off by default.**",
+        "reset-axis policy is empty",
+        # Reset is not unconditionally absent: an authored `reset_axes` grants it
+        # with zoom still off, and `default_drag_action` is narrowed under polar.
+        "An explicit `reset_axes` also grants reset",
+        'accepts only `"auto"` and `"none"` here',
+        "xy.interaction_config(zoom=True)",
+        "def zoomable_polar_demo():",
         "authored fractional degree",
         "splits a line into visible runs",
         "`line`, `scatter`, and `area` are limited to",
@@ -1689,6 +2044,14 @@ def test_polar_guides_track_the_current_coordinate_system_contract() -> None:
         "Partial-sector layouts are not implemented",
         "validated log-r semantics",
         "Each polar trace is limited to 200,000 points",
+        # Zoom, and the reset that follows it, are opt-in on polar (polar-axes.md
+        # §8). No polar guide may promise either as part of the default contract,
+        # and none may claim a non-wind-rose radius is merely layout — an ordinary
+        # `polar_chart` carrying measured radii is the documented opt-in case.
+        "Wheel and modebar zoom scale the radial maximum",
+        "radial wheel zoom, double-click reset",
+        "hover, radial-only zoom",
+        "its radius is layout rather than data",
     ):
         assert stale_fragment not in polar_guides
         assert stale_fragment not in matplotlib
@@ -1788,18 +2151,17 @@ def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Pa
     """Accept only the complete code-native gallery in the production route."""
     module_path = tmp_path / "route.jsx"
     preview = 'viewBox=\\"0 0 320 232\\"'
-    module_path.write_text(
-        preview * 34 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
+    surface = "gallery-preview-surface aspect-[320/232] shadow-large"
+    expected = check_html_routes.INLINE_SVG_PREVIEW_COUNT
+    module_path.write_text(preview * expected + surface, encoding="utf-8")
 
     check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
-    module_path.write_text(
-        preview * 33 + "gallery-preview-surface aspect-[320/232] shadow-large",
-        encoding="utf-8",
-    )
-    with pytest.raises(RuntimeError, match="33 previews, expected 34"):
+    module_path.write_text(preview * (expected - 1) + surface, encoding="utf-8")
+    with pytest.raises(
+        RuntimeError,
+        match=rf"{expected - 1} previews, expected {expected}",
+    ):
         check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 
@@ -2087,6 +2449,77 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
+    assert "AlgoliaSearch" in rendered
+    assert "Inkeep" not in rendered
+
+
+def test_prerendered_route_paths_support_current_and_legacy_reflex_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the production validator compatible across Reflex export layouts."""
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", tmp_path)
+
+    assert check_html_routes.route_html_paths("/charts/scatter/") == (
+        tmp_path / "charts/scatter.html",
+        tmp_path / "charts/scatter/index.html",
+    )
+    assert check_html_routes.route_html_paths("/") == (
+        tmp_path.with_suffix(".html"),
+        tmp_path / "index.html",
+    )
+    assert check_html_routes.fallback_html_paths() == (
+        tmp_path / "404.html",
+        tmp_path / "__spa-fallback.html",
+    )
+
+
+def test_prerendered_route_layout_is_selected_once_for_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not let a stale route from another layout mask missing output."""
+    current_root = tmp_path / "current"
+    current_root.mkdir()
+    (current_root / "404.html").touch()
+    (current_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", current_root)
+    assert check_html_routes.prerender_layout_index() == 0
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    (legacy_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", legacy_root)
+    assert check_html_routes.prerender_layout_index() == 1
+
+
+def test_current_prerender_layout_does_not_accept_a_stale_legacy_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail when current output is missing even if its legacy peer remains."""
+    build_root = tmp_path / "build" / "docs" / "xy"
+    build_root.mkdir(parents=True)
+    (build_root / "404.html").touch()
+    stale_route = build_root / "charts" / "scatter" / "index.html"
+    stale_route.parent.mkdir(parents=True)
+    stale_route.write_text(check_html_routes.LLMS_DIRECTIVE, encoding="utf-8")
+
+    routes_root = tmp_path / "routes"
+    routes_root.mkdir()
+    (routes_root / "[charts].[scatter]._index.jsx").touch()
+
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(
+        check_html_routes,
+        "discover_docs",
+        lambda _config: [SimpleNamespace(route="/charts/scatter/", content="")],
+    )
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {})
+
+    with pytest.raises(RuntimeError, match=r"charts/scatter\.html"):
+        check_html_routes.main()
 
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
@@ -2440,7 +2873,10 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
         "/styling/themes-and-tokens/": ("xy.theme",),
         "/integrations/reflex/": (
             "reflex_xy.chart",
+            "reflex_xy.data",
             "reflex_xy.figure",
+            "reflex_xy.scatter_chart",
+            "reflex_xy.line_chart",
             "reflex_xy.inline",
             "reflex_xy.append",
         ),
@@ -2459,6 +2895,29 @@ def test_other_api_owned_pages_append_focused_tables() -> None:
         assert api_path in adapter_api
     assert "Props" in adapter_api
     assert "Preview" not in adapter_api
+
+
+def test_reflex_integration_renders_the_state_backed_data_example() -> None:
+    """Keep the primary @rxy.data example visible as a live chart demo."""
+    page = next(
+        page for page in discover_docs(DOCS_CONFIG) if page.route == "/integrations/reflex/"
+    )
+    live_blocks = [
+        block
+        for block in parse_document(page.content).blocks
+        if isinstance(block, CodeBlock) and {"demo", "exec"} <= set(block.flags)
+    ]
+
+    assert len(live_blocks) == 2
+    state_backed = next(block for block in live_blocks if "@rxy.data" in block.content)
+    assert "rxy.scatter_chart(" in state_backed.content
+    state_rendered = str(
+        XyDocsMarkdownTransformer(
+            virtual_filepath=_page_virtual_filepath(page),
+            filename=str(page.source_path),
+        ).code_block(state_backed)
+    )
+    assert "XYChart" in state_rendered
 
 
 @pytest.mark.parametrize(

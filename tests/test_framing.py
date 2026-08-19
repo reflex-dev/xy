@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from scripts.js_exports import missing_esm_exports
 
 from xy.channel import (
     FRAME_ALIGNMENT,
@@ -259,6 +260,47 @@ def test_javascript_decodes_python_golden_frame_without_payload_copies() -> None
     assert all(offset % FRAME_ALIGNMENT == 0 for offset in result["offsets"])
 
 
+def test_javascript_accepts_cross_realm_array_buffer_without_copy() -> None:
+    body = encode_frame({"type": "density_update", "seq": 9}, [b"databricks"])
+    encoded = base64.b64encode(body).decode("ascii")
+    script = f"""
+      import vm from 'node:vm';
+      import {{ decodeFrame }} from {CLIENT.as_uri()!r};
+      const source = vm.runInNewContext('new ArrayBuffer({len(body)})');
+      new Uint8Array(source).set(Buffer.from({encoded!r}, 'base64'));
+      const decoded = decodeFrame(source);
+      const payload = decoded.buffers[0];
+      let spoofRejected = false;
+      try {{
+        decodeFrame({{
+          [Symbol.toStringTag]: 'ArrayBuffer',
+          byteLength: source.byteLength,
+        }});
+      }} catch (error) {{
+        spoofRejected = error instanceof TypeError;
+      }}
+      process.stdout.write(JSON.stringify({{
+        crossRealm: source instanceof ArrayBuffer === false,
+        sameBacking: payload.buffer === source,
+        payload: Buffer.from(
+          payload.buffer,
+          payload.byteOffset,
+          payload.byteLength
+        ).toString('utf8'),
+        spoofRejected,
+      }}));
+    """
+
+    result = _node(script)
+
+    assert result == {
+        "crossRealm": True,
+        "sameBacking": True,
+        "payload": "databricks",
+        "spoofRejected": True,
+    }
+
+
 def test_javascript_rejects_malformed_and_unaligned_frames() -> None:
     valid = encode_frame({"type": "selection"}, [b"abc", b"def"])
     cases: list[bytes] = [valid[:cut] for cut in (0, 1, 23, 24, len(valid) - 1)]
@@ -302,6 +344,6 @@ def test_widget_entry_no_longer_slices_binary_views() -> None:
     assert "raw.map(bytesToSpan)" in header
     for text in (source, header):
         assert ".buffer.slice(b.byteOffset" not in text
-    # The built bundle is minified; the decodeFrame export alias is the marker
-    # that survives identifier renaming.
-    assert "as decodeFrame" in built
+    # The built bundle is minified; its export block is what survives
+    # identifier renaming.
+    assert not missing_esm_exports(built, ("decodeFrame",))

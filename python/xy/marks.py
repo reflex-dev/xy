@@ -147,6 +147,27 @@ def _stroke_channel(
     return None, resolved
 
 
+def _implied_stroke_width(
+    stroke: Optional[str],
+    stroke_width: float,
+    *,
+    stroke_channel: Optional[channels.ColorChannel] = None,
+    stroke_width_channel: Optional[channels.StyleChannel] = None,
+) -> float:
+    """Return the effective width, implying 1px for paint without a width.
+
+    Scalar zero shares the public default semantics and therefore implies 1px;
+    an authored width channel stays authoritative, even when its rows are zero.
+    """
+    if (
+        (stroke is not None or stroke_channel is not None)
+        and stroke_width == 0.0
+        and stroke_width_channel is None
+    ):
+        return 1.0
+    return stroke_width
+
+
 def _series_direct_paints(
     value: Any,
     n_series: int,
@@ -676,6 +697,395 @@ def sankey(
         raise
 
 
+def funnel(
+    self: "Figure",
+    stage: ArrayLike,
+    value: ArrayLike,
+    *,
+    orientation: str = "vertical",
+    geometry: str = "area",
+    gap: Optional[float] = None,
+    neck: str = "rect",
+    min_width: float = 0.0,
+    color: Union[str, None] = None,
+    colors: Optional[Sequence[str]] = None,
+    name: Optional[str] = None,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    show_values: bool = True,
+    show_conversion: bool = True,
+    show_dropoff: bool = False,
+    labels: bool = True,
+    label_size: float = 12.0,
+    value_format: str = "{:,.10g}",
+    percent_format: str = "{:.0%}",
+    style: styles.StyleMapping | None = None,
+) -> "Figure":
+    """Add a funnel: one centered segment per stage, in declared order.
+
+    Stage math (`_funnel.compute_stages`), quad geometry
+    (`_funnel.compute_layout`) and the label ladder (`_funnel.decide_labels`)
+    are pure Python at build time, exactly as `hist` owns its binning and
+    `sankey` its layout; the renderers only ever see `funnel` quads. The stage
+    axis is categorical (stage names in declared order — never sorted: a
+    funnel is a business process), the cross axis is numeric and centered on
+    zero.
+
+    ``geometry="area"`` draws the classic tapering silhouette — each segment's
+    far edge previews the next stage's width, so painted area is NOT
+    proportional to the stage value. ``geometry="bar"`` draws centered
+    constant-width segments whose widths carry the values exactly. ``neck``
+    ("rect" | "taper") decides the last area segment's far edge. ``min_width``
+    keeps zero/tiny stages visible (a drawn floor as a fraction of the widest
+    stage); event and label values are never clamped.
+
+    Per-stage colors are a categorical channel over the stage names — palette
+    slots follow declared stage order, and the legend gets one row per stage.
+    An explicit `color=` paints every segment one constant color instead (no
+    per-stage legend rows); `colors=` pins one CSS color per stage.
+    """
+    from . import _funnel
+
+    css = styles.compile_mark_style("funnel", style)
+    opacity = css.get("opacity", opacity)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    name = self._optional_text(name, "funnel name")
+
+    if stage is None or value is None:
+        raise ValueError(
+            "funnel needs stage names and values: xy.funnel(stage=[...], value=[...]) "
+            "or xy.funnel(data=df, stage='col', value='col')"
+        )
+    if self._is_category_like(self._materialize_sequence(stage)):
+        stage_names = self._category_axis_labels(self._materialize_sequence(stage), "funnel stage")
+    else:
+        # Numeric stages are legal input (quarter numbers, ordinal codes) but
+        # a funnel's stage axis is categorical by contract, so they become
+        # labels in the declared order. 1-D only: silently flattening a 2-D
+        # array would invent a stage order the caller never declared.
+        stage_arr = np.asarray(self._materialize_sequence(stage))
+        if stage_arr.ndim != 1:
+            raise ValueError(f"funnel stage must be 1-D, got shape {stage_arr.shape}")
+        stage_names = [channels.category_label(raw) for raw in stage_arr]
+    values_arr = self._as_1d_float(value, "funnel value")
+    empty_probe = self._structural_probe and len(stage_names) == 0 and len(values_arr) == 0
+    if empty_probe:
+        # A plan probe has no stage rows from which to build geometry, but it
+        # must still exercise the same data-independent configuration gate as
+        # a real build. Do not manufacture a sentinel stage: colors length,
+        # key length, and stage/value coupling are real-data contracts checked
+        # when columns bind.
+        _funnel._validated_layout_options(
+            orientation=orientation,
+            geometry=geometry,
+            gap=gap,
+            neck=neck,
+            min_width=min_width,
+        )
+        if colors is not None and color is not None:
+            raise ValueError("funnel takes color= or colors=, not both")
+        if colors is not None:
+            for entry in colors:
+                _validate.css_color(str(entry), "funnel colors")
+        if color is not None:
+            _validate.css_color(color, "funnel color")
+        _opacity_constant, opacity_channel = channels.resolve_style_channel(
+            opacity, 0, "funnel opacity", minimum=0.0, maximum=1.0
+        )
+        if opacity_channel is not None:
+            raise ValueError(
+                "funnel opacity is per-trace; use colors= with RGBA for per-stage alpha"
+            )
+        _stroke_value, stroke_channel = _stroke_channel(stroke, 0, "funnel stroke")
+        if stroke_channel is not None:
+            raise ValueError("funnel stroke is per-trace")
+        _width_constant, width_channel = channels.resolve_style_channel(
+            stroke_width, 0, "funnel stroke_width", minimum=0.0
+        )
+        if width_channel is not None:
+            raise ValueError("funnel stroke_width is per-trace")
+        return self
+    layout = _funnel.compute_layout(
+        stage_names,
+        [float(v) for v in values_arr],
+        orientation=orientation,
+        geometry=geometry,
+        gap=gap,
+        neck=neck,
+        min_width=min_width,
+    )
+    n = len(layout.stages)
+
+    if colors is not None and color is not None:
+        raise ValueError("funnel takes color= or colors=, not both")
+    if colors is not None:
+        if len(colors) != n:
+            raise ValueError(
+                f"funnel colors must have one entry per stage ({n}); got {len(colors)}"
+            )
+        stage_css = [_validate.css_color(str(c), "funnel colors") for c in colors]
+    elif isinstance(self.palette, Mapping):
+        # A `{category: color}` theme palette pins colors by stage NAME. The
+        # canonical resolver owns that contract (spare-color fallback and the
+        # unmapped-category warning), so run it and reorder its per-category
+        # answer back into declared stage order — the resolver factorizes
+        # alphabetically for its own determinism, which a funnel must undo.
+        resolved = channels.resolve_color(
+            np.array(stage_names, dtype=object),
+            n,
+            default_constant=self.next_series_color,
+            palette=self.palette,
+        )
+        lookup = dict(zip(resolved.categories or [], resolved.palette or [], strict=True))
+        if all(name in lookup for name in stage_names):
+            stage_css = [lookup[name] for name in stage_names]
+        else:
+            # The resolver reads a column of CSS colors as per-point PAINT
+            # rather than as category labels, so stage names that are
+            # themselves colors ("#ff0000") come back as direct RGBA with no
+            # categories to reorder. The map is still keyed by stage name, so
+            # apply it here and take the spare-color rule for the rest.
+            pinned = {str(key): str(value) for key, value in self.palette.items()}
+            spare = [c for c in DEFAULT_PALETTE if c not in set(pinned.values())] or list(
+                DEFAULT_PALETTE
+            )
+            unmapped = 0
+            missing: list[str] = []
+            stage_css = []
+            for stage_name in stage_names:
+                if stage_name in pinned:
+                    stage_css.append(pinned[stage_name])
+                else:
+                    stage_css.append(spare[unmapped % len(spare)])
+                    unmapped += 1
+                    missing.append(stage_name)
+            if missing:
+                # The resolver path warns about unmapped categories; this
+                # fallback must too, or a typo in the map is silent exactly
+                # when the stage names look like colors.
+                warnings.warn(
+                    f"{len(missing)} stage(s) {missing} are not in the "
+                    "xy.theme(palette={...}) map and fall back to the cycle. "
+                    "Add them to the map to pin their colors.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+    else:
+        stage_css = [self.palette_color(i) for i in range(n)]
+
+    if color is not None:
+        color_ch = channels.ColorChannel(
+            mode="constant", constant=_validate.css_color(color, "funnel color")
+        )
+    else:
+        # Hand-built rather than `resolve_color`: factorization sorts category
+        # labels alphabetically for palette determinism, but a funnel's palette
+        # slots must follow the DECLARED stage order (stage 0 wears palette
+        # color 0), and `colors=` must pin by position.
+        code_dtype = np.uint8 if n <= channels.MAX_CATEGORIES else np.uint32
+        color_ch = channels.ColorChannel(
+            mode="categorical",
+            codes=np.arange(n, dtype=code_dtype),
+            categories=list(layout.stages[i].name for i in range(n)),
+            palette=stage_css,
+        )
+
+    opacity_constant, opacity_channel = channels.resolve_style_channel(
+        opacity, n, "funnel opacity", minimum=0.0, maximum=1.0
+    )
+    if opacity_channel is not None:
+        raise ValueError("funnel opacity is per-trace; use colors= with RGBA for per-stage alpha")
+    opacity_value = 1.0 if opacity_constant is None else float(opacity_constant)
+    stroke_value, stroke_ch = _stroke_channel(stroke, n, "funnel stroke")
+    if stroke_ch is not None:
+        raise ValueError("funnel stroke is per-trace")
+    width_constant, width_channel = channels.resolve_style_channel(
+        stroke_width, n, "funnel stroke_width", minimum=0.0
+    )
+    if width_channel is not None:
+        raise ValueError("funnel stroke_width is per-trace")
+    stroke_width_value = 0.0 if width_constant is None else float(width_constant)
+    stroke_width_value = _implied_stroke_width(stroke_value, stroke_width_value)
+
+    stage_dim = "y" if orientation == "vertical" else "x"
+    # The checkpoint is taken BEFORE the stage names commit to the axis
+    # registry: a later failure (a bad value_format in the label pass, for
+    # example) must roll the categories back too, or the next valid funnel on
+    # this axis starts its positions after the ghost of the failed one.
+    checkpoint = self._checkpoint()
+    try:
+        # Category positions come from the axis registry so a funnel layered
+        # onto an axis that already holds categories lands after them instead
+        # of on top of them; on a fresh axis they are exactly 0..n-1.
+        centers = self._axis_positions(stage_names, stage_dim)
+        pos0 = np.array(
+            [centers[q.stage] + (q.pos0 - q.stage) for q in layout.quads], dtype=np.float64
+        )
+        pos1 = np.array(
+            [centers[q.stage] + (q.pos1 - q.stage) for q in layout.quads], dtype=np.float64
+        )
+        lo0 = np.array([q.lo0 for q in layout.quads], dtype=np.float64)
+        hi0 = np.array([q.hi0 for q in layout.quads], dtype=np.float64)
+        lo1 = np.array([q.lo1 for q in layout.quads], dtype=np.float64)
+        hi1 = np.array([q.hi1 for q in layout.quads], dtype=np.float64)
+        posc0, posc1 = self.store.ingest(pos0), self.store.ingest(pos1)
+        loc0, hic0 = self.store.ingest(lo0), self.store.ingest(hi0)
+        loc1, hic1 = self.store.ingest(lo1), self.store.ingest(hi1)
+        style_dict: dict[str, Any] = {
+            "opacity": opacity_value,
+            "orientation": orientation,
+            "role": "funnel",
+        }
+        style_dict.update(styles._opacity_channels(css))
+        if stroke_value is not None:
+            style_dict["stroke"] = stroke_value
+        if stroke_width_value:
+            style_dict["stroke_width"] = stroke_width_value
+        # Slot mapping (funnel geometry contract): the stage-axis edges ride
+        # the stage axis's x0/x1-or-y0/y1 pair, the leading cross edges ride
+        # the other pair, and the generic x/y slots carry the TRAILING cross
+        # edges — both on the CROSS axis scale, which is why `_range_columns`
+        # has a funnel branch.
+        if orientation == "vertical":
+            trace = Trace(
+                id=len(self.traces),
+                kind="funnel",
+                x=loc1,
+                y=hic1,
+                x0=loc0,
+                x1=hic0,
+                y0=posc0,
+                y1=posc1,
+                name=name,
+                style=style_dict,
+                color_ch=color_ch,
+                count=n,
+            )
+        else:
+            trace = Trace(
+                id=len(self.traces),
+                kind="funnel",
+                x=loc1,
+                y=hic1,
+                x0=posc0,
+                x1=posc1,
+                y0=loc0,
+                y1=hic0,
+                name=name,
+                style=style_dict,
+                color_ch=color_ch,
+                count=n,
+            )
+        self.traces.append(trace)
+        # Numeric fields are the event payload; the `*_text` twins are the
+        # readout. Python owns every format so a tooltip, a label and a static
+        # export can never disagree about how a number reads — the client has
+        # no `str.format`, and re-implementing these specs in JS is exactly the
+        # divergence the single-reference rule exists to prevent.
+        trace.tooltip_rows = [
+            {
+                "stage": s.name,
+                "value": s.value,
+                "share": s.share,
+                "prior": s.prior,
+                "conversion": s.conversion,
+                "dropoff": s.dropoff,
+                "value_text": _funnel.format_value(s.value, value_format),
+                "prior_text": (
+                    None if s.prior is None else _funnel.format_value(s.prior, value_format)
+                ),
+                "share_text": _funnel.format_ratio(s.share, percent_format),
+                "conversion_text": _funnel.format_ratio(s.conversion, percent_format),
+                "dropoff_text": _funnel.format_ratio(s.dropoff, percent_format),
+            }
+            for s in layout.stages
+        ]
+        if labels:
+            # Inside-label contrast is judged against the fill each segment
+            # ACTUALLY wears: the constant `color=` when given, else the
+            # per-stage palette. Judging the palette while painting a constant
+            # put near-white labels on a white funnel.
+            drawn_css = [color] * n if color is not None else stage_css
+            plot_w = self.width if isinstance(self.width, int) else 640
+            plot_h = self.height if isinstance(self.height, int) else 400
+            specs = _funnel.decide_labels(
+                layout,
+                show_values=show_values,
+                show_conversion=show_conversion,
+                show_dropoff=show_dropoff,
+                value_format=value_format,
+                percent_format=percent_format,
+                font_size=label_size,
+                plot_px=(plot_w * 0.85, plot_h * 0.85),
+            )
+            for spec in specs:
+                if spec.placement == "hidden":
+                    continue
+                inside = spec.placement == "inside"
+                pos = centers[spec.stage] + (spec.pos - spec.stage)
+                if orientation == "vertical":
+                    x_anchor, y_anchor = spec.cross, pos
+                    # Vertical outside labels run into the side margin, and a
+                    # boundary label sits half a stage above its stage's own,
+                    # so the two never share a line.
+                    dx, dy = (0.0, 0.0) if inside else (8.0, 0.0)
+                else:
+                    x_anchor, y_anchor = pos, spec.cross
+                    # Horizontal outside labels all sit ABOVE their segment, so
+                    # a stage's own value and the boundary label beside it would
+                    # land on one line and overprint. Boundary labels take a
+                    # second row.
+                    row = 1.4 * label_size if spec.kind == "dropoff" else 0.0
+                    dx, dy = (0.0, 0.0) if inside else (0.0, -8.0 - row)
+                self.text(
+                    x_anchor,
+                    y_anchor,
+                    spec.text,
+                    dx=dx,
+                    dy=dy,
+                    anchor="middle" if inside else spec.anchor,
+                    color=_funnel_label_color(drawn_css[spec.stage]) if inside else None,
+                    style={"font_size": label_size},
+                    # A funnel label describes one stage's geometry, so a
+                    # legend toggle must hide the two together — an orphaned
+                    # value floating over an empty slot is worse than no
+                    # label. A drop-off label belongs to the boundary it
+                    # names, so it retires with its own stage.
+                    owner={"trace": trace.id, "category": spec.stage},
+                )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
+def _funnel_label_color(css: str) -> Optional[str]:
+    """Contrast color for a label inside a segment of fill `css`.
+
+    WCAG relative-luminance threshold, or None (the theme's own text color)
+    when the fill only resolves in a browser — a `var()`/`oklch()`/
+    `color-mix()` entry has no luminance XY can read, and guessing from the
+    exporters' substitute blue put a light label on a fill that resolves
+    white on screen. `_parse_color` cannot report this: it silently returns
+    the substitute, so the check has to happen against the CSS grammar.
+    """
+    from . import kernels
+
+    status, rgba = kernels.css_check(kernels.CSS_COLOR, str(css))
+    if status != 1 or rgba is None:
+        return None
+    r, g, b = (round(c * 255) for c in rgba[:3])
+
+    def channel(v: int) -> float:
+        c = v / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    luminance = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    return "#1f2430" if luminance > 0.45 else "#f7f8fa"
+
+
 def triangle_mesh(
     self: "Figure",
     x0: ArrayLike,
@@ -737,12 +1147,12 @@ def triangle_mesh(
         default=0.0,
         minimum=0.0,
     )
-    if (
-        (stroke_value is not None or stroke_ch is not None)
-        and not stroke_width_value
-        and ("stroke_width" not in style_channels)
-    ):
-        stroke_width_value = 1.0
+    stroke_width_value = _implied_stroke_width(
+        stroke_value,
+        stroke_width_value,
+        stroke_channel=stroke_ch,
+        stroke_width_channel=style_channels.get("stroke_width"),
+    )
     color_ch = channels.resolve_color(
         color,
         n,
@@ -841,6 +1251,10 @@ def _split_by_positions(
     without the O(n·k) rescan. NaN positions keep the mask semantics: NaN never
     compares equal, so a NaN key carries an empty group.
     """
+    if len(vals) == 0:
+        # np.split of nothing still yields one empty chunk, which would
+        # desynchronize groups (1) from unique positions (0).
+        return [], positions[:0]
     unique, inverse = np.unique(positions, return_inverse=True)
     order = np.argsort(inverse, kind="stable")
     bounds = np.searchsorted(inverse[order], np.arange(1, len(unique)))
@@ -1600,6 +2014,13 @@ def stairs(
         raise ValueError("stairs where must be 'pre', 'post', or 'mid'")
     vals = self._as_1d_float(values, "stairs values")
     if len(vals) == 0:
+        if self._structural_probe:
+            # Structural probe: config validated above; the values/edges
+            # coupling (len+1, strictly increasing) is a real-data contract
+            # and is checked when data binds. No trace is contributed.
+            if edges is not None:
+                self._as_1d_float(edges, "stairs edges")
+            return self
         raise ValueError("stairs values must contain at least one value")
     if edges is None:
         edge_values = np.arange(len(vals) + 1, dtype=np.float64)
@@ -1644,17 +2065,21 @@ def ecdf(
     bounded approximation for very large distributions using the native
     histogram kernel.
     """
-    vals = self._as_1d_float(values, "ecdf values")
-    vals = vals[np.isfinite(vals)]
+    # Config before data: the bins contract is structural and must hold (and
+    # be reported) whether or not any values arrived yet.
+    if bins is not None and (
+        isinstance(bins, (bool, np.bool_))
+        or not isinstance(bins, (int, np.integer))
+        or int(bins) <= 0
+    ):
+        raise ValueError("ecdf bins must be a positive integer or None")
+    vals_all = self._as_1d_float(values, "ecdf values")
+    vals = vals_all[np.isfinite(vals_all)]
     if len(vals) == 0:
+        if self._structural_probe and len(vals_all) == 0:
+            return self  # structural probe: config checked, no trace
         raise ValueError("ecdf values must contain at least one finite value")
     if bins is not None:
-        if (
-            isinstance(bins, (bool, np.bool_))
-            or not isinstance(bins, (int, np.integer))
-            or int(bins) <= 0
-        ):
-            raise ValueError("ecdf bins must be a positive integer or None")
         lo, hi = self._auto_domain(kernels.min_max(vals))
         counts, edges = kernels.histogram_uniform(vals, lo, hi, int(bins), density=False)
         keep = counts > 0
@@ -1845,12 +2270,12 @@ def scatter(
             default=0.0,
             minimum=0.0,
         )
-        if (
-            (stroke_value is not None or stroke_ch is not None)
-            and not stroke_width_value
-            and ("stroke_width" not in style_channels)
-        ):
-            stroke_width_value = 1.0
+        stroke_width_value = _implied_stroke_width(
+            stroke_value,
+            stroke_width_value,
+            stroke_channel=stroke_ch,
+            stroke_width_channel=style_channels.get("stroke_width"),
+        )
         if (
             stroke_value is None
             and stroke_ch is None
@@ -2000,6 +2425,15 @@ def histogram(
     density = self._bool_param(density, "histogram density")
     cumulative = self._bool_param(cumulative, "histogram cumulative")
     vals = self._as_1d_float(values, "histogram values")
+    if self._structural_probe and len(vals) == 0:
+        # Structural probe: validate the config the aggregation below would
+        # otherwise carry, then contribute no trace — binning is data work
+        # and empty probe input must never be able to fail it.
+        if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool) and int(bins) <= 0:
+            raise ValueError("histogram bins must be positive")
+        if range is not None:
+            self._finite_increasing_pair(range, "histogram range")
+        return self
     if density and not np.isfinite(vals).any():
         raise ValueError("histogram density requires at least one finite value")
     if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
@@ -2177,6 +2611,8 @@ def box(
     stats = [_distribution_stats(g) for g in groups]
     finite_stats = [s for s in stats if np.isfinite(s[0])]
     if not finite_stats:
+        if self._structural_probe and not any(len(g) for g in groups):
+            return self  # structural probe: config checked, no trace
         raise ValueError("box values must contain at least one finite group")
     checkpoint = self._checkpoint()
     try:
@@ -2372,6 +2808,8 @@ def violin(
             rect_y0.append(center - half_width)
             rect_y1.append(center + half_width)
     if not rect_x0:
+        if self._structural_probe and not any(len(g) for g in groups):
+            return self  # structural probe: config checked, no trace
         raise ValueError("violin values must contain at least one finite group")
     checkpoint = self._checkpoint()
     try:
@@ -2438,6 +2876,21 @@ def hexbin(
     name = self._optional_text(name, "hexbin name")
     opacity = self._opacity(opacity, "hexbin opacity")
     colormap = channels.resolve_colormap(colormap)
+    # Config before data (the structural probe relies on this ordering: the
+    # range's shape, mincnt's sign, and gridsize above are structure — where
+    # the invented-free probe must still fail loudly — while which points
+    # fall inside the range is data work that only runs on real rows).
+    if range is not None:
+        if len(range) != 2:
+            raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
+        xr = self._finite_increasing_pair(range[0], "hexbin x range")
+        yr = self._finite_increasing_pair(range[1], "hexbin y range")
+    # Matplotlib displays zero-count cells when C is absent and mincnt is not
+    # specified, producing the full rectangular honeycomb. Reducer hexbins
+    # cannot reduce an empty group and therefore default to one observation.
+    threshold = (0 if C is None else 1) if mincnt is None else int(mincnt)
+    if threshold < 0:
+        raise ValueError("hexbin mincnt must be nonnegative")
     # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
     # raw points must not stay resident in the figure's column store.
     x_all, _x_kind, _x_copies = columns._canonicalize(x)
@@ -2456,23 +2909,14 @@ def hexbin(
     if c_all is not None:
         finite &= np.isfinite(c_all)
     if not np.any(finite):
+        if self._structural_probe and n_points == 0:
+            return self  # structural probe: config checked, no aggregation
         raise ValueError("hexbin x and y must contain at least one finite pair")
     xv, yv = x_all[finite], y_all[finite]
     cv = None if c_all is None else c_all[finite]
     if range is None:
         xr = self._auto_domain(kernels.min_max(xv))
         yr = self._auto_domain(kernels.min_max(yv))
-    else:
-        if len(range) != 2:
-            raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
-        xr = self._finite_increasing_pair(range[0], "hexbin x range")
-        yr = self._finite_increasing_pair(range[1], "hexbin y range")
-    # Matplotlib displays zero-count cells when C is absent and mincnt is not
-    # specified, producing the full rectangular honeycomb. Reducer hexbins
-    # cannot reduce an empty group and therefore default to one observation.
-    threshold = (0 if cv is None else 1) if mincnt is None else int(mincnt)
-    if threshold < 0:
-        raise ValueError("hexbin mincnt must be nonnegative")
     # Matplotlib's hex lattice is the union of an integer grid and a half-cell
     # offset grid. Assign each point to the nearer center in the hex metric;
     # rectangular binning plus staggered display centers leaves overlaps and
@@ -2712,6 +3156,27 @@ def _contourf_corner_triangles(
     )
 
 
+def _validated_contour_levels(
+    self: "Figure", levels: Union[int, ArrayLike]
+) -> Union[int, np.ndarray]:
+    """The config half of contour level resolution: bounds and finiteness.
+
+    Returns the validated level count for the int form (whose concrete
+    values derive from the data's domain later), or the sorted explicit
+    level values. Shared by the normal build and the structural-probe gate
+    so the contract cannot fork.
+    """
+    if isinstance(levels, (int, np.integer)) and not isinstance(levels, (bool, np.bool_)):
+        n_levels = int(levels)
+        if n_levels <= 0 or n_levels > 256:
+            raise ValueError("contour levels must be between 1 and 256")
+        return n_levels
+    level_values = self._as_1d_float(levels, "contour levels")
+    if len(level_values) == 0 or len(level_values) > 256 or not np.all(np.isfinite(level_values)):
+        raise ValueError("contour levels must contain 1 to 256 finite values")
+    return np.sort(level_values)
+
+
 def contour(
     self: "Figure",
     z: ArrayLike,
@@ -2740,7 +3205,16 @@ def contour(
     color = css.get("color", color)
     width = css.get("width", width)
     opacity = css.get("opacity", opacity)
+    # Config before data (single-source: _validated_contour_levels is shared
+    # with the structural-probe gate below).
+    levels_config = _validated_contour_levels(self, levels)
+    colormap = channels.resolve_colormap(colormap)
+    name = self._optional_text(name, "contour name")
+    if extend not in ("neither", "min", "max", "both"):
+        raise ValueError("contour extend must be 'neither', 'min', 'max', or 'both'")
     arr = self._as_float_array(z, "contour z")
+    if self._structural_probe and arr.size == 0:
+        return self  # structural probe: config checked, no marching
     if arr.ndim != 2 or min(arr.shape) < 2:
         raise ValueError(
             f"contour z must be a 2-D matrix with at least 2 rows/columns, got {arr.shape}"
@@ -2751,30 +3225,16 @@ def contour(
     finite = arr[np.isfinite(arr)]
     if len(finite) == 0:
         raise ValueError("contour z must contain at least one finite value")
-    if isinstance(levels, (int, np.integer)) and not isinstance(levels, (bool, np.bool_)):
-        n_levels = int(levels)
-        if n_levels <= 0 or n_levels > 256:
-            raise ValueError("contour levels must be between 1 and 256")
+    if isinstance(levels_config, int):
         lo, hi = self._auto_domain(kernels.min_max(finite))
-        level_values = np.linspace(lo, hi, n_levels + 2, dtype=np.float64)[1:-1]
+        level_values = np.linspace(lo, hi, levels_config + 2, dtype=np.float64)[1:-1]
     else:
-        level_values = self._as_1d_float(levels, "contour levels")
-        if (
-            len(level_values) == 0
-            or len(level_values) > 256
-            or not np.all(np.isfinite(level_values))
-        ):
-            raise ValueError("contour levels must contain 1 to 256 finite values")
-        level_values = np.sort(level_values)
+        level_values = levels_config
     work = (rows - 1) * (cols - 1) * len(level_values)
     if work > MAX_CONTOUR_WORK:
         raise ValueError(
             f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    colormap = channels.resolve_colormap(colormap)
-    name = self._optional_text(name, "contour name")
-    if extend not in ("neither", "min", "max", "both"):
-        raise ValueError("contour extend must be 'neither', 'min', 'max', or 'both'")
     extend_min = filled and extend in ("min", "both")
     extend_max = filled and extend in ("max", "both")
     color_table: Optional[np.ndarray]
@@ -3142,6 +3602,13 @@ def heatmap(
     if hasattr(z, "to_numpy"):
         z = z.to_numpy()
     arr = np.asarray(z)
+    if self._structural_probe and arr.size == 0:
+        # Structural probe: validate the config the build below would carry
+        # (z's 2-D-ness is a real-data shape contract, checked at bind).
+        channels.resolve_colormap(colormap)
+        if domain is not None:
+            self._finite_increasing_pair(domain, "heatmap domain")
+        return self
     truecolor = arr.ndim == 3 and arr.shape[-1] in (3, 4)
     if not truecolor and arr.ndim != 2:
         raise ValueError(f"heatmap z must be 2-D or RGB(A), got shape {arr.shape}")

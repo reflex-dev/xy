@@ -51,6 +51,17 @@ readouts, focusable direct-point navigation with Arrow/Home/End keys, named
 toolbar controls with toggle state, visible focus styling, reduced-motion
 behavior, and forced-colors affordances.
 
+The public documentation keeps code-copy controls visually icon-only while
+providing stable accessible names and polite copied/failed announcements. Its
+production-DOM check rejects both unnamed controls and shared-theme generated
+text that would replace the copy/check icon feedback.
+
+Live chart demos reuse the Reflex Build action from `reflex-site-shared`, and
+the documentation navbar uses that package's keyword-only Algolia search. The
+production route gate selects either the current flat-HTML/`404.html` layout or
+the legacy directory-index/`__spa-fallback.html` layout once for the complete
+build, so stale files from the other layout cannot mask missing routes.
+
 CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
 checks those semantics and interactions in every engine, compares WebGL output
 with a coarse per-channel perceptual signature, and compares DOM chrome through
@@ -83,7 +94,7 @@ These must pass before publishing.
 | Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
-| Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
+| Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
 | sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
@@ -341,9 +352,16 @@ artifacts, not another package or release.
 
 Before tagging a release:
 
+- Tag as `vX.Y.Z`, optionally with a canonical PEP 440 pre-release suffix
+  (`v0.2.0a1`/`b1`/`rc1`). That shape is the whole release gate
+  (`scripts/check_release_version.py`), because it is the shape
+  uv-dynamic-versioning derives the published version from; `.postN`, `.devN`,
+  local (`+…`), and non-canonical (`-alpha1`) spellings are refused before
+  anything builds.
 - Add a dated `## [X.Y.Z] — YYYY-MM-DD` heading to `CHANGELOG.md` for the
-  version being tagged. This is the one thing the tag cannot vouch for, and the
-  release gate blocks the publish without it.
+  version being tagged. Deliberately not gated: a missing or undated entry is
+  fixed with a follow-up commit, and blocking the publish on it only ever forced
+  a tag to be deleted and re-cut over a documentation edit.
 - Refresh benchmark reports or explicitly document why the previous report still
   applies.
 - Run `make check-full` locally or confirm the equivalent

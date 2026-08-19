@@ -61,7 +61,10 @@ Object.assign(ChartView.prototype, {
       if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
-    } else if (g._cpuRibbon && Array.isArray(g.tooltipRows)) {
+    } else if ((g._cpuRibbon || g._cpuFunnel) && Array.isArray(g.tooltipRows)) {
+      // Semantic rows replace the coordinate readout: ribbon and funnel
+      // geometry slots hold internal placement coordinates, and the pick
+      // describes the flow/stage, never its placement.
       const semantic = g.tooltipRows[hit.index];
       if (semantic && typeof semantic === "object") Object.assign(row, semantic);
     } else if (g._cpuRect) {
@@ -318,6 +321,43 @@ Object.assign(ChartView.prototype, {
       }
       return items;
     }
+    const rowTrace = (Array.isArray(this.spec.traces) ? this.spec.traces : [])
+      .find((t) => t && t.id === row.trace);
+    if (rowTrace && rowTrace.kind === "funnel" && row.stage !== undefined) {
+      // A funnel stage's identity is its name and its conversion arithmetic;
+      // the geometry slots are layout. The kernel ships a preformatted `*_text`
+      // beside each number — it owns `value_format`/`percent_format`, and an
+      // em dash where a ratio's denominator was zero — so the tooltip prints
+      // those and never invents a format of its own.
+      const field = (label, text, numeric) => {
+        if (typeof text === "string") {
+          // The em dash IS the readout for an undefined ratio (a stage after
+          // a zero): dropping the row made the tooltip shape change between
+          // stages, which reads as missing data rather than "no meaningful
+          // number here".
+          items.push({ kind: "field", label, value: text });
+          return;
+        }
+        if (numeric !== undefined && numeric !== null && Number.isFinite(Number(numeric))) {
+          items.push({ kind: "field", label, value: fmtValue(numeric) });
+        }
+      };
+      items.push({ kind: "title", value: String(row.stage) });
+      field(
+        typeof (labels as any).value === "string" ? (labels as any).value : "Value",
+        row.value_text,
+        row.value,
+      );
+      // The prior value makes "From previous" checkable rather than asserted;
+      // stage 0 has no prior and simply omits the row.
+      if (row.prior_text || (row.prior !== undefined && row.prior !== null)) {
+        field("From", row.prior_text, row.prior);
+      }
+      field("Overall", row.share_text, row.share);
+      field("From previous", row.conversion_text, row.conversion);
+      field("Drop-off", row.dropoff_text, row.dropoff);
+      return items;
+    }
     const seriesName = this._tooltipSeriesName(row);
     if (seriesName) items.push({ kind: "title", value: seriesName });
     const wedge = this._namedWedge(row);
@@ -469,10 +509,11 @@ Object.assign(ChartView.prototype, {
     const yAxis = g.yAxis || "y";
     let x = row.x;
     let y = row.y;
-    if (g._cpuRibbon || !Number.isFinite(x) || !Number.isFinite(y)) {
-      // Sankey rows describe a whole ribbon/node rather than a single data
-      // point, so their anchor always follows the pick. Category rows also
-      // carry labels instead of numeric coordinates and use the same fallback.
+    if (g._cpuRibbon || g._cpuFunnel || !Number.isFinite(x) || !Number.isFinite(y)) {
+      // Sankey rows describe a whole ribbon/node — and a funnel row a whole
+      // stage segment — rather than a single data point, so their anchor
+      // always follows the pick. Category rows also carry labels instead of
+      // numeric coordinates and use the same fallback.
       const rect = this.canvas.getBoundingClientRect();
       [x, y] = this._dataFromCanvas(clientX - rect.left, clientY - rect.top, xAxis, yAxis);
     }
@@ -541,8 +582,12 @@ Object.assign(ChartView.prototype, {
     if (this.a11yLive && options.announce !== false) {
       const prefix = this._a11yKeyboardReadout;
       const detail = lines.join(", ");
+      // A funnel is an ordered process, and its keyboard walk should say so:
+      // "Stage 2 of 5", not "Point 2 of 5".
+      const g = this._hoverTarget && this._hoverTarget.g;
+      const noun = g && g.trace && g.trace.kind === "funnel" ? "Stage" : "Point";
       const announcement = prefix
-        ? `Point ${prefix.flat + 1} of ${prefix.total}. ${detail}`
+        ? `${noun} ${prefix.flat + 1} of ${prefix.total}. ${detail}`
         : detail;
       if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
     }

@@ -253,13 +253,90 @@ Cartesian charts:
   already on it — while an authored spoke label survives and
   `xy.tooltip(labels={"x": ...})` opts the angle back in. A hole or excluded
   part of a sector is not hit-testable.
-- Wheel and modebar zoom scale the radial maximum while keeping the radial
-  minimum fixed. Reset restores the original radial range.
+- **Zoom is off by default.** Polar charts ship without wheel zoom, modebar zoom
+  controls, or the zoom percentage indicator. Reset follows by default: with
+  nothing to move the view, the derived reset-axis policy is empty, so Fit Data
+  and Reset View are absent and double-click has nothing to restore. Wind roses
+  are the exception and keep zoom on. Enabling zoom brings the wheel, the whole
+  modebar zoom menu, and double-click reset back: zoom scales the radial maximum
+  while keeping the radial minimum fixed, and reset restores the original radial
+  range. An explicit `reset_axes` also grants reset on its own — controls and
+  double-click alike, whatever the zoom switch says — which is what a chart whose
+  view moves through linked axes or state-driven updates rather than a gesture
+  should use. Its modebar trigger shows a view-controls icon rather than a zoom
+  percentage, because with zoom off nothing can move that number.
+- Drag does nothing on a disc, and says so: theta pan, box zoom, and
+  rectangular/lasso selection have no polar geometry, so `default_drag_action`
+  accepts only `"auto"` and `"none"` here and raises on the rest rather than
+  resolving to a tool that cannot engage.
 - Theta rotation/panning, interactive sector zoom, box zoom, rectangular or lasso
   selection, brushing, and crosshairs are not currently available.
 
-Keeping the radial minimum fixed prevents an ordinary zoom from unexpectedly
-turning a disc into an annulus. See
+### Why Zoom Is Off by Default
+
+The center of a polar chart is a fixed point: zoom scales the radial maximum
+while holding the radial minimum in place. That is well behaved when the radius
+is a measured quantity, and misleading when it is not. A pie or donut carries its
+value in the *angle* and uses the radius as a constant rim; a radial bar chart,
+gauge, or radar sits on a fixed frame. Zooming those crops the rim while the
+geometry stays welded to the middle of the disc, which reads as a broken chart
+rather than as navigation.
+
+`xy.wind_rose()` keeps zoom enabled because its radius genuinely is data — a
+frequency count per direction — so pulling the outer ring in magnifies the short
+sectors of a rose dominated by one prevailing direction.
+
+Leaving zoom off also means the chart does not capture the wheel, so a page
+scrolls normally when the cursor passes over a pie or gauge.
+
+### Enable Zoom on a Polar Chart
+
+Add an `xy.interaction_config(zoom=True)` child when the radius is a measured
+quantity worth magnifying. Because the radial minimum stays pinned, zooming in
+enlarges the values nearest the center — which is what you want when a single
+large lobe squashes the rest of the pattern against the middle of the disc:
+
+~~~python demo exec
+import numpy as np
+import reflex_xy
+import xy
+
+bearing = np.linspace(0.0, 360.0, 721)
+offset = (bearing + 180.0) % 360.0 - 180.0
+# Linear radiated power: one dominant main lobe plus side lobes a twentieth its
+# size, so the side-lobe structure only becomes readable once the radial axis is
+# zoomed in.
+power = np.exp(-(offset / 16.0) ** 2) + 0.05 * np.abs(np.cos(np.radians(3.0 * bearing)))
+
+zoomable_polar = xy.polar_chart(
+    xy.line(bearing, power, color="#6e56cf", width=2.0),
+    xy.theta_axis(unit="degrees", zero="N", direction="clockwise"),
+    xy.r_axis(label="radiated power"),
+    xy.interaction_config(zoom=True),
+    title="Antenna pattern — scroll to magnify the side lobes",
+)
+
+
+def zoomable_polar_demo():
+    return reflex_xy.chart(zoomable_polar, height="420px")
+~~~
+
+The same flag is available directly on the chart for one-off cases
+(`xy.polar_chart(..., zoom=True)`), and `xy.interaction_config(zoom=False)` turns
+zoom off on a wind rose. Related switches narrow the gesture further once zoom is
+enabled: `wheel_zoom=False` keeps the modebar controls but releases the wheel,
+`zoom_buttons=False` does the reverse, and `zoom_limits=(1.0, 8.0)` caps how far
+in the radius can go. `box_zoom`, `select`, `brush`, and `crosshair` stay off on
+polar charts whatever their flags say — those gestures are rectangles and have no
+polar geometry yet.
+
+Radial zoom always keeps the radial minimum fixed, so an ordinary zoom never
+turns a disc into an annulus; author a deliberate annulus with `r_axis(hole=...)`
+or `r_axis(origin=...)` instead. One consequence is worth knowing before you
+enable it: values above the zoomed radial maximum are culled rather than clamped
+for lines and points, so zooming in on a chart whose interesting structure sits at
+the rim hides it instead of enlarging it. Reach for `r_axis(type_="log")` when a
+wide radial range needs to be readable at every scale at once. See
 [Interactions and selections](/docs/xy/core-concepts/interactions/) for the
 general interaction configuration surface.
 

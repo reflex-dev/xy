@@ -152,7 +152,10 @@ stable (10 byte-identical frames), so progressive renderers are charged until
 their last chunk lands.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time-dark.png">
+    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  </picture>
 </p>
 
 XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of
@@ -245,6 +248,44 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index)
+```
+
+For state-driven charts, declare the chart in the page and supply columns from
+a `@reflex_xy.data` state method — the structure (channels, colormaps, axes)
+is validated when `reflex run` compiles the app, while the columns ride the
+app's own websocket as binary buffers, never through Reflex state:
+
+```python
+from typing import TypedDict
+
+import numpy as np
+import reflex as rx
+import reflex_xy
+
+
+class CloudData(TypedDict):
+    x: np.ndarray
+    y: np.ndarray
+    mag: np.ndarray
+
+
+class Dash(rx.State):
+    points: int = 200_000
+
+    @reflex_xy.data
+    def cloud(self) -> CloudData:
+        rng = np.random.default_rng(7)
+        x = rng.normal(size=self.points)
+        y = x * 0.6 + rng.normal(scale=0.6, size=self.points)
+        return {"x": x, "y": y, "mag": np.hypot(x, y)}
+
+
+def dashboard() -> rx.Component:
+    return reflex_xy.scatter_chart(
+        data=Dash.cloud,
+        x="x", y="y", color="mag", colormap="viridis",
+        height="460px",
+    )
 ```
 
 Hover, pan, and zoom keep working. For charts driven by Reflex state, events, or

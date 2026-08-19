@@ -47,7 +47,8 @@ Looking for a specific family?
   [wind roses](/docs/xy/charts/wind-rose/) for directional distributions
 - Specialized: [stem](/docs/xy/charts/stem-plot/),
   [segments](/docs/xy/charts/segments/),
-  [Sankey](/docs/xy/charts/sankey/), and
+  [Sankey](/docs/xy/charts/sankey/),
+  [funnel](/docs/xy/charts/funnel-chart/), and
   [triangle mesh](/docs/xy/components/triangle-mesh/)
 - [Annotations](/docs/xy/components/annotations/) for rules, bands, labels, arrows,
   callouts, and threshold zones

@@ -24,6 +24,7 @@ renderer cannot silently ignore a declaration that another honors.
 | `triangle_mesh` | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | `heatmap`, `hexbin` | `fill-opacity`, `opacity` |
 | `ribbon`, `sankey` | `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; Sankey styles apply to link ribbons |
+| `funnel` | `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; per-stage paint is the categorical stage channel (`colors=`/theme palette), never `fill` |
 
 Use canonical CSS kebab-case when sharing styles with web code; Python
 snake_case aliases remain accepted.

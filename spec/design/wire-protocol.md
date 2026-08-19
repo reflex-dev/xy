@@ -354,6 +354,15 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   (`python/reflex_xy/namespace.py`) — and on streaming append (§4),
   with no join copy anywhere on a live path.
 
+The browser accepts genuine `ArrayBuffer` objects across JavaScript realm
+boundaries. This matters for notebook hosts such as Databricks, whose widget
+manager can construct the binary comm attachment in a different realm from the
+one evaluating the anywidget module: cross-realm buffers fail JavaScript's
+realm-local `instanceof ArrayBuffer` test despite retaining the same binary
+brand. The client verifies that brand with the intrinsic `byteLength` getter
+and creates a view over the original buffer, preserving the live path's
+no-re-encoding and no-extra-copy contract.
+
 Column entries otherwise carry `len`, an optional `dtype` (`"u8"` or `"u32"`;
 absent means f32), and, for offset-encoded geometry,
 `offset`/`scale`/`kind`.
@@ -379,7 +388,42 @@ columns that form one stable 64-bit identity per shipped mark. Aggregate and
 decimated tiers omit keys and record an animation fallback rather than
 materializing canonical rows in the browser.
 
-### 5.1 Full-payload data transition
+### 5.1 Legend automatic-location metadata
+
+An unanchored Cartesian legend whose author requested `loc="best"` has this
+first-paint shape:
+
+```json
+{
+  "legend": {
+    "loc": "upper left",
+    "auto_loc": "best"
+  }
+}
+```
+
+`loc` is always one concrete member of the nine-candidate set when `auto_loc`
+is present. It is the Python scorer's initial decision and remains sufficient
+for static writers and older clients. The optional `auto_loc` field records
+semantic intent separately; `"best"` authorizes the browser to replace the
+concrete location after measuring rendered geometry on resize or after a view
+settles. Absence of `auto_loc` means the transmitted location is exact.
+
+The initial Python/static location and the browser's first settled live
+location choose the exact minimum score, with the canonical nine-candidate
+order breaking an exact tie. After a live winner is settled, subsequent view,
+resize, and LOD re-scores retain it unless a challenger lowers the normalized
+occupied fraction by at least `0.05`. The exception is an empty challenger,
+which always replaces an occupied current box. This live-only hysteresis keeps
+near-uniform rendered occupancy from moving the legend on every settle without
+blocking a clearly open candidate.
+
+Payload builders omit the field for an explicit concrete `loc`, any legend
+with `anchor`, and polar coordinates. Those are authored placements, not live
+scoring requests. Receivers must likewise ignore `auto_loc` outside an
+unanchored Cartesian plot.
+
+### 5.2 Full-payload data transition
 
 A host receiving a replacement `{spec, buffers}` for the same mounted figure
 calls `ChartView.updatePayload`. This is an in-browser operation, not a new
@@ -420,9 +464,9 @@ The reassembled bytes are identical to the source blob, which is what keeps
 
 Two independent version constants:
 
-- **Renderer/spec protocol.** `PROTOCOL_VERSION = 12` (`python/xy/config.py`)
+- **Renderer/spec protocol.** `PROTOCOL_VERSION = 13` (`python/xy/config.py`)
   rides every first-paint spec as `spec["protocol"]`; the client's
-  `PROTOCOL = 12` (`js/src/00_header.ts`) is checked in the `ChartView`
+  `PROTOCOL = 13` (`js/src/00_header.ts`) is checked in the `ChartView`
   constructor. A mismatch replaces the chart element with "update the xy
   package and restart the kernel" and throws. Requests and replies carry no
   version of their own — the handshake happens once, at first paint, before
@@ -469,7 +513,18 @@ Two independent version constants:
   v11 client would silently draw a full circular, centre-origin view and route
   those grid/segment traces through their Cartesian paths. The v12 handshake
   rejects that stale bundle before any of those compatible-looking wrong
-  pictures can appear.
+  pictures can appear. v13 adds the `funnel` mark kind (per-stage symmetric
+  quads: six semantic geometry columns re-labelled `pos0`/`pos1`/`lo0`/`hi0`/
+  `lo1`/`hi1`, an `orientation` field, a per-stage paint channel, and semantic
+  `tooltip_rows` — the funnel geometry contract in
+  `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
+  unknown kinds, so a cached v12 client would silently draw every funnel as a
+  point cloud of trailing cross edges.
+  The optional `legend.auto_loc` field described in §5.1 deliberately does
+  **not** increment v13: it accompanies an already concrete `legend.loc`, so a
+  cached client that does not recognize the hint renders the same correct
+  first placement and merely forgoes later adaptive re-scoring. Ignoring it
+  cannot produce a structurally wrong first-paint scene.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.

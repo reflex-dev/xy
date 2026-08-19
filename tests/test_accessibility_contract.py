@@ -63,10 +63,12 @@ def test_categorical_axes_announce_categories_instead_of_numeric_padding() -> No
 def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
     required = (
         'this._listen(c, "keydown", (e) => this._onA11yKey(e))',
-        "const hit = { trace: g.trace.id, index: offset, g }",
+        # `row` (not the flat traversal offset) so a legend-filtered funnel
+        # stage still reports the SHIPPED row the kernel and tooltip_rows speak.
+        "const hit = { trace: g.trace.id, index: row, g }",
         "this._showTooltip(hit, clientX, clientY)",
         "this._drawKeepPick()",
-        "Point ${prefix.flat + 1} of ${prefix.total}.",
+        "${noun} ${prefix.flat + 1} of ${prefix.total}.",
         "if (this._interactionTransitionActive()) return;",
         'this.a11yLive.textContent = "Readout closed."',
         'this._dispatchChartEvent("leave"',
@@ -74,6 +76,19 @@ def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
     for label, text in CLIENTS:
         for snippet in required:
             assert snippet in text, f"{label} keyboard path drifted from hover pipeline"
+
+
+def test_legend_visibility_preserves_point_access_but_filters_funnel_stages() -> None:
+    """Visual toggles must not shrink the historic point-series a11y universe;
+    funnel stage navigation is the deliberate geometry-visible exception."""
+    required = (
+        "(!mark.stageNav || !g._legendHidden)",
+        "markOf(g.trace.kind).stageNav && g._visMap",
+        "return Math.min(g._cpu.x.length, g._cpu.y.length)",
+    )
+    for label, text in CLIENTS:
+        for snippet in required:
+            assert snippet in text, f"{label} lost the legend/a11y compatibility split"
 
 
 def test_keyboard_activation_uses_the_click_contract() -> None:

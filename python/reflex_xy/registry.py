@@ -17,18 +17,21 @@ loop captured at setup time; see `schedule_broadcast`.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from xy._figure import Figure
 
-__all__ = ["FigureEntry", "FigureRegistry", "registry"]
+__all__ = ["ColumnEntry", "FigureEntry", "FigureRegistry", "registry"]
+
+_logger = logging.getLogger("reflex_xy")
 
 # Idle figures are swept after this long without a subscribe/message/publish.
 # Deterministic (state-backed) figures rebuild transparently on the next
@@ -38,7 +41,8 @@ DEFAULT_TTL_SECONDS = 30 * 60.0
 _SWEEP_INTERVAL_SECONDS = 60.0
 
 
-PushHook = Callable[[str, dict, list[bytes], Optional[int]], Awaitable[None]]
+PushBuffer = bytes | bytearray | memoryview
+PushHook = Callable[[str, dict, Sequence[PushBuffer], Optional[int]], Awaitable[None]]
 
 
 @dataclass
@@ -48,7 +52,7 @@ class _QueuedPush:
     callback: PushHook
     token: str
     message: dict
-    buffers: list[bytes]
+    buffers: list[PushBuffer]
     version: Optional[int]
     completion: Optional[asyncio.Future[None]] = None
 
@@ -93,11 +97,40 @@ class FigureEntry:
         self.last_access = time.monotonic()
 
 
+@dataclass
+class ColumnEntry:
+    """One registered column set (the data half of the data-bound tier).
+
+    Column entries are pure rebuildable caches of Reflex state — the
+    `@reflex_xy.data` method is the recipe — so they carry none of the
+    figure entry's kernel machinery: no locks (a republish replaces the
+    whole immutable generation), no pins, always sweepable.
+    """
+
+    columns: dict[str, Any]
+    token: str
+    version: int = 1
+    last_access: float = field(default_factory=time.monotonic)
+
+    def touch(self) -> None:
+        self.last_access = time.monotonic()
+
+
 class FigureRegistry:
     """token -> FigureEntry map with versioning and TTL sweep."""
 
     def __init__(self, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> None:
         self._entries: dict[str, FigureEntry] = {}
+        # Data-bound tier: column sets published by @reflex_xy.data vars,
+        # and the data-token -> {plan digest} index that lets a column
+        # republish rebuild + broadcast every mounted dependent figure. The
+        # index is bounded by mounted plans: entries are added when a
+        # composite figure binds (namespace sub) and dropped by
+        # _unbind_plan_if_unmounted_locked on every transition that can end
+        # the mount — unsubscribe, disconnect, release, failed-rebuild
+        # cleanup, TTL sweep, and a republish that finds it unmounted.
+        self._column_entries: dict[str, ColumnEntry] = {}
+        self._digests_by_data_token: dict[str, set[str]] = {}
         # A mounted client remains in its socket room when a TTL sweep evicts
         # a rebuildable figure. Retain only the evicted scalar version while
         # at least one such client is subscribed, so a state-driven rebuild on
@@ -133,6 +166,11 @@ class FigureRegistry:
         # async callback(token, message, buffers, version) -> None for append
         # and view-state pushes — the message-shaped data-plane seam.
         self._on_push: Optional[PushHook] = None
+        # async callback(token, error, resync) -> None: room-wide err frames
+        # for server-side failures with no request to answer (a data
+        # republish whose plan bind fails must not leave stale pixels
+        # silently frozen).
+        self._on_error: Optional[Callable[[str, str, bool], Awaitable[None]]] = None
 
     # -- wiring ------------------------------------------------------------
 
@@ -148,12 +186,34 @@ class FigureRegistry:
     ) -> None:
         self._on_push = callback
 
+    def on_error(self, callback: Callable[[str, str, bool], Awaitable[None]]) -> None:
+        self._on_error = callback
+
+    def _schedule_error(self, token: str, error: str, *, resync: bool) -> None:
+        """Fan an out-of-band failure to a figure room from any thread."""
+        callback = self._on_error
+        loop = self._loop
+        if callback is None or loop is None:
+            return
+
+        async def _run() -> None:
+            await callback(token, error, resync)
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(_run())
+        else:
+            asyncio.run_coroutine_threadsafe(_run(), loop)
+
     def _enqueue_push(
         self,
         entry: FigureEntry,
         token: str,
         message: dict,
-        buffers: list[bytes],
+        buffers: Sequence[PushBuffer],
         version: Optional[int],
         *,
         completion: Optional[asyncio.Future[None]] = None,
@@ -169,7 +229,7 @@ class FigureRegistry:
         loop = self._loop
         if callback is None or loop is None:
             return False, None
-        queued = _QueuedPush(callback, token, message, buffers, version, completion)
+        queued = _QueuedPush(callback, token, message, list(buffers), version, completion)
         with self._mutex:
             entry._push_queue.append(queued)
             if entry._push_drain_scheduled:
@@ -276,38 +336,7 @@ class FigureRegistry:
         which is the signal that subscribers need a new payload.
         """
         with self._mutex:
-            entry = self._entries.get(token)
-            # A cache-miss rebuild inserts its entry before room fan-out. A
-            # canonical same-object publish re-authorizes that provisional
-            # generation without bumping its version, but must still own a
-            # normal broadcast in case the rebuild-owned fan-out fails.
-            reauthorized = entry is not None and bool(self._active_rebuild_guards.get(token))
-            # This is a canonical dependency/application publish. Any builder
-            # that began from the preceding absence must not overwrite it,
-            # even if this entry is released again before that builder ends.
-            self._invalidate_rebuild_guards_locked(token)
-            if entry is None:
-                version = self._evicted_versions.pop(token, 0) + 1
-                entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
-                self._entries[token] = entry
-                changed = True
-            else:
-                changed = entry.figure is not figure
-                if changed:
-                    # A replacement is a new immutable generation. In-flight
-                    # handlers keep a self-consistent old figure/version pair
-                    # instead of observing the old figure with a newly bumped
-                    # version. Their results are discarded by ``is_current``.
-                    entry = FigureEntry(
-                        figure=figure,
-                        token=token,
-                        version=entry.version + 1,
-                        pinned=entry.pinned or pinned,
-                    )
-                    self._entries[token] = entry
-                else:
-                    entry.pinned = entry.pinned or pinned
-                    entry.touch()
+            entry, changed, reauthorized = self._publish_locked(token, figure, pinned)
         if broadcast and (changed or reauthorized):
             # Re-publishing the identical object means nothing moved; a new
             # figure object is normally the signal subscribers need a fresh
@@ -316,6 +345,48 @@ class FigureRegistry:
             # schedules an independently coalesced delivery of the same version.
             self.schedule_broadcast(token)
         return entry
+
+    def _publish_locked(
+        self, token: str, figure: "Figure", pinned: bool
+    ) -> tuple[FigureEntry, bool, bool]:
+        """The mutation half of ``publish``; the registry mutex must be held.
+
+        Returns ``(entry, changed, reauthorized)`` so callers can schedule the
+        broadcast after releasing the mutex.
+        """
+        entry = self._entries.get(token)
+        # A cache-miss rebuild inserts its entry before room fan-out. A
+        # canonical same-object publish re-authorizes that provisional
+        # generation without bumping its version, but must still own a
+        # normal broadcast in case the rebuild-owned fan-out fails.
+        reauthorized = entry is not None and bool(self._active_rebuild_guards.get(token))
+        # This is a canonical dependency/application publish. Any builder
+        # that began from the preceding absence must not overwrite it,
+        # even if this entry is released again before that builder ends.
+        self._invalidate_rebuild_guards_locked(token)
+        if entry is None:
+            version = self._evicted_versions.pop(token, 0) + 1
+            entry = FigureEntry(figure=figure, token=token, version=version, pinned=pinned)
+            self._entries[token] = entry
+            changed = True
+        else:
+            changed = entry.figure is not figure
+            if changed:
+                # A replacement is a new immutable generation. In-flight
+                # handlers keep a self-consistent old figure/version pair
+                # instead of observing the old figure with a newly bumped
+                # version. Their results are discarded by ``is_current``.
+                entry = FigureEntry(
+                    figure=figure,
+                    token=token,
+                    version=entry.version + 1,
+                    pinned=entry.pinned or pinned,
+                )
+                self._entries[token] = entry
+            else:
+                entry.pinned = entry.pinned or pinned
+                entry.touch()
+        return entry, changed, reauthorized
 
     def begin_rebuild(self, token: str) -> tuple[Optional[FigureEntry], Optional[object]]:
         """Atomically return the current entry or guard this missing generation."""
@@ -389,6 +460,7 @@ class FigureRegistry:
             self._invalidate_rebuild_guards_locked(token)
             entry = self._entries.pop(token, None)
             self._retain_removed_version_locked(token, entry)
+            self._unbind_plan_if_unmounted_locked(token)
 
     def remove_if_current(self, token: str, expected: FigureEntry, *, guard: object) -> bool:
         """Remove ``expected`` only while its rebuild guard is still valid.
@@ -405,10 +477,34 @@ class FigureRegistry:
                 return False
             del self._entries[token]
             self._retain_removed_version_locked(token, expected)
+            self._unbind_plan_if_unmounted_locked(token)
             return True
 
     def _invalidate_rebuild_guards_locked(self, token: str) -> None:
         self._active_rebuild_guards.pop(token, None)
+
+    def _unbind_plan_if_unmounted_locked(self, token: str) -> None:
+        """Drop a composite plan token's binding once nothing serves or
+        watches it (mutex held; no-op for non-plan tokens).
+
+        This is the other half of the index invariant "bounded by mounted
+        plans": ``bind_plan`` inserts on subscribe, and every transition that
+        can end a mount — unsubscribe, disconnect, release, failed-rebuild
+        cleanup, the TTL sweep — funnels here, so short-lived sessions cannot
+        accumulate bindings that only a republish would have collected.
+        """
+        from .tokens import parse_plan_token
+
+        parsed = parse_plan_token(token)
+        if parsed is None:
+            return
+        if token in self._entries or self._rebuildable_subscribers.get(token):
+            return
+        digests = self._digests_by_data_token.get(parsed.data_token)
+        if digests is not None:
+            digests.discard(parsed.digest)
+            if not digests:
+                self._digests_by_data_token.pop(parsed.data_token, None)
 
     def _retain_removed_version_locked(self, token: str, entry: Optional[FigureEntry]) -> None:
         if self._rebuildable_subscribers.get(token):
@@ -449,6 +545,7 @@ class FigureRegistry:
             if not subscribers:
                 self._rebuildable_subscribers.pop(token, None)
                 self._evicted_versions.pop(token, None)
+                self._unbind_plan_if_unmounted_locked(token)
 
         tokens = self._rebuildable_tokens_by_sid.get(sid)
         if tokens is not None:
@@ -468,6 +565,7 @@ class FigureRegistry:
                 if not subscribers:
                     self._rebuildable_subscribers.pop(token, None)
                     self._evicted_versions.pop(token, None)
+                    self._unbind_plan_if_unmounted_locked(token)
 
     def tokens(self) -> list[str]:
         with self._mutex:
@@ -476,6 +574,110 @@ class FigureRegistry:
     def __len__(self) -> int:
         with self._mutex:
             return len(self._entries)
+
+    # -- data-bound tier: column entries + plan index ------------------------
+
+    def publish_columns(self, token: str, columns: dict[str, Any]) -> ColumnEntry:
+        """Insert or replace a column set, then rebuild every mounted plan
+        bound to it (fresh figures under the composite tokens, broadcast by
+        the ordinary publish fan-out). Entries are immutable generations: a
+        republish replaces the whole entry and bumps its version."""
+        with self._mutex:
+            previous = self._column_entries.get(token)
+            version = 1 if previous is None else previous.version + 1
+            entry = ColumnEntry(columns=columns, token=token, version=version)
+            self._column_entries[token] = entry
+            digests = sorted(self._digests_by_data_token.get(token, ()))
+        for digest in digests:
+            self._rebuild_dependent(token, digest, entry)
+        return entry
+
+    def get_columns(self, token: str) -> Optional[ColumnEntry]:
+        with self._mutex:
+            entry = self._column_entries.get(token)
+            if entry is not None:
+                entry.touch()
+            return entry
+
+    def release_columns(self, token: str) -> None:
+        """Drop a column set and every dependent composite figure entry.
+
+        The "no data right now" path (`@reflex_xy.data` returning None): the
+        empty handle unmounts subscribed charts client-side, and dropping
+        the dependent figure caches here keeps a later re-mount rebuilding
+        from current state instead of serving pre-release columns.
+        """
+        from .tokens import build_plan_token
+
+        with self._mutex:
+            self._column_entries.pop(token, None)
+            digests = self._digests_by_data_token.pop(token, set())
+        for digest in sorted(digests):
+            self.release(build_plan_token(digest, token))
+
+    def bind_plan(self, data_token: str, digest: str) -> None:
+        """Record that a mounted plan binds this data token (idempotent)."""
+        with self._mutex:
+            self._digests_by_data_token.setdefault(data_token, set()).add(digest)
+
+    def _rebuild_dependent(self, data_token: str, digest: str, column_entry: ColumnEntry) -> None:
+        """Re-bind one dependent plan against freshly published columns.
+
+        ``column_entry`` is the generation this rebuild serves. Concurrent
+        republishes rebuild concurrently and may complete out of order; every
+        outcome below (publish, failure release + err frame) is gated on the
+        generation still being current — atomically with the registry mutation
+        — so an older generation that finishes late can never overwrite a
+        newer one's figure or report a stale failure.
+        """
+        from .plan import plan_of
+        from .tokens import build_plan_token, parse_token
+
+        composite = build_plan_token(digest, data_token)
+        with self._mutex:
+            if self._column_entries.get(data_token) is not column_entry:
+                return  # a newer generation owns this rebuild now
+            mounted = composite in self._entries or bool(
+                self._rebuildable_subscribers.get(composite)
+            )
+            if not mounted:
+                # Nothing serves or watches this plan anymore: forget the
+                # binding (the same invariant every unmount transition
+                # enforces); a later subscribe rebuilds and re-indexes.
+                self._unbind_plan_if_unmounted_locked(composite)
+                return
+        parsed = parse_token(data_token)
+        source = (
+            f"{parsed.state_full_name}.{parsed.var_name}" if parsed is not None else "the data var"
+        )
+        plan = plan_of(digest)
+        try:
+            if plan is None:
+                from .plan import PlanMissError
+
+                raise PlanMissError(digest)
+            figure = plan.bind(column_entry.columns, source=source).figure()
+        except Exception as exc:  # noqa: BLE001 - user data meets page structure here
+            # Fail loud on both sides: the server log carries the bind error,
+            # and subscribers get an err frame instead of silently frozen
+            # pixels (their bounded resync retries against current state) —
+            # unless a newer generation superseded this one meanwhile, in
+            # which case the failure is obsolete and it owns the outcome.
+            with self._mutex:
+                if self._column_entries.get(data_token) is not column_entry:
+                    return
+                self._invalidate_rebuild_guards_locked(composite)
+                removed = self._entries.pop(composite, None)
+                self._retain_removed_version_locked(composite, removed)
+            _logger.warning("republish of %s failed: %s", composite, exc)
+            self._schedule_error(composite, str(exc), resync=True)
+            return
+        with self._mutex:
+            if self._column_entries.get(data_token) is not column_entry:
+                return  # a newer generation's figure must win; drop this one
+            _, changed, reauthorized = self._publish_locked(composite, figure, False)
+        if changed or reauthorized:
+            self.schedule_broadcast(composite)
 
     # -- version bump + fan-out ---------------------------------------------
 
@@ -702,7 +904,12 @@ class FigureRegistry:
     # -- TTL sweep -----------------------------------------------------------
 
     def sweep(self, *, now: Optional[float] = None) -> list[str]:
-        """Drop unpinned entries idle past the TTL; returns dropped tokens."""
+        """Drop unpinned entries idle past the TTL; returns dropped tokens.
+
+        Column entries sweep under the same TTL: they are state-rebuildable
+        caches exactly like state-token figures (a later subscribe re-runs
+        the data method), so the sweep bounds column memory, not correctness.
+        """
         now = time.monotonic() if now is None else now
         dropped: list[str] = []
         with self._mutex:
@@ -715,6 +922,11 @@ class FigureRegistry:
                     self._invalidate_rebuild_guards_locked(token)
                     self._retain_removed_version_locked(token, entry)
                     del self._entries[token]
+                    self._unbind_plan_if_unmounted_locked(token)
+                    dropped.append(token)
+            for token, column_entry in list(self._column_entries.items()):
+                if now - column_entry.last_access > self._ttl:
+                    del self._column_entries[token]
                     dropped.append(token)
         return dropped
 
@@ -733,6 +945,8 @@ registry: FigureRegistry = FigureRegistry()
 def reset_registry_for_tests() -> FigureRegistry:
     """Reset the process registry in place (test isolation only)."""
     registry._entries.clear()
+    registry._column_entries.clear()
+    registry._digests_by_data_token.clear()
     registry._evicted_versions.clear()
     registry._rebuildable_subscribers.clear()
     registry._rebuildable_tokens_by_sid.clear()
@@ -741,6 +955,7 @@ def reset_registry_for_tests() -> FigureRegistry:
     registry._loop = None
     registry._on_publish = None
     registry._on_push = None
+    registry._on_error = None
     registry._ttl = DEFAULT_TTL_SECONDS
     return registry
 

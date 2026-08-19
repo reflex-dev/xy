@@ -18,65 +18,58 @@ def _load_module():
 check_release_version = _load_module()
 
 
-def _changelog(tmp_path: Path, changelog_heading: str) -> Path:
-    changelog = tmp_path / "CHANGELOG.md"
-    changelog.write_text(f"# Changelog\n\n{changelog_heading}\n\n- Something.\n")
-    return changelog
+def test_gate_passes_a_release_tag() -> None:
+    assert check_release_version.check_release("v0.2.0") == []
 
 
-def test_gate_passes_when_tag_and_changelog_agree(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.2.0] — 2026-07-09")
-
-    assert check_release_version.check_release("v0.2.0", changelog) == []
-
-
-def test_gate_accepts_plain_hyphen_date_separator(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.2.0] - 2026-07-09")
-
-    assert check_release_version.check_release("v0.2.0", changelog) == []
-
-
-def test_gate_rejects_undated_changelog_entry(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.1.0] — unreleased development line")
-
-    errors = check_release_version.check_release("v0.1.0", changelog)
-
-    assert any("no dated" in e for e in errors)
-
-
-def test_gate_rejects_missing_changelog_entry(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.2.0] — 2026-07-09")
-
-    errors = check_release_version.check_release("v0.3.0", changelog)
-
-    assert any("no dated" in e for e in errors)
-
-
-def test_gate_rejects_a_tag_that_is_not_a_release_tag(tmp_path: Path) -> None:
+def test_gate_rejects_a_tag_that_is_not_a_release_tag() -> None:
     # The docs site deploys on CalVer tags (2026.WW.N) that the version
     # derivation deliberately ignores; one must never publish a release.
-    changelog = _changelog(tmp_path, "## [2026.30.1] — 2026-07-24")
-
-    errors = check_release_version.check_release("2026.30.1", changelog)
+    errors = check_release_version.check_release("2026.30.1")
 
     assert any("is not a release tag" in e for e in errors)
 
 
-def test_gate_rejects_a_derived_development_version_tag(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.0.3.dev4] — 2026-07-24")
-
-    errors = check_release_version.check_release("v0.0.3.dev4+g63c0697", changelog)
+def test_gate_rejects_a_derived_development_version_tag() -> None:
+    errors = check_release_version.check_release("v0.0.3.dev4+g63c0697")
 
     assert any("is not a release tag" in e for e in errors)
 
 
-def test_main_requires_a_tag(tmp_path: Path, monkeypatch) -> None:
+def test_gate_passes_a_canonical_prerelease_tag() -> None:
+    assert check_release_version.check_release("v0.0.1a1") == []
+
+
+def test_gate_passes_prerelease_tags_for_the_core_too() -> None:
+    assert check_release_version.check_release("v1.0.0rc2") == []
+
+
+def test_gate_rejects_non_canonical_prerelease_spellings() -> None:
+    # The derivation normalizes `alpha1` to `a1`, so a non-canonical tag can
+    # never equal its own built version — refuse it before it builds anything.
+    for tag in ("v0.0.1-alpha1", "v0.0.1alpha1", "v0.0.1a"):
+        errors = check_release_version.check_release(tag)
+        assert any("is not a release tag" in e for e in errors), tag
+
+
+def test_gate_ignores_the_changelog() -> None:
+    # Writing up the release is a checklist item, not a gate: a tag no longer
+    # has to be deleted and re-cut because CHANGELOG.md was edited afterwards.
+    assert check_release_version.check_release("v9.9.9") == []
+
+
+def test_main_requires_a_tag(monkeypatch) -> None:
     monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
-    changelog = _changelog(tmp_path, "## [0.1.0] — 2026-07-09")
 
-    rc = check_release_version.main(["--changelog", str(changelog)])
+    assert check_release_version.main([]) == 1
 
-    assert rc == 1
+
+def test_main_reports_a_bad_tag_shape() -> None:
+    assert check_release_version.main(["--tag", "v0.0.6.post1"]) == 1
+
+
+def test_main_accepts_a_release_tag() -> None:
+    assert check_release_version.main(["--tag", "v0.0.6"]) == 0
 
 
 def test_release_workflow_wires_the_gate() -> None:
@@ -86,44 +79,3 @@ def test_release_workflow_wires_the_gate() -> None:
 
     assert "scripts/check_release_version.py" in workflow
     assert "if: github.event_name == 'push'" in workflow
-
-
-def test_gate_passes_a_canonical_prerelease_tag(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [0.0.1a1] — 2026-07-25")
-
-    errors = check_release_version.check_release("v0.0.1a1", changelog)
-
-    assert errors == []
-
-
-def test_gate_passes_prerelease_tags_for_the_core_too(tmp_path: Path) -> None:
-    changelog = _changelog(tmp_path, "## [1.0.0rc2] — 2026-07-25")
-
-    assert check_release_version.check_release("v1.0.0rc2", changelog) == []
-
-
-def test_gate_rejects_non_canonical_prerelease_spellings(tmp_path: Path) -> None:
-    # The derivation normalizes `alpha1` to `a1`, so a non-canonical tag can
-    # never equal its own built version — refuse it before it builds anything.
-    changelog = _changelog(tmp_path, "## [0.0.1a1] — 2026-07-25")
-
-    for tag in ("v0.0.1-alpha1", "v0.0.1alpha1", "v0.0.1a"):
-        errors = check_release_version.check_release(tag, changelog)
-        assert any("is not a release tag" in e for e in errors), tag
-
-
-def test_a_prerelease_needs_its_own_dated_entry(tmp_path: Path) -> None:
-    # An entry for the final 0.0.1 must not vouch for 0.0.1a1 (or vice versa).
-    changelog = _changelog(tmp_path, "## [0.0.1] — 2026-07-25")
-
-    errors = check_release_version.check_release("v0.0.1a1", changelog)
-
-    assert any("no dated" in e for e in errors)
-
-
-def test_gate_accepts_the_unbracketed_v_heading_style(tmp_path: Path) -> None:
-    # v0.0.2 was documented as `## v0.0.2 - 2026-07-24` (no brackets, leading
-    # v). The gate checks that dated notes exist, not heading punctuation.
-    changelog = _changelog(tmp_path, "## v0.0.2 - 2026-07-24")
-
-    assert check_release_version.check_release("v0.0.2", changelog) == []

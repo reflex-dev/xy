@@ -1,8 +1,9 @@
-import { PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL, TRACE_GPU_BUFFERS, xyByteSpan } from "./00_header";
 import { buildLutData, colormapKey, colormapStops } from "./10_colormaps";
 import { chartBackdrop, cssColor, ensureChromeStylesheet, hexColor, parseColor, readTheme, safeCssPaint } from "./20_theme";
 import { angularTicks, categoryTicks, fmtAxis, fmtGeneral, fmtLinear, fmtLog, fmtValue, linearTicks, logTicks, timeTicks } from "./30_ticks";
-import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { AREA_FS, AREA_VS, ATTR_SLOTS, BAR_VS, DENSITY_FS, FUNNEL_VS, GRID_VS, HEATMAP_FS, LINE_CAP_MODES, LINE_FS, LINE_VS, MESH_FS, MESH_VS, PICK_FS, PICK_VS, POINT_FS, POINT_SIMPLE_FS, POINT_SIMPLE_VS, POINT_VS, RECT_FS, RECT_VS, RIBBON_FS, RIBBON_STEPS, RIBBON_VS, SEGMENT_FS, SEGMENT_VS, makeProgram, uniformOf, xySmoothResample } from "./40_gl";
+import { acquireGLHost } from "./42_glhost";
 import { lodCopyGrid, lodDecodeLogU8, lodDrawDensityTier, lodDropDensityCache, lodDropPointCache, lodRememberDensity, lodSampleForView, lodWriteGridTexture } from "./45_lod";
 import { markOf } from "./55_marks";
 
@@ -168,6 +169,114 @@ const LEGEND_DIM_OPACITY = 0.2;
 const LEGEND_DIM_ROW = 0.4;
 // Legend click-toggle (interaction spec §10): opacity of a toggled-off row.
 const LEGEND_OFF_ROW = 0.35;
+// Live ``loc="best"`` placement scores the pixels that were actually painted,
+// not source rows.  The fixed raster makes the pass screen- and data-bounded
+// for direct, decimated, and density tiers alike. The first measurable score
+// takes the exact minimum, with canonical candidate order breaking true ties.
+// Later settled scores retain the live winner across sub-5-point occupancy
+// changes; an empty challenger still always beats an occupied current box.
+const LEGEND_BEST_GRID_W = 96;
+const LEGEND_BEST_GRID_H = 72;
+const LEGEND_BEST_INSET_PX = 6;
+const LEGEND_BEST_HYSTERESIS = 0.05;
+const LEGEND_BEST_SCORE_EPSILON = 1e-12;
+const LEGEND_BEST_ORDER = [
+  "upper right",
+  "upper left",
+  "lower left",
+  "lower right",
+  "center right",
+  "center left",
+  "lower center",
+  "upper center",
+  "center",
+];
+
+/** Pick the least-occupied standard legend box from a binary screen raster.
+ * All geometry is normalized to the plot, which keeps this helper independent
+ * of the DOM and makes its tie behavior directly probeable. */
+function xyLegendBestLocation(
+  occupancy: ArrayLike<number>,
+  gridW: number,
+  gridH: number,
+  boxW: number,
+  boxH: number,
+  insetX = 0,
+  insetY = 0,
+  currentLoc: string | null = null,
+  hysteresis = 0,
+  blockedLocs: ReadonlySet<string> | null = null,
+): string {
+  const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
+  const gw = Math.max(1, Math.floor(Number(gridW) || 0));
+  const gh = Math.max(1, Math.floor(Number(gridH) || 0));
+  const bw = clamp(Number(boxW) || 0, 0, 1);
+  const bh = clamp(Number(boxH) || 0, 0, 1);
+  const ix = clamp(Number(insetX) || 0, 0, 0.5);
+  const iy = clamp(Number(insetY) || 0, 0, 0.5);
+  const left = clamp(ix, 0, Math.max(0, 1 - bw));
+  const right = clamp(1 - ix - bw, 0, Math.max(0, 1 - bw));
+  const centerX = Math.max(0, (1 - bw) / 2);
+  const upper = clamp(iy, 0, Math.max(0, 1 - bh));
+  const lower = clamp(1 - iy - bh, 0, Math.max(0, 1 - bh));
+  const centerY = Math.max(0, (1 - bh) / 2);
+  const positions = {
+    "upper right": [right, upper],
+    "upper left": [left, upper],
+    "lower left": [left, lower],
+    "lower right": [right, lower],
+    "center right": [right, centerY],
+    "center left": [left, centerY],
+    "lower center": [centerX, lower],
+    "upper center": [centerX, upper],
+    center: [centerX, centerY],
+  };
+  const scores = new Map<string, number>();
+  for (const loc of LEGEND_BEST_ORDER) {
+    const [x, y] = positions[loc];
+    const x0 = clamp(Math.floor(x * gw), 0, gw);
+    const x1 = clamp(Math.ceil((x + bw) * gw), x0, gw);
+    const y0 = clamp(Math.floor(y * gh), 0, gh);
+    const y1 = clamp(Math.ceil((y + bh) * gh), y0, gh);
+    let occupied = 0;
+    for (let row = y0; row < y1; row++) {
+      const offset = row * gw;
+      for (let col = x0; col < x1; col++) {
+        if (occupancy[offset + col]) occupied += 1;
+      }
+    }
+    const area = Math.max(1, (x1 - x0) * (y1 - y0));
+    const score = occupied / area;
+    scores.set(loc, score);
+  }
+  const unblocked = blockedLocs
+    ? LEGEND_BEST_ORDER.filter((loc) => !blockedLocs.has(loc))
+    : LEGEND_BEST_ORDER;
+  // Oversized legends can geometrically intersect a prior box everywhere. In
+  // that unavoidable case, fall back to the ordinary exact occupancy score.
+  const candidates = unblocked.length ? unblocked : LEGEND_BEST_ORDER;
+  const floor = candidates.reduce(
+    (lowest, loc) => Math.min(lowest, scores.get(loc) ?? Infinity),
+    Infinity,
+  );
+  const winner = candidates.find(
+    (loc) => (scores.get(loc) ?? Infinity) === floor,
+  ) || candidates[0];
+  const currentScore = currentLoc == null ? undefined : scores.get(currentLoc);
+  if (
+    currentLoc == null ||
+    currentScore == null ||
+    !candidates.includes(currentLoc) ||
+    !(hysteresis > 0) ||
+    winner === currentLoc
+  ) return winner;
+  // A truly empty destination is qualitatively better than any overlap. Keep
+  // that sparse-data guarantee even when the fractional improvement is below
+  // the live stability band (for example one occupied cell in a large box).
+  if (floor === 0 && currentScore > 0) return winner;
+  const improvement = currentScore - floor;
+  return improvement + LEGEND_BEST_SCORE_EPSILON < hysteresis ? currentLoc : winner;
+}
 // SVG gradient ids resolve document-wide; a module counter keeps every chart
 // instance's legend swatch ramps distinct.
 let legendGradientSeq = 0;
@@ -562,7 +671,16 @@ export class ChartView {
     this._ctxLostPending = false;
     this._ctxRecoverRequested = false;
     this._ctxVisible = xyInitiallyVisible(el);
-    XY_CONTEXT_GOVERNOR.register(this);
+    // Top-level documents default to one shared WebGL2 host. Child frames keep
+    // the existing governed per-chart path unless explicitly opted in: the
+    // browser's context quota spans frames, while a WebGL context cannot cross
+    // their realm/document boundary.
+    this._glHost = null;
+    this._present2d = null;
+    this._sharedGlAttempted = false;
+    this._governorRegistered = false;
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
@@ -574,7 +692,12 @@ export class ChartView {
       // points intentionally let the exception surface. Leave a useful DOM
       // fallback behind for browsers without WebGL2; recovery attempts catch
       // the same error themselves and therefore never replace their canvas.
-      XY_CONTEXT_GOVERNOR.unregister(this);
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.unregister(this);
+        this._governorRegistered = false;
+      }
+      this._glHost?.release(this);
+      this._glHost = null;
       if (String(err && err.message || err) === "webgl2 unavailable") {
         this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       }
@@ -1469,11 +1592,18 @@ export class ChartView {
   _emitViewChange(source = "view", opts: any = {}) {
     if (this._destroyed) return;
     const broadcast = opts.broadcast !== false;
+    const phase = opts.phase || "end";
+    // Update-phase frames keep the last settled answer in place.  The one
+    // end-phase event every gesture already emits is the central, coalesced
+    // seam for a fresh rendered-geometry score (pan, wheel, linked, history,
+    // and programmatic writes all pass through here).
+    this._legendBestInteractionActive = phase === "update";
+    if (phase === "end" && this._markBestLegendsDirty()) this.draw();
     this._pendingViewEvent = {
       source,
       broadcast,
       axes: Array.isArray(opts.axes) ? [...opts.axes] : [],
-      phase: opts.phase || "end",
+      phase,
       interaction_id: opts.interactionId ?? ++this._interactionSeq,
     };
     if (this._viewEventRaf) return;
@@ -1749,6 +1879,22 @@ export class ChartView {
   // restoration; on restore every GPU object is recreated from the retained
   // spec + payload, then a fresh view request re-syncs live tiers (kernel
   // updates written into now-dead buffers are gone until it answers).
+  _onGlHostContextLost() {
+    if (this._destroyed) return;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
+    this._glHostRecoveryDelay = 0;
+    // Keep the visible canvas as the per-chart event surface. Existing hosts
+    // and telemetry listen here, while the real loss belongs to the detached
+    // shared canvas and is fanned out by GLHost.
+    this.canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+  }
+
+  _onGlHostContextRestored() {
+    if (this._destroyed) return;
+    this.canvas.dispatchEvent(new Event("webglcontextrestored"));
+  }
+
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
@@ -1766,7 +1912,7 @@ export class ChartView {
       // Either way a live context just went away; let peer frames know the
       // shared budget has room (a governed release already announced; this is
       // deduped, and it is what tells peers about a browser-side eviction).
-      XY_CONTEXT_GOVERNOR._announceLive();
+      if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.xyContextState = "lost";
@@ -1776,6 +1922,13 @@ export class ChartView {
       this.seq += 1;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
+      // A loss can cancel the wheel end timer or an in-flight view animation
+      // after its update frame set the private legend gate. There will be no
+      // matching public end event in that case. Clear the gate and retain one
+      // settled score for the first restored frame (which may have snapped to
+      // an animation target that was never rendered before the loss).
+      this._legendBestInteractionActive = false;
+      this._markBestLegendsDirty();
       if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
       this._wheelZoomRaf = null;
       this._pendingWheelZoom = null;
@@ -1817,6 +1970,10 @@ export class ChartView {
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
       });
+      // The host owns restoration of the one real context and will fan the
+      // restored event back out to every surviving client. Rebuilding or
+      // replacing this 2D presentation canvas cannot restore that context.
+      if (this._glHost) return;
       // A governed release keeps a snapshot and deliberately waits until the
       // chart is requested again. A browser-side eviction is different: the
       // canvas has no stand-in, and IntersectionObserver may not deliver a
@@ -1886,10 +2043,20 @@ export class ChartView {
           String(err && err.message || err).startsWith("WebGL error ");
         if (transient) {
           this._contextRecoveryError = null;
-          this._scheduleContextRecovery();
+          if (this._glHost) {
+            if (this.gl && !this.gl.isContextLost()) {
+              try { this._destroyGlResources(); } catch (_cleanupError) {}
+            }
+            this._scheduleGlHostClientRecovery();
+          } else {
+            this._scheduleContextRecovery();
+          }
           return;
         }
         this._contextRecoveryError = err;
+        clearTimeout(this._glHostRecoveryTimer);
+        this._glHostRecoveryTimer = null;
+        this._glHostRecoveryDelay = 0;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
         this.gl = null;
@@ -1903,9 +2070,14 @@ export class ChartView {
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
       this._ctxRecoveryDelay = 0;
+      clearTimeout(this._glHostRecoveryTimer);
+      this._glHostRecoveryTimer = null;
+      this._glHostRecoveryDelay = 0;
       this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
-      XY_CONTEXT_GOVERNOR._announceLive(); // context recovered; peers rebalance
+      if (this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR._announceLive(); // fallback context recovered; peers rebalance
+      }
       this._scheduleViewRequest(this.view, { delay: 0 });
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
@@ -1921,6 +2093,7 @@ export class ChartView {
   // spec + payload rebuild everything on re-entry (§18/§27), riding the same
   // lost/restored machinery the lifecycle gate already exercises.
   _releaseContext() {
+    if (this._glHost) return false;
     if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
     const ext = this.gl.getExtension("WEBGL_lose_context");
     if (!ext) return false;
@@ -1958,13 +2131,12 @@ export class ChartView {
       snap.height = this.canvas.height;
       snap.style.cssText = this.canvas.style.cssText;
       snap.style.pointerEvents = "none";
-      // Do not copy the default WebGL framebuffer with drawImage(). Contexts
-      // use preserveDrawingBuffer=false, so Chrome may hand the 2D canvas an
-      // already-discarded transparent buffer even though _drawNow() just
-      // submitted the marks. Read the freshly drawn pixels synchronously
-      // before WEBGL_lose_context instead; this keeps governed releases from
-      // showing only the independently painted grid/chrome while scrolling a
-      // many-chart page.
+      // Keep the governed-release snapshot on the direct readPixels path. The
+      // native fallback now requests buffer preservation for settled legend
+      // scoring, but readPixels here is synchronous by contract and also keeps
+      // recovery correct for an older/embedded browser that ignored that
+      // attribute. It prevents a released view from showing only the
+      // independently painted grid/chrome while scrolling a many-chart page.
       const gl = this.gl;
       const w = this.canvas.width;
       const h = this.canvas.height;
@@ -2021,6 +2193,13 @@ export class ChartView {
   // fresh one and rebuilt from the retained spec + payload.
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
+    if (this._glHost) {
+      // Host-wide recovery fans out its own restored event. This path handles
+      // a client-only rebuild that was deferred while its view or document
+      // was hidden after a transient allocation failure.
+      this._scheduleGlHostClientRecovery();
+      return;
+    }
     // Governed release, but its webglcontextlost event has not dispatched yet
     // (scrolled back into view in the same task it was released). Chromium
     // drops a restoreContext() issued before the loss event, stranding the
@@ -2079,6 +2258,46 @@ export class ChartView {
     this._ctxRecoveryTimer = setTimeout(() => {
       this._ctxRecoveryTimer = null;
       if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
+  // A host can be healthy while one client fails transiently during its own
+  // shader/buffer rebuild. Retry that client without letting a hidden or
+  // off-screen chart spin at frame rate under persistent GPU pressure.
+  _scheduleGlHostClientRecovery() {
+    if (
+      this._glHostRecoveryTimer ||
+      this._destroyed ||
+      !this._glHost ||
+      !this._glLost ||
+      !this._ctxVisible
+    ) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._glHostRecoveryDelay || 50;
+    this._glHostRecoveryDelay = Math.min(1000, delay * 2);
+    const host = this._glHost;
+    this._glHostRecoveryTimer = setTimeout(() => {
+      this._glHostRecoveryTimer = null;
+      if (
+        this._destroyed ||
+        this._glHost !== host ||
+        !this._glLost ||
+        !this._ctxVisible ||
+        !host.ready ||
+        host.lost ||
+        !host.gl ||
+        host.gl.isContextLost() ||
+        (
+          typeof document !== "undefined" &&
+          document.visibilityState &&
+          document.visibilityState !== "visible"
+        )
+      ) return;
+      this._onGlHostContextRestored();
     }, delay);
   }
 
@@ -2291,6 +2510,7 @@ export class ChartView {
       const anchor = lg.dataset.xyLegendAnchor ? JSON.parse(lg.dataset.xyLegendAnchor) : null;
       this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right", anchor);
     }
+    this._markBestLegendsDirty();
     this._positionTitles();
     this._positionReductionBadges();
     this._positionColorbar();
@@ -2526,7 +2746,15 @@ export class ChartView {
     // A chrome rebuild replaces the row nodes mid-hover, so their pointerleave
     // never fires; release any active dim state before dropping the old boxes.
     this._clearLegendHover();
+    // Visibility observers retain their observed nodes. A chrome rebuild can
+    // replace every legend, so disconnect before dropping those nodes and let
+    // `_legendBox` attach the shared observers to the replacements below.
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._legends = [];
+    this._legendBestDirty = false;
     // Toggle state survives chrome/GPU rebuilds: it lives on the view keyed
     // by spec-trace index, and freshly built rows re-adopt it below.
     this._legendOffTraces = this._legendOffTraces || new Set();
@@ -2597,11 +2825,11 @@ export class ChartView {
           ? !!this._legendOffCats.get(it.traces[0])?.has(it.cat)
           : it.traces.every((ti) => this._legendOffTraces.has(ti));
       }
-      if (items.length) this._legendBox(root, items, s.legend || {});
+      if (items.length) this._legendBox(root, items, s.legend || {}, "main");
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
-    for (const extra of s.extra_legends || []) {
+    for (const [extraIndex, extra] of (s.extra_legends || []).entries()) {
       const mapped = (extra.items || []).map((it) => ({
         swatch: it.style && it.style.color,
         name: it.name,
@@ -2609,12 +2837,16 @@ export class ChartView {
         line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
         style: it.style || {},
       }));
-      if (mapped.length) this._legendBox(root, mapped, extra);
+      if (mapped.length) this._legendBox(root, mapped, extra, `extra:${extraIndex}`);
     }
   }
 
-  _legendBox(root, items, options) {
+  _legendBox(root, items, options, source = null) {
     const lg: any = document.createElement("div");
+    // Retain the declarative source across data-only updatePayload swaps. The
+    // chrome DOM stays mounted on that path, but a browser unable to sample
+    // its WebGL surface must still adopt the incoming concrete Python fallback.
+    lg._xyLegendSource = source;
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const horizontal = ncols > 1;
@@ -2642,6 +2874,18 @@ export class ChartView {
     lg.dataset.xyLegendLoc = loc;
     if (Array.isArray(options.anchor)) {
       lg.dataset.xyLegendAnchor = JSON.stringify(options.anchor);
+    }
+    // Python/static export keeps `loc` concrete for deterministic files and
+    // ships the separate intent bit only when the author requested automatic
+    // placement. Anchors are authored geometry and polar legends own a gutter,
+    // so neither is ever reconsidered here.
+    if (
+      String(options.auto_loc || "").trim().toLowerCase() === "best" &&
+      !Array.isArray(options.anchor) &&
+      this.spec?.coords !== "polar"
+    ) {
+      lg.dataset.xyLegendAutoLoc = "best";
+      this._legendBestDirty = true;
     }
     if (Number.isFinite(Number(options.border_pad))) {
       lg.dataset.xyLegendBorderPad = String(Math.max(0, Number(options.border_pad)));
@@ -2817,6 +3061,9 @@ export class ChartView {
     lg._xyItemRows = rows;
     root.appendChild(lg);
     this._legends.push(lg); // _resize refreshes each box's responsive anchor
+    if (this._legends.some((item) => item.dataset.xyLegendAutoLoc === "best")) {
+      for (const item of this._legends) this._observeBestLegendVisibility(item);
+    }
     return lg;
   }
 
@@ -2982,6 +3229,11 @@ export class ChartView {
           for (const s of this._densityOverlays(g)) {
             this._dimLut(s, t.color.palette, item.cat, bg);
           }
+        } else if (g._cpuFunnel) {
+          // A funnel carries resolved RGBA rows, not a palette LUT, so the
+          // sibling dim recolors the rows themselves with the same blend
+          // rule _paletteLutDimmed applies to LUT entries.
+          this._dimFunnelPaint(g, item.cat, bg);
         } else {
           this._dimLut(g, t.color.palette, item.cat, bg);
         }
@@ -3026,6 +3278,27 @@ export class ChartView {
     s.lut = this._paletteLutDimmed(palette, keepIdx, bg);
   }
 
+  // Legend-hover sibling dim for a funnel: the hovered stage keeps its full
+  // color, every other stage blends toward the backdrop by the same
+  // LEGEND_DIM_OPACITY weight the LUT path uses. Rebuilt from the retained
+  // full rows, uploaded through the shared filter-aware path.
+  _dimFunnelPaint(g, keepCode, bg) {
+    const full = g._funnelRgbaFull;
+    const codes = g._funnelCodes;
+    if (!full || !codes) return;
+    const rows = new Uint8Array(full.length);
+    for (let i = 0; i * 4 < full.length; i++) {
+      const keep = Math.round(codes[i]) === keepCode;
+      const w = keep ? 1 : LEGEND_DIM_OPACITY;
+      rows[i * 4] = full[i * 4] * w + bg[0] * 255 * (1 - w);
+      rows[i * 4 + 1] = full[i * 4 + 1] * w + bg[1] * 255 * (1 - w);
+      rows[i * 4 + 2] = full[i * 4 + 2] * w + bg[2] * 255 * (1 - w);
+      rows[i * 4 + 3] = full[i * 4 + 3];
+    }
+    g._funnelHoverDim = true;
+    this._uploadFunnelPaint(g, rows);
+  }
+
   // Undo any hover LUT swap on a trace and its density sample overlays,
   // and put back the plane's original texture if hover dimmed it.
   _restoreLegendLuts(g) {
@@ -3044,6 +3317,10 @@ export class ChartView {
       this.gl.deleteTexture(g._legendHoverTex);
       g._legendHoverTex = null;
       g._legendHoverPrevTex = null;
+    }
+    if (g._funnelHoverDim) {
+      delete g._funnelHoverDim;
+      this._uploadFunnelPaint(g);
     }
   }
 
@@ -3156,6 +3433,7 @@ export class ChartView {
       traces: it.traces.map((ti) => this.spec.traces[ti].id),
       ...(it.cat != null ? { category: it.cat } : {}),
     });
+    this._markBestLegendsDirty();
     this.draw();
   }
 
@@ -3179,9 +3457,41 @@ export class ChartView {
       g._filterDirty = true;
       for (const s of this._densityOverlays(g)) this._filterScatterRows(s, hidden);
       this._scheduleViewRequest(this.view, { delay: 0 });
+    } else if (g._cpuFunnel) {
+      this._filterFunnelStages(g, hidden);
     } else {
       this._filterScatterRows(g, hidden);
     }
+  }
+
+  // Hiding a funnel stage removes that segment and nothing else: the stage
+  // axis keeps its label and the surviving stages keep their own geometry and
+  // conversion arithmetic, because a funnel's stage values are the data, not
+  // a running total to be recomputed. Small-N, so the six instance columns and
+  // the paint rows are simply rebuilt from the retained CPU views rather than
+  // read back off the GPU the way the scatter filter must.
+  _filterFunnelStages(g, hidden) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const codes = g._funnelCodes;
+    const visible = [];
+    for (let i = 0; i < f.n; i++) {
+      const code = codes ? Math.round(codes[i]) : i;
+      if (!hidden || !hidden.has(code)) visible.push(i);
+    }
+    // `_visMap` translates drawn instance → shipped stage row, so hover,
+    // tooltips and events keep naming the right stage while filtered.
+    g._visMap = visible.length === f.n ? null : Int32Array.from(visible);
+    g.n = visible.length;
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const source = f[name];
+      const values = g._visMap
+        ? Float32Array.from(visible, (i) => source[i])
+        : source;
+      this._deleteBuffers(g, [slot + "Buf"]);
+      g[slot + "Buf"] = this._upload(values);
+    }
+    this._uploadFunnelPaint(g);
   }
 
   // Filter a scatter-shaped gpu entry's vertex buffers down to the rows whose
@@ -3264,10 +3574,466 @@ export class ChartView {
         // view request must re-bin under the mask, not stand on it.
         g._filterDirty = true;
         if (g.sampleOverlay) this._filterScatterRows(g.sampleOverlay, cats);
+      } else if (g._cpuFunnel) {
+        // _filterScatterRows is gated on CPU color codes a funnel does not
+        // have — routing a rebuilt funnel there silently un-hid its stages.
+        this._filterFunnelStages(g, cats);
       } else {
         this._filterScatterRows(g, cats);
       }
     }
+  }
+
+  _markBestLegendsDirty() {
+    const automatic = (this._legends || []).some(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (automatic) this._legendBestDirty = true;
+    return automatic;
+  }
+
+  _bestLegendIsVisible(legend) {
+    if (!legend?.isConnected || legend.hidden || !legend.getClientRects().length) return false;
+    // A transformed/collapsed box can still contribute a DOMRect entry whose
+    // visual width or height is zero. It is no more scoreable than display:none
+    // and would otherwise make `_bestLegendLocationForRaster` return null after
+    // the expensive canvas readback.
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    // `getClientRects` catches display:none/zero layout, but visibility,
+    // content-visibility, and opacity can suppress paint while retaining the
+    // same measurable box. Walk through the root because author utility
+    // classes commonly hide the whole chart or one legend at a breakpoint.
+    let node: any = legend;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        style.contentVisibility === "hidden" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  _syncBestLegendVisibility(remeasure = false) {
+    if (this._destroyed) return;
+    let needsScore = false;
+    for (const legend of this._legends || []) {
+      const wasVisible = legend._xyLegendBestVisible === true;
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      const sizeChanged = remeasure && wasVisible && visible && (
+        rect.width !== legend._xyLegendBestWidth || rect.height !== legend._xyLegendBestHeight
+      );
+      const fixedMoved = remeasure && wasVisible && visible &&
+        legend.dataset.xyLegendAutoLoc !== "best" && (
+          rect.left !== legend._xyLegendBestLeft || rect.top !== legend._xyLegendBestTop
+        );
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestLeft = rect?.left ?? 0;
+      legend._xyLegendBestTop = rect?.top ?? 0;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      // Fixed/anchored legends are raster obstacles for automatic siblings.
+      // Re-score when either kind starts or stops painting; a hidden automatic
+      // box can likewise free a candidate for a later automatic sibling.
+      if (wasVisible !== visible || sizeChanged || fixedMoved) needsScore = true;
+    }
+    if (needsScore && this._markBestLegendsDirty()) this.draw();
+  }
+
+  _observeBestLegendVisibility(legend) {
+    if (legend._xyLegendBestObserved) return;
+    legend._xyLegendBestObserved = true;
+    const visible = this._bestLegendIsVisible(legend);
+    const rect = visible ? legend.getBoundingClientRect() : null;
+    legend._xyLegendBestVisible = visible;
+    legend._xyLegendBestLeft = rect?.left ?? 0;
+    legend._xyLegendBestTop = rect?.top ?? 0;
+    legend._xyLegendBestWidth = rect?.width ?? 0;
+    legend._xyLegendBestHeight = rect?.height ?? 0;
+
+    // ResizeObserver covers display:none and responsive stylesheet changes:
+    // a zero-sized legend receives a fresh nonzero entry when it participates
+    // in layout again. One observer per view is shared by every legend that
+    // participates in a chart with at least one automatic legend.
+    if (typeof ResizeObserver !== "undefined") {
+      this._legendBestResizeObserver ||= new ResizeObserver(() => {
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestResizeObserver.observe(legend);
+    }
+    // Visibility/collapse/opacity can change without changing box dimensions.
+    // Observe only the legend's paint-affecting attributes; ancestor changes
+    // are already covered by the chart's theme observer, and a document-wide
+    // subtree observer would turn unrelated application churn into chart work.
+    if (typeof MutationObserver !== "undefined") {
+      this._legendBestMutationObserver ||= new MutationObserver(() => {
+        // Class/style mutations can alter the *visual* footprint through a
+        // nonzero CSS transform. ResizeObserver sees the unchanged layout box,
+        // so remeasure here as well as checking hidden/visible transitions.
+        this._syncBestLegendVisibility(true);
+      });
+      this._legendBestMutationObserver.observe(legend, {
+        attributes: true,
+        attributeFilter: ["class", "hidden", "style"],
+      });
+    }
+    if (!this._legendBestVisibilityEventsArmed) {
+      this._legendBestVisibilityEventsArmed = true;
+      const sync = () => this._syncBestLegendVisibility(true);
+      // Re-evaluate media-query visibility at its natural seams. These
+      // listeners are registered through `_listen`, so destroy removes them.
+      this._listen(window, "resize", sync);
+      this._listen(window, "pageshow", sync);
+      this._listen(document, "visibilitychange", sync);
+    }
+  }
+
+  _bestLegendLiveRasterAvailable() {
+    if (this._destroyed || this._glLost || !this.gl || !this.root?.isConnected) return false;
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return false;
+    if (!(this.plot?.w > 0) || !(this.plot?.h > 0)) return false;
+    // A temporarily hidden legend does not remove the shared rendered-marks
+    // raster. Preserve its last live result; the visibility observer will
+    // re-arm a score when that individual box becomes measurable again.
+    return true;
+  }
+
+  _adoptBestLegendFallbacks(spec = this.spec) {
+    if (this._bestLegendLiveRasterAvailable()) return false;
+    let changed = false;
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc !== "best" || legend.dataset.xyLegendAnchor) continue;
+      const source = legend._xyLegendSource;
+      const options = source === "main"
+        ? spec?.legend
+        : typeof source === "string" && source.startsWith("extra:")
+          ? spec?.extra_legends?.[Number(source.slice("extra:".length))]
+          : null;
+      if (
+        String(options?.auto_loc || "").trim().toLowerCase() !== "best" ||
+        Array.isArray(options?.anchor)
+      ) continue;
+      // This is a declarative Python fallback, not a rendered-geometry score.
+      // If live rasterization later returns, its first measurable placement
+      // must use the exact minimum rather than inheriting fallback stickiness.
+      legend._xyLegendBestLiveLoc = null;
+      const loc = String(options?.loc || "upper right");
+      if (legend.dataset.xyLegendLoc !== loc) {
+        legend.dataset.xyLegendLoc = loc;
+        this._positionLegend(legend, loc);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  _settleBestLegendInteraction() {
+    if (!this._legendBestInteractionActive) return false;
+    this._legendBestInteractionActive = false;
+    if (this._markBestLegendsDirty()) this.draw();
+    return true;
+  }
+
+  _fillBestLegendRasterRect(raster, rect) {
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return;
+    // DOMRects are visual coordinates (after CSS zoom/transform), so map them
+    // against the marks canvas's visual plot rect rather than adding unscaled
+    // layout offsets to the root rect.
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    if (!(plotRect.width > 0) || !(plotRect.height > 0)) return;
+    const plotLeft = plotRect.left;
+    const plotTop = plotRect.top;
+    const left = Math.max(plotLeft, rect.left);
+    const right = Math.min(plotRect.right, rect.right);
+    const top = Math.max(plotTop, rect.top);
+    const bottom = Math.min(plotRect.bottom, rect.bottom);
+    if (!(right > left) || !(bottom > top)) return;
+    const x0 = Math.max(
+      0,
+      Math.min(raster.w, Math.floor(((left - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const x1 = Math.max(
+      x0,
+      Math.min(raster.w, Math.ceil(((right - plotLeft) / plotRect.width) * raster.w)),
+    );
+    const y0 = Math.max(
+      0,
+      Math.min(raster.h, Math.floor(((top - plotTop) / plotRect.height) * raster.h)),
+    );
+    const y1 = Math.max(
+      y0,
+      Math.min(raster.h, Math.ceil(((bottom - plotTop) / plotRect.height) * raster.h)),
+    );
+    for (let row = y0; row < y1; row++) {
+      raster.occupancy.fill(1, row * raster.w + x0, row * raster.w + x1);
+    }
+  }
+
+  _bestLegendAnnotationPainted(label) {
+    // getClientRects catches display:none, but not an opacity-zero ancestor.
+    // Walk to the chart root so a utility class on the annotation layer does
+    // not reserve an obstacle for pixels the user cannot see.
+    let node: any = label;
+    let labelStyle = null;
+    while (node && node.nodeType === 1) {
+      const style = getComputedStyle(node);
+      if (node === label) labelStyle = style;
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        (Number.isFinite(Number(style.opacity)) && Number(style.opacity) <= 0)
+      ) return false;
+      if (node === this.root) break;
+      node = node.parentElement;
+    }
+    if (!labelStyle) return false;
+
+    // Computed transparent colors are serialized as rgba(..., 0) in current
+    // browsers; slash-alpha color() forms are handled as well. Detect only an
+    // exact zero here. Unknown paint syntaxes remain conservative obstacles.
+    const transparent = (paint) => {
+      const value = String(paint || "").trim().toLowerCase();
+      if (!value || value === "transparent") return true;
+      const zeroAlpha = /(?:,|\/)\s*0(?:\.0+)?%?\s*\)$/;
+      return zeroAlpha.test(value) && (value.startsWith("rgba(") || value.includes("/"));
+    };
+    if (!transparent(labelStyle.color)) return true;
+    if (!transparent(labelStyle.backgroundColor)) return true;
+    for (const side of ["Top", "Right", "Bottom", "Left"]) {
+      if (
+        labelStyle[`border${side}Style`] !== "none" &&
+        (parseFloat(labelStyle[`border${side}Width`]) || 0) > 0 &&
+        !transparent(labelStyle[`border${side}Color`])
+      ) return true;
+    }
+    if (
+      labelStyle.textDecorationLine !== "none" &&
+      !transparent(labelStyle.textDecorationColor)
+    ) return true;
+    // Shadows and generated content are not cheaply decomposable into alpha;
+    // if either is present, retaining the box is the safe visible-paint answer.
+    return labelStyle.textShadow !== "none" || labelStyle.boxShadow !== "none";
+  }
+
+  _bestLegendRaster() {
+    const p = this.plot;
+    if (!(p?.w > 0) || !(p?.h > 0) || !this.canvas || !this.overlay) return null;
+    // Native fallback canvases can only be sampled reliably when the browser
+    // honored the preservation attribute requested at context creation. The
+    // shared host presents into Canvas2D and does not need this gate.
+    if (!this._glHost && this._legendBestCanvasSnapshotReady !== true) return null;
+    const scratch = this._legendBestScratch || document.createElement("canvas");
+    this._legendBestScratch = scratch;
+    // Assigning the fixed dimensions clears the prior frame and resets 2D
+    // state. The readback below therefore remains a constant 27 KiB whether
+    // the plotted source has ten rows or ten billion.
+    scratch.width = LEGEND_BEST_GRID_W;
+    scratch.height = LEGEND_BEST_GRID_H;
+    const ctx = scratch.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    try {
+      ctx.clearRect(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H);
+      ctx.imageSmoothingEnabled = true;
+      // The marks surface is plot-local and transparent. The annotation
+      // overlay is chart-local, hence the plot crop in its source rectangle.
+      // Deliberately do not sample `chrome`: its plot background would mark
+      // every cell occupied and grid lines are not data.
+      ctx.drawImage(
+        this.canvas,
+        0,
+        0,
+        this.canvas.width,
+        this.canvas.height,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+      ctx.drawImage(
+        this.overlay,
+        p.x * this.dpr,
+        p.y * this.dpr,
+        p.w * this.dpr,
+        p.h * this.dpr,
+        0,
+        0,
+        LEGEND_BEST_GRID_W,
+        LEGEND_BEST_GRID_H,
+      );
+    } catch (_error) {
+      // A browser that cannot snapshot its live WebGL surface keeps the
+      // concrete Python-selected fallback rather than making a blind move.
+      return null;
+    }
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, LEGEND_BEST_GRID_W, LEGEND_BEST_GRID_H).data;
+    } catch (_error) {
+      return null;
+    }
+    const occupancy = new Uint8Array(LEGEND_BEST_GRID_W * LEGEND_BEST_GRID_H);
+    for (let i = 0; i < occupancy.length; i++) {
+      // Downsampling can leave a one-device-pixel line at very low alpha. Any
+      // non-rounding alpha is painted geometry; opacity must not make the same
+      // line safe for a legend merely because the author styled it faintly.
+      if (pixels[i * 4 + 3] > 1) occupancy[i] = 1;
+    }
+    const raster = {
+      occupancy,
+      w: LEGEND_BEST_GRID_W,
+      h: LEGEND_BEST_GRID_H,
+      plot: this.canvas.getBoundingClientRect(),
+    };
+    // Annotation text is DOM chrome, not part of either sampled canvas. Treat
+    // its visible box as a solid important obstacle. Fixed/anchored legends
+    // likewise reserve their authored rectangles when an additional automatic
+    // legend is present.
+    for (const label of this.labels.querySelectorAll('[data-xy-slot="annotation_label"]')) {
+      if ((label as HTMLElement).hidden || !label.getClientRects().length) continue;
+      if (!this._bestLegendAnnotationPainted(label)) continue;
+      this._fillBestLegendRasterRect(raster, label.getBoundingClientRect());
+    }
+    for (const legend of this._legends || []) {
+      if (legend.dataset.xyLegendAutoLoc === "best") continue;
+      if (!this._bestLegendIsVisible(legend)) continue;
+      this._fillBestLegendRasterRect(raster, legend.getBoundingClientRect());
+    }
+    return raster;
+  }
+
+  _bestLegendLocationForRaster(
+    raster,
+    legend,
+    allowHysteresis = true,
+    blockedLocs = null,
+  ) {
+    const rect = legend.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const plotRect = raster.plot || this.canvas.getBoundingClientRect();
+    const plotW = plotRect.width || this.plot.w;
+    const plotH = plotRect.height || this.plot.h;
+    return xyLegendBestLocation(
+      raster.occupancy,
+      raster.w,
+      raster.h,
+      rect.width / plotW,
+      rect.height / plotH,
+      LEGEND_BEST_INSET_PX / this.plot.w,
+      LEGEND_BEST_INSET_PX / this.plot.h,
+      allowHysteresis &&
+        typeof legend._xyLegendBestLiveLoc === "string" &&
+        legend.dataset.xyLegendLoc === legend._xyLegendBestLiveLoc
+        ? legend._xyLegendBestLiveLoc
+        : null,
+      LEGEND_BEST_HYSTERESIS,
+      blockedLocs,
+    );
+  }
+
+  _maybePositionBestLegends() {
+    const automatic = (this._legends || []).filter(
+      (lg) => lg.dataset.xyLegendAutoLoc === "best" && !lg.dataset.xyLegendAnchor,
+    );
+    if (!automatic.length || this.spec?.coords === "polar") {
+      this._legendBestDirty = false;
+      return;
+    }
+    // Retain the last settled winner through gestures and every interpolation
+    // frame. Seeing a data/LOD transition makes the eventual settled frame
+    // dirty even if the end-of-gesture score already ran against the covering
+    // overview; fades schedule their own final draw, so the refined rendered
+    // representation gets exactly one follow-up score without a kernel hook.
+    if (
+      this._dataAnim ||
+      this._transitionView ||
+      this._interactionTransitionActive() ||
+      // Drill entry/exit clocks can finish before the aggregate backdrop and
+      // point-intensity easings. Their tick fields reset on the actual final
+      // frame, so this defers exactly through those frames and scores once
+      // against the settled rendered representation.
+      (this.gpuTraces || []).some((g) =>
+        Boolean(g._drillBackdropTick || g._blendTick || g.drill?._blendTick),
+      )
+    ) {
+      this._legendBestDirty = true;
+      return;
+    }
+    if (!this._legendBestDirty || this._legendBestInteractionActive) return;
+    // Visibility measurement reads layout/computed style, so keep it behind
+    // both settled-state gates. Clean hover frames and animation/gesture frames
+    // must not pay for geometry that cannot produce a new placement anyway.
+    const visibleAutomatic = automatic.filter((legend) => {
+      const visible = this._bestLegendIsVisible(legend);
+      const rect = visible ? legend.getBoundingClientRect() : null;
+      legend._xyLegendBestVisible = visible;
+      legend._xyLegendBestWidth = rect?.width ?? 0;
+      legend._xyLegendBestHeight = rect?.height ?? 0;
+      return visible;
+    });
+    // A hidden/collapsed legend has no box to score. Treat that settled state
+    // as clean instead of reading the canvases on every unrelated draw; its
+    // observer marks one fresh score when the box becomes measurable again.
+    if (!visibleAutomatic.length) {
+      this._legendBestDirty = false;
+      return;
+    }
+    const raster = this._bestLegendRaster();
+    if (!raster) return;
+    let positioned = 0;
+    const positionedRects = [];
+    for (const legend of visibleAutomatic) {
+      let loc = this._bestLegendLocationForRaster(raster, legend);
+      if (!loc) continue;
+      legend.dataset.xyLegendLoc = loc;
+      this._positionLegend(legend, loc);
+      let rect = legend.getBoundingClientRect();
+      const overlapsPrior = positionedRects.some((prior) =>
+        rect.left < prior.right && rect.right > prior.left &&
+        rect.top < prior.bottom && rect.bottom > prior.top,
+      );
+      if (overlapsPrior) {
+        // Occupancy hysteresis stabilizes small mark-density changes, not box
+        // collisions. Probe the nine bounded candidate rectangles only on this
+        // slow path, then re-run the exact score over non-colliding locations.
+        const blockedLocs = new Set();
+        for (const candidate of LEGEND_BEST_ORDER) {
+          this._positionLegend(legend, candidate);
+          const candidateRect = legend.getBoundingClientRect();
+          if (positionedRects.some((prior) =>
+            candidateRect.left < prior.right && candidateRect.right > prior.left &&
+            candidateRect.top < prior.bottom && candidateRect.bottom > prior.top,
+          )) blockedLocs.add(candidate);
+        }
+        const exactLoc = this._bestLegendLocationForRaster(
+          raster,
+          legend,
+          false,
+          blockedLocs,
+        );
+        if (exactLoc) {
+          loc = exactLoc;
+          legend.dataset.xyLegendLoc = loc;
+          this._positionLegend(legend, loc);
+          rect = legend.getBoundingClientRect();
+        }
+      }
+      legend._xyLegendBestLiveLoc = loc;
+      // Multiple automatic boxes choose in stable DOM order. Each settled box
+      // becomes an obstacle for the next, whose current corner cannot survive
+      // merely because the added box occupies less than the stability band.
+      this._fillBestLegendRasterRect(raster, rect);
+      positionedRects.push(rect);
+      positioned += 1;
+    }
+    this._legendBestDirty = positioned !== visibleAutomatic.length;
   }
 
   _positionLegend(lg, loc, anchor = null) {
@@ -3603,18 +4369,62 @@ export class ChartView {
     this.overlay.style.width = this.size.w + "px";
     this.overlay.style.height = this.size.h + "px";
 
-    // Stay inside the page's context budget before acquiring (governor above):
-    // at budget, the least-recently-visible off-screen view releases first.
-    XY_CONTEXT_GOVERNOR.reserve(this);
-    const gl = this.canvas.getContext("webgl2", {
-      antialias: false, premultipliedAlpha: true, alpha: true,
-    });
-    if (!gl) {
-      XY_CONTEXT_GOVERNOR.cancel(this);
-      throw new Error("webgl2 unavailable");
+    // A visible chart canvas is a normal 2D DOM surface; a detached GLHost
+    // owns the one WebGL2 context for every ChartView in this document. Keep a
+    // guarded native path for child frames, explicit rollback, and host
+    // allocation failure — that path retains the proven context governor.
+    if (!this._sharedGlAttempted) {
+      this._sharedGlAttempted = true;
+      const host = acquireGLHost(document, this);
+      if (host) {
+        const present = this.canvas.getContext("2d", { alpha: true });
+        if (present) {
+          this._glHost = host;
+          this._present2d = present;
+          this.canvas.dataset.xyGlHost = "shared";
+        } else {
+          host.release(this);
+        }
+      }
+    }
+
+    let gl;
+    if (this._glHost) {
+      gl = this._glHost.gl;
+      if (!gl || gl.isContextLost()) throw new Error("webgl2 unavailable");
+    } else {
+      if (!this._governorRegistered) {
+        XY_CONTEXT_GOVERNOR.register(this);
+        this._governorRegistered = true;
+      }
+      // Stay inside the page's context budget before acquiring (governor
+      // fallback): at budget, the least-recently-visible view releases first.
+      XY_CONTEXT_GOVERNOR.reserve(this);
+      const needsLegendBestSnapshot = (this._legends || []).some(
+        (legend) =>
+          legend.dataset.xyLegendAutoLoc === "best" &&
+          !legend.dataset.xyLegendAnchor,
+      );
+      gl = this.canvas.getContext("webgl2", {
+        antialias: false,
+        premultipliedAlpha: true,
+        alpha: true,
+        // The shared host copies from its own preserved buffer into a 2D
+        // presentation canvas. Only a native chart with an automatic legend
+        // needs its just-drawn pixels retained for the settled drawImage
+        // downsample; fixed/no-legend charts keep WebGL's faster default.
+        preserveDrawingBuffer: needsLegendBestSnapshot,
+      });
+      if (!gl) {
+        XY_CONTEXT_GOVERNOR.cancel(this);
+        throw new Error("webgl2 unavailable");
+      }
+      this._legendBestCanvasSnapshotReady =
+        needsLegendBestSnapshot &&
+        gl.getContextAttributes()?.preserveDrawingBuffer === true;
+      XY_CONTEXT_GOVERNOR.acquired(this);
     }
     this.gl = gl;
-    XY_CONTEXT_GOVERNOR.acquired(this);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -3624,19 +4434,36 @@ export class ChartView {
     this._progCache = new Map();
     this._glPrograms = this._progCache; // deletion iterates the cache values
 
-    // Fullscreen quad for density/heatmap, plus its VAO (a_corner at slot 0).
-    this.quad = gl.createBuffer();
-    this.quad._fcId = ++this._bufSeq;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-    this.quadVao = gl.createVertexArray();
-    gl.bindVertexArray(this.quadVao);
-    gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
-    gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
-    gl.bindVertexArray(null);
+    // Density/heatmap use one immutable fullscreen quad. It is safe to pool at
+    // host scope because fixed attribute slots make its VAO program-agnostic.
+    if (this._glHost) {
+      this.quad = this._glHost.sharedQuad;
+      this.quadVao = this._glHost.sharedQuadVao;
+    } else {
+      this.quad = gl.createBuffer();
+      this.quad._fcId = ++this._bufSeq;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+      this.quadVao = gl.createVertexArray();
+      gl.bindVertexArray(this.quadVao);
+      gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
+      gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
+      gl.bindVertexArray(null);
+    }
 
-    this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    // Build transactionally. A lost context or allocation failure midway
+    // through a trace list must not strand the buffers/programs already made
+    // for its prefix — shared-host recovery may retry this client in place.
+    this.gpuTraces = [];
+    try {
+      for (const trace of this.spec.traces) {
+        this.gpuTraces.push(this._buildTrace(buffer, trace));
+      }
+    } catch (error) {
+      try { this._destroyGlResources(); } catch (_cleanupError) {}
+      throw error;
+    }
     this._reapplyLegendVisibility();
     this._updatePickable();
   }
@@ -3655,7 +4482,17 @@ export class ChartView {
   _prog(key, vs, fs) {
     let p = this._progCache.get(key);
     if (!p) {
-      p = makeProgram(this.gl, vs, fs);
+      // Uniforms are mutable program state. Keep programs client-owned until
+      // every mark pass is independently state-complete; sharing them would
+      // let one chart's transition/style uniforms leak into another chart.
+      const host = this._glHost;
+      // The resolver is an additive host capability. A singleton installed by
+      // an older duplicate bundle does not expose it, so mixed-version pages
+      // safely retain the native per-program shader lifecycle.
+      const resolveShader = host && typeof host.getOrCreateShader === "function"
+        ? host.getOrCreateShader.bind(host)
+        : undefined;
+      p = makeProgram(this.gl, vs, fs, resolveShader);
       this._progCache.set(key, p);
     }
     return p;
@@ -3667,6 +4504,9 @@ export class ChartView {
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
   get ribbonProg() { return this._prog("ribbon", RIBBON_VS, RIBBON_FS); }
+  // The funnel program shares the ribbon fragment stage: same edge
+  // coverage, stroke inset, and match-fill outline contract.
+  get funnelProg() { return this._prog("funnel", FUNNEL_VS, RIBBON_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -4428,12 +5268,13 @@ export class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform1f(u("u_yconstant"), this._axisConstant(g.yAxis));
     gl.uniform1i(u("u_segments"), RIBBON_STEPS);
-    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
     const stroke = g.stroke || [0, 0, 0, 0];
     gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
-    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * (g._legendDim ?? 1));
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
     // A flat band must mix toward ITS OWN colour, so a per-band source buffer
     // with no target buffer binds the source buffer to both attributes —
     // mixing toward the constant fallback painted every node's right edge
@@ -4504,6 +5345,264 @@ export class ChartView {
       const edgeHi = w0 * yVal("y1", index) + w1 * yVal("t1", index);
       if (pointerY >= Math.min(edgeLo, edgeHi) && pointerY <= Math.max(edgeLo, edgeHi)) {
         return { trace: g.trace.id, index, g, dist: 0, synthetic: true };
+      }
+    }
+    return null;
+  }
+
+  // Funnel ships one symmetric quad per stage (pos0/pos1 along the stage
+  // axis, lo/hi cross edges at each end) plus a per-stage color channel. Each
+  // column uploads as a per-instance attribute with ITS OWN meta uniform —
+  // nothing is re-encoded client-side — and the funnel program sweeps a
+  // 4-vertex strip per stage, sharing RIBBON_FS for the fwidth edge coverage
+  // that keeps the slanted edges smooth on the antialias:false context.
+  _buildFunnelMark(g, t, buffer) {
+    const cols: any = {};
+    const metas: any = {};
+    let n = Infinity;
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const values = this._columnView(buffer, this.spec.columns[t[name]]);
+      cols[name] = values;
+      metas[name] = { ...this.spec.columns[t[name]] };
+      g[slot + "Meta"] = metas[name];
+      g[slot + "Buf"] = this._upload(values);
+      n = Math.min(n, values.length);
+    }
+    n = Number.isFinite(n) ? n : 0;
+    g.n = n;
+    g.orientation = t.orientation === "horizontal" ? 1 : 0;
+    g._cpuFunnel = { ...cols, metas, n };
+    // Stage centers for keyboard traversal (declared order): the a11y walk
+    // reads g._cpu.x/y like any point group, so a funnel announces stage by
+    // stage from the first. Centers are decoded to data space and re-encoded
+    // against the pos0/lo0 metas the _cpu record carries.
+    const posMeta = metas.pos0;
+    const crossMeta = metas.lo0;
+    const dec = (name, i) => this._decodeValue(cols[name], metas[name], i);
+    const centerX = new Float32Array(n);
+    const centerY = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const pCenter = (dec("pos0", i) + dec("pos1", i)) / 2;
+      const cCenter = (dec("lo0", i) + dec("hi0", i) + dec("lo1", i) + dec("hi1", i)) / 4;
+      const encP = (pCenter - posMeta.offset) * (posMeta.scale || 1);
+      const encC = (cCenter - crossMeta.offset) * (crossMeta.scale || 1);
+      centerX[i] = g.orientation === 1 ? encP : encC;
+      centerY[i] = g.orientation === 1 ? encC : encP;
+    }
+    g._cpu = {
+      x: centerX,
+      y: centerY,
+      xMeta: { ...(g.orientation === 1 ? posMeta : crossMeta) },
+      yMeta: { ...(g.orientation === 1 ? crossMeta : posMeta) },
+    };
+    this._funnelPaint(g, t, buffer);
+    const style = t.style || {};
+    g.strokeWidth = Number(style.stroke_width) || 0;
+    g.stroke = style.stroke ? parseColor(this.root, style.stroke, [0, 0, 0, 1]) : null;
+    g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
+  }
+
+  // Per-stage fill resolved to one RGBA8 row per instance. Categorical codes
+  // look their palette entry up here — theme-resolving each CSS color, so a
+  // var(--…) palette entry follows light/dark — and the funnel program needs
+  // no LUT texture. Build stashes codes+palette on the record; refreshColor
+  // re-runs this with buffer=null to re-resolve against the new theme.
+  _funnelPaint(g, t, buffer) {
+    // Always resolved over the FULL stage count, never g.n: after a legend
+    // filter g.n is the visible count, and a theme refresh that rebuilt the
+    // cache at that length recolored the survivors by their DRAWN index and
+    // lost the hidden stages' rows for good — restoring a stage then drew
+    // garbage. The filter is applied at upload time instead.
+    const full = g._cpuFunnel ? g._cpuFunnel.n : g.n;
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    const channel = t.color || {};
+    if (buffer !== null && Number.isInteger(channel.buf)) {
+      if (channel.mode === "categorical") {
+        g._funnelCodes = this._columnView(buffer, this.spec.columns[channel.buf]);
+      } else if (channel.mode === "direct_rgba") {
+        g._funnelRgba = this._columnView(buffer, this.spec.columns[channel.buf]);
+      }
+    }
+    let rgba = null;
+    if (channel.mode === "categorical" && g._funnelCodes) {
+      const palette = Array.isArray(channel.palette) && channel.palette.length
+        ? channel.palette : ["#4c78a8"];
+      const table = palette.map((css) => parseColor(this.root, css, [0.3, 0.47, 0.66, 1]));
+      rgba = new Uint8Array(full * 4);
+      for (let i = 0; i < full; i++) {
+        const c = table[Math.round(g._funnelCodes[i]) % table.length];
+        rgba.set([c[0] * 255, c[1] * 255, c[2] * 255, c[3] * 255], i * 4);
+      }
+    } else if (channel.mode === "direct_rgba" && g._funnelRgba) {
+      rgba = g._funnelRgba;
+    }
+    // Full-length rows kept for the legend filter and hover dim, which build
+    // their visible/dimmed subsets from them rather than reading the GPU back.
+    g._funnelRgbaFull = rgba || null;
+    this._uploadFunnelPaint(g);
+  }
+
+  // Upload the paint rows the current legend filter leaves visible. The one
+  // place rgbaBuf is (re)created, so a theme refresh, a filter toggle, and a
+  // legend-hover dim can never disagree about row order.
+  _uploadFunnelPaint(g, rows = null) {
+    if (g.rgbaBuf) this._deleteBuffers(g, ["rgbaBuf"]);
+    const full = rows || g._funnelRgbaFull;
+    if (!full) return;
+    let out = full;
+    if (g._visMap) {
+      out = new Uint8Array(g._visMap.length * 4);
+      for (let k = 0; k < g._visMap.length; k++) {
+        const i = g._visMap[k];
+        out.set(full.subarray(i * 4, i * 4 + 4), k * 4);
+      }
+    }
+    g.rgbaBuf = this._upload(out);
+  }
+
+  // Mix the six per-stage geometry columns for the current animation frame
+  // and write them into the LIVE buffers in place (same WebGLBuffer objects,
+  // so the VAO signature holds). Small-N by contract, so the per-frame CPU
+  // mix is cheaper than a second attribute set and the shader stays as-is.
+  // Covers the update interpolation (prev -> current by progress), the
+  // enter grow (cross edges expand from the segment spine), and the settled
+  // re-upload after either finishes.
+  _mixFunnelGeometry(g) {
+    const f = g._cpuFunnel;
+    if (!f) return;
+    const prev = g._transitionPrevFunnelValues;
+    const progress = g._transitionPositionProgress;
+    const grow = g._transitionGrow ?? 1;
+    const mixing = (prev && Number.isFinite(progress) && progress < 1) || grow < 1;
+    if (!mixing) {
+      if (!g._funnelGeomMixed) return;
+      delete g._funnelGeomMixed;
+    }
+    const gl = this.gl;
+    const rows = g._visMap;
+    const count = rows ? rows.length : f.n;
+    const scratch = (g._funnelMixScratch ||= {});
+    const mixed = {};
+    for (const name of Object.keys(FUNNEL_SLOTS)) {
+      const out = scratch[name] && scratch[name].length === count
+        ? scratch[name]
+        : (scratch[name] = new Float32Array(count));
+      const cur = f[name];
+      const start = prev && prev[name];
+      for (let k = 0; k < count; k++) {
+        const i = rows ? rows[k] : k;
+        let value = cur[i];
+        if (start && Number.isFinite(progress) && progress < 1) {
+          value = start[i] + (value - start[i]) * progress;
+        }
+        out[k] = value;
+      }
+      mixed[name] = out;
+    }
+    if (grow < 1) {
+      // Grow from the spine: both cross edges of each end expand from their
+      // midpoint, so a vertical funnel widens out of its centerline exactly
+      // as a bar grows out of its baseline. Encoded space is fine — the two
+      // edges share a meta per column pair only after decoding, so mix the
+      // DECODED midpoint per end via the metas.
+      const dec = (name, values, index) => this._decodeValue(values, f.metas[name], index);
+      const enc = (name, value) => (value - f.metas[name].offset) * (f.metas[name].scale || 1);
+      for (let k = 0; k < count; k++) {
+        for (const [lo, hi] of [["lo0", "hi0"], ["lo1", "hi1"]]) {
+          const a = dec(lo, mixed[lo], k);
+          const b = dec(hi, mixed[hi], k);
+          const mid = (a + b) / 2;
+          mixed[lo][k] = enc(lo, mid + (a - mid) * grow);
+          mixed[hi][k] = enc(hi, mid + (b - mid) * grow);
+        }
+      }
+    }
+    for (const [name, slot] of Object.entries(FUNNEL_SLOTS)) {
+      const buf = g[slot + "Buf"];
+      if (!buf) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, mixed[name], gl.DYNAMIC_DRAW);
+    }
+    if (mixing) g._funnelGeomMixed = true;
+  }
+
+  _drawFunnels(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.funnelProg;
+    this._mixFunnelGeometry(g);
+    gl.useProgram(prog);
+    const u = (name) => uniformOf(gl, prog, name);
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    gl.uniform2f(u("u_pmap"), ...(horizontal ? xm : ym));
+    gl.uniform2f(u("u_cmap"), ...(horizontal ? ym : xm));
+    this._setAxisUniforms(prog, "u_p0", g.x0Meta, posAxis);
+    this._setAxisUniforms(prog, "u_p1", g.x1Meta, posAxis);
+    this._setAxisUniforms(prog, "u_l0", g.y0Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h0", g.y1Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_l1", g.x2Meta, crossAxis);
+    this._setAxisUniforms(prog, "u_h1", g.y2Meta, crossAxis);
+    gl.uniform1i(u("u_pmode"), this._axisMode(posAxis));
+    gl.uniform1f(u("u_pconstant"), this._axisConstant(posAxis));
+    gl.uniform1i(u("u_cmode"), this._axisMode(crossAxis));
+    gl.uniform1f(u("u_cconstant"), this._axisConstant(crossAxis));
+    gl.uniform1i(u("u_horizontal"), horizontal ? 1 : 0);
+    const transitionAlpha = (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha);
+    const stroke = g.stroke || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
+    gl.uniform1i(u("u_strokeMode"), g.stroke ? 0 : 1);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}) * transitionAlpha);
+    const parts = Object.values(FUNNEL_SLOTS).map((slot) => g[slot + "Buf"]._fcId);
+    parts.push(g.rgbaBuf ? g.rgbaBuf._fcId : 0);
+    this._bindVao(g, "funnel", parts, () => {
+      for (const slot of Object.values(FUNNEL_SLOTS)) {
+        this._vaoAttr(ATTR_SLOTS["a" + slot], g[slot + "Buf"], 0, 1);
+      }
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+    });
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  // Containment against the same linear edges the mesh triangles draw, in
+  // axis-transformed space (the ribbon rule: the pointer and the decoded
+  // endpoints go through the transform the shader applies, so log/symlog
+  // axes hit-test the drawn shape, and on linear axes it is the identity).
+  // Index is the QUAD (= stage) index, which is what tooltip_rows and the
+  // kernel exact-pick expect.
+  _funnelHover(g, dataX, dataY) {
+    const f = g._cpuFunnel;
+    if (!f) return null;
+    const horizontal = g.orientation === 1;
+    const posAxis = horizontal ? g.xAxis : g.yAxis;
+    const crossAxis = horizontal ? g.yAxis : g.xAxis;
+    const posAxisRec = { ...this._axis(posAxis), constant: this._axisConstant(posAxis) };
+    const crossAxisRec = { ...this._axis(crossAxis), constant: this._axisConstant(crossAxis) };
+    const pointerPos = this._axisCoord(posAxisRec, horizontal ? dataX : dataY);
+    const pointerCross = this._axisCoord(crossAxisRec, horizontal ? dataY : dataX);
+    const val = (name, i) => this._decodeValue(f[name], f.metas[name], i);
+    const posVal = (name, i) => this._axisCoord(posAxisRec, val(name, i));
+    const crossVal = (name, i) => this._axisCoord(crossAxisRec, val(name, i));
+    // A legend-hidden stage draws nothing, so it must not hover either; the
+    // returned index stays the SHIPPED stage row, which is what tooltip_rows
+    // and the kernel exact-pick speak.
+    const rows = g._visMap ? Array.from(g._visMap) : null;
+    for (let k = 0; k < (rows ? rows.length : f.n); k++) {
+      const i = rows ? rows[k] : k;
+      const p0 = posVal("pos0", i);
+      const p1 = posVal("pos1", i);
+      const lo = Math.min(p0, p1);
+      const hi = Math.max(p0, p1);
+      if (!(pointerPos >= lo && pointerPos <= hi) || hi === lo) continue;
+      const t = (pointerPos - p0) / (p1 - p0);
+      const eLo = crossVal("lo0", i) + (crossVal("lo1", i) - crossVal("lo0", i)) * t;
+      const eHi = crossVal("hi0", i) + (crossVal("hi1", i) - crossVal("hi0", i)) * t;
+      if (pointerCross >= Math.min(eLo, eHi) && pointerCross <= Math.max(eLo, eHi)) {
+        return { trace: g.trace.id, index: i, g, dist: 0, synthetic: true };
       }
     }
     return null;
@@ -5357,8 +6456,7 @@ export class ChartView {
   }
 
 
-  _drawNow() {
-    if (this._destroyed || !this.gl || this._glLost) return;
+  _renderGlFrame() {
     this._healStaleTheme();
     // `_drawPoints` records authored-marker draws here so the Canvas overlay
     // paints the exact direct/sample/drill entries and LOD alpha chosen by
@@ -5409,6 +6507,24 @@ export class ChartView {
       drawTrace(g);
     }
     this._drawHoverState();
+  }
+
+  _drawNow() {
+    if (this._destroyed || !this.gl || this._glLost) return;
+    let rendered;
+    if (this._glHost) {
+      rendered = this._glHost.render(
+        this,
+        this._present2d,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderGlFrame(),
+      );
+    } else {
+      rendered = this._renderGlFrame();
+    }
+    // Presentation now owns the GL pixels. Do DOM/2D overlay work afterward
+    // so the shared default framebuffer is copied immediately after GPU work.
     // Keep a visible tooltip anchored through pan, zoom, and linked views.
     this._repositionTooltip();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
@@ -5416,8 +6532,10 @@ export class ChartView {
     if (!this._rafKeepPick) this._pickDirty = true;
     this._rafKeepPick = false;
     this._drawChrome();
+    this._maybePositionBestLegends();
     this._renderLassoSelection?.();
     this._renderBoxSelection?.();
+    return rendered;
   }
 
   // Centralized clock seam for animation state machines. Production uses the
@@ -7389,11 +8507,8 @@ export class ChartView {
 
   // -- picking (§17) --------------------------------------------------------
 
-  _renderPick() {
+  _renderPickPass() {
     const gl = this.gl;
-    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
-      this._allocPickTex(); // deferred resize catch-up
-    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.BLEND);
@@ -7469,6 +8584,23 @@ export class ChartView {
     gl.enable(gl.BLEND);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this._pickDirty = false;
+    return true;
+  }
+
+  _renderPick() {
+    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
+      this._allocPickTex(); // deferred resize catch-up
+    }
+    if (this._glHost) {
+      return this._glHost.pick(
+        this,
+        this.pickFbo,
+        this.canvas.width,
+        this.canvas.height,
+        () => this._renderPickPass(),
+      ) === true;
+    }
+    return this._renderPickPass();
   }
 
   _pickAt(cssX, cssY) {
@@ -7480,7 +8612,7 @@ export class ChartView {
     ) return null;
     if (this._pickDirty) {
       try {
-        this._renderPick();
+        if (!this._renderPick()) return null;
       } catch (err) {
         // Native eviction can race pointer movement before the asynchronous
         // webglcontextlost event updates `_glLost`. Suppress only that lost-
@@ -7495,6 +8627,7 @@ export class ChartView {
     if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
     const buf = new Uint8Array(4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    if (this._glHost) gl.readBuffer(gl.COLOR_ATTACHMENT0);
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     // Reassemble the global 32-bit id; zero is the background sentinel.
@@ -7640,6 +8773,10 @@ export class ChartView {
     const polarGeom = this._polarGeometry();
     for (const g of this.gpuTraces) {
       if (g.tier === "density") continue;
+      // A legend-hidden series draws nothing, so it must not answer hover
+      // either (interaction spec §10) — before this guard every CPU-hover
+      // kind (bar, rect, ribbon, funnel) kept reporting invisible geometry.
+      if (g._legendHidden) continue;
       const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
       if (!Number.isFinite(dataX) || !Number.isFinite(dataY)) continue;
       if (g.heatmap && g._cpuHeatmap) {
@@ -7654,6 +8791,13 @@ export class ChartView {
       }
       if (g._cpuRibbon) {
         const hit = this._ribbonHover(g, dataX, dataY);
+        if (hit) return hit;
+        continue;
+      }
+      if (g._cpuFunnel) {
+        // Before the generic point path: the funnel's _cpu holds stage
+        // centers for keyboard traversal, not hoverable point geometry.
+        const hit = this._funnelHover(g, dataX, dataY);
         if (hit) return hit;
         continue;
       }
@@ -7870,9 +9014,9 @@ export class ChartView {
     this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
     if (id === this._hoverId) {
       // Point tooltips stay attached to their data point. Sankey ribbons and
-      // nodes cover an area instead, so keep their tooltip at the pointer as
-      // it travels through the same picked shape.
-      if (hit.g && hit.g._cpuRibbon) {
+      // nodes — and funnel segments — cover an area instead, so keep their
+      // tooltip at the pointer as it travels through the same picked shape.
+      if (hit.g && (hit.g._cpuRibbon || hit.g._cpuFunnel)) {
         this._setTooltipAnchor(hit, this._lastRow, e.clientX, e.clientY);
         this._repositionTooltip();
       } else if (!this._tooltipAnchor) {
@@ -7931,6 +9075,7 @@ export class ChartView {
   refreshTheme() {
     if (this._destroyed) return;
     this._applyTheme();
+    this._markBestLegendsDirty();
     this.draw();
   }
 
@@ -7949,11 +9094,16 @@ export class ChartView {
     if (this._dataAnim) {
       this._emitAnimationLifecycle?.("end", this._dataAnim.phase, { cancelled: true });
     }
-    XY_CONTEXT_GOVERNOR.unregister(this);
+    if (this._governorRegistered) {
+      XY_CONTEXT_GOVERNOR.unregister(this);
+      this._governorRegistered = false;
+    }
     this._ctxIo?.disconnect();
     this._ctxIo = null;
     clearTimeout(this._ctxRecoveryTimer);
     this._ctxRecoveryTimer = null;
+    clearTimeout(this._glHostRecoveryTimer);
+    this._glHostRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();
@@ -7961,6 +9111,10 @@ export class ChartView {
       this._rebinWorker = null;
     }
     this._ro?.disconnect();
+    this._legendBestResizeObserver?.disconnect();
+    this._legendBestResizeObserver = null;
+    this._legendBestMutationObserver?.disconnect();
+    this._legendBestMutationObserver = null;
     this._io?.disconnect();
     this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
@@ -8003,8 +9157,14 @@ export class ChartView {
     // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
     // "too many active WebGL contexts" eviction. Listeners are already removed
     // above and _destroyed is set, so the resulting event starts no recovery.
-    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
-    if (loseExt) loseExt.loseContext();
+    if (this._glHost) {
+      const host = this._glHost;
+      this._glHost = null;
+      host.release(this);
+    } else {
+      const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+      if (loseExt) loseExt.loseContext();
+    }
     this.gl = null;
     this.root.remove();
   }
@@ -8083,9 +9243,9 @@ export class ChartView {
     if (this.pickTex && !texSeen.has(this.pickTex)) gl.deleteTexture(this.pickTex);
     this.pickFbo = null;
     this.pickTex = null;
-    if (this.quad) gl.deleteBuffer(this.quad);
+    if (this.quad && !this._glHost) gl.deleteBuffer(this.quad);
     this.quad = null;
-    if (this.quadVao) gl.deleteVertexArray(this.quadVao);
+    if (this.quadVao && !this._glHost) gl.deleteVertexArray(this.quadVao);
     this.quadVao = null;
     for (const p of this._progCache ? this._progCache.values() : []) {
       if (p) gl.deleteProgram(p);

@@ -399,6 +399,7 @@ Object.assign(ChartView.prototype, {
     g._sampleRebinned = !!rebinned; // badge: recorded reduction, never silent (§28)
     lodRememberDensity(this, g, g.density);
     this._refreshReductionBadges();
+    this._markBestLegendsDirty();
     this.draw();
   },
 
@@ -414,6 +415,10 @@ Object.assign(ChartView.prototype, {
     const raw = spec.buffer_layout === "split" ? buffers : buffers && buffers[0];
     if (raw == null) return;
     const payload = payloadBuffers(spec, raw);
+    // Appends can extend direct buffers in place or replace a screen-bounded
+    // representation. During an authored data animation the dirty bit stays
+    // pending until `_maybePositionBestLegends` sees its settled final frame.
+    this._markBestLegendsDirty();
     const prevSpec = this.spec;
     // Follow policy, decided against the OLD home view before it moves:
     // - at home (never zoomed, or axes reset): the chart follows its data —
@@ -728,6 +733,7 @@ Object.assign(ChartView.prototype, {
     if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
+      let legendGeometryChanged = false;
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
@@ -779,11 +785,14 @@ Object.assign(ChartView.prototype, {
         if (Array.isArray(upd.x_range) && upd.x_range.length === 2) {
           g._decimatedWindow = [Number(upd.x_range[0]), Number(upd.x_range[1])];
         }
+        legendGeometryChanged = true;
       }
+      if (legendGeometryChanged) this._markBestLegendsDirty();
       this.draw();
     } else if (msg.type === "density_update") {
       if (msg.seq !== undefined && msg.seq !== this.seq && !this._densityReplyCurrent(msg)) return;
       const densityTraces = msg.traces || [];
+      let legendGeometryChanged = false;
       const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
       if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
         pendingTraceIds.add(Number(msg.trace));
@@ -818,7 +827,11 @@ Object.assign(ChartView.prototype, {
         if (this._traceFilterKey(g) !== lodFilterKey(upd.filter && upd.filter.hidden_categories)) {
           continue;
         }
-        if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+        if (upd.mode === "points") {
+          this._applyDrill(g, upd, buffers);
+          legendGeometryChanged = true;
+          continue;
+        }
         // The current mask has an aggregate again; request planning may
         // resume normal aggregate-stands elision. A points drill above must
         // NOT clear the flag: it lands no grid under the mask, so the only
@@ -826,9 +839,11 @@ Object.assign(ChartView.prototype, {
         // keeps forcing the full-window re-bin until a stamped grid arrives.
         g._filterDirty = false;
         lodApplyDensityUpdate(this, g, upd, buffers);
+        legendGeometryChanged = true;
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
       this._updatePickable();
+      if (legendGeometryChanged) this._markBestLegendsDirty();
       this.draw();
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);

@@ -14,6 +14,7 @@ release or CI green build.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib
 import json
 import os
@@ -334,6 +335,54 @@ def validate_pep561_marker(
     return []
 
 
+def validate_static_typing_surface(
+    pkg: ModuleType,
+    init_path: Path = ROOT / "python" / "xy" / "__init__.py",
+) -> list[str]:
+    """Ensure every lazy root export also has a static declaration.
+
+    Runtime consumers resolve root names through ``__getattr__``.  A type
+    checker cannot infer the per-name types hidden behind that dynamic hook, so
+    each public name must also be imported under ``TYPE_CHECKING`` (or, for a
+    lazily materialized scalar such as ``__version__``, explicitly annotated).
+    """
+    errors: list[str] = []
+    public_names = set(_string_list(getattr(pkg, "__all__", None), "__all__", errors))
+
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
+    except (OSError, SyntaxError) as exc:
+        return [*errors, f"cannot inspect static typing surface in {init_path}: {exc}"]
+
+    declared: set[str] = set()
+    for statement in tree.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            declared.add(statement.target.id)
+            continue
+        if not (
+            isinstance(statement, ast.If)
+            and isinstance(statement.test, ast.Name)
+            and statement.test.id == "TYPE_CHECKING"
+        ):
+            continue
+        for child in statement.body:
+            if isinstance(child, ast.ImportFrom):
+                declared.update(
+                    alias.asname or alias.name for alias in child.names if alias.name != "*"
+                )
+            elif isinstance(child, ast.Import):
+                declared.update(
+                    alias.asname or alias.name.split(".", 1)[0] for alias in child.names
+                )
+
+    missing = sorted(public_names - declared)
+    if missing:
+        errors.append(
+            f"xy public names have no static TYPE_CHECKING import or annotation: {missing}"
+        )
+    return errors
+
+
 def _loaded_import_budget_modules() -> list[str]:
     return sorted(
         name for name in sys.modules if name in HEAVY_THIRD_PARTY_IMPORTS or name.startswith("xy.")
@@ -483,6 +532,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     errors = check_all_fresh_import_budgets() if check_lazy_import else []
     errors.extend(validate_version_consistency(pkg))
     errors.extend(validate_pep561_marker())
+    errors.extend(validate_static_typing_surface(pkg))
     errors.extend(validate_public_api(pkg))
     errors.extend(validate_component_public_api(pkg))
     errors.extend(validate_declarative_api_contract(pkg))

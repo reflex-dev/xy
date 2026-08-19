@@ -41,7 +41,7 @@ def _python_examples() -> dict[str, str]:
             continue
         if line.startswith("#"):
             heading = line.lstrip("#").strip()
-        elif line in {"```python", "~~~python"}:
+        elif line.startswith(("```python", "~~~python")):
             fence = line[:3]
             source = []
 
@@ -56,8 +56,9 @@ def test_framework_integration_examples_run_in_isolation(tmp_path: Path) -> None
     examples = _python_examples()
     assert set(examples) == {
         "Install and Configure",
-        "Fixed Charts",
-        "State-Backed Charts",
+        "Fixed Data",
+        "State-Backed Data",
+        "Compose Multiple Marks",
         "Events and Streaming",
         "Custom Chrome Slots",
     }
@@ -77,12 +78,13 @@ for heading, source in examples.items():
         calls = []
         namespace.update(token="chart-token", next_x=3, next_y=5)
         reflex_xy.append = lambda *args, **kwargs: calls.append((args, kwargs))
-        namespace["reflex_xy"] = reflex_xy
+        namespace["rxy"] = reflex_xy
 
     exec(compile(source, f"{{doc_path}}#{{heading}}", "exec"), namespace)
 
-    if heading in {{"Fixed Charts", "State-Backed Charts"}}:
-        component = namespace["index"]()
+    if heading in {{"Fixed Data", "State-Backed Data", "Compose Multiple Marks"}}:
+        factory = "trends" if heading == "Compose Multiple Marks" else "index"
+        component = namespace[factory]()
         assert isinstance(component, rx.Component)
         assert "XYChart" in str(component)
     elif heading == "Install and Configure":

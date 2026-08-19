@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+import typing
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -18,6 +19,7 @@ import numpy as np
 import pytest
 
 import xy
+from xy import components
 from xy._svg import _PolarProjection, axis_ticks, layout, minor_axis_ticks
 from xy.config import POLAR_DIRECT_CEILING
 
@@ -1758,3 +1760,188 @@ def test_time_radius_is_exempt_from_the_centre_origin_default() -> None:
     # Numeric radii keep the centre-origin contract untouched.
     numeric, _ = xy.polar_chart(xy.line(angles, [5.0, 5.0, 5.0])).figure().build_payload_split()
     assert numeric["y_axis"]["range"] == [0.0, 5.0]
+
+
+def _polar_zoom_flag(chart) -> object:
+    spec, _ = chart.figure().build_payload_split()
+    return spec.get("interaction", {}).get("zoom", "absent")
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        ("polar_chart", lambda *c, **k: xy.polar_chart(xy.line([0.0, 1.0], [1.0, 2.0]), *c, **k)),
+        (
+            "polar_bar_chart",
+            lambda *c, **k: xy.polar_bar_chart(xy.bar([0.0], [1.0], width=1.0), *c, **k),
+        ),
+        ("pie_chart", lambda *c, **k: xy.pie_chart(["a", "b"], [1.0, 2.0], *c, **k)),
+        (
+            "radar_chart",
+            lambda *c, **k: xy.radar_chart(["a", "b", "c"], xy.area([1.0, 2.0, 3.0]), *c, **k),
+        ),
+    ],
+)
+def test_polar_ships_zoom_disabled_by_default(label, build) -> None:
+    """Polar zoom is OFF by default and says so on the wire (§8).
+
+    The centre is a fixed point of the transform and r_lo is pinned, so a
+    zoom-in crops the rim while the geometry stays welded to the middle of the
+    disc — on a pie, radial bar, or radar (constant rim, or a fixed 0..1 frame)
+    that reads as broken rather than as navigation. The flag must be *explicit*
+    rather than omitted: the client cannot re-derive it, because `Chart.kind`
+    never reaches the payload and every polar figure looks identical to it.
+    """
+    assert _polar_zoom_flag(build()) is False, label
+    # Both opt-in spellings win over the default.
+    assert _polar_zoom_flag(build(zoom=True)) is True, label
+    assert _polar_zoom_flag(build(xy.interaction_config(zoom=True))) is True, label
+
+
+def test_wind_rose_is_the_polar_composition_that_keeps_zoom() -> None:
+    """A wind rose's radius is a frequency COUNT, so scaling the outer ring
+    against a pinned zero is the useful gesture — it magnifies the short
+    sectors of a rose dominated by one prevailing direction. It is the one
+    exception the polar zoom-off default is written around, and an author can
+    still turn it off."""
+    directions = [0.0, 45.0, 90.0, 180.0, 270.0]
+    speeds = [1.0, 4.0, 9.0, 3.0, 6.0]
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds)) is True
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds, zoom=False)) is False
+    assert (
+        _polar_zoom_flag(xy.wind_rose(directions, speeds, xy.interaction_config(zoom=False)))
+        is False
+    )
+    # `None` is "unset" everywhere else in the interaction API, so it must keep
+    # the rose's own default rather than fall through to the polar one. A wrapper
+    # forwarding an `Optional[bool]` would otherwise turn zoom OFF by passing the
+    # value that means "I have no opinion".
+    assert _polar_zoom_flag(xy.wind_rose(directions, speeds, zoom=None)) is True
+
+
+#: Every drag action polar refuses, derived from the public `DefaultDragAction`
+#: type rather than hand-listed: a hand-written subset had already drifted (it
+#: missed `select-y`), and deriving it means a newly added drag action is covered
+#: the moment it exists — either polar grows a tool for it or this test fails.
+_POLAR_INERT_DRAG_ACTIONS = sorted(
+    set(typing.get_args(components.DefaultDragAction)) - {"auto", "none"}
+)
+
+
+def test_the_inert_polar_drag_action_list_is_exhaustive() -> None:
+    """Guard the derivation above: `auto`/`none` are the only legal polar values,
+    so every other member of the type must be in the refusal list."""
+    assert set(_POLAR_INERT_DRAG_ACTIONS) == {
+        "pan",
+        "zoom",
+        "select",
+        "select-x",
+        "select-y",
+        "select-lasso",
+    }
+
+
+@pytest.mark.parametrize("action", _POLAR_INERT_DRAG_ACTIONS)
+def test_polar_refuses_every_inert_drag_action(action) -> None:
+    """A disc has no drag tools, so only `auto`/`none` are meaningful (§8).
+
+    The client returns `[]` for `pan_axes` and forces `box_zoom`/`select`/`brush`
+    off under polar whatever the flags say, so each of these was accepted and
+    then resolved to no usable tool. `zoom` was the worst of them: validation
+    read an absent `zoom` as enabled while the payload resolved it to `False`,
+    so the figure shipped a self-contradicting
+    `{"zoom": false, "default_drag_action": "zoom"}`.
+    """
+    for build in (
+        lambda **k: xy.polar_chart(xy.scatter([0.0, 1.0], [1.0, 2.0]), **k),
+        lambda **k: xy.pie_chart(["a", "b"], [1.0, 2.0], **k),
+        lambda **k: xy.wind_rose([10.0, 20.0, 30.0], [1.0, 2.0, 3.0], **k),
+    ):
+        with pytest.raises(ValueError, match="does not support default_drag_action"):
+            build(default_drag_action=action).figure().build_payload_split()
+        # Explicitly enabling the capability does not make the drag tool exist.
+        with pytest.raises(ValueError, match="does not support default_drag_action"):
+            build(zoom=True, default_drag_action=action).figure().build_payload_split()
+
+    # `auto` and `none` stay legal — they are what polar already resolves to.
+    for legal in ("auto", "none"):
+        spec, _ = (
+            xy.polar_chart(xy.line([0.0, 1.0], [1.0, 2.0]), default_drag_action=legal)
+            .figure()
+            .build_payload_split()
+        )
+        assert spec["interaction"]["default_drag_action"] == legal
+
+
+def test_cartesian_drag_action_validation_is_unchanged() -> None:
+    """The polar refusal must not leak into Cartesian charts, whose drag tools
+    are real; only a capability the config itself turned off still raises."""
+    spec, _ = (
+        xy.line_chart(xy.line([0.0, 1.0], [1.0, 2.0]), default_drag_action="zoom")
+        .figure()
+        .build_payload_split()
+    )
+    assert spec["interaction"]["default_drag_action"] == "zoom"
+    # Absent zoom stays absent on the wire for Cartesian (§5.2).
+    assert "zoom" not in spec["interaction"]
+    with pytest.raises(ValueError, match="requires navigation and pan"):
+        xy.line_chart(
+            xy.line([0.0, 1.0], [1.0, 2.0]), pan=False, default_drag_action="pan"
+        ).figure().build_payload_split()
+
+
+def test_explicit_reset_axes_still_grants_polar_reset_without_zoom() -> None:
+    """`reset_axes` is the documented escape hatch, and it survives zoom=False.
+
+    `_resetAxisPolicy` returns an authored `reset_axes` verbatim instead of
+    deriving pan-axes union zoom-axes, so Fit Data / Reset View render and
+    double-click restores those axes even with zoom off — which matters for a
+    polar chart whose view moves through linked axes or state-driven updates
+    rather than through a gesture. The docs must not promise reset is absent
+    outright.
+    """
+    theta, r = _rose()
+    spec, _ = (
+        xy.polar_chart(xy.line(theta, r), xy.interaction_config(reset_axes=("y",)))
+        .figure()
+        .build_payload_split()
+    )
+    assert spec["interaction"]["zoom"] is False
+    assert spec["interaction"]["reset_axes"] == ["y"]
+
+
+def test_interaction_config_opts_a_polar_chart_back_into_zoom() -> None:
+    """The documented escape hatch: an `interaction_config` child is applied
+    after chart props, so it is the last word on either side of the default."""
+    theta, r = _rose()
+    assert _polar_zoom_flag(xy.polar_chart(xy.line(theta, r))) is False
+    assert (
+        _polar_zoom_flag(xy.polar_chart(xy.line(theta, r), xy.interaction_config(zoom=True)))
+        is True
+    )
+    assert _polar_zoom_flag(xy.pie_chart(["a", "b"], [1.0, 2.0], zoom=True)) is True
+    # A cartesian figure is untouched: its zoom stays absent so the client keeps
+    # resolving the ordinary `True` default (pan-and-zoom-configuration §5.2).
+    assert _polar_zoom_flag(xy.line_chart(xy.line([0.0, 1.0], [1.0, 2.0]))) == "absent"
+
+
+def test_pyplot_polar_projection_inherits_the_zoom_default() -> None:
+    """`coords="polar"` carries the default, not the helper factories, so a
+    hand-built `xy.chart(coords="polar")` and the shim's `projection="polar"`
+    get it too — the rule belongs to the coordinate system, and there is one of
+    it rather than one per factory."""
+    import xy.pyplot as plt
+
+    theta, r = _rose()
+    assert _polar_zoom_flag(xy.chart(xy.line(theta, r), coords="polar")) is False
+
+    figure, ax = plt.subplots(subplot_kw={"projection": "polar"})
+    ax.plot([0.0, 1.0, 2.0], [1.0, 2.0, 3.0])
+    try:
+        charts = figure._charts()
+        assert charts
+        for chart in charts:
+            spec, _ = chart.figure().build_payload_split()
+            assert spec["interaction"]["zoom"] is False
+    finally:
+        plt.close(figure)

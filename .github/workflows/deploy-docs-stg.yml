@@ -42,16 +42,17 @@ jobs:
           EVENT_SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
         run: |
-          # Shape check only — the real gate (tag == pyproject == CHANGELOG)
-          # runs below against the tagged tree. Deliberately PEP 440, not
-          # strict SemVer: release.yml requires tag == "v" + the pyproject
-          # version, so an rc tags as `v0.2.0rc1` (no dash) and a post-release
-          # as `v0.2.0.post1`. Local versions are excluded because `+` is not a
-          # legal Docker tag character and this value becomes the image tag,
-          # and the trailing class cannot end in a separator. 128 chars is the
-          # ceiling the reusable build/helm workflows enforce.
+          # Loose shape check only: this runs before the repo is on disk, so all
+          # it has to establish is that the value can resolve to a ref and is a
+          # legal image tag. check_release_version.py below is the authority on
+          # what a release tag is. Deliberately PEP 440, not strict SemVer — a
+          # pre-release tags as `v0.2.0rc1`, no dash. Local versions are
+          # excluded because `+` is not a legal Docker tag character and this
+          # value becomes the image tag, and the trailing class cannot end in a
+          # separator. 128 chars is the ceiling the reusable build/helm
+          # workflows enforce.
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-]?[A-Za-z0-9]+)*$ ]]; then
-            echo "::error::version must be a release tag like v0.1.0, v0.2.0rc1 or v0.2.0.post1"
+            echo "::error::version must be a release tag like v0.1.0 or v0.2.0rc1"
             exit 1
           fi
           if (( ${#VERSION} > 128 )); then
@@ -71,13 +72,14 @@ jobs:
           echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
 
       # A semver-shaped tag is not necessarily a releasable one. Run the same
-      # gate release.yml runs, against the tagged tree, so a stray `v9.9.9`
-      # cannot deploy docs for a library version that can never be published.
+      # gate release.yml runs, from the tagged tree, so a tag the version
+      # derivation cannot read cannot deploy docs for a library version that can
+      # never be published.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.resolve.outputs.source_sha }}
           persist-credentials: false
-      - name: Release version gate (tag == pyproject == CHANGELOG)
+      - name: Release version gate (tag shape)
         env:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: python3 scripts/check_release_version.py --tag "$VERSION"
@@ -118,8 +120,8 @@ jobs:
       - run: echo "Approved for production promotion"
 
   # No GitHub Release job here: on a `v*` tag release.yml owns the release
-  # (it gates tag == pyproject == CHANGELOG and attaches the Pyodide wheel with
-  # generated notes). A second creator would race it and could win, stamping a
+  # (it gates the tag shape and attaches the Pyodide wheel with generated
+  # notes). A second creator would race it and could win, stamping a
   # library release with docs-deployment notes. The flip side of not owning it
   # is that this workflow must confirm it happened before promoting prod.
   verify-library-release:

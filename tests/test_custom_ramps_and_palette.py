@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import xy
-from xy import _svg, channels
+from xy import _raster, _svg, channels
 from xy.config import DEFAULT_PALETTE
 
 RAMP = ["#0b1220", "#2563eb", "#22d3ee", "#fde68a"]
@@ -432,6 +432,37 @@ def test_hand_authored_specs_degrade_per_index_never_onto_one_color():
     assert not (rows[:, :3].sum(axis=1) == 0).any(), "entry resolved to black"
     assert [list(row[:3]) for row in rows] == [
         list(channels.palette_rows_rgba8([c], 1)[0][:3]) for c in DEFAULT_PALETTE[:3]
+    ]
+
+
+def test_native_raster_categorical_fallback_is_indexed_and_warns() -> None:
+    trace = {
+        "color": {
+            "mode": "categorical",
+            "buf": 0,
+            "palette": ["var(--a)", "var(--b)", "var(--c)"],
+        }
+    }
+    codes = np.arange(3, dtype=np.uint8)
+
+    with pytest.warns(RuntimeWarning, match="resolve only in a browser"):
+        rgba = _raster._trace_paint_rgba(trace, "color", 3, "#000000", lambda _index: codes)
+
+    assert np.rint(rgba * 255).astype(np.uint8).tolist() == [
+        list(channels.palette_rows_rgba8([color], 1)[0]) for color in DEFAULT_PALETTE[:3]
+    ]
+
+
+def test_native_raster_literal_categorical_palette_never_warns() -> None:
+    trace = {"color": {"mode": "categorical", "buf": 0, "palette": PALETTE[:3]}}
+    codes = np.arange(3, dtype=np.uint8)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        rgba = _raster._trace_paint_rgba(trace, "color", 3, "#000000", lambda _index: codes)
+
+    assert np.rint(rgba * 255).astype(np.uint8).tolist() == [
+        list(row) for row in channels.palette_rows_rgba8(PALETTE[:3], 3)
     ]
 
 

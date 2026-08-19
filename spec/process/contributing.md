@@ -178,8 +178,10 @@ This runs seven split browser checks, which CI runs as separate steps:
 The stdlib payload gate runs `scripts/render_smoke_nonumpy.py`. It hand-builds a
 payload from stdlib `array` and `struct` in exactly the wire shape
 `build_payload` emits, drives the standalone JS bundle in Chromium, and reads
-back a lit-pixel count via `gl.readPixels`. It needs neither numpy nor PyPI, so
-it covers the render client in a locked-down environment.
+back a lit-pixel count via `gl.readPixels`. A stdlib-only DevTools Protocol
+session stops the browser as soon as the page publishes its result instead of
+waiting for a WebGL page to become idle. It needs neither numpy nor PyPI, so it
+covers the render client in a locked-down environment.
 
 The real-Figure gate runs `scripts/smoke_render.py`. It builds a standalone page
 the same way `Chart.to_html` does from an actual Figure (line decimation plus

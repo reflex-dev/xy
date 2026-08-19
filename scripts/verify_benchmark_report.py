@@ -77,7 +77,7 @@ WORKFLOW_REQUIRED_SCENARIOS = {
     "export_svg_decimated_line",
     "export_png_native_decimated_line",
 }
-DASHBOARD_REQUIRED_COUNTS = {10, 20, 50}
+DASHBOARD_REQUIRED_COUNTS = {10, 20, 50, 60}
 DASHBOARD_MIN_LOSS_FREE_CHARTS = 10
 DASHBOARD_SMOKE_BUDGETS_MS = {
     "render_ms": 5_000.0,
@@ -1565,6 +1565,27 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                     "ms_per_chart",
                     "payload_prep_ms",
                     "navigation_ready_ms",
+                    "chart_setup_first_draw_p50_ms",
+                    "chart_setup_first_draw_p95_ms",
+                    "chart_setup_first_draw_max_ms",
+                    "startup_shader_compile_calls",
+                    "startup_unique_shader_sources",
+                    "startup_program_create_calls",
+                    "startup_program_link_calls",
+                    "pick_probe_charts",
+                    "pick_probe_chart_ids",
+                    "post_pick_shader_compile_calls",
+                    "post_pick_unique_shader_sources",
+                    "post_pick_program_create_calls",
+                    "post_pick_program_link_calls",
+                    "shader_compile_calls",
+                    "unique_shader_sources",
+                    "program_create_calls",
+                    "program_link_calls",
+                    "startup_long_task_observer_supported",
+                    "startup_long_task_count",
+                    "startup_long_task_total_ms",
+                    "startup_long_task_max_ms",
                     "scroll_pass_ms",
                     "steady_redraw_p95_ms",
                     "steady_redraw_active_charts",
@@ -1597,6 +1618,11 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "ms_per_chart",
                 "payload_prep_ms",
                 "navigation_ready_ms",
+                "chart_setup_first_draw_p50_ms",
+                "chart_setup_first_draw_p95_ms",
+                "chart_setup_first_draw_max_ms",
+                "startup_long_task_total_ms",
+                "startup_long_task_max_ms",
                 "scroll_pass_ms",
                 "scroll_recovery_p95_ms",
                 "steady_redraw_p95_ms",
@@ -1612,8 +1638,37 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "context_lost_events",
                 "context_restored_events",
                 "governed_context_lost_events",
+                "startup_long_task_count",
+                "pick_probe_charts",
             ):
                 _require_nonnegative_integer(row, key, path, errors)
+            allow_zero_shader_counters = (
+                isinstance(row.get("created_charts"), int)
+                and not isinstance(row.get("created_charts"), bool)
+                and row.get("created_charts") == 0
+            )
+            shader_counter_validator = (
+                _require_nonnegative_integer
+                if allow_zero_shader_counters
+                else _require_positive_integer
+            )
+            for key in (
+                "startup_shader_compile_calls",
+                "startup_unique_shader_sources",
+                "startup_program_create_calls",
+                "startup_program_link_calls",
+                "post_pick_shader_compile_calls",
+                "post_pick_unique_shader_sources",
+                "post_pick_program_create_calls",
+                "post_pick_program_link_calls",
+                "shader_compile_calls",
+                "unique_shader_sources",
+                "program_create_calls",
+                "program_link_calls",
+            ):
+                shader_counter_validator(row, key, path, errors)
+            if not isinstance(row.get("startup_long_task_observer_supported"), bool):
+                errors.append(f"{path}.startup_long_task_observer_supported must be a boolean")
             for key in ("js_heap_before_bytes", "js_heap_bytes"):
                 _require_optional_nonnegative_number(row, key, path, errors)
             delta = row.get("js_heap_delta_bytes")
@@ -1715,8 +1770,121 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         "currently_lost_chart_ids",
         "released_chart_ids",
         "evicted_chart_ids",
+        "pick_probe_chart_ids",
     )
     ids = {key: _dashboard_id_list(row, key, path, expected_ids, errors) for key in id_keys}
+
+    setup_first_draw_percentiles = (
+        row.get("chart_setup_first_draw_p50_ms"),
+        row.get("chart_setup_first_draw_p95_ms"),
+        row.get("chart_setup_first_draw_max_ms"),
+    )
+    if all(_is_number(value) for value in setup_first_draw_percentiles) and not (
+        setup_first_draw_percentiles[0]
+        <= setup_first_draw_percentiles[1]
+        <= setup_first_draw_percentiles[2]
+    ):
+        errors.append(f"{path}.chart setup/first-draw telemetry must satisfy p50 <= p95 <= max")
+    shader_phases = (
+        (
+            "startup",
+            row.get("startup_shader_compile_calls"),
+            row.get("startup_unique_shader_sources"),
+            row.get("startup_program_create_calls"),
+            row.get("startup_program_link_calls"),
+        ),
+        (
+            "post-pick",
+            row.get("post_pick_shader_compile_calls"),
+            row.get("post_pick_unique_shader_sources"),
+            row.get("post_pick_program_create_calls"),
+            row.get("post_pick_program_link_calls"),
+        ),
+        (
+            "final",
+            row.get("shader_compile_calls"),
+            row.get("unique_shader_sources"),
+            row.get("program_create_calls"),
+            row.get("program_link_calls"),
+        ),
+    )
+    for label, compiles, unique, creates, links in shader_phases:
+        prefix = {"startup": "startup_", "post-pick": "post_pick_", "final": ""}[label]
+        compile_key = f"{prefix}shader_compile_calls"
+        unique_key = f"{prefix}unique_shader_sources"
+        create_key = f"{prefix}program_create_calls"
+        link_key = f"{prefix}program_link_calls"
+        if all(
+            isinstance(value, int) and not isinstance(value, bool) for value in (compiles, unique)
+        ):
+            if unique > compiles:
+                errors.append(f"{path}.{unique_key} must be <= {compile_key}")
+            if row.get("context_lost_events") == 0 and compiles != unique:
+                errors.append(
+                    f"{path}.{compile_key} must compile each unique shader source exactly "
+                    f"once in a loss-free {label} phase"
+                )
+        if (
+            all(
+                isinstance(value, int) and not isinstance(value, bool) for value in (creates, links)
+            )
+            and links > creates
+        ):
+            errors.append(f"{path}.{link_key} must be <= {create_key}")
+    if all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for phase in shader_phases
+        for value in phase[1:]
+    ):
+        for metric_index, label in (
+            (1, "shader compile calls"),
+            (2, "unique shader sources"),
+            (3, "program creates"),
+            (4, "program links"),
+        ):
+            values = [phase[metric_index] for phase in shader_phases]
+            if values != sorted(values):
+                errors.append(f"{path}.{label} must be monotonic across startup/pick/final")
+        if row.get("context_lost_events") == 0 and shader_phases[1][1:] != shader_phases[2][1:]:
+            errors.append(f"{path}.loss-free redraw phase must not compile or link new programs")
+    if (
+        chart_count == 60
+        and row.get("render_status") == "complete"
+        and row.get("fully_nonblank") is True
+        and row.get("context_lost_events") == 0
+    ):
+        expected_pick_ids = [f"chart-{index}" for index in range(1, 60, 5)]
+        if row.get("pick_probe_chart_ids") != expected_pick_ids:
+            errors.append(
+                f"{path}.pick_probe_chart_ids must identify the 12 mixed-dashboard "
+                "scatter charts in deterministic order"
+            )
+        exact = {
+            "startup_shader_compile_calls": 9,
+            "startup_unique_shader_sources": 9,
+            "startup_program_create_calls": 60,
+            "startup_program_link_calls": 60,
+            "pick_probe_charts": 12,
+            "post_pick_shader_compile_calls": 11,
+            "post_pick_unique_shader_sources": 11,
+            "post_pick_program_create_calls": 72,
+            "post_pick_program_link_calls": 72,
+        }
+        for key, expected in exact.items():
+            if row.get(key) != expected:
+                errors.append(
+                    f"{path}.{key} must be {expected} for the mixed 60-chart shader oracle"
+                )
+    long_task_count = row.get("startup_long_task_count")
+    long_task_total = row.get("startup_long_task_total_ms")
+    long_task_max = row.get("startup_long_task_max_ms")
+    if all(_is_number(value) for value in (long_task_total, long_task_max)):
+        if long_task_max > long_task_total:
+            errors.append(f"{path}.startup_long_task_max_ms must be <= startup_long_task_total_ms")
+        if long_task_count == 0 and (long_task_total != 0 or long_task_max != 0):
+            errors.append(f"{path}.zero startup long tasks must have zero duration telemetry")
+    if row.get("startup_long_task_observer_supported") is False and long_task_count != 0:
+        errors.append(f"{path}.unsupported long-task observer must report zero tasks")
 
     count_keys = (
         "steady_redraw_active_charts",
@@ -1735,6 +1903,7 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         ("creation_failed_charts", "creation_failure_ids"),
         ("initial_nonblank_charts", "initial_nonblank_chart_ids"),
         ("scroll_nonblank_charts", "scroll_nonblank_chart_ids"),
+        ("pick_probe_charts", "pick_probe_chart_ids"),
     )
     for count_key, ids_key in expected_pairs:
         if row.get(count_key) != len(ids[ids_key]):

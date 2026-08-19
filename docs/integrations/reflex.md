@@ -3,7 +3,10 @@ title: Reflex
 description: Render fixed and state-backed XY charts as first-class Reflex components.
 components:
   - reflex_xy.chart
+  - reflex_xy.data
   - reflex_xy.figure
+  - reflex_xy.scatter_chart
+  - reflex_xy.line_chart
   - reflex_xy.inline
   - reflex_xy.append
 ---
@@ -40,11 +43,11 @@ Then register the bundled plugin:
 ~~~python
 # rxconfig.py
 import reflex as rx
-import reflex_xy
+import reflex_xy as rxy
 
 config = rx.Config(
     app_name="dashboard",
-    plugins=[reflex_xy.XYPlugin()],
+    plugins=[rxy.XYPlugin()],
 )
 ~~~
 
@@ -52,31 +55,28 @@ The plugin attaches XY's binary data plane to the Reflex app's existing
 Socket.IO server. It does not add another HTTP service or websocket endpoint to
 deploy.
 
-## Fixed Charts
+## Fixed Data
 
-Pass a regular `xy.Chart` directly to `reflex_xy.chart` when its data does not
-depend on state. The adapter compiles a content-addressed binary asset during
-the frontend build, so the result works with `reflex export` and needs no
-backend connection.
+Pass concrete columns through `data=` when they do not depend on state. The
+adapter compiles a content-addressed binary asset during the frontend build, so
+the result works with `reflex export` and needs no backend connection.
 
-~~~python
+~~~python demo exec
 import numpy as np
 import reflex as rx
-import reflex_xy
+import reflex_xy as rxy
 import xy
 
 t = np.linspace(0, 4 * np.pi, 800)
 
 
 def index() -> rx.Component:
-    return reflex_xy.chart(
-        xy.line_chart(
-            xy.line(t, np.sin(t), name="signal"),
-            xy.x_axis(label="t"),
-            title="Static payload",
-            width="100%",
-            height=280,
-        ),
+    return rxy.line_chart(
+        data={"t": t, "signal": np.sin(t)},
+        x="t",
+        y="signal",
+        x_axis=xy.x_axis(label="t"),
+        title="Static payload",
         height="280px",
     )
 ~~~
@@ -85,43 +85,54 @@ Static charts retain browser-local hover, pan, zoom, and density refinement.
 They do not dispatch backend event handlers because there is no live kernel to
 resolve semantic event payloads.
 
-## State-Backed Charts
+## State-Backed Data
 
-Use `@reflex_xy.figure` when chart data depends on session state. The computed
-var stores only an opaque token; numeric columns travel as binary frames over
-the app's existing websocket rather than through Reflex state JSON.
+Use `@rxy.data` when chart columns depend on session state. Declare the
+chart where it renders and return only its columns from the state method. The
+chart structure is validated when `reflex run` compiles the app, without
+running the data method. At runtime the computed var holds only a typed handle;
+numeric columns travel as binary frames over the app's existing websocket
+rather than through Reflex state JSON.
 
-~~~python
+~~~python demo exec
+from typing import TypedDict
+
 import numpy as np
 import reflex as rx
-import reflex_xy
-import xy
+import reflex_xy as rxy
+
+
+class CloudData(TypedDict):
+    x: np.ndarray
+    y: np.ndarray
+    magnitude: np.ndarray
 
 
 class Dashboard(rx.State):
     points: int = 20_000
     hovered: dict = {}
 
-    @reflex_xy.figure
-    def cloud(self) -> xy.Chart:
+    @rxy.data
+    def cloud(self) -> CloudData:
         rng = np.random.default_rng(7)
         x = rng.normal(size=self.points)
         y = 0.6 * x + rng.normal(scale=0.6, size=self.points)
-        return xy.scatter_chart(
-            xy.scatter(x, y, density=True),
-            width="100%",
-            height=420,
-        )
+        return {"x": x, "y": y, "magnitude": np.hypot(x, y)}
 
     @rx.event
-    def record_hover(self, row: dict):
-        self.hovered = row
+    def record_hover(self, event: rxy.PointHoverEvent):
+        self.hovered = {**event.get("data", {}), **event.get("datum", {})}
 
 
 def index() -> rx.Component:
     return rx.vstack(
-        reflex_xy.chart(
-            Dashboard.cloud,
+        rxy.scatter_chart(
+            data=Dashboard.cloud,
+            x="x",
+            y="y",
+            color="magnitude",
+            colormap="viridis",
+            density=True,
             on_point_hover=Dashboard.record_hover,
             height="420px",
         ),
@@ -130,8 +141,63 @@ def index() -> rx.Component:
     )
 ~~~
 
-Figure builders may also be `async def`, following the same rules as Reflex
-async computed vars.
+The `TypedDict` return annotation lets the integration catch misspelled column
+names while the page compiles. A plain mapping return type also works, but its
+column names can only be checked when the data method first runs. Data methods
+may be `async def` and may return `None` when no data is currently available.
+
+### Compose Multiple Marks
+
+For multiple marks, pass data-free XY nodes to `rxy.chart`. Channel values are
+column-name strings, and every mark binds to the same data handle:
+
+~~~python
+from typing import TypedDict
+
+import numpy as np
+import reflex as rx
+import reflex_xy as rxy
+import xy
+
+
+class TrendData(TypedDict):
+    x: np.ndarray
+    y: np.ndarray
+    magnitude: np.ndarray
+
+
+class Trends(rx.State):
+    @rxy.data
+    def samples(self) -> TrendData:
+        x = np.linspace(0, 10, 1_000)
+        y = np.sin(x)
+        return {"x": x, "y": y, "magnitude": np.abs(y)}
+
+
+def trends() -> rx.Component:
+    return rxy.chart(
+        xy.scatter("x", "y", color="magnitude", density=True),
+        xy.line("x", "magnitude", name="magnitude"),
+        xy.x_axis(label="feature A"),
+        xy.legend(),
+        data=Trends.samples,
+        height="420px",
+    )
+~~~
+
+Both the flat factories such as `rxy.scatter_chart` and composed `rxy.chart`
+build a data-free plan at page evaluation. Invalid chart options and unknown
+columns in a typed schema therefore fail at compile time rather than producing
+a blank chart in the browser. Changing state republishes only the columns under
+the stable data handle, preserving the mounted chart's view and selection.
+
+Data handles are ordinary Reflex vars. They can be selected with `rx.cond`, or
+collected in a typed `list[rxy.DataHandle[Schema]]` for `rx.foreach`, as long as
+each source satisfies the chart's column schema.
+
+Use `@rxy.data` for every state-backed chart whose marks, axes, and other
+structure can be declared in the page. `@rxy.figure` remains an escape hatch
+only for the uncommon case where state changes that structure itself.
 
 ## Events and Streaming
 
@@ -139,8 +205,7 @@ async computed vars.
 `on_animation_start`, and `on_animation_end` dispatch small semantic payloads
 through normal Reflex event handlers. Large
 chart buffers never enter those payloads. These props belong on the outer
-`reflex_xy.chart(...)` component and work only with a live token source, such
-as an `inline()` token or an `@reflex_xy.figure` var.
+`rxy` chart factory and work with a live `@rxy.data` source.
 
 They are separate from the core callbacks accepted by `xy` chart containers.
 Core `on_hover`, `on_click`, `on_brush`, `on_select`, and `on_view_change`
@@ -173,7 +238,7 @@ To extend a registered chart from an event or background task, append new
 points without rebuilding the component:
 
 ~~~python
-reflex_xy.append(token, x=[next_x], y=[next_y])
+rxy.append(token, x=[next_x], y=[next_y])
 ~~~
 
 See [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/)
@@ -183,13 +248,11 @@ for the mutation and snapshot contract.
 
 | Component source | Best for | Backend |
 | --- | --- | --- |
-| A direct `xy.Chart`: `reflex_xy.chart(chart)` | Fixed, exportable charts | None |
-| A module-scope `token = reflex_xy.inline(chart)`, then `reflex_xy.chart(token)` | Fixed data with kernel round-trips | XY registry |
-| An `@reflex_xy.figure` var: `reflex_xy.chart(State.figure)` | Session and state-driven charts | Reflex + XY registry |
+| Concrete columns: `rxy.scatter_chart(data={...}, ...)` | Fixed, compile-bound columns | None |
+| An `@rxy.data` var: `rxy.scatter_chart(data=State.data, ...)` | State-driven columns with fixed, compile-validated structure | Reflex + XY registry |
 
-`inline()` should run at module scope so every backend worker registers the
-same content-addressed token. Despite its name, `inline()` is the live,
-kernel-backed fixed-data tier; passing a Chart directly is the static tier.
+Prefer the concrete-column form for fixed data and `@rxy.data` for state-backed
+data. Both use the same compile-validated chart API; only the transport changes.
 
 ## Custom Chrome Slots
 
@@ -222,6 +285,6 @@ objects never enter standalone HTML. For ordinary DOM customization, use the
 
 The Reflex adapter and callback payload details are still experimental. Pin
 `xy` when you need a stable integration contract, and build against
-`reflex_xy.chart`, `@reflex_xy.figure`, and `reflex_xy.append` rather than
-private transport or registry modules.
+`rxy.chart`, `@rxy.data`, and `rxy.append` rather than private transport or
+registry modules.
 ~~~

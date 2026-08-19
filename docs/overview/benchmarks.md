@@ -113,6 +113,8 @@ export CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 .venv/bin/python benchmarks/summarize_ux.py /path/to/xy-ux-suite
 .venv/bin/python benchmarks/plot_ux.py /path/to/xy-ux-suite --out-dir charts
+.venv/bin/python benchmarks/plot_ux.py /path/to/xy-ux-suite --out-dir charts \
+  --color-scheme dark --suffix=-dark
 ```
 
 Keep results separated by environment. Hardware WebGL and SwiftShader rows are

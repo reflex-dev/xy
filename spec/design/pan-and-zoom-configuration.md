@@ -125,7 +125,7 @@ keeps policy in one visible node.
 | `default_drag_action` | `"auto"` | Choose pan when available, then another enabled drag tool. |
 | `pan` | `True` | Drag panning is available. |
 | `pan_axes` | all declared axes | Pan every axis unless explicitly narrowed. A narrowed-out zoom axis is contained to its home window (§7.1). |
-| `zoom` | `True` | Zoom actions are available. |
+| `zoom` | `True` (`False` under `coords="polar"`) | Zoom actions are available. |
 | `zoom_axes` | all declared axes | Zoom every axis unless explicitly narrowed. |
 | `zoom_limits` | `(1.0, None)` on every axis in `zoom_axes` | Do not zoom out past home; allow zoom-in to bounds/precision. |
 | `wheel_zoom` | `True` | Wheel and trackpad zoom. |
@@ -141,6 +141,16 @@ to `{"x": (1.0, None), "y": (1.0, None)}`. A declared `y2` also receives
 
 Unspecified keys should remain absent from the payload. The client resolves defaults,
 keeping exports compact and compatibility explicit.
+
+**One exception: `zoom` under `coords="polar"`.** A polar figure resolves `zoom` in
+Python and always ships the flag, because the client cannot make the decision — a pie
+and a wind rose are the same figure to it (`Chart.kind` never reaches the wire) and
+they want opposite answers. The centre is a fixed point of the polar transform, so
+zooming a constant-rim composition crops it rather than navigating it; the default is
+therefore `False`, `wind_rose` ships `True` because its radius is a frequency count,
+and `xy.interaction_config(zoom=…)` overrides either. With the flag off, the polar
+modebar carries no zoom controls and the wheel is left uncancelled so the page keeps
+scrolling. See [`polar-axes.md`](polar-axes.md) §8.
 
 ### 5.3 Precedence
 
@@ -477,7 +487,7 @@ part of the contract, not incidental:
 | --- | --- |
 | `margin` unset | 3% of the data span on each end. A log axis additionally floors the low edge at `max(lo / 10, nextafter(0, 1))`. |
 | `margin=0` | The domain is exactly the data range — no pad, on any scale kind. |
-| Log axis with an explicit `margin` | The pad is applied in log10 space (`10 ** (log10(lo) - span * margin)`), so it is multiplicative and symmetric on screen. The `lo / 10` floor does not apply: an authored margin is the authority on the low edge. |
+| Log axis with an explicit `margin` | The pad is applied in log10 space (`10 ** (log10(lo) - span * margin)`), so it is multiplicative and symmetric on screen. If the padded low edge underflows to zero, it is floored at `nextafter(0, 1)`; the `lo / 10` floor does not apply because an authored margin remains the authority otherwise. |
 | Singleton data range (`lo == hi`) with an explicit `margin` | The extent becomes `[lo, lo + 1]` and the margin pads that unit interval — matching mpl's singleton handling. Without a margin the legacy fallback still applies: `±5%` of `abs(lo)`, or `±0.5` at zero. |
 | Zero-baseline marks (bars, areas) | Unchanged: the padded edge still snaps back to `0` when the data range touches it, so a bar chart's baseline does not float off the spine. |
 | Both ends sticky (mesh, image, ECDF cumulative axis) | The axis takes the data range verbatim, as matplotlib's sticky edges do for `imshow`/`pcolormesh`/`hist2d`/`specgram` and for an ECDF's 0/1 axis. The engine has no sticky concept beyond the zero-baseline anchor above, so the pyplot shim resolves this case itself and ships a materialized `domain` in place of `margin` (`Axes._fully_sticky_domain`) — the two never combine. A *one-sided* sticky edge is the zero baseline and stays with `margin`, anchored by the engine. |

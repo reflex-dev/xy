@@ -843,7 +843,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/visual_regression_smoke.py",
         "scripts/interaction_stress_smoke.py",
         "benchmarks/bench_dashboard.py",
-        "--chart-counts 10,20,50",
+        "--chart-counts 10,20,50,60",
         "dashboard-smoke.json --kind dashboard-browser",
         "--sizes 1e5,1e6,1e7 --production --json scatter.json",
         "scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json",
@@ -1072,6 +1072,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "verify_benchmark_report.py workflows.json --kind workflow-native",
         "bench_interaction.py",
         "bench_dashboard.py",
+        "--chart-counts 10,20,50,60",
         "docs/benchmark_ci.md",
         "if-no-files-found: warn",
     )
@@ -1352,7 +1353,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "publish",
         "release",
         "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
-        "and a tag/version/CHANGELOG agreement gate",
+        "and a release-tag shape gate",
         "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",

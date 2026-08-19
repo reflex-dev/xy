@@ -99,6 +99,40 @@ def test_every_chart_kind_exports_wellformed_svg() -> None:
         assert 'xmlns="http://www.w3.org/2000/svg"' in svg
 
 
+def test_svg_best_legend_rescores_the_final_export_size(monkeypatch) -> None:
+    figure = xy.chart(
+        xy.bar([0.75], [1.0], base=[0.90], width=0.04, name="series"),
+        xy.x_axis(domain=(0.0, 1.0)),
+        xy.y_axis(domain=(0.0, 1.0)),
+        xy.legend(loc="best"),
+        width=640,
+        height=360,
+    ).figure()
+    initial, _ = figure.build_payload()
+    assert initial["legend"]["loc"] == "upper right"
+
+    from xy import _legendfit
+
+    calls = []
+    original = _legendfit.resolve_for_figure
+
+    def record(figure, spec=None, legend_options=None, rendered_columns=None):
+        result = original(figure, spec, legend_options, rendered_columns)
+        calls.append((spec["width"], spec["height"], rendered_columns, result))
+        return result
+
+    monkeypatch.setattr(_legendfit, "resolve_for_figure", record)
+    root = _parse(figure.to_svg(width=280))
+
+    # Payload construction first resolves at the authored 640 px. The static
+    # post-pass must then score the emitted columns at the final 280 px layout.
+    assert calls[-1][:2] == (280, 360)
+    assert isinstance(calls[-1][2], bytes)
+    assert calls[-1][3] == "upper left"
+    assert float(_text_element(root, "series").attrib["x"]) < 140.0
+    assert figure.legend_options["loc"] == "best"
+
+
 def test_svg_paints_figure_and_plot_backgrounds() -> None:
     chart = xy.line_chart(
         xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),

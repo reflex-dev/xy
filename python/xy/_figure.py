@@ -8,9 +8,11 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+import contextlib
 import math
 import warnings
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
 
@@ -48,6 +50,26 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 # "selection not passed" sentinel for state_patch_message: None is meaningful
 # there (clear the selection), so absence needs its own marker.
 _STATE_UNSET: Any = object()
+
+#: Structural-probe mode. While active, a mark whose data channels are all
+#: empty validates its *configuration* (enums, bounds, colormaps, range
+#: shapes) and contributes no traces, instead of refusing zero rows. This is
+#: the core validation seam compile gates build on (the Reflex plan probe:
+#: spec/design/reflex-integration.md §3.6 "Kind coverage") — structure is
+#: checkable with no data bound, and data-dependent aggregation never runs
+#: on invented values. Non-empty data behaves identically in and out of
+#: probe mode.
+_STRUCTURAL_PROBE: ContextVar[bool] = ContextVar("xy_structural_probe", default=False)
+
+
+@contextlib.contextmanager
+def structural_probe():
+    """Build figures in structural-probe mode (see ``_STRUCTURAL_PROBE``)."""
+    token = _STRUCTURAL_PROBE.set(True)
+    try:
+        yield
+    finally:
+        _STRUCTURAL_PROBE.reset(token)
 
 
 class Selection:
@@ -108,6 +130,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # size (§28). height="100%" needs a parent with a defined height (the
         # usual CSS contract); otherwise the chart falls back to its 120px
         # min-height.
+        # Captured at construction so every mark applied to this figure agrees
+        # on the mode regardless of where the applier call happens.
+        self._structural_probe = _STRUCTURAL_PROBE.get()
         self.width = self._pixel_dimension(width, "width")
         self.height = self._pixel_dimension(height, "height")
         # padding: override the auto plot margins (top, right, bottom, left) in
@@ -600,6 +625,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     segments = _marks.segments
     ribbon = _marks.ribbon
     sankey = _marks.sankey
+    funnel = _marks.funnel
     triangle_mesh = _marks.triangle_mesh
     bar = _marks.bar
     column = _marks.column
@@ -647,8 +673,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             style["wedge_gap"] = gap
         stroke = self._optional_css_color(stroke, f"{kind} stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
-        if stroke is not None and stroke_width == 0.0:
-            stroke_width = 1.0
+        stroke_width = _marks._implied_stroke_width(stroke, stroke_width)
         fill_spec = _validate.mark_fill(fill, f"{kind} fill")
         if stroke is not None:
             style["stroke"] = stroke
@@ -828,6 +853,37 @@ class Figure(AnnotationsMixin, PayloadMixin):
         value = self.interaction.get(name)
         return list(self.axis_options) if value is None else self._axis_policy(value, name)
 
+    def _validate_funnel_axes(self) -> None:
+        """Refuse axis types the funnel geometry cannot draw truthfully.
+
+        A funnel's segments are centered on zero, so half its corners are
+        negative — a log cross axis maps them to NaN and a symlog one bends
+        the silhouette; a time cross axis has no meaning for widths. The
+        stage axis is categorical by construction, and a forced type
+        (`_axis_kind` lets a forced "time" beat the category registry) would
+        silently strip the stage labels. Every one of these *would* draw
+        something, and a plausible wrong picture is worse than an error (§28).
+        """
+        for t in self.traces:
+            if t.kind != "funnel":
+                continue
+            vertical = str(t.style.get("orientation", "vertical")) == "vertical"
+            cross_axis = t.x_axis if vertical else t.y_axis
+            stage_axis = t.y_axis if vertical else t.x_axis
+            cross_type = self.axis_options.get(cross_axis, {}).get("type")
+            if cross_type in {"log", "symlog", "time"}:
+                raise ValueError(
+                    f"funnel cross axis {cross_axis!r} cannot be {cross_type!r}: "
+                    "segments are centered on zero, so their widths only read "
+                    "on a linear axis"
+                )
+            stage_type = self.axis_options.get(stage_axis, {}).get("type")
+            if stage_type in {"log", "symlog", "time"}:
+                raise ValueError(
+                    f"funnel stage axis {stage_axis!r} cannot be {stage_type!r}: "
+                    "the stage axis is categorical (stage names in declared order)"
+                )
+
     def _validate_coords(self) -> None:
         """Refuse mark kinds the polar transform does not yet render correctly.
 
@@ -977,6 +1033,23 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     "before charting."
                 )
 
+    def _zoom_enabled(self) -> bool:
+        """The resolved `zoom` capability.
+
+        `zoom` is the one interaction switch whose default depends on the
+        coordinate system: polar resolves it to False (polar-axes.md §8 — the
+        centre is a fixed point, so zooming a constant-rim composition crops it
+        instead of navigating it), Cartesian to True. Every consumer of the
+        resolved value goes through here, so validation and the payload cannot
+        disagree about it — they did, and `default_drag_action='zoom'` on a
+        polar chart passed construction only to ship the self-contradicting
+        `{"zoom": false, "default_drag_action": "zoom"}`.
+        """
+        value = self.interaction.get("zoom")
+        if value is None:
+            return self.coords != "polar"
+        return value is not False
+
     def _validate_interaction(self) -> None:
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
@@ -989,8 +1062,31 @@ class Figure(AnnotationsMixin, PayloadMixin):
         action = self._default_drag_action(action)
         if action in {"auto", "none"}:
             return
+        if self.coords == "polar":
+            # A disc has no drag tools at all (polar-axes.md §8), which is why
+            # polar's resolved drag mode is `none`: the client returns [] for
+            # `pan_axes` and forces `box_zoom`/`select`/`brush` off under polar,
+            # whatever the flags say. So every action but `auto`/`none` is
+            # accepted-and-inert — the plausible-but-wrong outcome §28 refuses
+            # everywhere else in this validator. Radial zoom is unaffected: it is
+            # a wheel/button gesture, not a drag.
+            raise ValueError(
+                f"coords='polar' does not support default_drag_action={action!r}; a "
+                "disc has no drag tools (theta pan, box zoom, and rectangular/lasso "
+                "selection all lack polar geometry), so only 'auto' and 'none' are "
+                "meaningful. Radial zoom is a separate wheel/button capability, "
+                "controlled by the `zoom` switch rather than by a drag action. See "
+                "spec/design/polar-axes.md."
+            )
 
         def enabled(name: str) -> bool:
+            # `zoom` reads through the resolved predicate rather than the raw
+            # dict so this can never disagree with what `_interaction_spec`
+            # ships. The polar guard above means the two currently agree for
+            # every action that reaches here; keeping the indirection is what
+            # stops that from silently ceasing to be true.
+            if name == "zoom":
+                return self._zoom_enabled()
             return self.interaction.get(name, True) is not False
 
         if action == "pan" and not (enabled("navigation") and enabled("pan")):
@@ -1426,7 +1522,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if scale == "log" and configured_margin is not None:
             transformed_lo, transformed_hi = np.log10((lo, hi))
             pad = (transformed_hi - transformed_lo) * margin
-            out_lo = 10.0 ** (transformed_lo - pad)
+            # A wide domain can drive the padded exponent past the smallest
+            # representable double, leaving a log axis with a non-positive
+            # lower bound. Floor it the same way the default-margin branch
+            # does, without the ``lo / 10.0`` clamp that would override an
+            # authored margin.
+            out_lo = max(10.0 ** (transformed_lo - pad), np.nextafter(0.0, 1.0))
             out_hi = 10.0 ** (transformed_hi + pad)
         else:
             pad = (hi - lo) * margin
@@ -1693,6 +1794,17 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if t.kind == "ribbon":
             # x is just the two faces; y needs all four span edges, two of
             # which ride in the `x`/`y` slots (ribbon geometry contract).
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("ribbon trace missing geometry columns")
+            return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
+        if t.kind == "funnel":
+            # The generic x/y slots carry the trailing CROSS edges (funnel
+            # geometry contract), so they range on the cross axis — x for a
+            # vertical funnel, y for a horizontal one.
+            if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+                raise ValueError("funnel trace missing geometry columns")
+            if str(t.style.get("orientation", "vertical")) == "vertical":
+                return [t.x0, t.x1, t.x, t.y] if axis == "x" else [t.y0, t.y1]
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1, t.x, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
@@ -1721,6 +1833,25 @@ class Figure(AnnotationsMixin, PayloadMixin):
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        if "zoom" not in self.interaction and not self._zoom_enabled():
+            # Polar zoom is OFF by default (polar-axes.md §8). The centre is a
+            # fixed point of the transform and r_lo is pinned, so zooming in
+            # only crops the rim while the geometry stays welded to the middle
+            # of the disc — on a pie, radial bar, or radar, whose radius is a
+            # constant rim or a fixed frame, that reads as broken rather than as
+            # navigation. A composition whose RADIUS is a measured quantity
+            # (`wind_rose`, where it is a frequency count) opts back in by
+            # shipping `zoom=True`, as does any author via
+            # `xy.interaction_config(zoom=True)`; an ordinary `polar_chart` whose
+            # radius IS data is expected to do the same.
+            #
+            # Resolved HERE and shipped explicitly, against §5.2's "unspecified
+            # keys stay absent" rule, for two reasons: the client cannot make
+            # this decision (`Chart.kind` never reaches the wire — every polar
+            # figure looks identical to it), and §28 requires the choice to be
+            # on the wire rather than re-derived per renderer. The predicate is
+            # `_zoom_enabled` so validation resolves the same default this ships.
+            spec["zoom"] = False
         for name in ("pan_axes", "zoom_axes", "reset_axes", "link_axes"):
             if name in self.interaction:
                 spec[name] = self._axis_policy(self.interaction[name], name)
@@ -1894,7 +2025,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         alpha: Any = None,
         stroke_width: Any = None,
         symbol: Any = None,
-    ) -> tuple[dict[str, Any], list[bytes]]:
+    ) -> tuple[dict[str, Any], list[memoryview]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay

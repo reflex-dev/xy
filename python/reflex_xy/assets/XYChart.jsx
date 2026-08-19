@@ -1,8 +1,12 @@
 // XYChart: mount a xy figure inside a Reflex app.
 //
-// Two modes, one prop apart (spec/design/reflex-integration.md):
+// Two modes (spec/design/reflex-integration.md). Live subscriptions have
+// three spellings that reduce to one token: `figure` ({token} — the typed
+// FigureHandle), the deprecated bare `token` string, and the plan tier's
+// `plan` digest + `data` ({token} DataHandle), composed client-side as
+// `xyp1|<plan>|<data.token>` once the data handle hydrates.
 //
-// `token` (live) — this component does NOT open its own connection.
+// Live — this component does NOT open its own connection.
 // socket.io multiplexing reuses the app's engine.io websocket when the
 // manager options match, so `xySocket()` below constructs its `/_xy`
 // namespace socket with exactly the options Reflex's own `connect()` uses
@@ -174,6 +178,22 @@ const axisLayoutSpec = (spec) => {
   );
 };
 
+// Python keeps `loc` concrete even for automatic placement so static exports
+// and browsers without a readable marks surface have a deterministic fallback.
+// That concrete answer is data-dependent, not constructor-owned chrome: when
+// `auto_loc="best"` remains active, a loc-only change must stay on the
+// updatePayload path instead of destroying and remounting ChartView.
+const mountedLegendSpec = (legend, coords) => {
+  if (!legend || typeof legend !== "object" || Array.isArray(legend)) return legend ?? null;
+  const automatic =
+    String(legend.auto_loc || "").trim().toLowerCase() === "best" &&
+    !Array.isArray(legend.anchor) &&
+    coords !== "polar";
+  if (!automatic) return legend;
+  const { loc: _concreteFallback, ...mounted } = legend;
+  return mounted;
+};
+
 // updatePayload owns new axes/ranges, trace buffers, marks, annotations,
 // tooltip content, and animation. The fields below instead determine DOM
 // topology or layout built only by the ChartView constructor. Projecting just
@@ -184,8 +204,9 @@ const mountedChromeSpec = (spec) => ({
   title: spec?.title ?? null,
   padding: spec?.padding ?? null,
   show_legend: spec?.show_legend !== false,
-  legend: spec?.legend ?? null,
-  extra_legends: spec?.extra_legends ?? null,
+  legend: mountedLegendSpec(spec?.legend, spec?.coords),
+  extra_legends: spec?.extra_legends?.map((legend) =>
+    mountedLegendSpec(legend, spec?.coords)) ?? null,
   legend_traces: (spec?.traces || []).map(legendTraceSpec),
   colorbar: spec?.colorbar ?? null,
   has_density_badges: (spec?.traces || []).some((trace) => trace?.tier === "density"),
@@ -259,6 +280,9 @@ const pointEnvelope = (type, token, row, extra = {}) => {
 export function XYChart(props) {
   const {
     token,
+    figure,
+    plan,
+    data,
     src,
     onPointHover,
     onPointClick,
@@ -276,6 +300,16 @@ export function XYChart(props) {
     ...divProps
   } = props;
   void _tailwindClassTokens;
+  // One subscription token from the three live spellings. `figure` is the
+  // typed handle ({token}); the bare `token` string is the deprecated wire.
+  // A present handle always wins — its empty token means "not ready" (no
+  // subscription yet), never a fallback to the legacy spelling. A plan
+  // digest + data handle compose the plan-tier token client-side, again
+  // only once the data handle is hydrated.
+  const figureToken = figure != null ? figure.token || null : token || null;
+  const liveToken = (plan && data && data.token)
+    ? `xyp1|${plan}|${data.token}`
+    : figureToken;
   const elRef = useRef(null); // inner chart mount (wiped on payload swaps)
   const outerRef = useRef(null); // stable wrapper: events, tooltip slot
   const tooltipSlotRef = useRef(null);
@@ -284,7 +318,7 @@ export function XYChart(props) {
   const [hoverPayload, setHoverPayload] = useState(null);
   const hasTooltipChildrenRef = useRef(false);
   hasTooltipChildrenRef.current = Boolean(children);
-  dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
+  dbg("render", { id: divProps.id, token: String(liveToken).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
   cbRef.current = {
@@ -398,8 +432,8 @@ export function XYChart(props) {
   // Live mode: subscribe on the shared websocket.
   useEffect(() => {
     const el = elRef.current;
-    dbg("effect run", { token: token && token.slice(0, 24), hasEl: !!el });
-    if (!token || src || !el) return undefined;
+    dbg("effect run", { token: liveToken && liveToken.slice(0, 24), hasEl: !!el });
+    if (!liveToken || src || !el) return undefined;
     const socket = xySocket();
     const mid = `m${nextMountId++}`;
     let view = null;
@@ -420,6 +454,11 @@ export function XYChart(props) {
     const viewCallbacks = [];
     const pendingStatePushes = [];
     let awaitingPayload = true;
+    // Consecutive server-initiated resyncs without an intervening payload.
+    // Bounds the retry loop when a resync can never succeed (e.g. a stale
+    // plan digest after hot-reload drift; the remount with the new digest
+    // resubscribes on its own).
+    let errResyncs = 0;
 
     const resetEpoch = () => {
       // Timer callbacks capture row/domain data from the preceding figure
@@ -445,14 +484,14 @@ export function XYChart(props) {
       // A reconnect can land on a fresh worker whose rebuilt figure starts at
       // version 1. Versions are monotonic only within this subscription epoch.
       resetEpoch();
-      socket.emit("sub", { fig: token, px: el.clientWidth || null, mid });
+      socket.emit("sub", { fig: liveToken, px: el.clientWidth || null, mid });
     };
 
     const emitMessage = (m) => {
       // socket.io flushes its sendBuffer before firing `connect`; never queue
       // an old-epoch request while the namespace is disconnected.
       if (awaitingPayload || !socket.connected) return;
-      const envelope = { fig: token, mid, m };
+      const envelope = { fig: liveToken, mid, m };
       if (payloadVersion !== null) envelope.v = payloadVersion;
       socket.emit("msg", envelope);
     };
@@ -499,7 +538,7 @@ export function XYChart(props) {
         const latest = pendingHover;
         pendingHover = null;
         if (!destroyed && latest && cbRef.current.onPointHover) {
-          cbRef.current.onPointHover(pointEnvelope("point_hover", token, latest));
+          cbRef.current.onPointHover(pointEnvelope("point_hover", liveToken, latest));
         }
       }, HOVER_THROTTLE_MS);
     };
@@ -509,7 +548,7 @@ export function XYChart(props) {
       cbRef.current.onViewChange({
         version: 1,
         type: "view_change",
-        token,
+        token: liveToken,
         x_domain: [m.x0, m.x1],
         y_domain: [m.y0, m.y1],
         source: m.source,
@@ -673,7 +712,7 @@ export function XYChart(props) {
       );
 
     const onPayload = (data) => {
-      if (destroyed || !data || data.fig !== token) return;
+      if (destroyed || !data || data.fig !== liveToken) return;
       // Direct subscription replies are mount-addressed; room-wide rebuild
       // broadcasts intentionally omit mid and remain visible to every mount.
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
@@ -698,6 +737,7 @@ export function XYChart(props) {
         && payloadVersion !== null
         && data.version < payloadVersion
       ) return;
+      errResyncs = 0; // an applied payload proves resubscription works again
       const nextPayloadVersion = Number.isInteger(data.version) ? data.version : null;
       const sameGenerationAddressedReplacement =
         data.mid != null &&
@@ -781,7 +821,7 @@ export function XYChart(props) {
     };
 
     const onMsg = (data) => {
-      if (destroyed || !data || data.fig !== token) return;
+      if (destroyed || !data || data.fig !== liveToken) return;
       // Replies are mount-addressed; pushes (append) carry no mid.
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
@@ -831,7 +871,7 @@ export function XYChart(props) {
         if (!clickWasPending) return;
         if (message.type === "pick_result" && message.row) {
           cbRef.current.onPointClick?.(
-            pointEnvelope("point_click", token, message.row, clickInput || {}),
+            pointEnvelope("point_click", liveToken, message.row, clickInput || {}),
           );
         }
         return; // synthetic pick — not for the view
@@ -857,7 +897,7 @@ export function XYChart(props) {
           cbRef.current.onSelectEnd({
             version: 1,
             type: "select_end",
-            token,
+            token: liveToken,
             selection: {
               kind: cleared ? "clear" : (message.kind || "box"),
               mode: message.mode || "replace",
@@ -890,9 +930,12 @@ export function XYChart(props) {
     };
 
     const onErr = (data) => {
-      if (destroyed || !data || data.fig !== token) return;
+      if (destroyed || !data || data.fig !== liveToken) return;
       console.warn(`xy: ${data.error} (fig ${data.fig})`);
-      if (data.resync === true && socket.connected) subscribe();
+      if (data.resync === true && socket.connected && errResyncs < 5) {
+        errResyncs += 1;
+        subscribe();
+      }
     };
 
     const onDisconnect = () => {
@@ -906,8 +949,15 @@ export function XYChart(props) {
     // Resubscribe on every (re)connect: after the app plane reconnects the
     // shared manager, rooms are gone and — on another backend node — the
     // figure itself may need a state-driven rebuild. `sub` triggers both.
-    socket.on("connect", subscribe);
-    subCounts.set(token, (subCounts.get(token) || 0) + 1);
+    // A fresh connection also restores the bounded resync-retry budget: the
+    // cap exists to stop same-connection err loops, not to dead-end a chart
+    // whose backend recovered after the budget ran out.
+    const onConnect = () => {
+      errResyncs = 0;
+      subscribe();
+    };
+    socket.on("connect", onConnect);
+    subCounts.set(liveToken, (subCounts.get(liveToken) || 0) + 1);
     if (socket.connected) subscribe();
 
     const rememberClick = (event) => {
@@ -937,13 +987,13 @@ export function XYChart(props) {
       socket.off("msg", onMsg);
       socket.off("err", onErr);
       socket.off("disconnect", onDisconnect);
-      socket.off("connect", subscribe);
-      const remaining = (subCounts.get(token) || 1) - 1;
+      socket.off("connect", onConnect);
+      const remaining = (subCounts.get(liveToken) || 1) - 1;
       if (remaining <= 0) {
-        subCounts.delete(token);
-        if (socket.connected) socket.emit("unsub", { fig: token, mid });
+        subCounts.delete(liveToken);
+        if (socket.connected) socket.emit("unsub", { fig: liveToken, mid });
       } else {
-        subCounts.set(token, remaining);
+        subCounts.set(liveToken, remaining);
       }
       reclaimTooltipSlot();
       if (view) view.destroy();
@@ -951,7 +1001,7 @@ export function XYChart(props) {
       window.__xy_views?.delete(outerRef.current?.id || mid);
       el.replaceChildren();
     };
-  }, [token, src]);
+  }, [liveToken, src]);
 
   // One DOM node, two consumers: our mount logic and reflex's ref registry.
   const mergedRef = (node) => {

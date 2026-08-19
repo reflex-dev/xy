@@ -211,6 +211,9 @@ known-first-party = ["reflex_xy", "xy"]
 
 [tool.ty.environment]
 python = ".venv"
+# Maintenance entry points are executable by path and import sibling helpers by
+# their local module names. Keep those imports visible when checking scripts.
+extra-paths = ["scripts"]
 
 [tool.ty.src]
 # Type-check the shippable library; tests/scripts/benchmarks use dynamic

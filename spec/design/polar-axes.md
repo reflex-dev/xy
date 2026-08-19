@@ -508,11 +508,64 @@ modebar reset remains available.
 
 - **Hover** — screen-space nearest-point test, seam-aware per §3.2, with the
   readout reporting (θ, r) in the axis's declared unit.
-- **Radial zoom** — wheel scales the radial maximum about a **fixed** radial
-  minimum (Plotly's radial semantics), serialized through the existing
-  view-state machinery. Anchoring at the cursor's radius was tried first and
-  rejected from interactive testing: an interior anchor unexpectedly lifts
-  `r_lo`. A deliberate annulus is instead authored through `hole` or
+- **Radial zoom — off by default, opt-in.** The centre is a fixed point of the
+  transform and `r_lo` is pinned (below), so zooming in can only crop the rim
+  while the geometry stays welded to the middle of the disc. For a composition
+  whose radius is *not* a measured quantity — a pie or donut (the radius is a
+  constant rim; the value is the ANGLE), a radial bar or gauge, a radar on a
+  fixed 0..1 frame — that reads as a broken chart rather than as navigation, so
+  `coords="polar"` resolves `zoom` to `False` and every polar payload carries
+  the flag explicitly.
+
+  Three consequences of the flag are the point of it, not side effects. The
+  modebar grows no zoom controls (`canRecordHistory` in `53_interaction.ts` — a
+  chart whose durable state cannot change must not offer view history either).
+  The wheel handler returns *before* `preventDefault()`, so the page scrolls
+  normally under the cursor instead of the chart swallowing the gesture. And
+  **reset goes with zoom by default**: `_resetAxisPolicy` *derives* pan-axes ∪
+  zoom-axes, both empty under polar with zoom off, so Fit Data / Reset View do not
+  render and the double-click handler restores nothing. Reset is therefore not
+  part of the default polar contract. It returns with zoom — and independently
+  with an authored `reset_axes`, which `_resetAxisPolicy` returns verbatim instead
+  of deriving. That hatch is not vestigial: a polar chart's view can still move
+  through linked axes or application-driven updates, which `navigation` does not
+  gate (pan-and-zoom-configuration.md §7), so an authored `reset_axes` is the
+  right way to offer reset on a gesture-free chart.
+
+  Validation resolves the same default the payload ships, through the one
+  `Figure._zoom_enabled` predicate. Without that, `default_drag_action="zoom"`
+  passed construction on a default polar figure (validation read absent-zoom as
+  enabled) and then shipped the self-contradicting
+  `{"zoom": false, "default_drag_action": "zoom"}`.
+
+  `default_drag_action` is narrowed further under polar: only `"auto"` and
+  `"none"` are accepted, and everything else raises. A disc has **no drag tools at
+  all** — the client resolves `pan_axes` to `[]` and forces
+  `box_zoom`/`select`/`brush` off under polar whatever the flags say — so `"pan"`,
+  `"zoom"`, and the four `select*` actions were each accepted and then resolved to
+  no usable tool. That is the accepted-but-inert trap this table's other rows
+  exist to close, and it applied even with `zoom=True`, since radial zoom is a
+  wheel/button gesture rather than a drag.
+
+  `wind_rose` is the exception the default is written around and ships
+  `zoom=True`: its radius is a frequency count, so scaling the outer ring
+  against a pinned zero magnifies the short sectors of a rose dominated by one
+  prevailing direction. Any author opts in or out the same way, with
+  `xy.interaction_config(zoom=True)` or a `zoom=` chart prop.
+
+  The decision is made in Python (`Figure._interaction_spec`) rather than
+  inferred by the renderers, for a reason that is structural: `Chart.kind` never
+  reaches the wire, so a pie and a wind rose are the *same figure* to the
+  client. This is the one documented exception to
+  [`pan-and-zoom-configuration.md`](pan-and-zoom-configuration.md) §5.2's
+  "unspecified keys stay absent" rule, and §28 wants the choice on the wire
+  rather than re-derived per renderer anyway.
+
+  When zoom **is** enabled, the wheel scales the radial maximum about a
+  **fixed** radial minimum (Plotly's radial semantics), serialized through the
+  existing view-state machinery. Anchoring at the cursor's radius was tried
+  first and rejected from interactive testing: an interior anchor unexpectedly
+  lifts `r_lo`. A deliberate annulus is instead authored through `hole` or
   `r_origin`, so it remains stable across view changes and every renderer uses
   the same inverse.
   Marks outside the radial range are **culled in the shader** (NaN position,
@@ -531,12 +584,17 @@ modebar reset remains available.
   visible extent at an angle is `[base, top] ∩ [r_lo, r_hi]`, and culling one
   endpoint made a radar fill vanish the moment zoom lifted `r_lo` above its
   baseline. A span fully outside collapses to zero and draws nothing.
-- **Reset** — existing modebar, no change.
-- The wheel gesture stays live even though polar's resolved default drag tool
-  is `none` (pan/box/select are all disabled, so there is nothing to drag).
-  Only the *user* choosing the `none` tool releases page scroll — the gate
-  distinguishes that from a chart that simply has no drag tools, because
-  conflating them made radial zoom dead on arrival.
+- **Reset** — existing modebar, no change, but the *derived* policy follows the
+  zoom capability: with zoom off and nothing authored, the reset-axis policy is
+  empty, so the controls do not render and the double-click handler is a no-op. An
+  authored `reset_axes` is honoured regardless. The handler stays *wired* rather
+  than gated separately (several pie/gauge/wind-rose examples hide the modebar, and
+  a chart that opts into zoom must not need a second opt-in to get back home).
+- The wheel gesture stays live — once zoom is enabled — even though polar's
+  resolved default drag tool is `none` (pan/box/select are all disabled, so
+  there is nothing to drag). Only the *user* choosing the `none` tool releases
+  page scroll; the gate distinguishes that from a chart that simply has no drag
+  tools, because conflating them made radial zoom dead on arrival.
 
 Deferred and explicitly disabled rather than half-working: θ pan (rotation),
 sector zoom, and box select. Box select's rectangle has no polar meaning; the
@@ -561,6 +619,8 @@ The Plotly-parity and axis-depth increments are shipped:
 | pyplot `projection="polar"` | Factories plus theta/r controls and the allowlisted mark families route into the same core polar figure. |
 | Angular tick text | `theta_axis(format=...)` wins over the built-in degree/radian text in all three renderers. It used to lose — the angular branch ran first and overwrote the authored spec — so a `format=` on a polar angular axis was accepted and ignored. Authored `tick_labels` still win over both, and a categorical θ axis keeps its category names. |
 | Legend beside the disc | A polar figure with a legend reserves a gutter and places the legend in it (§3, layout). Zero-width wedges are legal at the mark layer, so a 0% pie/gauge slice draws nothing instead of raising. |
+| Radial zoom default | `coords="polar"` ships `zoom=False` and no zoom/reset modebar controls; `wind_rose` (radius = a count) ships `zoom=True`. `xy.interaction_config(zoom=…)` or a `zoom=` chart prop overrides either direction, and an authored `reset_axes` grants reset on its own. §8. |
+| Polar `default_drag_action` | Only `"auto"`/`"none"` are accepted; `"pan"`, `"zoom"`, and `select*` raise, because polar resolves `pan_axes` to `[]` and forces `box_zoom`/`select`/`brush` off, leaving no drag tool for them to name. §8. |
 
 The remaining work stays explicitly disabled or direct-only:
 

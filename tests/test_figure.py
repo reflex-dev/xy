@@ -1689,6 +1689,15 @@ def test_log_autorange_uses_positive_zone_stats():
     assert hi >= 100.0
 
 
+def test_log_explicit_margin_keeps_lower_bound_positive():
+    """An authored margin must not pad the lower bound down to zero."""
+    fig = Figure().scatter(np.array([0.0, 1.0]), np.array([1e-300, 1e10]))
+    fig.set_axis("y", type_="log", margin=0.1)
+    lo, hi = fig.y_range()
+    assert lo == np.nextafter(0.0, 1.0)
+    assert hi > lo
+
+
 def test_memory_report_accounts_for_bytes():
     n = 100_000
     x = np.arange(n, dtype=np.float64)
@@ -2080,6 +2089,11 @@ def test_mark_fill_rejects_invalid_gradients() -> None:
         fig.area(
             [0.0, 1.0], [1.0, 2.0], fill={"gradient": "linear-gradient(red, blue)", "mode": "x"}
         )
+    # Keys of a user-supplied dict need not be mutually comparable; report the
+    # unknown key rather than letting the sort raise a bare TypeError
+    # (spec/api/styling.md: closed grammars raise ValueError, naming the reason).
+    with pytest.raises(ValueError, match="unknown key"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill={1: "x", "mode": "y"})
     # validation happens before ingest — the failed call leaves no partial trace
     assert fig.traces == []
 

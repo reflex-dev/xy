@@ -13,7 +13,7 @@ which is sometimes deliberate, and the notes say which.
 
 ## In one line
 
-- **11** mark style properties across **21** mark kinds, drawn by all three renderers.
+- **11** mark style properties across **22** mark kinds, drawn by all three renderers.
 - **48** stable chrome slots, CSS- and Tailwind-addressable in the browser; **10** of them reach the native writers — nine through `styles={slot: ...}` itself, and `root` through the chart-level `style=` token bag.
 - **1** shipped extension point.
 - **1** known default divergence between renderers, listed below rather than left to be discovered.
@@ -26,12 +26,12 @@ one honors.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|
-| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
 | `fill` | svg | `area`, `bar`, `box`, `column`, `error_band`, `hist`, `histogram`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |

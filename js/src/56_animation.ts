@@ -1,4 +1,4 @@
-import { PROTOCOL } from "./00_header";
+import { FUNNEL_SLOTS, PROTOCOL } from "./00_header";
 import { ChartView } from "./50_chartview";
 
 // Declarative data animation: one browser clock, bounded previous/next GPU
@@ -88,7 +88,7 @@ Object.assign(ChartView.prototype, {
 
   _defaultEntrance(kind) {
     if (kind === "line" || kind === "area" || kind === "error_band") return "reveal";
-    if (kind === "bar" || kind === "column") return "grow";
+    if (kind === "bar" || kind === "column" || kind === "funnel") return "grow";
     if (kind === "scatter" || kind === "errorbar") return "scale";
     return "none";
   },
@@ -118,7 +118,8 @@ Object.assign(ChartView.prototype, {
     if (enter === "scale") {
       if (g.trace.kind === "scatter") g._transitionScale = p;
       else if (g.trace.kind === "errorbar") g._transitionScale = p;
-      else if (g.trace.kind === "bar" || g.trace.kind === "column") g._transitionGrow = p;
+      else if (g.trace.kind === "bar" || g.trace.kind === "column" ||
+               g.trace.kind === "funnel") g._transitionGrow = p;
       else if (g.trace.kind === "line" || g.trace.kind === "area" ||
                g.trace.kind === "error_band") g._transitionReveal = p;
     }
@@ -139,6 +140,12 @@ Object.assign(ChartView.prototype, {
     delete g._transitionPrevValue1Values;
     delete g._transitionPrevValue0Values;
     delete g._transitionPrevWidth;
+    if (g._transitionPrevFunnelValues) {
+      delete g._transitionPrevFunnelValues;
+      // The live buffers hold the last mixed frame; the next _drawFunnels
+      // re-uploads the settled geometry once.
+      g._funnelGeomMixed = true;
+    }
     delete g._transitionPositionInterpolated;
     this._deleteBuffers(g, [
       "_transitionPrevXBuf", "_transitionPrevYBuf",
@@ -332,6 +339,9 @@ Object.assign(ChartView.prototype, {
     if (["bar", "column"].includes(next.trace.kind)) {
       return this._prepareBarPositionInterpolation(previous, next, match);
     }
+    if (next.trace.kind === "funnel") {
+      return this._prepareFunnelPositionInterpolation(previous, next, match);
+    }
     if (!["scatter", "line"].includes(next.trace.kind)) return false;
     if (!previous._cpu || !next._cpu || next.n !== next._cpu.x.length ||
         previous.n !== previous._cpu.x.length) {
@@ -452,6 +462,59 @@ Object.assign(ChartView.prototype, {
     return true;
   },
 
+  // Funnel update interpolation runs on the CPU: one quad per stage, so
+  // mixing six little arrays and re-uploading them per frame costs less than
+  // a second attribute set would, and the shader stays untouched. Start
+  // values are the OLD trace's currently DISPLAYED geometry (mid-flight
+  // retargets included), re-encoded into the new columns' metas; unmatched
+  // stages start at their destination.
+  _prepareFunnelPositionInterpolation(previous, next, match) {
+    const oldF = previous._cpuFunnel;
+    const newF = next._cpuFunnel;
+    // Over the match limit the strategy is already "snap": preparing anyway
+    // would mix six full-size arrays per frame for identical values.
+    if (match.strategy === "snap" || !oldF || !newF ||
+        previous.orientation !== next.orientation) {
+      match.fallback ||= "snap:layout-mismatch";
+      return false;
+    }
+    if (match.strategy === "append") {
+      // Append matching pairs rows by their decoded x value, and a vertical
+      // funnel's x centers are all ~0 (the cross midline), so every new stage
+      // paired with the LAST old stage. Stages are an ordered process, not a
+      // stream: match them by position instead, and say so.
+      match.fallback ||= "index:append-unsupported";
+      match.pairs.length = 0;
+      const count = Math.min(oldF.n, newF.n);
+      for (let i = 0; i < count; i++) match.pairs.push([i, i]);
+    }
+    const names = Object.keys(FUNNEL_SLOTS);
+    const encode = (value, meta) => (value - meta.offset) * (meta.scale || 1);
+    const starts = {};
+    for (const name of names) starts[name] = new Float32Array(newF[name].subarray(0, newF.n));
+    const prevStarts = previous._transitionPrevFunnelValues;
+    const prevProgress = previous._transitionPositionProgress;
+    for (const [oldIndex, newIndex] of match.pairs) {
+      if (oldIndex >= oldF.n || newIndex >= newF.n) continue;
+      for (const name of names) {
+        const meta = oldF.metas[name];
+        let displayed = this._decodeValue(oldF[name], meta, oldIndex);
+        if (prevStarts && Number.isFinite(prevProgress)) {
+          const from = this._decodeValue(prevStarts[name], meta, oldIndex);
+          displayed = from + (displayed - from) * prevProgress;
+        }
+        if (Number.isFinite(displayed)) {
+          starts[name][newIndex] = encode(displayed, newF.metas[name]);
+        }
+      }
+    }
+    next._transitionPrevFunnelValues = starts;
+    next._transitionPositionProgress = 0;
+    next._transitionPositionInterpolated = true;
+    previous._transitionSkipExit = true;
+    return true;
+  },
+
   updatePayload(spec, buffer) {
     if (this._destroyed || !spec || spec.protocol !== PROTOCOL) return false;
     if (this._dataAnimRaf) cancelAnimationFrame(this._dataAnimRaf);
@@ -470,6 +533,12 @@ Object.assign(ChartView.prototype, {
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this._payload = buffer;
+    // The wrapper intentionally leaves automatic legend chrome mounted when
+    // only Python's data-dependent concrete fallback changed. A live renderer
+    // keeps its last settled winner through the animation; a lost/detached or
+    // non-preserved fallback canvas cannot score and adopts the new concrete
+    // location immediately instead.
+    this._adoptBestLegendFallbacks?.(spec);
     // A full payload re-homes the view to its own axis ranges (reflex-integration
     // §4 "state-driven rebuild"): unlike streaming append, it carries no
     // follow-policy, so it behaves like a fresh mount of the new data. Clear the
@@ -488,9 +557,14 @@ Object.assign(ChartView.prototype, {
     const target = { ...this.view0 };
     if (this._glLost || !this.gl) {
       this.view = { ...target };
+      this._markBestLegendsDirty?.();
       return true;
     }
     this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
+    // The legend DOM is unchanged on updatePayload, but every rendered mark
+    // underneath it was replaced. Keep this pending through `_dataAnim`; the
+    // completion draw is the single settled raster score.
+    this._markBestLegendsDirty?.();
     for (const next of this.gpuTraces) {
       const old = previous.find((candidate) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
       if (old) {
