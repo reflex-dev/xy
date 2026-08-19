@@ -16,14 +16,17 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any, Optional, get_type_hints
 
 ROOT = Path(__file__).resolve().parents[1]
 IMPORT_BUDGET_MS = 200.0
@@ -47,79 +50,176 @@ HEAVY_XY_IMPORTS = {
 }
 HEAVY_IMPORTS = HEAVY_THIRD_PARTY_IMPORTS | HEAVY_XY_IMPORTS
 COMPONENT_REEXPORTS = {"CHART_DOM_SLOTS"}
-DECLARATIVE_MARK_EXPORTS = (
-    "scatter",
-    "segments",
-    "triangle_mesh",
-    "line",
-    "area",
-    "histogram",
-    "hist",
-    "bar",
-    "column",
-    "heatmap",
-)
-DECLARATIVE_ANNOTATION_EXPORTS = (
-    "arrow",
-    "callout",
-    "label",
-    "marker",
-    "threshold",
-    "threshold_zone",
-    "vline",
-    "hline",
-    "x_band",
-    "y_band",
-    "text",
-)
-DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis", "theta_axis", "r_axis")
-DECLARATIVE_CHROME_EXPORTS = (
-    "legend",
-    "tooltip",
-    "colorbar",
-    "modebar",
-    "theme",
-    "interaction_config",
-)
-DECLARATIVE_CHART_EXPORTS = (
-    "chart",
-    "scatter_chart",
-    "polar_chart",
-    "radar_chart",
-    "polar_bar_chart",
-    "pie_chart",
-    "wind_rose",
-    "segments_chart",
-    "triangle_mesh_chart",
-    "line_chart",
-    "area_chart",
-    "histogram_chart",
-    "bar_chart",
-    "column_chart",
-    "heatmap_chart",
-)
-DECLARATIVE_CHART_READOUTS = (
-    "figure",
-    "widget",
-    "show",
-    "to_html",
-    "html",
-    "_repr_html_",
-    "to_svg",
-    "to_png",
-    "memory_report",
-    "chrome_components",
-    "reflex_components",
-    "append",
-    "pick",
-    "select_range",
-)
-DECLARATIVE_API_EXPORTS = (
-    *DECLARATIVE_MARK_EXPORTS,
-    *DECLARATIVE_ANNOTATION_EXPORTS,
-    *DECLARATIVE_AXIS_EXPORTS,
-    *DECLARATIVE_CHROME_EXPORTS,
-    *DECLARATIVE_CHART_EXPORTS,
+CHROME_RETURN_TYPES = {"Colorbar", "Interaction", "Legend", "Modebar", "Theme", "Tooltip"}
+SUPPORT_RETURN_TYPES = {"Animation", "ExportConfig", "FacetChart", "Spring"}
+SPECIAL_PUBLIC_CHART_METHODS = {"_repr_html_"}
+SPECIAL_PUBLIC_SELECTION_METHODS = {"__len__"}
+EXPERIMENTAL_PUBLIC_EXPORTS: tuple[str, ...] = ()
+DEPRECATED_PUBLIC_EXPORTS: tuple[str, ...] = ()
+PRIVATE_PUBLIC_EXPORTS: tuple[str, ...] = ()
+CHART_METHOD_DOC = ROOT / "docs" / "api-reference" / "figure-methods.md"
+SELECTION_METHOD_DOC = ROOT / "docs" / "api-reference" / "events-and-callbacks.md"
+
+
+@dataclass(frozen=True)
+class PublicApiInventory:
+    """Machine-readable inventory of the supported public composition API."""
+
+    component_reexports: tuple[str, ...]
+    component_types: tuple[str, ...]
+    mark_factories: tuple[str, ...]
+    annotation_factories: tuple[str, ...]
+    axis_factories: tuple[str, ...]
+    chrome_factories: tuple[str, ...]
+    chart_factories: tuple[str, ...]
+    support_factories: tuple[str, ...]
+    chart_methods: tuple[str, ...]
+    selection_methods: tuple[str, ...]
+    experimental_exports: tuple[str, ...] = EXPERIMENTAL_PUBLIC_EXPORTS
+    deprecated_exports: tuple[str, ...] = DEPRECATED_PUBLIC_EXPORTS
+    private_exports: tuple[str, ...] = PRIVATE_PUBLIC_EXPORTS
+
+    @property
+    def component_factories(self) -> tuple[str, ...]:
+        return (
+            *self.mark_factories,
+            *self.annotation_factories,
+            *self.axis_factories,
+            *self.chrome_factories,
+            *self.chart_factories,
+            *self.support_factories,
+        )
+
+    @property
+    def declarative_exports(self) -> tuple[str, ...]:
+        return (
+            *self.component_types,
+            *self.component_factories,
+        )
+
+    @property
+    def classified_component_exports(self) -> tuple[str, ...]:
+        return (
+            *self.component_reexports,
+            *self.declarative_exports,
+            *self.experimental_exports,
+            *self.deprecated_exports,
+            *self.private_exports,
+        )
+
+
+PUBLIC_API_MANIFEST = PublicApiInventory(
+    component_reexports=("CHART_DOM_SLOTS",),
+    component_types=(
+        "Animation",
+        "Annotation",
+        "Axis",
+        "Chart",
+        "Colorbar",
+        "Component",
+        "ExportConfig",
+        "FacetChart",
+        "Interaction",
+        "Legend",
+        "Mark",
+        "Modebar",
+        "Spring",
+        "Theme",
+        "Tooltip",
+    ),
+    mark_factories=(
+        "area",
+        "bar",
+        "box",
+        "column",
+        "contour",
+        "ecdf",
+        "error_band",
+        "errorbar",
+        "heatmap",
+        "hexbin",
+        "hist",
+        "histogram",
+        "line",
+        "mark",
+        "ribbon",
+        "sankey",
+        "scatter",
+        "segments",
+        "stairs",
+        "stem",
+        "step",
+        "triangle_mesh",
+        "violin",
+    ),
+    annotation_factories=(
+        "arrow",
+        "callout",
+        "hline",
+        "label",
+        "marker",
+        "text",
+        "threshold",
+        "threshold_zone",
+        "vline",
+        "x_band",
+        "y_band",
+    ),
+    axis_factories=("r_axis", "theta_axis", "x_axis", "y_axis"),
+    chrome_factories=("colorbar", "interaction_config", "legend", "modebar", "theme", "tooltip"),
+    chart_factories=(
+        "area_chart",
+        "bar_chart",
+        "box_chart",
+        "chart",
+        "column_chart",
+        "contour_chart",
+        "ecdf_chart",
+        "error_band_chart",
+        "errorbar_chart",
+        "heatmap_chart",
+        "hexbin_chart",
+        "histogram_chart",
+        "line_chart",
+        "pie_chart",
+        "polar_bar_chart",
+        "polar_chart",
+        "radar_chart",
+        "sankey_chart",
+        "scatter_chart",
+        "segments_chart",
+        "stairs_chart",
+        "stem_chart",
+        "step_chart",
+        "triangle_mesh_chart",
+        "violin_chart",
+        "wind_rose",
+    ),
+    support_factories=("animation", "export_config", "facet_chart", "spring"),
+    chart_methods=(
+        "figure",
+        "chrome_components",
+        "reflex_components",
+        "widget",
+        "show",
+        "set_view",
+        "reset_view",
+        "select",
+        "clear_selection",
+        "view_state",
+        "to_html",
+        "html",
+        "_repr_html_",
+        "to_svg",
+        "to_png",
+        "to_image",
+        "write_image",
+        "memory_report",
+        "append",
+        "pick",
+        "select_range",
+    ),
+    selection_methods=("index", "__len__", "xy", "rows"),
 )
 
 
@@ -235,8 +335,210 @@ def validate_component_public_api(
     return errors
 
 
+def _return_type_name(value: Any) -> str | None:
+    try:
+        return_type = get_type_hints(value).get("return")
+    except Exception:
+        return None
+    return getattr(return_type, "__name__", None)
+
+
+def _component_factory_categories(components_module: ModuleType) -> dict[str, list[str]]:
+    categories = {
+        "mark_factories": [],
+        "annotation_factories": [],
+        "axis_factories": [],
+        "chrome_factories": [],
+        "chart_factories": [],
+        "support_factories": [],
+    }
+    for name in getattr(components_module, "__all__", ()):
+        if name in COMPONENT_REEXPORTS:
+            continue
+        value = getattr(components_module, name, None)
+        if not inspect.isfunction(value):
+            continue
+        return_name = _return_type_name(value)
+        if return_name == "Mark":
+            categories["mark_factories"].append(name)
+        elif return_name == "Annotation":
+            categories["annotation_factories"].append(name)
+        elif return_name == "Axis":
+            categories["axis_factories"].append(name)
+        elif return_name == "Chart":
+            categories["chart_factories"].append(name)
+        elif return_name in CHROME_RETURN_TYPES:
+            categories["chrome_factories"].append(name)
+        elif return_name in SUPPORT_RETURN_TYPES:
+            categories["support_factories"].append(name)
+    return categories
+
+
+def _public_methods(
+    cls: type[Any],
+    *,
+    special_public_methods: set[str],
+) -> tuple[str, ...]:
+    methods: list[str] = []
+    for name, value in cls.__dict__.items():
+        if name == "__init__":
+            continue
+        if not callable(value) and not isinstance(value, property):
+            continue
+        if name.startswith("_") and name not in special_public_methods:
+            continue
+        methods.append(name)
+    return tuple(methods)
+
+
+def build_public_api_inventory(
+    pkg: ModuleType,
+    components_module: ModuleType | None = None,
+) -> PublicApiInventory:
+    """Build the public API inventory from exported objects and annotations."""
+    if components_module is None:
+        components_module = importlib.import_module(".components", pkg.__name__)
+
+    component_names = tuple(getattr(components_module, "__all__", ()))
+    categories = _component_factory_categories(components_module)
+    component_types = tuple(
+        name
+        for name in component_names
+        if name not in COMPONENT_REEXPORTS
+        and inspect.isclass(getattr(components_module, name, None))
+    )
+    chart_methods = _public_methods(
+        components_module.Chart,
+        special_public_methods=SPECIAL_PUBLIC_CHART_METHODS,
+    )
+    figure_module = importlib.import_module("._figure", pkg.__name__)
+    selection_methods = _public_methods(
+        figure_module.Selection,
+        special_public_methods=SPECIAL_PUBLIC_SELECTION_METHODS,
+    )
+    return PublicApiInventory(
+        component_reexports=tuple(name for name in component_names if name in COMPONENT_REEXPORTS),
+        component_types=component_types,
+        mark_factories=tuple(categories["mark_factories"]),
+        annotation_factories=tuple(categories["annotation_factories"]),
+        axis_factories=tuple(categories["axis_factories"]),
+        chrome_factories=tuple(categories["chrome_factories"]),
+        chart_factories=tuple(categories["chart_factories"]),
+        support_factories=tuple(categories["support_factories"]),
+        chart_methods=chart_methods,
+        selection_methods=selection_methods,
+    )
+
+
+def validate_public_api_inventory(
+    inventory: PublicApiInventory,
+    components_module: ModuleType,
+) -> list[str]:
+    """Ensure every component export is explicitly classified in the inventory."""
+    errors: list[str] = []
+    component_names = set(
+        _string_list(
+            getattr(components_module, "__all__", None),
+            f"{components_module.__name__}.__all__",
+            errors,
+        )
+    )
+    classified = set(inventory.classified_component_exports)
+    missing = sorted(component_names - classified)
+    stale = sorted(classified - component_names)
+    if missing:
+        errors.append(f"component public exports are unclassified: {missing}")
+    if stale:
+        errors.append(f"public API inventory classifies non-exported names: {stale}")
+    return errors
+
+
+def validate_public_api_manifest(
+    inventory: PublicApiInventory,
+    manifest: PublicApiInventory = PUBLIC_API_MANIFEST,
+) -> list[str]:
+    """Ensure discovery neither adds nor silently removes supported names."""
+    errors: list[str] = []
+    fields = (
+        "component_reexports",
+        "component_types",
+        "mark_factories",
+        "annotation_factories",
+        "axis_factories",
+        "chrome_factories",
+        "chart_factories",
+        "support_factories",
+        "chart_methods",
+        "selection_methods",
+    )
+    for field_name in fields:
+        expected = set(getattr(manifest, field_name))
+        actual = set(getattr(inventory, field_name))
+        missing = sorted(expected - actual)
+        added = sorted(actual - expected)
+        if missing:
+            errors.append(
+                f"public API manifest names missing from discovery ({field_name}): {missing}"
+            )
+        if added:
+            errors.append(
+                f"public API discovery contains unmanifested names ({field_name}): {added}"
+            )
+    return errors
+
+
+def _has_doc_reference(text: str, name: str, *, receiver: str | None = None) -> bool:
+    tokens = [f"`{name}`", f"`{name}()`", f"`{name}(`"]
+    if receiver is not None:
+        tokens.extend(
+            (
+                f"`{receiver}.{name}()`",
+                f"`{receiver}.{name}(`",
+                f"{receiver}.{name}(",
+            )
+        )
+    return (
+        any(token in text for token in tokens)
+        or re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}\s*\(", text) is not None
+    )
+
+
+def validate_docs_inventory(
+    inventory: PublicApiInventory,
+    *,
+    chart_doc: Path = CHART_METHOD_DOC,
+    selection_doc: Path = SELECTION_METHOD_DOC,
+) -> list[str]:
+    """Ensure public methods have API reference coverage."""
+    errors: list[str] = []
+    try:
+        chart_text = chart_doc.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read Chart API docs {chart_doc}: {exc}"]
+    try:
+        selection_text = selection_doc.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read Selection API docs {selection_doc}: {exc}"]
+
+    for method in inventory.chart_methods:
+        if not _has_doc_reference(chart_text, method, receiver="chart"):
+            errors.append(f"Chart public method {method!r} is missing from {chart_doc}")
+    selection_aliases = {"__len__": "len(selection)"}
+    for method in inventory.selection_methods:
+        token = selection_aliases.get(method)
+        if token is not None:
+            if token not in selection_text:
+                errors.append(f"Selection public method {method!r} is missing from {selection_doc}")
+        elif not _has_doc_reference(selection_text, method):
+            errors.append(f"Selection public method {method!r} is missing from {selection_doc}")
+    return errors
+
+
 def validate_declarative_api_contract(
-    pkg: ModuleType, components_module: ModuleType | None = None
+    pkg: ModuleType,
+    components_module: ModuleType | None = None,
+    *,
+    manifest: PublicApiInventory | None = None,
 ) -> list[str]:
     """Ensure the Reflex-shaped composition API remains a named public contract."""
     errors: list[str] = []
@@ -259,8 +561,20 @@ def validate_declarative_api_contract(
             errors,
         )
     )
+    if errors:
+        return errors
 
-    for name in DECLARATIVE_API_EXPORTS:
+    chart_class = getattr(components_module, "Chart", None)
+    if chart_class is None:
+        errors.append(f"{components_module.__name__}.Chart is missing")
+        return errors
+
+    inventory = build_public_api_inventory(pkg, components_module)
+    errors.extend(validate_public_api_inventory(inventory, components_module))
+    if manifest is not None:
+        errors.extend(validate_public_api_manifest(inventory, manifest))
+
+    for name in inventory.declarative_exports:
         if name not in public_names:
             errors.append(f"declarative API export {name!r} is missing from xy.__all__")
         if exports.get(name) != ".components":
@@ -278,14 +592,11 @@ def validate_declarative_api_contract(
                 f"declarative API export {name!r} is undefined in {components_module.__name__}"
             )
 
-    chart_class = getattr(components_module, "Chart", None)
-    if chart_class is None:
-        errors.append(f"{components_module.__name__}.Chart is missing")
-        return errors
-    for method in DECLARATIVE_CHART_READOUTS:
+    for method in inventory.chart_methods:
         value = getattr(chart_class, method, None)
         if not callable(value):
             errors.append(f"declarative Chart readout {method!r} must be callable")
+    errors.extend(validate_docs_inventory(inventory))
 
     return errors
 
@@ -535,7 +846,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     errors.extend(validate_static_typing_surface(pkg))
     errors.extend(validate_public_api(pkg))
     errors.extend(validate_component_public_api(pkg))
-    errors.extend(validate_declarative_api_contract(pkg))
+    errors.extend(validate_declarative_api_contract(pkg, manifest=PUBLIC_API_MANIFEST))
     if check_lazy_import:
         eager = sorted(after_import - before)
         errors[:0] = _format_eager_import_findings("in-process", eager)
