@@ -1428,8 +1428,10 @@ void main() {
     // An edge that leaves a log axis's domain has no coordinate. Collapse that
     // side onto the centre rather than culling the bar: the half that does
     // exist is still real, and matplotlib and Plotly both keep drawing it.
-    if (isnan(cLo) || cLo < -1e29) cLo = cC;
-    if (isnan(cHi) || cHi < -1e29) cHi = cC;
+    // The predicate is false for NaN as well as for either infinity and for
+    // mode 1's -1e30 sentinel, so one test covers every unusable coordinate.
+    if (!(abs(cLo) < 1e29)) cLo = cC;
+    if (!(abs(cHi) < 1e29)) cHi = cC;
     // Ordered, so a reversed axis keeps clipA left of clipB and the corner SDF
     // frame below stays the one a forward axis produces.
     float a = (cLo - cC) * u_pmap.x;

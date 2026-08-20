@@ -5417,10 +5417,25 @@ export class ChartView {
   // A degenerate window or encoding yields the off-screen sentinel (mul 0,
   // add -2) rather than an Infinity that would reach the shader as NaN.
   _map(meta, lo, hi, axisId = null) {
-    const degenerate = { mul: 0, add: -2, shift: 0, dataMul: 0 };
+    const offscreen = { mul: 0, add: -2, shift: 0, dataMul: 0 };
+    // Every non-degenerate exit goes through this. The constants travel to the
+    // GPU as f32, so an f64-finite value that overflows on upload is still an
+    // Infinity in the shader, and `encoded * Infinity` rasterizes as NaN —
+    // validate the f32 images, not the f64 ones.
+    const gpu = (mul, add, shift, dataMul) => {
+      if (!Number.isFinite(Math.fround(mul)) || !Number.isFinite(Math.fround(add))) {
+        return offscreen;
+      }
+      // `dataMul` feeds nothing but a data-space width (BAR_VS), so a window
+      // too narrow for f32 to hold its slope zeroes that alone: a zero-width
+      // bar is a visible mistake, an Infinity is a NaN clip coordinate, and
+      // positions — which never read it — keep working either way.
+      const width = Number.isFinite(Math.fround(dataMul)) ? dataMul : 0;
+      return { mul, add, shift, dataMul: width };
+    };
     if (!axisId || this._axisMode(axisId) === 0) {
       const span = hi - lo;
-      if (!Number.isFinite(span) || span === 0) return degenerate;
+      if (!Number.isFinite(span) || span === 0) return offscreen;
       const scale = meta && Number.isFinite(meta.scale) ? meta.scale : 1;
       const offset = meta && Number.isFinite(meta.offset) ? meta.offset : 0;
       const dataMul = 2 / span;
@@ -5430,30 +5445,21 @@ export class ChartView {
       // the legitimately tiny scales an enormous finite domain produces
       // (~1e-38): the fold has f64 to divide in, and must use the very scale
       // the vertex buffer was encoded with, not a clamped stand-in.
-      if (scale === 0) {
-        return { mul: 0, add: (offset - lo) * dataMul - 1, shift: 0, dataMul };
-      }
+      if (scale === 0) return gpu(0, (offset - lo) * dataMul - 1, 0, dataMul);
       const mul = dataMul / scale;
       const shiftRaw = Math.fround(((lo + hi) / 2 - offset) * scale);
       const shift = Number.isFinite(shiftRaw) ? shiftRaw : 0;
       const add = (offset + shift / scale - lo) * dataMul - 1;
-      // The constants are uploaded as f32, so an f64-finite value that overflows
-      // on the way to the GPU is still an Infinity in the shader — and
-      // `encoded * Infinity` rasterizes as NaN. Check the f32 images, not the
-      // f64 ones.
-      if (!Number.isFinite(Math.fround(mul)) || !Number.isFinite(Math.fround(add))) {
-        return degenerate;
-      }
-      return { mul, add, shift, dataMul };
+      return gpu(mul, add, shift, dataMul);
     }
     const axis = this._axis(axisId);
     const c0 = this._axisCoord(axis, lo);
     const c1 = this._axisCoord(axis, hi);
-    if (![c0, c1].every(Number.isFinite) || c1 === c0) return degenerate;
+    if (![c0, c1].every(Number.isFinite) || c1 === c0) return offscreen;
     // Log-family axes decode before mapping, so one coordinate-space affine
     // serves every column on the axis.
     const mul = 2 / (c1 - c0);
-    return { mul, add: -1 - c0 * mul, shift: 0, dataMul: 0 };
+    return gpu(mul, -1 - c0 * mul, 0, 0);
   }
 
   _mapConst(value, lo, hi, axisId = null) {

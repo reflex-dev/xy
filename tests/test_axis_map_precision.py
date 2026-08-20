@@ -18,6 +18,7 @@ Run `node js/build.mjs` once per checkout so the bundle exists.
 from __future__ import annotations
 
 import json
+import os
 import re
 import struct
 import subprocess
@@ -37,10 +38,6 @@ SPAN_MS = 4 * 60 * 60 * 1000.0
 N = 30_000
 PLOT_PX = 820
 
-pytestmark = pytest.mark.skipif(
-    not BUNDLE.exists(), reason="run `node js/build.mjs` to build the client bundle"
-)
-
 
 def f32(value: float) -> float:
     """Round through a 32-bit float, the way a GPU uniform or attribute does."""
@@ -52,7 +49,12 @@ def js_maps(cases: list[dict]) -> list[dict]:
 
     `_map` reads only `_axis`/`_axisMode`/`_axisCoord`, all of which are pure
     apart from `this.axes`, so a bare context is enough — no DOM, no WebGL.
+
+    Only the callers of this helper need the bundle; the GLSL checks below read
+    source, so the skip belongs here rather than on the module.
     """
+    if not BUNDLE.exists():
+        pytest.skip("run `node js/build.mjs` to build the client bundle")
     script = """
 import { ChartView } from "./python/xy/static/index.js";
 const proto = ChartView.prototype;
@@ -75,7 +77,10 @@ process.stdout.write(JSON.stringify(out));
         text=True,
         timeout=60,
         check=True,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "XY_CASES": json.dumps(cases)},
+        # Inherit the environment: node needs whatever PATH, HOME, NODE_OPTIONS
+        # and NODE_PATH the runner set, and a hand-built env silently breaks on
+        # any machine that installs node somewhere else.
+        env={**os.environ, "XY_CASES": json.dumps(cases)},
     )
     return json.loads(completed.stdout)
 
@@ -169,6 +174,22 @@ def test_a_non_affine_axis_reports_no_data_space_slope() -> None:
     # A linear axis does report one: clip units per data unit over the window.
     (linear,) = js_maps([{"meta": {"offset": 0.0, "scale": 1.0}, "lo": 0.0, "hi": 1000.0}])
     assert linear["dataMul"] == pytest.approx(2 / 1000)
+
+
+def test_an_unrepresentable_constant_maps_off_screen() -> None:
+    """Every exit is validated in f32, including the zero-scale one: an f64
+    finite `add` that overflows on upload is still an Infinity in the shader."""
+    (m,) = js_maps([{"meta": {"offset": 1e30, "scale": 0.0}, "lo": 0.0, "hi": 1e-12}])
+    assert (m["mul"], m["add"], m["dataMul"]) == (0, -2, 0)
+
+
+def test_a_window_too_narrow_for_an_f32_slope_only_loses_the_width() -> None:
+    """`dataMul` feeds nothing but a bar's data-space width, so an overflow
+    there zeroes that alone — positions, which never read it, keep working."""
+    (m,) = js_maps([{"meta": {"offset": 5e-41, "scale": 1e3}, "lo": 0.0, "hi": 1e-40}])
+    assert m["dataMul"] == 0, "an f32-infinite data slope must not reach BAR_VS"
+    assert m["mul"] != 0 and m["add"] == pytest.approx(0.0, abs=1e-6)
+    assert clip((0.0 - 5e-41) * 1e3, m) == pytest.approx(-1.0, abs=1e-3)
 
 
 def test_a_degenerate_window_maps_off_screen() -> None:
