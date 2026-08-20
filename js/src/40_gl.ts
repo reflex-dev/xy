@@ -128,7 +128,24 @@ float xyAxisCoord(float encoded, vec2 meta, int mode, float constant) {
   if (mode == 2) return sign(value) * log(1.0 + abs(value) / constant);
   return value;
 }
-float xyMap(float encoded, vec2 map, vec2 meta, int mode, float constant) {
+// One column's view->clip affine. The map is ALWAYS the one built for the very
+// meta passed alongside it (_map, 50_chartview.ts) — a map folded for a
+// different column of the same axis is a different transform, not a rounding
+// difference, so the two travel together through every call site.
+//
+//   mode 0 (linear):  clip = (encoded - map.z) * map.x + map.y
+//   log / symlog:     clip = xyAxisCoord(encoded, meta) * map.x + map.y
+//
+// Linear axes never rebuild the absolute coordinate in f32. The CPU folds this
+// column's offset and scale into map.xy in f64, so a millisecond epoch keeps
+// every bit of its intra-view spread instead of collapsing onto the ~2^24
+// grid a decoded f32 timestamp lands on (§4/§16). map.z re-centres the multiply
+// on the visible window so both terms stay O(1) rather than large and
+// near-cancelling at deep zoom. map.w is the same slope per *data* unit, for
+// the one caller that scales a data-space width (BAR_VS). Log-family axes are
+// not affine, so they decode first and map.zw is unused.
+float xyMap(float encoded, vec4 map, vec2 meta, int mode, float constant) {
+  if (mode == 0) return (encoded - map.z) * map.x + map.y;
   return xyAxisCoord(encoded, meta, mode, constant) * map.x + map.y;
 }
 float xyViewCoord(float value, int mode, float constant) {
@@ -324,7 +341,7 @@ export const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
 in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
-uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec4 u_xmap; uniform vec4 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform int u_symbol; uniform float u_dpr; uniform int u_selActive;
@@ -531,7 +548,7 @@ void main() {
 // on software GL while producing the same circle SDF and premultiplied color.
 export const POINT_SIMPLE_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy;
-uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec4 u_xmap; uniform vec4 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
@@ -573,7 +590,7 @@ void main() {
 // points (GLSL highp int is signed), far beyond what GPU memory admits.
 export const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_prevx; in float a_prevy; in float a_sval;
-uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec4 u_xmap; uniform vec4 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
 uniform float u_transitionProgress; uniform int u_transitionActive;
@@ -746,7 +763,7 @@ void main() {
 export const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 in float a_prevx; in float a_prevy; in float a_prevx1; in float a_prevy1;
-uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform vec4 u_xmap; uniform vec4 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform int u_cap; uniform int u_capSegments;
 uniform float u_transitionProgress; uniform int u_transitionActive;
@@ -856,7 +873,8 @@ export const LINE_CAP_MODES = { butt: 0, round: 1, square: 2 };
 export const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
-uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform vec4 u_x0map; uniform vec4 u_x1map; uniform vec4 u_y0map; uniform vec4 u_y1map;
+uniform vec2 u_res; uniform float u_width;
 uniform float u_animationProgress;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
@@ -901,8 +919,8 @@ void main() {
                       u_trange, u_turn, u_rshape);
     }
   } else {
-    p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode, u_x0constant), xyMap(ay0, u_ymap, u_y0meta, u_y0mode, u_y0constant));
-    p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode, u_x1constant), xyMap(ay1, u_ymap, u_y1meta, u_y1mode, u_y1constant));
+    p0 = vec2(xyMap(ax0, u_x0map, u_x0meta, u_x0mode, u_x0constant), xyMap(ay0, u_y0map, u_y0meta, u_y0mode, u_y0constant));
+    p1 = vec2(xyMap(ax1, u_x1map, u_x1meta, u_x1mode, u_x1constant), xyMap(ay1, u_y1map, u_y1meta, u_y1mode, u_y1constant));
   }
   vec2 center = (p0 + p1) * 0.5;
   p0 = mix(center, p0, u_animationProgress);
@@ -978,7 +996,8 @@ export const RIBBON_STEPS = 96;
 export const RIBBON_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
 in vec4 a_rgba; in vec4 a_rgba2;
-uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec4 u_x0map; uniform vec4 u_x1map;
+uniform vec4 u_y0map; uniform vec4 u_y1map; uniform vec4 u_t0map; uniform vec4 u_t1map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_t0meta; uniform vec2 u_t1meta;
 uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
@@ -989,12 +1008,12 @@ out float v_side;
 out float v_t;
 ${AXIS_GLSL}
 void main() {
-  float X0 = xyMap(ax0, u_xmap, u_x0meta, u_xmode, u_xconstant);
-  float X1 = xyMap(ax1, u_xmap, u_x1meta, u_xmode, u_xconstant);
-  float SLO = xyMap(ay0, u_ymap, u_y0meta, u_ymode, u_yconstant);
-  float SHI = xyMap(ay1, u_ymap, u_y1meta, u_ymode, u_yconstant);
-  float TLO = xyMap(ax2, u_ymap, u_t0meta, u_ymode, u_yconstant);
-  float THI = xyMap(ay2, u_ymap, u_t1meta, u_ymode, u_yconstant);
+  float X0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode, u_xconstant);
+  float X1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode, u_xconstant);
+  float SLO = xyMap(ay0, u_y0map, u_y0meta, u_ymode, u_yconstant);
+  float SHI = xyMap(ay1, u_y1map, u_y1meta, u_ymode, u_yconstant);
+  float TLO = xyMap(ax2, u_t0map, u_t0meta, u_ymode, u_yconstant);
+  float THI = xyMap(ay2, u_t1map, u_t1meta, u_ymode, u_yconstant);
   float t = floor(float(gl_VertexID) * 0.5) / float(max(u_segments, 1));
   float side = float(gl_VertexID & 1);
   float u = 1.0 - t;
@@ -1028,7 +1047,8 @@ void main() {
 export const FUNNEL_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
 in vec4 a_rgba;
-uniform vec2 u_pmap; uniform vec2 u_cmap;
+uniform vec4 u_p0map; uniform vec4 u_p1map;
+uniform vec4 u_l0map; uniform vec4 u_h0map; uniform vec4 u_l1map; uniform vec4 u_h1map;
 uniform vec2 u_p0meta; uniform vec2 u_p1meta;
 uniform vec2 u_l0meta; uniform vec2 u_h0meta; uniform vec2 u_l1meta; uniform vec2 u_h1meta;
 uniform int u_pmode; uniform float u_pconstant; uniform int u_cmode; uniform float u_cconstant;
@@ -1039,12 +1059,12 @@ out float v_side;
 out float v_t;
 ${AXIS_GLSL}
 void main() {
-  float P0 = xyMap(ax0, u_pmap, u_p0meta, u_pmode, u_pconstant);
-  float P1 = xyMap(ax1, u_pmap, u_p1meta, u_pmode, u_pconstant);
-  float L0 = xyMap(ay0, u_cmap, u_l0meta, u_cmode, u_cconstant);
-  float H0 = xyMap(ay1, u_cmap, u_h0meta, u_cmode, u_cconstant);
-  float L1 = xyMap(ax2, u_cmap, u_l1meta, u_cmode, u_cconstant);
-  float H1 = xyMap(ay2, u_cmap, u_h1meta, u_cmode, u_cconstant);
+  float P0 = xyMap(ax0, u_p0map, u_p0meta, u_pmode, u_pconstant);
+  float P1 = xyMap(ax1, u_p1map, u_p1meta, u_pmode, u_pconstant);
+  float L0 = xyMap(ay0, u_l0map, u_l0meta, u_cmode, u_cconstant);
+  float H0 = xyMap(ay1, u_h0map, u_h0meta, u_cmode, u_cconstant);
+  float L1 = xyMap(ax2, u_l1map, u_l1meta, u_cmode, u_cconstant);
+  float H1 = xyMap(ay2, u_h1map, u_h1meta, u_cmode, u_cconstant);
   float t = floor(float(gl_VertexID) * 0.5);
   float side = float(gl_VertexID & 1);
   float pos = mix(P0, P1, t);
@@ -1100,7 +1120,8 @@ void main() {
 export const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
-uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec4 u_x0map; uniform vec4 u_x1map; uniform vec4 u_x2map;
+uniform vec4 u_y0map; uniform vec4 u_y1map; uniform vec4 u_y2map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
 uniform int u_x0mode; uniform float u_x0constant; uniform int u_x1mode; uniform float u_x1constant; uniform int u_x2mode; uniform float u_x2constant;
@@ -1112,13 +1133,15 @@ void main() {
   int vertex = gl_VertexID % 3;
   float x = vertex == 0 ? ax0 : (vertex == 1 ? ax1 : ax2);
   float y = vertex == 0 ? ay0 : (vertex == 1 ? ay1 : ay2);
-  vec2 xm = vertex == 0 ? u_x0meta : (vertex == 1 ? u_x1meta : u_x2meta);
-  vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
+  vec2 xmeta = vertex == 0 ? u_x0meta : (vertex == 1 ? u_x1meta : u_x2meta);
+  vec2 ymeta = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
+  vec4 xmap = vertex == 0 ? u_x0map : (vertex == 1 ? u_x1map : u_x2map);
+  vec4 ymap = vertex == 0 ? u_y0map : (vertex == 1 ? u_y1map : u_y2map);
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
   float xconstant = vertex == 0 ? u_x0constant : (vertex == 1 ? u_x1constant : u_x2constant);
   float yconstant = vertex == 0 ? u_y0constant : (vertex == 1 ? u_y1constant : u_y2constant);
-  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode, xconstant), xyMap(y, u_ymap, ym, ymode, yconstant), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, xmap, xmeta, xmode, xconstant), xyMap(y, ymap, ymeta, ymode, yconstant), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
   v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
@@ -1184,7 +1207,7 @@ float xyGradT(float markT, vec2 res) {
 // baseline column. Baseline is offset-encoded independently from y.
 export const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
-uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
+uniform vec4 u_xmap; uniform vec4 u_ymap; uniform vec4 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform float u_revealProgress; uniform float u_revealSegments;
@@ -1276,7 +1299,7 @@ void main() {
 // primitive for histogram, bar/column, waterfall, and later heatmap cells.
 export const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
-uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u_y1map;
+uniform vec4 u_x0map; uniform vec4 u_x1map; uniform vec4 u_y0map; uniform vec4 u_y1map;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_xmode; uniform float u_xconstant; uniform int u_ymode; uniform float u_yconstant;
 uniform vec4 u_edgePad;
@@ -1346,7 +1369,7 @@ export const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
 in float a_prevx; in float a_prevy; in float a_prevx1;
 in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
-uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
+uniform vec4 u_pmap; uniform vec4 u_v0map; uniform vec4 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform float u_pconstant; uniform int u_vmode; uniform float u_vconstant;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
@@ -1382,7 +1405,40 @@ void main() {
   }
   v0 += u_v0EdgePad;
   v1 = mix(v0, v1, u_animationProgress);
-  float halfW = abs(width * u_pmap.x) * 0.5;
+  // The bar's clip extent is the IMAGE of the data-space interval
+  // [pos - width/2, pos + width/2], not a slope times the width. On a linear
+  // axis the transform is affine and the two coincide, so the width scales by
+  // map.w (clip units per DATA unit) — the only form that also avoids
+  // rebuilding the absolute position in f32 (§16). Log-family axes are not
+  // affine: a bar at x=100 of width 10 spans x=95..105, which is a wider left
+  // half than right, not ten log units either side. Those decode (safe — §16
+  // pins their encode offset to 0) and map each edge, which is what RECT_VS
+  // already does with four separate edge columns.
+  //
+  // The two offsets are measured from the bar's OWN position, then applied
+  // around the transition-mixed p, so a growing/moving bar keeps its shape.
+  float dLo = -abs(width * u_pmap.w) * 0.5;
+  float dHi = -dLo;
+  if (u_pmode != 0) {
+    float pv = xyDecode(a_pos, u_pmeta);
+    float hw = abs(width) * 0.5;
+    float cC = xyViewCoord(pv, u_pmode, u_pconstant);
+    float cLo = xyViewCoord(pv - hw, u_pmode, u_pconstant);
+    float cHi = xyViewCoord(pv + hw, u_pmode, u_pconstant);
+    // An edge that leaves a log axis's domain has no coordinate. Collapse that
+    // side onto the centre rather than culling the bar: the half that does
+    // exist is still real, and matplotlib and Plotly both keep drawing it.
+    // The predicate is false for NaN as well as for either infinity and for
+    // mode 1's -1e30 sentinel, so one test covers every unusable coordinate.
+    if (!(abs(cLo) < 1e29)) cLo = cC;
+    if (!(abs(cHi) < 1e29)) cHi = cC;
+    // Ordered, so a reversed axis keeps clipA left of clipB and the corner SDF
+    // frame below stays the one a forward axis produces.
+    float a = (cLo - cC) * u_pmap.x;
+    float b = (cHi - cC) * u_pmap.x;
+    dLo = min(a, b);
+    dHi = max(a, b);
+  }
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   if (u_coordMode == 1) {
     // A polar bar is an annular sector, which four corners cannot express. The
@@ -1427,11 +1483,11 @@ void main() {
   }
   vec2 clipA, clipB;
   if (u_orientation == 0) {
-    clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);
+    clipA = vec2(p + dLo, v0); clipB = vec2(p + dHi, v1);
     gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
     v_t = c.y;
   } else {
-    clipA = vec2(v0, p - halfW); clipB = vec2(v1, p + halfW);
+    clipA = vec2(v0, p + dLo); clipB = vec2(v1, p + dHi);
     gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
     v_t = c.x;
   }
