@@ -5404,6 +5404,10 @@ export class ChartView {
   // folded into `add` — an f64-only shift would reintroduce the very error it
   // exists to remove. `dataMul` is the slope per *data* unit, which is what a
   // data-space width (a bar's) must scale by; `mul` is per *encoded* unit.
+  // A non-affine axis has no such constant, so `dataMul` is 0 there and a
+  // caller needing a data-space span transforms both of its edges instead
+  // (BAR_VS) — a zero-width bar is a visible mistake, a plausible-looking
+  // coordinate-space slope is not.
   //
   // Marks pass WINDOWS around, not maps: several of them place four or six
   // independently encoded columns per axis, and a map is only valid for the
@@ -5417,12 +5421,18 @@ export class ChartView {
     if (!axisId || this._axisMode(axisId) === 0) {
       const span = hi - lo;
       if (!Number.isFinite(span) || span === 0) return degenerate;
-      // Mirrors xyDecode's `max(abs(meta.y), 1e-30)` floor: a zero or denormal
-      // encode scale must not turn the folded slope into Infinity.
-      const rawScale = meta && Number.isFinite(meta.scale) ? meta.scale : 1;
-      const scale = Math.abs(rawScale) >= 1e-30 ? rawScale : (rawScale < 0 ? -1e-30 : 1e-30);
+      const scale = meta && Number.isFinite(meta.scale) ? meta.scale : 1;
       const offset = meta && Number.isFinite(meta.offset) ? meta.offset : 0;
       const dataMul = 2 / span;
+      // A zero encode scale encodes every value to 0, so the honest picture is
+      // "the whole column sits on its offset" — expressible exactly, with no
+      // division and no epsilon. Flooring |scale| instead would be wrong for
+      // the legitimately tiny scales an enormous finite domain produces
+      // (~1e-38): the fold has f64 to divide in, and must use the very scale
+      // the vertex buffer was encoded with, not a clamped stand-in.
+      if (scale === 0) {
+        return { mul: 0, add: (offset - lo) * dataMul - 1, shift: 0, dataMul };
+      }
       const mul = dataMul / scale;
       const shiftRaw = Math.fround(((lo + hi) / 2 - offset) * scale);
       const shift = Number.isFinite(shiftRaw) ? shiftRaw : 0;
@@ -5441,10 +5451,9 @@ export class ChartView {
     const c1 = this._axisCoord(axis, hi);
     if (![c0, c1].every(Number.isFinite) || c1 === c0) return degenerate;
     // Log-family axes decode before mapping, so one coordinate-space affine
-    // serves every column on the axis; `dataMul` keeps the pre-fold slope a
-    // data-space width scaled by before linear axes started folding.
+    // serves every column on the axis.
     const mul = 2 / (c1 - c0);
-    return { mul, add: -1 - c0 * mul, shift: 0, dataMul: mul };
+    return { mul, add: -1 - c0 * mul, shift: 0, dataMul: 0 };
   }
 
   _mapConst(value, lo, hi, axisId = null) {

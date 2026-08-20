@@ -1405,7 +1405,38 @@ void main() {
   }
   v0 += u_v0EdgePad;
   v1 = mix(v0, v1, u_animationProgress);
-  float halfW = abs(width * u_pmap.w) * 0.5;
+  // The bar's clip extent is the IMAGE of the data-space interval
+  // [pos - width/2, pos + width/2], not a slope times the width. On a linear
+  // axis the transform is affine and the two coincide, so the width scales by
+  // map.w (clip units per DATA unit) — the only form that also avoids
+  // rebuilding the absolute position in f32 (§16). Log-family axes are not
+  // affine: a bar at x=100 of width 10 spans x=95..105, which is a wider left
+  // half than right, not ten log units either side. Those decode (safe — §16
+  // pins their encode offset to 0) and map each edge, which is what RECT_VS
+  // already does with four separate edge columns.
+  //
+  // The two offsets are measured from the bar's OWN position, then applied
+  // around the transition-mixed p, so a growing/moving bar keeps its shape.
+  float dLo = -abs(width * u_pmap.w) * 0.5;
+  float dHi = -dLo;
+  if (u_pmode != 0) {
+    float pv = xyDecode(a_pos, u_pmeta);
+    float hw = abs(width) * 0.5;
+    float cC = xyViewCoord(pv, u_pmode, u_pconstant);
+    float cLo = xyViewCoord(pv - hw, u_pmode, u_pconstant);
+    float cHi = xyViewCoord(pv + hw, u_pmode, u_pconstant);
+    // An edge that leaves a log axis's domain has no coordinate. Collapse that
+    // side onto the centre rather than culling the bar: the half that does
+    // exist is still real, and matplotlib and Plotly both keep drawing it.
+    if (isnan(cLo) || cLo < -1e29) cLo = cC;
+    if (isnan(cHi) || cHi < -1e29) cHi = cC;
+    // Ordered, so a reversed axis keeps clipA left of clipB and the corner SDF
+    // frame below stays the one a forward axis produces.
+    float a = (cLo - cC) * u_pmap.x;
+    float b = (cHi - cC) * u_pmap.x;
+    dLo = min(a, b);
+    dHi = max(a, b);
+  }
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   if (u_coordMode == 1) {
     // A polar bar is an annular sector, which four corners cannot express. The
@@ -1450,11 +1481,11 @@ void main() {
   }
   vec2 clipA, clipB;
   if (u_orientation == 0) {
-    clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);
+    clipA = vec2(p + dLo, v0); clipB = vec2(p + dHi, v1);
     gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
     v_t = c.y;
   } else {
-    clipA = vec2(v0, p - halfW); clipB = vec2(v1, p + halfW);
+    clipA = vec2(v0, p + dLo); clipB = vec2(v1, p + dHi);
     gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
     v_t = c.x;
   }
