@@ -1124,7 +1124,7 @@ def test_client_funnel_draw_multiplies_transition_opacity_into_both_paints() -> 
     source = (Path(__file__).parents[1] / "js" / "src" / "50_chartview.ts").read_text(
         encoding="utf-8"
     )
-    draw = source.split("_drawFunnels(g, xm, ym) {")[1].split("\n  }\n\n", 1)[0]
+    draw = source.split("_drawFunnels(g, xr, yr) {")[1].split("\n  }\n\n", 1)[0]
     assert "const transitionAlpha = (g._transitionOpacity ?? 1)" in draw
     assert 'u("u_opacity"), this._fillOpacity(g.trace.style) * transitionAlpha' in draw
     assert 'u("u_strokeOpacity")' in draw and "* transitionAlpha" in draw
