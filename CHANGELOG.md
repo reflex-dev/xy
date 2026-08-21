@@ -1,26 +1,20 @@
 # Changelog
 
-All notable changes to **xy** are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
-adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
-pre-1.0, minor versions may contain breaking changes (see the stability table
-in the README).
+All notable changes to **xy** are documented here. The project adheres to
+[Semantic Versioning](https://semver.org/) once `1.0.0` ships; pre-1.0, minor
+versions may contain breaking changes (see the stability table in the README).
 
-## [Unreleased]
+This file is generated, and it is the release trigger: a version heading with no
+matching git tag is what makes the pipeline build and publish that version.
+Do not add or edit a version heading by hand — write a news fragment under
+`news/` instead (`make news NAME=1234.feature.md`), and the *Dispatch release*
+workflow materializes the pending fragments into a new section with
+[towncrier](https://towncrier.readthedocs.io/). See
+[`spec/process/production-readiness.md`](spec/process/production-readiness.md).
 
-### Changed
+<!-- towncrier release notes start -->
 
-- Unanchored Cartesian legends now use content-aware placement when `loc` is
-  set to `"best"`. The initial static decision measures the legend
-  against bounded line, area, scatter, bar, and annotation geometry, while the
-  browser remeasures rendered pixels after responsive resize and settled view
-  changes. Initial/static placement takes the exact minimum with canonical tie
-  order; after the browser establishes a live winner, a five-percentage-point
-  hysteresis keeps near-uniform views from making the legend hop, while an
-  empty candidate still always beats an occupied one. Explicit locations,
-  anchors, and polar legends remain fixed.
-
-## [0.0.6] - 2026-08-07
+## v0.0.6 (2026-08-07)
 
 ### Added
 - The primary data-bound Reflex component API is now available. `@reflex_xy.data`
@@ -104,7 +98,7 @@ in the README).
   dependencies, including PostCSS, were updated to patched versions, with the
   associated Python and JavaScript lockfiles refreshed.
 
-## [0.0.5] - 2026-07-31
+## v0.0.5 (2026-07-31)
 
 ### Added
 - Reflex integration is now bundled in the `xy` distribution and installed as
@@ -279,7 +273,7 @@ in the README).
   `set_transform` move the whole patch. Previously they reached only the fill,
   and a hidden patch still drew its outline.
 
-## [0.0.4] - 2026-07-27
+## v0.0.4 (2026-07-27)
 
 ### Added
 - Notebook display-host resolution (`spec/design/reflex-shaped-api.md` §3.3):
@@ -506,7 +500,7 @@ in the README).
   every colormap had ≤ 11 stops; a 256-stop ramp sits exactly at that limit, so
   the index is now `int32`.
 
-## [0.0.3] - 2026-07-24
+## v0.0.3 (2026-07-24)
 
 ### Changed
 - The runtime-verified WebAssembly wheel now targets the standardized PEP 783
@@ -520,7 +514,7 @@ in the README).
   `libxy_core.so`, the filename Pyodide's dynamic loader expects, even when
   cibuildwheel runs on a macOS host.
 
-## [0.0.2] - 2026-07-24
+## v0.0.2 (2026-07-24)
 
 ### Changed
 - The distribution version is derived from git tags (uv-dynamic-versioning)
@@ -1076,7 +1070,7 @@ in the README).
 - `XY_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
   backend (`xy/_fallback.py`).
 
-## [0.0.1] — 2026-07-16
+## v0.0.1 (2026-07-16)
 
 Initial development snapshot: line/scatter/area/histogram/bar/heatmap chart
 families, binary columnar transport, WebGL2 rendering, M4 decimation, density

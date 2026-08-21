@@ -6,8 +6,15 @@ SDIST ?=
 WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
+NAME ?=
+# The release tool, pinned to the same version as `cli-command` in
+# [tool.reflex-release] — keep the two together, or a local `make news` and the
+# release workflows would run different pipelines. Installed into a throwaway
+# environment, so the tool is never a dependency of the dev venv.
+RELEASE_VERSION ?= 0.1.0a2
+RELEASE_CLI = uvx reflex-release@$(RELEASE_VERSION)
 
-.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke news news-check
 
 help:
 	@printf '%s\n' \
@@ -25,7 +32,7 @@ help:
 		'  make check-errors     run public error, LOD, and mutation-safety tests' \
 		'  make check-api        run lazy public API and type-surface checks' \
 		'  make check-import     run import-time and dependency-boundary checks' \
-		'  make check-ci         run CI/release workflow invariant checks' \
+		'  make check-ci         run CI and CodSpeed workflow invariant checks' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires matplotlib)' \
@@ -35,6 +42,8 @@ help:
 		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, heatmap-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
 		'                        override UV_CACHE_DIR if your uv cache lives elsewhere' \
 		'  make list-checks      list verifier check names' \
+		'  make news NAME=1234.feature.md  add a changelog news fragment' \
+		'  make news-check       check this branch against main for a required fragment' \
 		'  make test             run pytest' \
 		'  make lint             run ruff check' \
 		'  make format           run ruff format --check' \
@@ -134,6 +143,23 @@ check-benchmark-report:
 
 list-checks:
 	$(PYTHON) scripts/verify_local.py --list
+
+# Every user-visible change lands a news fragment; the release pipeline
+# materializes the pending ones into CHANGELOG.md. Types: breaking,
+# deprecation, feature, bugfix, performance, docs, misc. Before you know the PR
+# number, name it `+something.feature.md` and rename it later.
+news:
+	@if [ -z "$(NAME)" ]; then \
+		echo 'Set NAME=<pr-number>.<type>.md, e.g. make news NAME=1234.feature.md' >&2; \
+		exit 2; \
+	fi
+	$(RELEASE_CLI) create "$(NAME)"
+
+# Defaults to the main branch, which is where nearly every pull request lands;
+# override for a prerelease or hotfix branch (BASE_REF=origin/r/hotfix/0.1) so it
+# diffs the same base the pull request does.
+news-check:
+	BASE_REF="$${BASE_REF:-origin/main}" $(RELEASE_CLI) changelog-check
 
 test:
 	$(PYTHON) -m pytest -q
