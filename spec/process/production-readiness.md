@@ -344,9 +344,10 @@ artifacts carry it. Three consequences worth knowing:
   clone fetches no tags and would *silently* build at the `0.0.0` fallback —
   which is why `collect` re-checks that every artifact declares the released
   version before the approval gate, rather than trusting the build.
-- A tag records a publish; it can no longer start one. No release workflow has a
-  `push: tags` trigger, so a hand-cut tag cannot bypass the changelog, the
-  version gate, or the approval.
+- A tag records a publish; it can no longer start one. No *publishing* workflow
+  has a `push: tags` trigger, so a hand-cut tag cannot bypass the changelog, the
+  version gate, or the approval. `deploy-docs-stg.yml` keeps one deliberately: it
+  publishes nothing, and a re-tag should redeploy the docs.
 
 ### The release workflows
 
@@ -515,9 +516,11 @@ Before merging a release pull request:
   applies.
 - Run `make check-full` locally or confirm the equivalent
   CI gates passed on the release commit.
-- Run `make check-ci` to confirm CI and release workflow
-  gates still include artifact verification, upload/download, and trusted PyPI
-  publishing.
+- Run `make check-ci` to confirm the CI and CodSpeed workflow gates still
+  include artifact verification and upload/download. The release workflows are
+  not in its scope: `reflex-release sync --check` on every pull request is what
+  keeps the generated four honest, and `collect` verifies the artifacts at
+  release time.
 - Before the first release after a change to the wheel matrix (new target,
   cross-compile toolchain, or tagging scheme), manually run
   `build_release_artifacts.yml` (`workflow_dispatch`) and confirm every leg of
@@ -584,16 +587,29 @@ Keep pushing these in low-conflict increments:
   route any new mark/chrome styling prop through `_validate.css_color` or
   `style_mapping` so no styling surface bypasses it.
 - Keep benchmark environment metadata and category IDs on every new generated report.
-- `publish.yml`'s `workflow_dispatch` `dry_run` input (default `true`) builds
+- `build_release_artifacts.yml`'s `workflow_dispatch` (leave `tag` empty) builds
   and verifies every wheel/sdist/wasm artifact without publishing; remaining
   follow-up is wiring an actual TestPyPI upload into that dry-run path (today it
-  only stops short of a real publish, it doesn't yet push to a test index) plus
+  reaches no publish path at all, it doesn't yet push to a test index) plus
   refreshed benchmark reports.
 - `reflex-release` is pinned at `0.1.0a2`, an alpha. Track its releases and bump
   the pin as it stabilizes, keeping `cli-command` and the `Makefile`'s
   `RELEASE_VERSION` on the same version — otherwise `make news` and the release
   workflows run different pipelines. `sync --check` on every pull request catches
   the half of a partial bump that reaches the workflows.
+- Two review findings land in `reflex-release`'s generated workflows, so they are
+  upstream fixes rather than local edits — patching them here would fork a file
+  `sync --check` then reports as drift forever, which is the arrangement this
+  repository just removed:
+  - `publish.yml`'s approval gate interpolates the captured `gh api` error into a
+    `::error::` message. A `gh` error line containing `::` would be re-parsed as a
+    workflow command, truncating the diagnostic. It cannot leak anything (the job
+    holds no secrets) and only affects a failure message, but it should be
+    sanitized before interpolation.
+  - `changelog.yml`'s header says "Two guards on every pull request" above three
+    numbered guards; the count went stale upstream when the `sync --check` step
+    was added.
+
 - `allow-self-review` is left at its default (`true`), so the `pypi`
   environment's reviewer list is the only control over who approves an upload —
   whoever dispatches a release can approve their own. Setting it to `false`

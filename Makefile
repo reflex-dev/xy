@@ -155,8 +155,11 @@ news:
 	fi
 	$(RELEASE_CLI) create "$(NAME)"
 
+# Defaults to the main branch, which is where nearly every pull request lands;
+# override for a prerelease or hotfix branch (BASE_REF=origin/r/hotfix/0.1) so it
+# diffs the same base the pull request does.
 news-check:
-	BASE_REF=origin/main $(RELEASE_CLI) changelog-check
+	BASE_REF="$${BASE_REF:-origin/main}" $(RELEASE_CLI) changelog-check
 
 test:
 	$(PYTHON) -m pytest -q

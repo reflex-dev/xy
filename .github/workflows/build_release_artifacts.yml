@@ -79,6 +79,12 @@ jobs:
     steps:
       # Shallow on purpose: this reads one stdlib script, no git history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here needs git write access: `git tag` works on a
+          # credential-free checkout and publish.yml pushes the tag later. Not
+          # persisting the token keeps it out of a workspace that then runs
+          # third-party build code.
+          persist-credentials: false
       - name: Check the tag is a shape the version derivation accepts
         if: inputs.tag != ''
         env:
@@ -123,6 +129,7 @@ jobs:
           # Full history and tags: the distribution version is derived from the
           # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
       # Contract rule 3: the dynamic versioning backend derives the version
       # from the newest reachable `v*` tag, so tagging HEAD locally is what makes
       # these artifacts carry `inputs.version`. The tag itself is pushed only
@@ -214,6 +221,7 @@ jobs:
           # Full history and tags: the distribution version is derived from the
           # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
       - name: Tag local checkout
         if: inputs.tag != ''
         env:
@@ -276,6 +284,7 @@ jobs:
           # Full history and tags: the distribution version is derived from the
           # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
       - name: Tag local checkout
         if: inputs.tag != ''
         env:

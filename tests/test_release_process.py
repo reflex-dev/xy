@@ -22,6 +22,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,14 +59,16 @@ def test_every_changelog_version_heading_is_machine_readable() -> None:
 
 def test_changelog_versions_are_newest_first() -> None:
     # towncrier prepends each new section, and the pipeline treats the *first*
-    # versioned heading as the newest. Document order is version order.
+    # versioned heading as the newest. Document order is version order — over the
+    # whole PEP 440 version, since prereleases and post-releases both order
+    # against the release they attach to (1.2.3rc1 < 1.2.3 < 1.2.3.post1).
     versions = [
-        tuple(int(part) for part in match["version"].split(".")[:3])
+        Version(match["version"])
         for line in _changelog_headings()
         if (match := HEADING_RE.match(line))
     ]
 
-    assert versions == sorted(versions, reverse=True), versions
+    assert versions == sorted(versions, reverse=True), [str(v) for v in versions]
 
 
 def test_towncrier_start_string_marks_where_sections_are_inserted() -> None:
@@ -95,6 +98,11 @@ def test_news_directory_exists_and_is_the_configured_one() -> None:
 
 def test_news_fragments_use_configured_types() -> None:
     types = {entry["directory"] for entry in TOWNCRIER["type"]}
+    # `<pr-number>.<type>[.md]`, or `+<name>.<type>[.md]` before the number is
+    # known. Anchored on the whole name: `496.feature.md.bak` and
+    # `496.invalid.feature.md` are both counted as pending by the release tool
+    # but are not fragments it will materialize.
+    fragment_re = re.compile(rf"^(?:\d+|\+[^.]+)\.(?:{'|'.join(sorted(types))})(?:\.md)?$")
     fragments = [
         path
         for path in (ROOT / TOWNCRIER["directory"]).iterdir()
@@ -102,10 +110,9 @@ def test_news_fragments_use_configured_types() -> None:
     ]
 
     for path in fragments:
-        parts = path.name.split(".")
-        assert types & set(parts), (
-            f"{path.name} names no configured fragment type; expected "
-            f"<pr-number>.<type>.md with type in {sorted(types)}"
+        assert fragment_re.match(path.name), (
+            f"{path.name} is not a fragment name; expected <pr-number>.<type>.md "
+            f"(or +<name>.<type>.md) with type in {sorted(types)}"
         )
         assert path.read_text(encoding="utf-8").strip(), f"{path.name} is empty"
 
