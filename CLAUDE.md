@@ -128,7 +128,8 @@ towncrier; `spec/process/production-readiness.md` § Release Checklist). A versi
 heading with no matching git tag is what publishes that version, and the tag is
 pushed only after PyPI accepts the artifacts — so never hand-edit a version
 heading, and never cut a release tag. Every change under `python/`, `src/` or
-`js/` adds a news fragment (`make news NAME=<pr>.<type>.md`); CI requires one.
+`js/` adds a news fragment (`make news NAME=<pr>.<type>.md`); CI requires one
+unless the `skip-changelog` label says the change is not user-facing.
 The four release workflows come from `reflex-release`, which owns their
 invariants — don't re-assert their contents in this repo; regenerate with
 `reflex-release sync` (its `sync --check` runs on every PR). xy owns exactly two

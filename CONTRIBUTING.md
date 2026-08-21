@@ -17,8 +17,9 @@ make check-full   # full production gate (also needs Node 18+ and clippy)
 ## Release notes
 
 `CHANGELOG.md` is generated and is the release trigger, so don't edit it by
-hand. Add a [towncrier](https://towncrier.readthedocs.io/) news fragment for
-every user-visible change instead:
+hand. Add a [towncrier](https://towncrier.readthedocs.io/) news fragment
+instead — every change under `python/`, `src/` or `js/` needs one, and the
+`skip-changelog` label waives it when a change is genuinely not user-facing:
 
 ```bash
 make news NAME=1234.feature.md   # breaking, deprecation, feature, bugfix,

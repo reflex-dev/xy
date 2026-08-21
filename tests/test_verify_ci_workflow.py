@@ -775,19 +775,25 @@ def _authored_workflows() -> list[Path]:
     out of sync with the tool. Pin policy applies to the files xy authors,
     including `build_release_artifacts.yml`, where xy's own build runs.
     """
+    # GitHub loads both extensions from .github/workflows, so an authored
+    # `.yaml` file must not slip past the pin and cache policy.
     return [
         path
-        for path in sorted(Path(".github/workflows").glob("*.yml"))
+        for path in sorted(_workflow_files())
         if _GENERATED_MARKER not in path.read_text(encoding="utf-8")
     ]
+
+
+def _workflow_files() -> list[Path]:
+    """Return every workflow file GitHub would load from this repository."""
+    directory = Path(".github/workflows")
+    return [*directory.glob("*.yml"), *directory.glob("*.yaml")]
 
 
 def test_generated_release_workflows_are_recognizable() -> None:
     # The scoping above is only sound while the marker actually identifies them.
     generated = {
-        path.name
-        for path in sorted(Path(".github/workflows").glob("*.yml"))
-        if path not in _authored_workflows()
+        path.name for path in sorted(_workflow_files()) if path not in _authored_workflows()
     }
 
     assert generated == {
