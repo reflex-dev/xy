@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -102,6 +103,138 @@ def _load_verify_module():
 
 
 verify_wheel = _load_verify_module()
+
+
+@pytest.mark.parametrize(
+    ("platform", "binary"),
+    [
+        (
+            "manylinux_2_17_x86_64",
+            b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62),
+        ),
+        (
+            "macosx_11_0_arm64",
+            b"\xcf\xfa\xed\xfe" + struct.pack("<I", 0x0100000C) + bytes(24),
+        ),
+        (
+            "win_amd64",
+            b"MZ"
+            + bytes(58)
+            + struct.pack("<I", 64)
+            + b"PE\0\0"
+            + struct.pack("<H", 0x8664)
+            + bytes(18)
+            + struct.pack("<H", 0x20B),
+        ),
+    ],
+)
+def test_native_binary_header_matches_wheel_platform(platform: str, binary: bytes) -> None:
+    verify_wheel._require_native_target("native", binary, platform)
+
+
+def test_native_binary_header_rejects_wrong_architecture() -> None:
+    binary = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62)
+
+    with pytest.raises(AssertionError, match="expected ELF/aarch64/64-bit"):
+        verify_wheel._require_native_target("native", binary, "manylinux_2_17_aarch64")
+
+
+def test_native_binary_rejects_missing_exported_abi_symbol() -> None:
+    binary = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(10) + struct.pack("<H", 62)
+
+    with pytest.raises(AssertionError, match="missing exported ABI symbols"):
+        verify_wheel._require_exported_symbols("native", binary, {"xy_abi_version"})
+
+
+def test_native_binary_accepts_exported_elf_abi_symbol() -> None:
+    data = bytearray(1024)
+    data[:4] = b"\x7fELF"
+    data[4:8] = bytes([2, 1, 1, 0])
+    struct.pack_into("<H", data, 18, 62)
+    struct.pack_into("<Q", data, 40, 512)
+    struct.pack_into("<H", data, 58, 64)
+    struct.pack_into("<H", data, 60, 3)
+    struct.pack_into("<H", data, 62, 0)
+    # The dynamic symbol table links to the following string-table section.
+    struct.pack_into("<I", data, 512 + 64 + 4, 11)
+    struct.pack_into("<Q", data, 512 + 64 + 24, 128)
+    struct.pack_into("<Q", data, 512 + 64 + 32, 24)
+    struct.pack_into("<I", data, 512 + 64 + 40, 2)
+    struct.pack_into("<Q", data, 512 + 64 + 56, 24)
+    struct.pack_into("<I", data, 512 + 128 + 4, 3)
+    struct.pack_into("<Q", data, 512 + 128 + 24, 256)
+    struct.pack_into("<Q", data, 512 + 128 + 32, 16)
+    struct.pack_into("<IBBH", data, 128, 1, 0x10, 0, 1)
+    data[256 : 256 + 16] = b"\0xy_abi_version\0"
+
+    verify_wheel._require_exported_symbols("native", bytes(data), {"xy_abi_version"})
+
+
+def test_macho_linkage_rejects_binary_above_wheel_floor() -> None:
+    data = bytearray(48)
+    data[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<I", data, 4, 0x0100000C)
+    struct.pack_into("<I", data, 16, 1)
+    struct.pack_into("<II", data, 32, 0x32, 16)
+    struct.pack_into("<I", data, 44, 12 << 16)
+
+    with pytest.raises(AssertionError, match="above 11.0"):
+        verify_wheel._require_macho_linkage("native", bytes(data), "macosx_11_0_arm64")
+
+
+def test_linkage_validation_requires_platform() -> None:
+    with pytest.raises(AssertionError, match="requires an expected native wheel platform"):
+        verify_wheel.verify_wheel(
+            Path("missing.whl"), expect_native=True, require_linkage=True
+        )
+
+
+def test_linkage_validation_requires_native_wheel() -> None:
+    with pytest.raises(AssertionError, match="requires an expected native wheel platform"):
+        verify_wheel.verify_wheel(
+            Path("missing.whl"),
+            expect_native=None,
+            expect_platform="win_amd64",
+            require_linkage=True,
+        )
+
+
+def _elf_linkage_fixture(interpreter: bytes, dependency: bytes, version: bytes = b"") -> bytes:
+    data = bytearray(512)
+    data[:4] = b"\x7fELF"
+    data[4:8] = bytes([2, 1, 1, 0])
+    struct.pack_into("<H", data, 16, 3)
+    struct.pack_into("<H", data, 18, 62)
+    struct.pack_into("<I", data, 20, 1)
+    struct.pack_into("<Q", data, 32, 64)
+    struct.pack_into("<H", data, 52, 64)
+    struct.pack_into("<H", data, 54, 56)
+    struct.pack_into("<H", data, 56, 3)
+    # A load segment covering the fixture's dynamic data and string table.
+    struct.pack_into("<IIQQQQQQ", data, 64, 1, 0, 0, 0x400000, 0, 512, 512, 0)
+    struct.pack_into("<IIQQQQQQ", data, 120, 3, 0, 240, 0, 0, len(interpreter), len(interpreter), 1)
+    struct.pack_into("<IIQQQQQQ", data, 176, 2, 0, 280, 0, 0, 64, 64, 1)
+    data[240 : 240 + len(interpreter)] = interpreter
+    strings = b"\0" + dependency + b"\0" + version + b"\0"
+    data[384 : 384 + len(strings)] = strings
+    struct.pack_into("<QQ", data, 280, 5, 0x400000 + 384)
+    struct.pack_into("<QQ", data, 296, 10, len(strings))
+    struct.pack_into("<QQ", data, 312, 1, 1)
+    struct.pack_into("<QQ", data, 328, 0, 0)
+    return bytes(data)
+
+
+def test_elf_linkage_validates_glibc_floor_and_dependency_family() -> None:
+    binary = _elf_linkage_fixture(b"/lib64/ld-linux-x86-64.so.2\0", b"libc.so.6", b"GLIBC_2.17")
+
+    verify_wheel._require_elf_linkage("native", binary, "manylinux_2_17_x86_64")
+
+    with pytest.raises(AssertionError, match="above manylinux_2_17"):
+        verify_wheel._require_elf_linkage(
+            "native",
+            _elf_linkage_fixture(b"/lib64/ld-linux-x86-64.so.2\0", b"libc.so.6", b"GLIBC_2.28"),
+            "manylinux_2_17_x86_64",
+        )
 
 
 def _record_hash(data: bytes) -> str:
