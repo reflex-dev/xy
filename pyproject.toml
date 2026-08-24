@@ -16,10 +16,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # The adapter source ships in every xy wheel so the framework integration and
-# render client can never drift. The extra only selects the supported Reflex
-# floor; importing plain `xy` remains framework-free.
+# render client can never drift. The extra selects the tested Reflex window;
+# importing plain `xy` remains framework-free.
 reflex = [
-    "reflex>=0.9.6",
+    "reflex>=0.9.6,<0.10",
 ]
 
 [project.urls]

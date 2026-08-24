@@ -98,7 +98,7 @@ Rust tooling beyond the commands above.
 
 - The bundled Reflex integration supports state-backed application charts and
   remains experimental. Install the extra to select a compatible Reflex
-  version. With uv:
+  supported version range (`>=0.9.6,<0.10`). With uv:
 
   ~~~bash
   uv add "xy[reflex]"
@@ -111,8 +111,8 @@ Rust tooling beyond the commands above.
   ~~~
 
   The `xy` wheel already carries the `reflex_xy` integration; the extra adds
-  only the supported Reflex dependency floor. Pin resolved versions for
-  production deployments. Continue with the
+  the tested Reflex compatibility range. The range is tested at Reflex 0.9.6
+  and 0.9.8 in CI. Continue with the
   [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
   limitations and setup.
 
