@@ -230,6 +230,14 @@ and `size_value` when those channels exist. A heatmap row is
 use their own client-side sequence (`_pickSeq`), not the view `seq` — sharing
 one counter let a hover invalidate an in-flight `tier_update`.
 
+`x`/`y` are raw axis coordinates from the conventional center/value columns
+(orientation-aware for bars: band center on the position axis, value end on
+the value axis). The client maps a category axis's code to its label before
+rendering or re-anchoring — the exact reply must land as an invisible
+refinement of the instant local readout, never a visible rewrite (a category
+code replacing its label, or a finite code dragging the tooltip anchor away
+from the cursor).
+
 **`selection`** — `{type, traces, total}` plus one u32 buffer per trace. Each
 entry is `{id, count, buf, drill_seq}`. Masks speak **shipped-vertex
 positions** (`fig.to_shipped_indices`), so `count` is the wire mask length,

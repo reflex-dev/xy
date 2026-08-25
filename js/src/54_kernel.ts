@@ -857,6 +857,21 @@ Object.assign(ChartView.prototype, {
       // them (fields the kernel row lacks are exactly the sibling-sourced
       // ones) so _applySharedTooltipFields finds nothing missing and skips
       // its O(n) sibling scans. It stays as the mismatch fallback.
+      // The kernel row carries raw axis coordinates; a category axis's code
+      // must become its label here, exactly as _localRow did for the instant
+      // readout — otherwise the exact reply visibly swaps "B" for "1" (and
+      // the finite code below would drag the anchor away from the cursor).
+      const rowG = this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
+      if (rowG) {
+        for (const channel of ["x", "y"]) {
+          if (typeof msg.row[channel] !== "number") continue;
+          const [value, kind] = this._sourceDisplayValue(
+            rowG, channel, msg.row[channel], msg.row[`${channel}_kind`],
+          );
+          msg.row[channel] = value;
+          if (kind === undefined) delete msg.row[`${channel}_kind`];
+        }
+      }
       const local = this._lastRow;
       if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
         for (const [key, value] of Object.entries(local)) {
