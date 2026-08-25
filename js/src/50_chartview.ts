@@ -1901,6 +1901,14 @@ export class ChartView {
       e.preventDefault();
       if (this._destroyed) return;
       const governedRelease = this.canvas.dataset.xyCtx === "released";
+      // A loss starts a fresh recovery cycle with a fresh context, so prior
+      // rebuild failures are no evidence about it — escalation counts
+      // consecutive failures within one cycle only. Reset before the
+      // duplicate guard below: the host fans out losses only on a live→lost
+      // transition, so a loss reaching a client still lost from a failed
+      // rebuild is a genuine new cycle too, and its stale count would
+      // otherwise escalate a host-wide recycle off one post-loss failure.
+      this._glHostRebuildFailures = 0;
       // _releaseContext marks the view lost synchronously before the browser
       // dispatches this event. Still run the full quiesce/telemetry path for
       // that first governed event; only ignore duplicate ungoverned losses.
@@ -1916,10 +1924,6 @@ export class ChartView {
       if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
-      // A genuine loss starts a fresh recovery cycle with a fresh context, so
-      // prior rebuild failures are no evidence about it — escalation counts
-      // consecutive failures within one cycle only.
-      this._glHostRebuildFailures = 0;
       this.root.dataset.xyContextState = "lost";
       // Quiesce every source of deferred GPU work, not only the draw RAF.
       // Incrementing seq makes pre-loss kernel/worker replies stale, so they

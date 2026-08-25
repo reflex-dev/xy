@@ -1206,6 +1206,114 @@ def test_genuine_loss_resets_rebuild_failure_count(tmp_path: Path) -> None:
     assert result["failuresAfterRecovery"] == 0, result
 
 
+_LOST_CLIENT_STALE_COUNT_PROBE = r"""
+  (async () => {
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const holder = document.getElementById("chart");
+      holder.replaceChildren();
+      const view = xy.renderStandalone(holder, spec, buf);
+      view._drawNow();
+      view._raf = null;
+
+      const host = view._glHost;
+      if (!host) throw new Error("probe did not acquire the shared host");
+      const extension = host.gl.getExtension("WEBGL_lose_context");
+      if (!extension) throw new Error("WEBGL_lose_context extension unavailable");
+
+      let failuresLeft = Infinity;
+      const originalGetOrCreateShader = host.getOrCreateShader;
+      host.getOrCreateShader = function (type, source) {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error("shader compile: null");
+        }
+        return originalGetOrCreateShader.call(this, type, source);
+      };
+
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 5000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      // Drive the client into the already-lost state organically: a genuine
+      // loss, then two rebuild failures against the restored context.
+      const lossCount = view._contextLossCount;
+      extension.loseContext();
+      await waitUntil(() => view._contextLossCount >= lossCount + 1, "first loss fan-out");
+      extension.restoreContext();
+      await waitUntil(
+        () => view._glLost && view._glHostRebuildFailures === 2,
+        "two rebuild failures on the restored context",
+      );
+      // Freeze the pending same-context retry so a third failure cannot land
+      // before the second genuine loss below.
+      clearTimeout(view._glHostRecoveryTimer);
+      view._glHostRecoveryTimer = null;
+
+      // A genuine host loss now arrives while this client is still lost from
+      // its failed rebuild. Exactly one transient failure remains for the
+      // fresh cycle — one failure on a fresh context is not the
+      // wedged-context signature, so recovery must take the cheap
+      // same-context retry, never a host-wide recycleSurface().
+      failuresLeft = 1;
+      const originalGl = host.gl;
+      const generationBefore = host.generation;
+      extension.loseContext();
+      await waitUntil(() => host.lost, "second loss reaching the host");
+      extension.restoreContext();
+      await waitUntil(
+        () => view.canvas.dataset.xyCtx === "live" && !view._glLost,
+        "recovery after one transient failure",
+      );
+
+      document.body.setAttribute("data-xy-lost-client-stale-count-probe", JSON.stringify({
+        // Loss + restore of the same surface is exactly one generation; an
+        // escalation would have added another and replaced the context.
+        sameContext: host.gl === originalGl,
+        generationDelta: host.generation - generationBefore,
+        failuresAfterRecovery: view._glHostRebuildFailures,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-lost-client-stale-count-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def test_loss_while_client_lost_resets_rebuild_failure_count(tmp_path: Path) -> None:
+    """A loss arriving while the client is already lost must still reset.
+
+    A failed rebuild leaves the client lost with a nonzero failure count; the
+    duplicate-loss guard must not skip the counter reset when a genuine host
+    loss then arrives, because the host fans out losses only on a live→lost
+    transition — that loss always heralds a fresh context, and the stale
+    count would otherwise escalate a host-wide ``recycleSurface()`` off a
+    single post-loss failure (§18).
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_LOST_CLIENT_STALE_COUNT_PROBE),
+        tmp_path / "shared_glhost_lost_client_stale_count.html",
+        "data-xy-lost-client-stale-count-probe",
+        label="shared WebGL host lost-client stale-count probe",
+    )
+
+    assert result["sameContext"] is True, result
+    assert result["generationDelta"] == 1, result
+    assert result["failuresAfterRecovery"] == 0, result
+
+
 def test_wedged_live_context_escalates_to_fresh_surface(tmp_path: Path) -> None:
     """Rebuilds that keep failing on a live context must not retry forever.
 

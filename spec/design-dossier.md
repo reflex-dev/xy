@@ -835,8 +835,12 @@ plain retries then never succeed, and the only user escape was refreshing the pa
 After three consecutive rebuild failures a client therefore calls
 `GLHost.recycleSurface()` — retire the current surface and rebuild every client on a
 fresh context, which is exactly what a reload buys — riding the existing loss/replace
-machinery and its backoff. The counter resets on the first successful rebuild, so
-ordinary transient pressure still recovers through cheap same-context retries.
+machinery and its backoff. The counter counts consecutive failures within one recovery
+cycle only: it resets on the first successful rebuild and on every loss notification —
+including one reaching a client still lost from a failed rebuild, since the host fans
+out losses only on a live→lost transition and a loss therefore always heralds a fresh
+context. Ordinary transient pressure thus recovers through cheap same-context retries,
+and a stale count can never escalate a host-wide recycle off a single post-loss failure.
 
 The governed per-chart path remains the compatibility fallback. It is used when shared
 hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document
