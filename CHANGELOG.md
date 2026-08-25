@@ -20,6 +20,19 @@ in the README).
   empty candidate still always beats an occupied one. Explicit locations,
   anchors, and polar legends remain fixed.
 
+### Fixed
+- Funnel labels no longer overlap on short vertical charts. Value labels sit
+  at the stage centers and drop-off labels at the boundaries between them, so
+  the two ladders interleave at half the stage pitch; both were budgeted
+  against a whole one, and every pitch between one and two line heights piled
+  them onto each other. The label ladder's plot-size estimate was also
+  optimistic — it scaled the chart height by a fraction, while the title band,
+  tick labels and margins actually cost a roughly fixed ~90px, so it claimed
+  153px of a real 92px plot at height 180 and placed labels that could not
+  fit. Cramped funnels now drop the derived drop-off percentage rather than
+  print it over the stage value; the tooltip and event payload still carry
+  every number, and roomy charts are unchanged.
+
 ## [0.0.6] - 2026-08-07
 
 ### Added

@@ -187,6 +187,31 @@ transformed space, so all three draw literally the same line on every axis
 type. CPU hover lerps the same edges in transformed space and returns the
 QUAD (= stage) index.
 
+**Labels.** The ladder in `_funnel.decide_labels` resolves every label to
+`inside`, `outside` or `hidden` at build time and ships the decision; no
+renderer re-places text. A value label tries its segment's box first, then the
+lane beside the funnel, then hides. Hiding is a §28 decimation decision and is
+recorded here: a label is dropped only when the space it needs is not there,
+and the tooltip and event payload still carry every number.
+
+Two rules the vertical layout depends on, both found by labels overlapping in
+review:
+
+- Value labels sit at the stage centers and drop-off labels at the boundaries
+  *between* them, so the two ladders **interleave at half the stage pitch**,
+  not a whole one. A drop-off label whose half pitch cannot hold a text line
+  keeps its row only where neither neighbouring value label reaches into the
+  span it starts at. The value label wins that tie — it is the datum, the
+  drop-off is arithmetic derived from it. A horizontal funnel is exempt: its
+  value labels ride above their own segment rather than in the boundary lane.
+- The ladder cannot see the real plot rectangle (only the renderers lay it
+  out), so it estimates from the configured chart size. The estimate must be
+  PESSIMISTIC: over-stating the room prints text on top of text, while
+  under-stating it only hides a label the tooltip still carries. Vertically
+  the title band, tick labels and margins cost a roughly fixed ~90px rather
+  than a fixed fraction, so the estimate subtracts a band instead of scaling
+  (`_funnel.estimate_plot_px`) — a fraction was 65% optimistic at height 180.
+
 **Paint.** One flat color per stage; there is no along-segment gradient (that
 is the ribbon's contract, and its `a_rgba2` slot is exactly what a funnel does
 not need). `opacity`, `stroke`, `stroke_width` are per-trace scalars, refused
