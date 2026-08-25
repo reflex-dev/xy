@@ -284,13 +284,10 @@ export class GLHost {
     }
   }
 
-  /** In-page equivalent of a full reload for the GL layer: retire the current
-   * surface and rebuild every client on a fresh context. A context can keep
-   * reporting itself live (`isContextLost()` false) while a wedged driver
-   * fails every rebuild against it; retrying on that same context can then
-   * never succeed, and before this seam existed the only escape was reloading
-   * the page. Rides the existing loss machinery, so replacement failures keep
-   * its backoff. */
+  /** Retire the current surface and rebuild every client on a fresh context —
+   * the escape for a wedged context that reports itself live
+   * (`isContextLost()` false) while every rebuild against it fails. Rides the
+   * existing loss machinery, so replacement failures keep its backoff. */
   recycleSurface(): void {
     if (this._disposed) return;
     this._markLost();

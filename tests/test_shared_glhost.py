@@ -1017,11 +1017,10 @@ _FAILED_REBUILD_FRAME_RETENTION_PROBE = r"""
 def test_failed_client_rebuild_keeps_last_presented_frame(tmp_path: Path) -> None:
     """A transiently failing restore must not blank the visible chart.
 
-    ``_initGl`` runs on every context-restore retry; sizing a canvas backing
-    store clears it even when the dimensions are unchanged, so an unguarded
-    resize wiped the last presented frame on each failed rebuild — a chart
-    under sustained GPU pressure visibly flickered between blank and drawn
-    until a retry finally succeeded (§18 recovery must be seamless).
+    ``_initGl`` runs on every context-restore retry, and a canvas
+    backing-store write clears the canvas even at unchanged dimensions —
+    the last presented frame must stay on screen until a rebuild
+    succeeds (§18).
     """
     chromium = find_chromium()
     if chromium is None:
@@ -1211,10 +1210,9 @@ def test_wedged_live_context_escalates_to_fresh_surface(tmp_path: Path) -> None:
     """Rebuilds that keep failing on a live context must not retry forever.
 
     A wedged driver can leave ``isContextLost()`` false while every compile
-    against that context fails; plain retries then never succeed and the only
-    user escape was a page reload. After three consecutive rebuild failures
-    the client recycles the shared surface — the in-page equivalent of that
-    reload — and recovers on the replacement context (§18).
+    against that context fails, so plain retries never succeed. After three
+    consecutive rebuild failures the client must recycle the shared surface
+    and recover on the replacement context (§18).
     """
     chromium = find_chromium()
     if chromium is None:

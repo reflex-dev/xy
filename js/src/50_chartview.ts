@@ -1916,11 +1916,9 @@ export class ChartView {
       if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
-      // A genuine loss starts a fresh recovery cycle (and already delivers
-      // the fresh-context remedy escalation exists for), so rebuild failures
-      // from a previous cycle are not evidence about the next context —
-      // carrying them over would recycle the whole host after one post-loss
-      // failure instead of three consecutive ones.
+      // A genuine loss starts a fresh recovery cycle with a fresh context, so
+      // prior rebuild failures are no evidence about it — escalation counts
+      // consecutive failures within one cycle only.
       this._glHostRebuildFailures = 0;
       this.root.dataset.xyContextState = "lost";
       // Quiesce every source of deferred GPU work, not only the draw RAF.
@@ -2054,13 +2052,11 @@ export class ChartView {
             if (this.gl && !this.gl.isContextLost()) {
               try { this._destroyGlResources(); } catch (_cleanupError) {}
             }
-            // A host context can stay "live" (`isContextLost()` false) while a
-            // wedged driver fails every rebuild against it. Retrying on that
-            // same context can then never succeed — a state users previously
-            // escaped only by reloading the page. After three consecutive
-            // failures, recycle the shared surface instead: a fresh context is
-            // exactly what a reload buys. (The capability check keeps a v1
-            // host from an older duplicate bundle on plain retries.)
+            // A wedged context can report itself live (isContextLost() false)
+            // while every rebuild against it fails, so retries on it never
+            // succeed. After three consecutive failures, recycle the shared
+            // surface for a fresh context (§18). The capability check keeps a
+            // v1 host from an older duplicate bundle on plain retries.
             this._glHostRebuildFailures = (this._glHostRebuildFailures || 0) + 1;
             if (
               this._glHostRebuildFailures >= 3 &&
@@ -4382,11 +4378,10 @@ export class ChartView {
   _initGl(buffer) {
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
-    // A canvas backing-store write clears the canvas even when the value is
-    // unchanged, and _initGl also runs on every context-restore retry. The
-    // last presented frame must survive a rebuild that fails transiently
-    // under GPU pressure (§18) — wiping it here turned each failed retry
-    // into a visible blank/flicker until a retry finally succeeded.
+    // A canvas backing-store write clears the canvas even at an unchanged
+    // value, and _initGl runs on every context-restore retry — write only on
+    // a real size change so the last presented frame survives a rebuild that
+    // fails transiently under GPU pressure (§18).
     const sizeSurface = (surface, w, h) => {
       w = Math.trunc(w);
       h = Math.trunc(h);
