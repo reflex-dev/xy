@@ -1,0 +1,70 @@
+{
+  "issue": "https://github.com/reflex-dev/xy/issues/485",
+  "generated_at_utc": "2026-08-16T22:50:11Z",
+  "fixture": {
+    "chart": "line",
+    "x": [0.0, 0.2, 0.4, 0.6, 0.7, 1.1],
+    "y": [0.1, 0.2, 0.25, 0.4, 0.7, 1.1],
+    "name": "Actual",
+    "line_width": 4,
+    "color": "#2563eb",
+    "x_domain": [0.0, 1.0],
+    "y_domain": [0.0, 1.0],
+    "legend_loc": "best",
+    "title": "Actual over time",
+    "chart_css_pixels": [760, 440]
+  },
+  "baseline": {
+    "source_tree": "detached worktree at the base commit",
+    "commit": "036271ac6534fdc4def1d85948e5c91b4a653e91",
+    "native_library": "target/release/libxy_core.dylib from base-equivalent Rust sources",
+    "standalone_js_sha256": "e67f5613d6fb57f25dae3ca3bd1c3d3bd91bb3fbf9b6a7919ccee45e39321963",
+    "payload_loc": "upper right",
+    "rendered_loc": "upper right",
+    "legend_rect": {
+      "x": 660.1953125,
+      "y": 46,
+      "width": 79.8046875,
+      "height": 21.5
+    },
+    "image": "before.png",
+    "image_sha256": "9c31a0b7a7fd3f9686340e28ede2f07abf0063e77dc3b3d121e108dfb1a5ee29"
+  },
+  "updated": {
+    "source_tree": "codex/issue-485-best-legend working tree",
+    "base_commit": "036271ac6534fdc4def1d85948e5c91b4a653e91",
+    "state": "uncommitted issue-485 implementation on the base commit",
+    "standalone_js_sha256": "86b2786963ce5077838dc7fba535c2e9345fa2011fff3c93998409b060ab580f",
+    "payload_loc": "upper left",
+    "payload_auto_loc": "best",
+    "rendered_loc": "upper left",
+    "legend_rect": {
+      "x": 68,
+      "y": 46,
+      "width": 79.8046875,
+      "height": 21.5
+    },
+    "image": "after.png",
+    "image_sha256": "7b27c56d2e43337f87f32496f3f38c94f1ae967fae08eed04ba300ec13dc9461"
+  },
+  "capture": {
+    "browser": "Chrome via Codex browser-client runtime",
+    "viewport_css_pixels": [800, 500],
+    "device_pixel_ratio": 1,
+    "root_rect": {
+      "x": 0,
+      "y": 0,
+      "width": 760,
+      "height": 440
+    },
+    "canvas_rect": {
+      "x": 62,
+      "y": 40,
+      "width": 684,
+      "height": 358
+    },
+    "clip_css_pixels": [0, 0, 760, 440],
+    "output_pixels": [760, 440],
+    "note": "The browser screenshot bytes were converted from JPEG to PNG with macOS sips without resizing."
+  }
+}

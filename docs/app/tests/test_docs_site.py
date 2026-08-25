@@ -10,6 +10,7 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
@@ -65,6 +66,7 @@ from xy_docs.gallery import (
 )
 from xy_docs.markdown import (
     XyDocsMarkdownTransformer,
+    _page_virtual_filepath,
     _split_demo_data,
     page_with_api_reference_toc,
     render_xy_markdown_page,
@@ -500,6 +502,9 @@ def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
     assert rendered_page.count('value:"data"') == data_demos * 2
     assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2 + data_demos
     assert rendered_page.count("xy-example-tab-list relative") == demo_count
+    assert rendered_page.count("Start Building Now!") == demo_count
+    secure_build_action = 'rel:"noopener noreferrer",target:"_blank",to:"https://build.reflex.dev/"'
+    assert rendered_page.count(secure_build_action) == demo_count
     assert (
         rendered_page.count("flex w-full flex-col gap-2 overflow-hidden px-2 pb-2 pt-4")
         == demo_count
@@ -1247,10 +1252,45 @@ def test_editing_a_page_drops_the_fence_snapshots_keyed_to_its_old_layout(
     # The edit removes the leading copy, renumbering the survivor to occurrence
     # 0 — and revises the trailing fence, as a real edit does, so it is a cache
     # miss and runs against whatever namespace the restore left behind.
-    render_xy_markdown_page(page_of("between = 2", duplicated, "second = (shared, between)"))
+    edited_page = page_of("between = 2", duplicated, "second = (shared, between)")
+    render_xy_markdown_page(edited_page)
 
-    module = _file_modules[str(source_path.resolve())]
+    module = _file_modules[_page_virtual_filepath(edited_page)]
     assert module.__dict__["second"] == (1, 2)
+
+
+def test_exec_module_identity_is_stable_across_build_roots(tmp_path: Path) -> None:
+    """Keep frontend and backend State module names independent of checkout paths."""
+    relative_path = Path("tests/split-build-state.md")
+    content = """~~~python exec
+class SplitBuildSymbol:
+    pass
+~~~"""
+
+    def page_at(build_root: str) -> DocsPage:
+        return DocsPage(
+            source_path=tmp_path / build_root / "docs" / relative_path,
+            relative_path=relative_path,
+            route="/tests/split-build-state/",
+            title="Split build state",
+            description=None,
+            metadata={},
+            content=content,
+        )
+
+    frontend_page = page_at("home/runner/work/xy/xy")
+    backend_page = page_at("app")
+    assert _page_virtual_filepath(frontend_page) == _page_virtual_filepath(backend_page)
+    render_xy_markdown_page(frontend_page)
+
+    virtual_filepath = _page_virtual_filepath(frontend_page)
+    frontend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+    render_xy_markdown_page(backend_page)
+    backend_symbol = _file_modules[virtual_filepath].SplitBuildSymbol
+
+    assert frontend_symbol is backend_symbol
+    assert frontend_symbol.__module__ == "_docgen_exec.xy_docs_tests_split_build_state_md"
+    assert str(tmp_path) not in frontend_symbol.__module__
 
 
 def _assigned_names(target: ast.expr) -> set[str]:
@@ -2409,6 +2449,77 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
+    assert "AlgoliaSearch" in rendered
+    assert "Inkeep" not in rendered
+
+
+def test_prerendered_route_paths_support_current_and_legacy_reflex_layouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep the production validator compatible across Reflex export layouts."""
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", tmp_path)
+
+    assert check_html_routes.route_html_paths("/charts/scatter/") == (
+        tmp_path / "charts/scatter.html",
+        tmp_path / "charts/scatter/index.html",
+    )
+    assert check_html_routes.route_html_paths("/") == (
+        tmp_path.with_suffix(".html"),
+        tmp_path / "index.html",
+    )
+    assert check_html_routes.fallback_html_paths() == (
+        tmp_path / "404.html",
+        tmp_path / "__spa-fallback.html",
+    )
+
+
+def test_prerendered_route_layout_is_selected_once_for_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Do not let a stale route from another layout mask missing output."""
+    current_root = tmp_path / "current"
+    current_root.mkdir()
+    (current_root / "404.html").touch()
+    (current_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", current_root)
+    assert check_html_routes.prerender_layout_index() == 0
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    (legacy_root / "__spa-fallback.html").touch()
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", legacy_root)
+    assert check_html_routes.prerender_layout_index() == 1
+
+
+def test_current_prerender_layout_does_not_accept_a_stale_legacy_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fail when current output is missing even if its legacy peer remains."""
+    build_root = tmp_path / "build" / "docs" / "xy"
+    build_root.mkdir(parents=True)
+    (build_root / "404.html").touch()
+    stale_route = build_root / "charts" / "scatter" / "index.html"
+    stale_route.parent.mkdir(parents=True)
+    stale_route.write_text(check_html_routes.LLMS_DIRECTIVE, encoding="utf-8")
+
+    routes_root = tmp_path / "routes"
+    routes_root.mkdir()
+    (routes_root / "[charts].[scatter]._index.jsx").touch()
+
+    monkeypatch.setattr(check_html_routes, "BUILD_ROOT", build_root)
+    monkeypatch.setattr(check_html_routes, "ROUTES_ROOT", routes_root)
+    monkeypatch.setattr(
+        check_html_routes,
+        "discover_docs",
+        lambda _config: [SimpleNamespace(route="/charts/scatter/", content="")],
+    )
+    monkeypatch.setattr(check_html_routes, "DOCS_REDIRECTS", {})
+
+    with pytest.raises(RuntimeError, match=r"charts/scatter\.html"):
+        check_html_routes.main()
 
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
@@ -2802,7 +2913,7 @@ def test_reflex_integration_renders_the_state_backed_data_example() -> None:
     assert "rxy.scatter_chart(" in state_backed.content
     state_rendered = str(
         XyDocsMarkdownTransformer(
-            virtual_filepath=str(page.source_path.resolve()),
+            virtual_filepath=_page_virtual_filepath(page),
             filename=str(page.source_path),
         ).code_block(state_backed)
     )

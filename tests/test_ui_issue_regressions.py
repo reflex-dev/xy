@@ -1129,3 +1129,161 @@ def test_categorical_tick_bounds_follow_anchor_rotation_and_extra_axis_side(
     assert extra, result
     assert all(row["side"] == "right" for row in extra), result
     assert all(row["pinnedRight"] for row in extra), result
+
+
+def test_bar_pick_reports_band_center_and_value_for_both_orientations() -> None:
+    """The exact pick row must agree with the instant client readout: the
+    category-band center on the position axis and the value end on the value
+    axis. Horizontal bars used to report the rect x midpoint (half the value)
+    and the y1 edge (band position + half width), so the kernel's exact reply
+    visibly rewrote the tooltip a round-trip after hover."""
+    vertical = xy.bar_chart(xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0]))
+    assert vertical.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": 1.0,
+        "y": 42.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    horizontal = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0], orientation="horizontal")
+    )
+    assert horizontal.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": 42.0,
+        "y": 1.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    # Stacked horizontal: the value end is the signed cumulative edge and the
+    # band center stays the category code, including on the negative branch.
+    stacked = xy.bar_chart(
+        xy.bar(
+            x=["A", "B"],
+            y=[[1.0, -2.0], [3.0, 4.0]],
+            mode="stacked",
+            orientation="horizontal",
+        )
+    )
+    assert stacked.pick(1, 0) == {
+        "trace": 1,
+        "index": 0,
+        "x": 4.0,
+        "y": 0.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+    assert stacked.pick(0, 1) == {
+        "trace": 0,
+        "index": 1,
+        "x": -2.0,
+        "y": 1.0,
+        "x_kind": "float",
+        "y_kind": "float",
+    }
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_bar_tooltip_survives_the_exact_pick_reply_unchanged(
+    tmp_path: Path, orientation: str
+) -> None:
+    """Hovering a bar shows the instant local readout; the kernel's exact
+    pick_result then replaces it. Both must say the same thing: the exact row
+    used to arrive as raw axis coordinates (category code, and for horizontal
+    bars half the value), so the tooltip visibly changed content and jumped to
+    a new anchor a round-trip after every hover."""
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0], orientation=orientation),
+        width=520,
+        height=320,
+    )
+    pick_row = chart.pick(0, 1)
+    hover_xy = (21.0, 1.0) if orientation == "horizontal" else (1.0, 21.0)
+    script = (
+        _PRELUDE
+        + f"""
+    const pickRow = {json.dumps(pick_row)};
+    const [hx, hy] = {json.dumps(hover_xy)};
+"""
+        + """
+    const rect = view.canvas.getBoundingClientRect();
+    // _projectDataPoint is root-relative; the hover canvas covers the plot.
+    const [lx, ly] = view._projectDataPoint("x", "y", hx, hy);
+    const cssX = lx - view.plot.x;
+    const cssY = ly - view.plot.y;
+    const hit = view._hoverAt(cssX, cssY);
+    if (!hit || hit.index !== 1) throw new Error("expected to hover bar index 1");
+    const clientX = rect.left + cssX;
+    const clientY = rect.top + cssY;
+    view._hoverTarget = hit;
+    view._lastHoverXY = {clientX, clientY};
+    view._showTooltip(hit, clientX, clientY);
+    const snapshot = () => ({
+      text: view.tooltip.textContent,
+      left: view.tooltip.style.left,
+      top: view.tooltip.style.top,
+      display: view.tooltip.style.display,
+    });
+    const before = snapshot();
+    view._onKernelMsg({type: "pick_result", row: pickRow}, []);
+    const after = snapshot();
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      before, after, exactRow: view._lastRow,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, f"bar tooltip exact reply {orientation}")
+
+    expected = "x42yB" if orientation == "horizontal" else "xBy42"
+    assert result["before"]["text"] == expected, result
+    assert result["after"] == result["before"], result
+    # The exact row reads like the local one: category label, full value.
+    label_field = "y" if orientation == "horizontal" else "x"
+    value_field = "x" if orientation == "horizontal" else "y"
+    assert result["exactRow"][label_field] == "B", result
+    assert result["exactRow"][value_field] == 42.0, result
+
+
+def test_pick_reply_for_a_dropped_trace_is_a_miss(tmp_path: Path) -> None:
+    """A pick_result can land after a data update removed its trace. With no
+    trace to map against, the raw kernel row must not render: the category
+    code would replace the label and drag the anchor — the exact rewrite/jump
+    this fix removes. A reply for a trace that no longer exists is a miss."""
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0]),
+        width=520,
+        height=320,
+    )
+    pick_row = chart.pick(0, 1)
+    script = (
+        _PRELUDE
+        + f"""
+    const pickRow = {json.dumps(pick_row)};
+"""
+        + """
+    const rect = view.canvas.getBoundingClientRect();
+    const [lx, ly] = view._projectDataPoint("x", "y", 1.0, 21.0);
+    const cssX = lx - view.plot.x;
+    const cssY = ly - view.plot.y;
+    const hit = view._hoverAt(cssX, cssY);
+    if (!hit || hit.index !== 1) throw new Error("expected to hover bar index 1");
+    const clientX = rect.left + cssX;
+    const clientY = rect.top + cssY;
+    view._hoverTarget = hit;
+    view._lastHoverXY = {clientX, clientY};
+    view._showTooltip(hit, clientX, clientY);
+    // Simulate a data update dropping the trace while the pick is in flight.
+    view.gpuTraces = view.gpuTraces.filter((t) => t.trace.id !== pickRow.trace);
+    view._onKernelMsg({type: "pick_result", row: pickRow}, []);
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      display: view.tooltip.style.display,
+      text: view.tooltip.textContent,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "pick reply dropped trace")
+    assert result["display"] == "none", result

@@ -629,6 +629,15 @@ placeholder.
 named edge and kept inside the plot rectangle — static export clamps it there
 explicitly — so `loc` alone can never paint a legend outside the axes.
 
+For an **unanchored Cartesian** legend, `loc="best"` requests automatic
+placement. Payload build measures the static legend footprint, scores the nine
+standard in-plot locations against the emitted mark geometry, and records a
+concrete `loc` as the static decision and safe first-paint fallback. The payload
+also records `auto_loc: "best"`, allowing the live browser to refine that choice
+from the pixels it actually rendered on its first settled draw, after a
+responsive resize, or after a settled view change. A concrete named `loc` is
+exact and never moves automatically.
+
 `xy.legend(anchor=...)` replaces that bounded, name-only placement with explicit
 geometry, mirroring Matplotlib's `bbox_to_anchor`; the `pyplot` shim maps
 `legend(bbox_to_anchor=...)` — a sequence, or any object exposing `.bounds` —
@@ -661,6 +670,12 @@ Reserving room for a legend placed outside the axes is therefore the caller's
 job. The composition API performs no automatic padding reservation — only the
 `pyplot` shim widens its own chart padding when `bbox_to_anchor` pushes the
 legend past an edge.
+
+An `anchor` is authored geometry and always bypasses live best-location
+scoring. Polar legends likewise keep their polar gutter placement; automatic
+re-scoring is a Cartesian in-plot behavior only. Supplying either one therefore
+omits `auto_loc`, even if Python had to settle a `"best"` spelling to a concrete
+location for the initial render.
 
 In the browser the legend is a DOM overlay above the marks canvas, positioned
 through the private `--xy-legend-left` / `--xy-legend-top` custom properties and
@@ -1381,27 +1396,72 @@ an unrecognized string never failed; it landed somewhere. `"northeast"` and
 `"best"` came out dead center, on top of the data, and `"top left"` came out
 *center*-left — which is what the facets-and-layers docs page was rendering.
 
-`"best"` scores each candidate box by the fraction of sampled marks inside it
-and keeps the least occupied, preferring the earlier candidate on a near-tie —
-Matplotlib's rule. It resolves **once, at payload-build time**
-(`xy._legendfit`), so the client and the two static writers all receive a
-settled location and cannot disagree about it (§28).
+For an unanchored Cartesian legend, `loc="best"` means **automatic**. The
+compatible `loc=None` default remains fixed at upper right. Python first records
+a concrete static decision and first-paint fallback, then adds the separate
+`auto_loc="best"` intent for the live renderer. Concrete named locations,
+anchored legends, and polar legends omit that intent and are never moved by the
+browser.
 
-The sampling is normative, because a different stride would place the legend
-somewhere else (§28):
+The initial Python pass (`xy._legendfit`) scores the **measured** box returned by
+the same `_legend_layout` used for static export, including its title, columns,
+font-relative row metrics, and 6 px plot inset. It reads the geometry already
+emitted for rendering, projects it through the displayed axis scale and
+direction, and accounts for the shape that can actually overlap the box:
 
-| | |
-| --- | --- |
-| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so the common path costs O(1) in the series length. That is a fast path, not a bound: if the 4096-point sample holds no finite pair, the full array is scanned instead, so a mostly-NaN series is still scored rather than silently dropped from placement. Worst case is therefore O(n), once, at build time. |
-| Finite cap | at most **512** finite points per series, evenly strided. |
-| Coordinate space | **display** space: the axis's `log`/`symlog` transform is applied first, so occupancy is measured where the marks are drawn. |
-| Off-plot marks | **dropped, not clamped.** Every renderer clips them, so folding them onto an edge would guard a corner the viewer sees as empty. |
-| Candidate order | the nine Matplotlib candidates, corners first, then mid-edges, then center. |
-| Near-tie band | boxes within **0.02** mean occupancy count as tied, and the earliest candidate wins — Matplotlib's integer badness ties on near-equal boxes, and a continuous metric would otherwise let sub-percent sampling noise override that order. |
+- lines contribute emitted vertices and segment crossings, including a visible
+  crossing whose endpoints lie outside the candidate;
+- areas contribute the covered area of their emitted top-and-baseline polygon,
+  so a thin sliver scores below a nearly full box;
+- scatter contributes marker extents rather than point centers alone;
+- density scatter contributes occupied cells from its bounded grid;
+- bar, column, and histogram marks contribute their full emitted rectangles;
+  and
+- rules, bands, arrows, text, labels, callouts, and other annotations contribute
+  their visible anchors, spans, paths, or estimated boxes.
 
-Density and heatmap tiers are not sampled: a trace with no `x`/`y` column pair
-contributes no occupancy, and a chart with no scorable series falls back to
+The production pass never performs a second scan of canonical mark rows. Direct
+scatter and rectangular marks use at most **4096** deterministically selected
+emitted entries; density uses its at-most **512 × 384** grid; and large
+line/area paths use their view-width-bounded M4 output, preserving extrema that
+an unrelated stride could miss. Direct line/area paths are already capped by
+the direct-tier threshold. Geometry is evaluated in display space (`linear`,
+`log`, or `symlog`) and clipped against the visible plot, while off-view line
+endpoints remain available to detect a segment crossing. A private raw-geometry
+fallback, used only when no emitted columns are available, caps paths at 1024
+entries. With no visible usable geometry the initial location is
 `"upper right"`.
+
+The nine candidates, in deterministic preference and tie-break order, are
+`"upper right"`, `"upper left"`, `"lower left"`, `"lower right"`,
+`"center right"`, `"center left"`, `"lower center"`, `"upper center"`, and
+`"center"`. The initial Python/static decision and the browser's first settled
+live decision choose the exact minimum score; only an exact tie reaches this
+canonical order. The order is therefore part of the placement contract: an
+empty or symmetric plot always chooses the same box.
+
+After layout, the browser measures the real DOM legend footprint and scores a
+fixed **96 × 72** occupancy raster made from the rendered marks and annotation
+overlay, plus visible annotation-label boxes and any fixed legend boxes. This
+is bounded by rendered pixels rather than canonical row count, so direct,
+decimated, and density tiers have the same fixed placement cost. A responsive
+resize remeasures and re-scores the box. Pan/zoom and programmatic view changes
+keep the last answer throughout update and transition frames, then re-score
+once the view has settled; a moving legend never chases the data during a
+gesture. Legend toggles and settled data/LOD replacements likewise dirty one
+bounded re-score. Once the browser has a settled live winner, these re-scores
+are hysteretic: the current location stays unless the best challenger lowers
+the normalized occupied fraction by at least **0.05** (5 percentage points).
+An empty challenger always beats an occupied current box, even when the
+improvement is smaller than that threshold. This prevents near-uniform rasters
+from making the legend hop after each settle while preserving clear-corner
+wins; exact-minimum and canonical-tie selection still govern the first live
+decision.
+
+Static export keeps the initial concrete choice when its dimensions are
+unchanged (including pyplot's more detailed compatibility scorer). When an
+export overrides width or height, SVG and raster remeasure the box and re-score
+the same emitted columns against the final layout before painting.
 
 ## Static export
 

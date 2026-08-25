@@ -81,6 +81,45 @@ def positioned_legend_demo():
     return reflex_xy.chart(positioned_legend_chart, height="320px")
 ~~~
 
+## Automatically Avoid Plotted Data
+
+Use `loc="best"` for an unanchored Cartesian legend that should choose the
+least-overlapping standard in-plot position. The browser scores the marks and
+important annotations it actually rendered, then rechecks the choice after a
+responsive resize or a settled pan/zoom. A concrete location such as
+`"upper left"`, an explicit `anchor=`, and polar legend placement remain fixed.
+
+The initial static choice and the browser's first settled choice take the exact
+least-occupied candidate, using the canonical location order to break a tie.
+After that, the browser keeps its settled winner across view, resize, and LOD
+rechecks unless another candidate improves the normalized occupied fraction by
+at least 5 percentage points. An empty challenger always replaces an occupied
+winner, even when that improvement is smaller. This keeps near-uniform plots
+stable without hiding a clearly open corner.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+automatic_legend_chart = xy.line_chart(
+    xy.line(
+        [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        [2, 120, 80, 118, 100, 115, 110, 116, 114, 120, 112, 119],
+        name="Actual",
+        color="#2563eb",
+        width=2.5,
+    ),
+    xy.x_axis(domain=(0, 11), label="period"),
+    xy.y_axis(domain=(0, 120), label="value"),
+    xy.legend(loc="best"),
+    title="Automatic least-overlap legend",
+)
+
+
+def automatic_legend_demo():
+    return reflex_xy.chart(automatic_legend_chart, height="320px")
+~~~
+
 ## Multi-Column Layout and Unnamed Series
 
 With many series, `ncols=2` lays the entries out in two columns; the dashed
@@ -163,8 +202,10 @@ you want to configure placement, columns, title, visibility, or styling.
 
 ### How do I change where the legend appears?
 
-Pass `loc=` to `xy.legend()`, e.g. `xy.legend(loc="upper right")`. If more than
-one `legend()` component is present, the last one supplies the effective
+Pass `loc=` to `xy.legend()`, e.g. `xy.legend(loc="upper right")`, or use
+`xy.legend(loc="best")` for content-aware automatic placement. The compatible
+`loc=None` default and every concrete location stay fixed. If more than one
+`legend()` component is present, the last one supplies the effective
 configuration.
 
 ### How do I arrange legend entries in multiple columns?

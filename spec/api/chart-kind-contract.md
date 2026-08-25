@@ -446,6 +446,11 @@ usually wrong). Each has an explicit trigger:
   `MARK_KINDS` at that call site.
 - **Trace shape & autorange**: `Trace(x, y)` remains the conventional center/value
   pair, while rectangle and segment marks carry explicit `x0/x1/y0/y1` columns.
+  For oriented bar-like marks the convention follows the orientation: the
+  position axis holds the band center and the value axis holds the value end
+  (`x1` for horizontal bars, `y1` for vertical), because the exact pick readout
+  (§16) projects these columns and must agree with the client's instant local
+  row — a horizontal bar must never read back its x midpoint (half the value).
   `Figure._range_columns()` already includes those geometry extents, so error
   bars, boxes, violins, contours, and other multi-column marks do not autorange
   to their midpoint only. *Trigger: a future mark whose extent is not expressible

@@ -47,7 +47,7 @@ dev = [
     "starlette>=0.36",
     # tests/reflex_adapter exercises the real socket data plane when the
     # `reflex` extra is installed in the main CI job.
-    "aiohttp>=3.9",
+    "aiohttp>=3.14.3",
     "uvicorn>=0.23",
     # Parses .binder/environment.yml in tests/test_binder_config.py so the
     # Binder contract is asserted on structure, not string transcription.

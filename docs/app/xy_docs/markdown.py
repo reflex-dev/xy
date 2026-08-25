@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections import Counter
 from dataclasses import replace
+from pathlib import Path
 
 import reflex as rx
 from reflex_docgen.markdown import CodeBlock, HeadingBlock, parse_document
@@ -36,6 +37,15 @@ from xy_docs.examples import chart_example_demo
 _DEMO_DATA_DIVIDER = "# --- chart ---"
 _DEMO_DATA_TAB_LINE_THRESHOLD = 10
 
+# Executable fences become in-memory Python modules, and Reflex includes that
+# module name in every State subclass's full name. Frontend and backend docs
+# images are built in different checkout roots, so an absolute source path here
+# produces incompatible state names (for example ``/home/runner/...`` in the
+# frontend and ``/app/...`` in the backend). Keep the module identity rooted in
+# the documentation tree instead; ``DocsPage.relative_path`` is stable in every
+# build environment and unique within this site.
+_EXEC_MODULE_ROOT = "xy-docs"
+
 # Namespace of the page module as of the end of each executed fence, keyed by
 # (virtual filepath, fence source, occurrence of that source in the page). The
 # occurrence disambiguates a page that repeats an identical fence: those are
@@ -47,6 +57,11 @@ _FENCE_NAMESPACES: dict[tuple[str, str, int], dict] = {}
 # snapshot's key includes the fence's *position*, so entries are only valid for
 # the exact page content that produced them. See `_invalidate_stale_fences`.
 _FENCE_PAGE_DIGESTS: dict[str, str] = {}
+
+
+def _page_virtual_filepath(page: DocsPage) -> str:
+    """Return one deployment-stable identity for a page's executable fences."""
+    return (Path(_EXEC_MODULE_ROOT) / page.relative_path).as_posix()
 
 
 def _invalidate_stale_fences(virtual_filepath: str, content: str) -> None:
@@ -269,16 +284,17 @@ class XyDocsMarkdownTransformer(ReflexDocTransformer):
 def render_xy_markdown_page(page: DocsPage) -> rx.Component:
     """Render one discovered XY documentation page."""
     source_path = page.source_path.resolve()
+    virtual_filepath = _page_virtual_filepath(page)
     # Cached snapshots are keyed by fence position, so they only survive while
     # the page source that produced them does.
-    _invalidate_stale_fences(str(source_path), page.content)
+    _invalidate_stale_fences(virtual_filepath, page.content)
     # One fence sequence per page render, even though the body and the FAQ are
     # transformed separately around the generated API section.
     fence_occurrences: Counter[str] = Counter()
 
     def _render(markdown_text: str) -> rx.Component:
         transformer = XyDocsMarkdownTransformer(
-            virtual_filepath=str(source_path),
+            virtual_filepath=virtual_filepath,
             filename=str(source_path),
             fence_occurrences=fence_occurrences,
         )

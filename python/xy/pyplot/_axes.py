@@ -8760,6 +8760,12 @@ class Axes(PlotTypeMixin):
                 legend_options=self._legend_options,
                 plot_size=best_plot_size,
             )
+            if self._projection == "cartesian" and self._legend_options.get("anchor") is None:
+                # Preserve the Matplotlib scorer's richer initial decision, but
+                # also tell the live renderer that an unanchored ``best``
+                # legend may be reconsidered after resize or settled view
+                # changes. Explicit, anchored, and polar locations stay exact.
+                core_figure.legend_options["auto_loc"] = "best"
         if "handleheight" in self._legend_options:
             core_figure.legend_options["handleheight"] = self._legend_options["handleheight"]
         for key in ("handlelength", "handletextpad"):
@@ -8793,13 +8799,16 @@ class Axes(PlotTypeMixin):
             extras = []
             for leg in legends:
                 spec = leg.spec()
-                if spec.get("loc") in (None, "best"):
+                automatic = spec.get("loc") in (None, "best")
+                if automatic:
                     spec["loc"] = self._best_legend_loc(
                         *best_ranges,
                         legend_options=spec,
                         items=list(spec.get("items") or []) or None,
                         plot_size=best_plot_size,
                     )
+                    if self._projection == "cartesian" and spec.get("anchor") is None:
+                        spec["auto_loc"] = "best"
                 extras.append(spec)
             core_figure.extra_legends = extras
         return self._chart

@@ -148,6 +148,35 @@ def test_dimension_override_and_fluid() -> None:
     assert _ihdr(png)[:2] == (500, 300)
 
 
+def test_raster_best_legend_rescores_final_size_without_mutating_extras() -> None:
+    figure = xy.chart(
+        xy.bar([0.75], [1.0], base=[0.90], width=0.04, name="series"),
+        xy.x_axis(domain=(0.0, 1.0)),
+        xy.y_axis(domain=(0.0, 1.0)),
+        xy.legend(loc="best"),
+        width=640,
+        height=360,
+    ).figure()
+    extra = {
+        "loc": "upper right",
+        "auto_loc": "best",
+        "items": [{"name": "extra", "kind": "bar", "style": {}}],
+    }
+    figure.extra_legends = [extra]
+
+    spec, _blob, _borrowed = _raster._export_payload(figure, 280, None, None)
+
+    assert spec["legend"] == {
+        "loc": "upper left",
+        "ncols": 1,
+        "auto_loc": "best",
+    }
+    assert spec["extra_legends"][0]["loc"] == "upper left"
+    assert spec["extra_legends"][0]["auto_loc"] == "best"
+    assert extra["loc"] == "upper right"
+    assert figure.extra_legends[0] is extra
+
+
 def test_flat_chart_is_indexed_gradient_chart_is_truecolor() -> None:
     # optimize=True retains the size-oriented palette selection path.
     flat = Figure(width=200, height=120).bar(["a", "b"], [1.0, 2.0], color="#2563eb")

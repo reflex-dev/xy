@@ -8,6 +8,18 @@ in the README).
 
 ## [Unreleased]
 
+### Changed
+
+- Unanchored Cartesian legends now use content-aware placement when `loc` is
+  set to `"best"`. The initial static decision measures the legend
+  against bounded line, area, scatter, bar, and annotation geometry, while the
+  browser remeasures rendered pixels after responsive resize and settled view
+  changes. Initial/static placement takes the exact minimum with canonical tie
+  order; after the browser establishes a live winner, a five-percentage-point
+  hysteresis keeps near-uniform views from making the legend hop, while an
+  empty candidate still always beats an occupied one. Explicit locations,
+  anchors, and polar legends remain fixed.
+
 ### Fixed
 - Funnel labels no longer overlap on short vertical charts. Value labels sit
   at the stage centers and drop-off labels at the boundaries between them, so
