@@ -1114,6 +1114,99 @@ _POISONED_CONTEXT_ESCALATION_PROBE = r"""
 """
 
 
+_STALE_FAILURE_COUNT_PROBE = r"""
+  (async () => {
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const holder = document.getElementById("chart");
+      holder.replaceChildren();
+      const view = xy.renderStandalone(holder, spec, buf);
+      view._drawNow();
+      view._raf = null;
+
+      const host = view._glHost;
+      if (!host) throw new Error("probe did not acquire the shared host");
+      const extension = host.gl.getExtension("WEBGL_lose_context");
+      if (!extension) throw new Error("WEBGL_lose_context extension unavailable");
+
+      // Stale count from an earlier recovery cycle, then a genuine loss and a
+      // SINGLE transient failure on the restored context. One failure on a
+      // fresh cycle is not the wedged-context signature, so it must take the
+      // cheap same-context retry — never a host-wide recycleSurface().
+      view._glHostRebuildFailures = 2;
+      let failuresLeft = 1;
+      const originalGetOrCreateShader = host.getOrCreateShader;
+      host.getOrCreateShader = function (type, source) {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error("shader compile: null");
+        }
+        return originalGetOrCreateShader.call(this, type, source);
+      };
+
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 5000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      const originalGl = host.gl;
+      const generationBefore = host.generation;
+      const lossCount = view._contextLossCount;
+      extension.loseContext();
+      await waitUntil(() => view._contextLossCount >= lossCount + 1, "context loss fan-out");
+      extension.restoreContext();
+      await waitUntil(
+        () => view.canvas.dataset.xyCtx === "live" && !view._glLost,
+        "recovery after one transient failure",
+      );
+
+      document.body.setAttribute("data-xy-stale-count-probe", JSON.stringify({
+        // A genuine loss + restore is exactly one generation; an escalation
+        // would have added another and replaced the context object.
+        sameContext: host.gl === originalGl,
+        generationDelta: host.generation - generationBefore,
+        failuresAfterRecovery: view._glHostRebuildFailures,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-stale-count-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def test_genuine_loss_resets_rebuild_failure_count(tmp_path: Path) -> None:
+    """Stale failures from a prior cycle must not carry across a real loss.
+
+    The escalation counter detects a wedged context — consecutive failures
+    against the same live context with no loss event between them. A genuine
+    ``webglcontextlost`` already delivers the fresh-context remedy, so one
+    post-loss failure must take the cheap same-context retry; escalating a
+    host-wide ``recycleSurface()`` off a stale count would make every chart
+    quiesce and rebuild under exactly the pressure being survived.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_STALE_FAILURE_COUNT_PROBE),
+        tmp_path / "shared_glhost_stale_count.html",
+        "data-xy-stale-count-probe",
+        label="shared WebGL host stale-failure-count probe",
+    )
+
+    assert result["sameContext"] is True, result
+    assert result["generationDelta"] == 1, result
+    assert result["failuresAfterRecovery"] == 0, result
+
+
 def test_wedged_live_context_escalates_to_fresh_surface(tmp_path: Path) -> None:
     """Rebuilds that keep failing on a live context must not retry forever.
 

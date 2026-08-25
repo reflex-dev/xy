@@ -1916,6 +1916,12 @@ export class ChartView {
       if (this._governorRegistered) XY_CONTEXT_GOVERNOR._announceLive();
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
+      // A genuine loss starts a fresh recovery cycle (and already delivers
+      // the fresh-context remedy escalation exists for), so rebuild failures
+      // from a previous cycle are not evidence about the next context —
+      // carrying them over would recycle the whole host after one post-loss
+      // failure instead of three consecutive ones.
+      this._glHostRebuildFailures = 0;
       this.root.dataset.xyContextState = "lost";
       // Quiesce every source of deferred GPU work, not only the draw RAF.
       // Incrementing seq makes pre-loss kernel/worker replies stale, so they
