@@ -11,7 +11,7 @@ NAME ?=
 # [tool.reflex-release] — keep the two together, or a local `make news` and the
 # release workflows would run different pipelines. Installed into a throwaway
 # environment, so the tool is never a dependency of the dev venv.
-RELEASE_VERSION ?= 0.1.0a2
+RELEASE_VERSION ?= 0.1.0a3
 RELEASE_CLI = uvx reflex-release@$(RELEASE_VERSION)
 
 .PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke news news-check
