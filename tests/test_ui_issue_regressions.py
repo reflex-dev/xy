@@ -1245,3 +1245,45 @@ def test_bar_tooltip_survives_the_exact_pick_reply_unchanged(
     value_field = "x" if orientation == "horizontal" else "y"
     assert result["exactRow"][label_field] == "B", result
     assert result["exactRow"][value_field] == 42.0, result
+
+
+def test_pick_reply_for_a_dropped_trace_is_a_miss(tmp_path: Path) -> None:
+    """A pick_result can land after a data update removed its trace. With no
+    trace to map against, the raw kernel row must not render: the category
+    code would replace the label and drag the anchor — the exact rewrite/jump
+    this fix removes. A reply for a trace that no longer exists is a miss."""
+    chart = xy.bar_chart(
+        xy.bar(x=["A", "B", "C"], y=[10.0, 42.0, 7.0]),
+        width=520,
+        height=320,
+    )
+    pick_row = chart.pick(0, 1)
+    script = (
+        _PRELUDE
+        + f"""
+    const pickRow = {json.dumps(pick_row)};
+"""
+        + """
+    const rect = view.canvas.getBoundingClientRect();
+    const [lx, ly] = view._projectDataPoint("x", "y", 1.0, 21.0);
+    const cssX = lx - view.plot.x;
+    const cssY = ly - view.plot.y;
+    const hit = view._hoverAt(cssX, cssY);
+    if (!hit || hit.index !== 1) throw new Error("expected to hover bar index 1");
+    const clientX = rect.left + cssX;
+    const clientY = rect.top + cssY;
+    view._hoverTarget = hit;
+    view._lastHoverXY = {clientX, clientY};
+    view._showTooltip(hit, clientX, clientY);
+    // Simulate a data update dropping the trace while the pick is in flight.
+    view.gpuTraces = view.gpuTraces.filter((t) => t.trace.id !== pickRow.trace);
+    view._onKernelMsg({type: "pick_result", row: pickRow}, []);
+    document.body.setAttribute("data-xy-issue-probe", JSON.stringify({
+      display: view.tooltip.style.display,
+      text: view.tooltip.textContent,
+    }));
+"""
+        + _POSTLUDE
+    )
+    result = _probe(chart, script, tmp_path, "pick reply dropped trace")
+    assert result["display"] == "none", result

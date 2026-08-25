@@ -236,7 +236,10 @@ the value axis). The client maps a category axis's code to its label before
 rendering or re-anchoring — the exact reply must land as an invisible
 refinement of the instant local readout, never a visible rewrite (a category
 code replacing its label, or a finite code dragging the tooltip anchor away
-from the cursor).
+from the cursor). A reply naming a trace the client no longer holds (dropped
+by a data update while the pick was in flight) has no mapping source and
+describes a mark that no longer exists; the client treats it as a miss and
+hides the tooltip.
 
 **`selection`** — `{type, traces, total}` plus one u32 buffer per trace. Each
 entry is `{id, count, buf, drill_seq}`. Masks speak **shipped-vertex
