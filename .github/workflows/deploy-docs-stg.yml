@@ -4,17 +4,35 @@
 name: Deploy XY Docs to Stage and Prod
 
 on:
+  # This is reflex-release's post-release workflow (`post-release-workflow` in
+  # pyproject.toml): the release pipeline dispatches it on each published tag,
+  # once the upload, the tag and the GitHub release exist, so the docs site
+  # ships the version it documents without anyone remembering to start it. The
+  # three inputs are that dispatch contract — `tag` is the only one a human
+  # needs to fill in.
   workflow_dispatch:
     inputs:
-      version:
+      tag:
         description: "Existing XY release tag (semver, for example v0.1.0)"
         required: true
         type: string
+      package:
+        description: "Published package (release pipeline; xy is the only one)"
+        required: false
+        type: string
+        default: xy
+      version:
+        description: "Published version without the v prefix (release pipeline)"
+        required: false
+        type: string
+        default: ""
   push:
-    # The library's semver release tags — the same `v*` tags release.yml
-    # publishes to PyPI from, so the docs site ships the version it documents.
-    # Deploying an arbitrary commit outside a release is workflow_dispatch's
-    # job (or deploy-docs-dev.yml, which tracks main on every push).
+    # A `v*` release tag pushed by hand, so re-tagging still deploys docs. The
+    # pipeline's own tag does not arrive this way — it is pushed with
+    # GITHUB_TOKEN, which deliberately fires no on-push workflow — which is what
+    # the post-release dispatch above is for. Deploying an arbitrary commit
+    # outside a release is workflow_dispatch's job too (or deploy-docs-dev.yml,
+    # which tracks main on every push).
     tags: ["v*"]
 
 permissions:
@@ -37,7 +55,7 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version || github.ref_name }}
+          VERSION: ${{ inputs.tag || github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
@@ -72,7 +90,7 @@ jobs:
           echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
 
       # A semver-shaped tag is not necessarily a releasable one. Run the same
-      # gate release.yml runs, from the tagged tree, so a tag the version
+      # gate publish.yml runs, from the tagged tree, so a tag the version
       # derivation cannot read cannot deploy docs for a library version that can
       # never be published.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,11 +137,11 @@ jobs:
     steps:
       - run: echo "Approved for production promotion"
 
-  # No GitHub Release job here: on a `v*` tag release.yml owns the release
-  # (it gates the tag shape and attaches the Pyodide wheel with generated
-  # notes). A second creator would race it and could win, stamping a
-  # library release with docs-deployment notes. The flip side of not owning it
-  # is that this workflow must confirm it happened before promoting prod.
+  # No GitHub Release job here: publish.yml owns the library release (it gates
+  # the tag shape, publishes the wheel matrix, and writes the release body from
+  # CHANGELOG.md). A second creator would stamp a library release with
+  # docs-deployment notes. The flip side of not owning it is that this workflow
+  # must confirm it happened before promoting prod.
   verify-library-release:
     name: Verify Library Release Published
     needs: [prepare, await-prod-approval]
@@ -132,9 +150,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      # release.yml runs in parallel on the same tag and its wheel matrix is
-      # slow, so poll rather than sample once. Prod must never document a
-      # version users cannot `pip install`.
+      # Normally already true: publish.yml uploads and creates the release
+      # *before* pushing the tag that brings us here. Poll anyway — a hand-pushed
+      # tag arrives with nothing published behind it, and PyPI's index can lag
+      # its own upload. Prod must never document a version users cannot
+      # `pip install`.
       - name: Await GitHub Release and PyPI availability
         env:
           GH_TOKEN: ${{ github.token }}

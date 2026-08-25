@@ -81,7 +81,7 @@ These must pass before publishing.
 | Python floor | `pyproject.toml`, Ruff, docs, syntax, and annotations stay on the Python 3.11+ floor | `python scripts/check_python_floor.py` |
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
 | Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
-| CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
+| CI/CodSpeed workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, and no-Rust clear-error jobs stay wired. The release workflows are `reflex-release`'s and are not re-checked here | `make check-ci` |
 | GitHub Actions token scope | CI, release, and manual benchmark workflows declare an explicit least-privilege `GITHUB_TOKEN` default; privileged jobs use narrow job-level overrides | GitHub code scanning (`actions/missing-workflow-permissions`) |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
 | Python tests | Native backend passes | `pytest -q` |
@@ -161,7 +161,7 @@ production-facing push:
 | Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
-| CI/release workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
+| CI/CodSpeed workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
 | Source distributions and wheels | `make check-sdist` and `make check-wheel` |
 | Existing release artifacts | `make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl` |
 | Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
@@ -216,7 +216,7 @@ Use `make check-wheel WHEEL_EXPECT=--expect-native` when verifying a native
 release wheel, or `WHEEL_EXPECT=--expect-pure` when intentionally checking the
 no-native artifact (it imports but errors clearly the moment compute is needed).
 
-Use this after editing CI/release workflows, benchmark artifact upload/download
+Use this after editing the CI or CodSpeed workflows, benchmark artifact upload/download
 wiring, trusted publishing, or the no-Rust clear-error install jobs:
 
 ```bash
@@ -325,57 +325,210 @@ Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
 ## Release Checklist
 
-The tag *is* the version. `pyproject.toml` declares `dynamic = ["version"]` and
-uv-dynamic-versioning derives the distribution version from the latest `v*` git
-tag, so cutting a release is `git tag vX.Y.Z && git push --tags` — there is no
-number to bump in a file, and no file that can drift from the tag. Two
-consequences worth knowing:
+**`CHANGELOG.md` is the release trigger.** A version heading in it with no
+matching git tag is what makes the pipeline build and publish that version, and
+the tag is pushed only *after* PyPI accepted the artifacts. Releases are driven
+by [reflex-release](https://github.com/reflex-dev/reflex/tree/main/packages/reflex-release)
+and [towncrier](https://towncrier.readthedocs.io/), configured in
+`[tool.reflex-release]` and `[tool.towncrier]`.
 
-- Builds between tags are versioned `<next>.devN+<commit>`, which PyPI rejects
-  by design: only a tag can produce an uploadable version.
+The version itself is still derived, never written down: `pyproject.toml`
+declares `dynamic = ["version"]` and uv-dynamic-versioning reads the latest `v*`
+git tag. Since no tag exists yet while a release builds, each build job tags its
+own checkout with the version the changelog asked for — which is what makes the
+artifacts carry it. Three consequences worth knowing:
+
+- Builds outside a release are versioned `<next>.devN+<commit>`, which PyPI
+  rejects by design: only the pipeline's tag produces an uploadable version.
 - Every checkout that builds must be unshallow (`fetch-depth: 0`). A depth-1
-  clone fetches no tags and would *silently* build at the `0.0.0` fallback;
-  `make check-ci` enforces this.
+  clone fetches no tags and would *silently* build at the `0.0.0` fallback —
+  which is why `collect` re-checks that every artifact declares the released
+  version before the approval gate, rather than trusting the build.
+- A tag records a publish; it can no longer start one. No *publishing* workflow
+  has a `push: tags` trigger, so a hand-cut tag cannot bypass the changelog, the
+  version gate, or the approval. `deploy-docs-stg.yml` keeps one deliberately: it
+  publishes nothing, and a re-tag should redeploy the docs.
 
-Pre-releases are tagged the same way with a canonical PEP 440 suffix —
-`vX.Y.ZaN` / `bN` / `rcN` (e.g. `v1.0.0rc1`) — and publish through the same
-pipeline; pip ignores them unless a pre-release is requested explicitly. Only
-the canonical spelling passes the release gate: `-alpha1`-style tags would be
-normalized by the version derivation and could never match their own built
-artifacts. A pre-release needs its own dated changelog entry, exactly like a
-final release.
+### The release workflows
+
+| Workflow | Trigger | What it does |
+| --- | --- | --- |
+| `changelog.yml` | pull request | Requires a news fragment for source changes, rejects hand-written version headings, and runs `sync --check` so a stale generated workflow fails here. |
+| `dispatch_release.yml` | manual | Materializes `news/` fragments into `CHANGELOG.md` at the next version. Final releases land through a pull request; prereleases go straight to an `r/pre-*` branch. |
+| `release_from_changelog.yml` | push to `main`, `r/pre-**`, `r/hotfix/**` | Publishes any changelog version that has no git tag, by calling `publish.yml`. |
+| `publish.yml` | called by the above, or manual | Validates the request, calls the build workflow below, waits for `pypi` environment approval, uploads, then tags and creates the GitHub release. |
+| `build_release_artifacts.yml` | called by `publish.yml`, or manual for a dry run | **This repository's own**: the release matrix — eleven platform wheels, the runtime-verified PyEmscripten wheel, and the sdist. |
+| `deploy-docs-stg.yml` | dispatched by `publish.yml` per published tag, or manual | **This repository's own**: builds and deploys the docs site for the version just published. |
+
+The first four come from `reflex-release` (pinned at `0.1.0a3` in
+`[tool.reflex-release] cli-command`), which owns their invariants and tests them
+where the tool lives. This repository deliberately does not re-assert their
+contents. The last two are its own, and they are the whole integration surface:
+one workflow builds the artifacts, one runs after the release. See *Upgrading the
+release tool* and *After a release* below.
+
+What the approver sees and what the release records is one artifact: before the
+`pypi` gate, `collect` writes a `sha256sum` manifest over exactly the files
+bound for PyPI, prints it to the job summary the reviewer reads, and the gated
+job re-checks it with coreutils only before uploading. `tag-and-release` then
+attaches that same manifest to the GitHub release, so what a published version
+contained outlives the workflow run.
+
+Repository settings the pipeline depends on, once:
+
+- A `pypi` environment **with required reviewers**. Every upload waits for that
+  approval, and `publish.yml` fails closed if it starts without reviewers
+  configured. If deployment branches are restricted, allow `main`, `r/pre-*` and
+  `r/hotfix/*`.
+- PyPI trusted publishing pointed at workflow `publish.yml`, environment `pypi`.
+  This *changed* when releases stopped being tag-triggered: a publisher still
+  naming `release.yml` will reject the upload.
+- *Allow GitHub Actions to create and approve pull requests* (Settings →
+  Actions → General), so a release action can open its pull request.
+- The `skip-changelog` and `changelog-version-edit` labels.
+
+### Upgrading the release tool
+
+All four generated workflows are `reflex-release`'s output, verbatim. Upgrading is
+a pin bump in two places — `cli-command` and the `Makefile`'s `RELEASE_VERSION` —
+plus `reflex-release sync`; the generated `changelog.yml` runs `sync --check` on every
+pull request, so a stale workflow (or a configuration change made without
+re-syncing) is a red PR rather than a surprise at release time.
+
+What this repository owns is `build_release_artifacts.yml`, because `xy` cannot
+be built by `uv build` on one runner: eleven cross-compiled platform wheels, a
+runtime-verified PyEmscripten wheel and an sdist, each needing its own operating
+system or toolchain. `[[tool.reflex-release.custom-build]]` points the pipeline
+at it, and `publish.yml` calls it in place of its own build job. Everything
+either side is unchanged — same changelog detection, same version, same approval
+gate, same tag-after-upload — and the whole matrix runs *before* the gate, so a
+reviewer approves a set of files that already exists and has already been
+checked.
+
+Four rules make that build workflow correct, all load-bearing:
+
+1. every artifact is named `<artifact-prefix><leg>`; anything else is not
+   collected, and therefore not published;
+2. upload distribution files only, since every collected file goes to PyPI;
+3. tag the checkout with `tag`, which is what makes the artifacts carry the
+   released version — `collect` fails the release otherwise;
+4. let failures fail. No `continue-on-error`: a lost matrix leg must stop the
+   release rather than ship an incomplete set.
+
+`expect-artifacts` in `pyproject.toml` names all thirteen files a release must
+contain, because a leg that runs, succeeds and uploads nothing looks exactly
+like one never configured — and PyPI accepts a version once. `reflex-release
+sync` also fails when the build workflow is missing or declares no
+`workflow_call` trigger, so a rename is caught on the pull request.
+
+### After a release
+
+`post-release-workflow` names one workflow of this repository's own to dispatch
+per published tag — `deploy-docs-stg.yml` — on the tag itself, so it sees exactly
+the tree that was published. It must declare `workflow_dispatch` inputs named
+`tag`, `package` and `version`, which is the dispatch contract;
+`tests/test_release_process.py` asserts ours does, because GitHub rejects a
+dispatch carrying inputs a workflow does not declare and that failure would land
+*after* the upload and the tag — the version out, the docs not deployed.
+
+A failure there is loud but harmless: the release is already published, and the
+dispatch can be repeated by hand. The step runs after `create-release`, so a docs
+deploy never precedes the release it documents.
+
+Two consequences of where the build sits:
+
+- **No secrets, no OIDC.** The calling job grants `contents: read`, and a called
+  workflow cannot hold more privilege than its caller, so this is the same
+  unprivileged boundary as the pipeline's own build job.
+- Its `workflow_dispatch` trigger is the dry run: it builds and verifies the
+  full matrix with no tag and no release. Nothing in that file can publish —
+  the upload path is in `publish.yml`, which the dry run never calls — which is
+  a stronger guarantee than the boolean `dry_run` gate the old tag-triggered
+  `release.yml` used.
+
+Because the release workflows are the tool's output, this repository does not
+re-assert their contents: `reflex-release` tests those invariants where it lives,
+and `scripts/verify_ci_workflow.py` covers only `ci.yml` and `codspeed.yml`. The
+action pins follow the same line — `tests/test_verify_ci_workflow.py` applies
+xy's one-SHA-per-action policy to the workflows xy authors, including
+`build_release_artifacts.yml`, and leaves the generated four to the tool.
+
+### Landing changes
+
+Every change to `python/`, `src/` or `js/` — the `root-source-dirs` a news
+fragment is required for — adds one:
+
+```bash
+make news NAME=1234.feature.md   # breaking, deprecation, feature, bugfix,
+                                 # performance, docs, misc
+```
+
+Write it for someone reading release notes, not for a reviewer reading the diff.
+Before you know the PR number, name it `+something.feature.md` and rename it
+later. `make news-check` runs the same check CI does. The `skip-changelog` label
+waives it for changes that genuinely are not user-facing; nothing waives the
+guard against hand-written version headings (`changelog-version-edit` is for
+deliberate restructuring of already-published sections, and this repository's
+switch to the towncrier heading format needed it once).
+
+### Cutting a release
+
+Run **Dispatch release** from the Actions tab and pick an action:
+
+| Action | Result |
+| --- | --- |
+| `release-patch` / `-minor` / `-major` | Final version from `main`. Opens a pull request. |
+| `release-post` | `X.Y.Z.postN`, for packaging-only fixes. Opens a pull request. |
+| `new-prerelease-patch` / `-minor` / `-major` | Starts an alpha train (`X.Y.Za1`) on an `r/pre-<date>` branch; builds immediately, uploads after approval. |
+| `continued-prerelease` | Next alpha (`a2`, `a3`, …). Dispatch **on** the train's `r/pre-*` branch. |
+| `release-from-prerelease` | Turns the train into its final version and collapses every alpha section into one, so alpha headings never ship in a final changelog. |
+
+Selecting no package auto-selects: pending news fragments, or (for
+`release-from-prerelease`) an alpha-topped changelog. **Merging the release pull
+request is what publishes.** Pre-releases use canonical PEP 440 suffixes
+(`aN`/`bN`/`rcN`); pip ignores them unless asked explicitly. Hotfixes branch
+`r/hotfix/X.Y` from the tag and publish directly from there, without stealing the
+"Latest" badge from a newer line.
 
 The repository has one release line: the `xy` distribution, including its
-bundled `reflex_xy` integration, ships from `vX.Y.Z` tags through
-`release.yml`. The `xy[reflex]` extra is dependency metadata in those same
-artifacts, not another package or release.
+bundled `reflex_xy` integration. The `xy[reflex]` extra is dependency metadata in
+those same artifacts, not another package or release.
 
-Before tagging a release:
+If a publish fails, fix the problem on top of the changelog bump — the tag was
+never pushed, so the next push to the branch retries the same version. Nothing
+has to be deleted and re-cut.
 
-- Tag as `vX.Y.Z`, optionally with a canonical PEP 440 pre-release suffix
-  (`v0.2.0a1`/`b1`/`rc1`). That shape is the whole release gate
-  (`scripts/check_release_version.py`), because it is the shape
-  uv-dynamic-versioning derives the published version from; `.postN`, `.devN`,
-  local (`+…`), and non-canonical (`-alpha1`) spellings are refused before
-  anything builds.
-- Add a dated `## [X.Y.Z] — YYYY-MM-DD` heading to `CHANGELOG.md` for the
-  version being tagged. Deliberately not gated: a missing or undated entry is
-  fixed with a follow-up commit, and blocking the publish on it only ever forced
-  a tag to be deleted and re-cut over a documentation edit.
+The documentation site follows automatically: `deploy-docs-stg.yml` is the
+configured `post-release-workflow`, so the pipeline dispatches it on each
+published tag once the upload, the tag and the GitHub release exist. Its own
+`push: tags` trigger cannot see that tag — it is pushed with `GITHUB_TOKEN`,
+which fires no on-push workflow — which is exactly the gap the dispatch closes.
+It stays hand-dispatchable with a `tag` for a re-deploy.
+
+Before merging a release pull request:
+
+- Review the materialized `CHANGELOG.md` section. It is the release notes, the
+  GitHub release body, and the publish authorization in one artifact; the version
+  in it is the version that ships. `scripts/check_release_version.py` refuses a
+  shape uv-dynamic-versioning cannot derive (`.devN`, local `+…`, or
+  non-canonical `-alpha1` spellings) before the matrix builds.
 - Refresh benchmark reports or explicitly document why the previous report still
   applies.
 - Run `make check-full` locally or confirm the equivalent
   CI gates passed on the release commit.
-- Run `make check-ci` to confirm CI and release workflow
-  gates still include artifact verification, upload/download, and trusted PyPI
-  publishing.
+- Run `make check-ci` to confirm the CI and CodSpeed workflow gates still
+  include artifact verification and upload/download. The release workflows are
+  not in its scope: `reflex-release sync --check` on every pull request is what
+  keeps the generated four honest, and `collect` verifies the artifacts at
+  release time.
 - Before the first release after a change to the wheel matrix (new target,
-  cross-compile toolchain, or tagging scheme), manually run the release
-  workflow (`workflow_dispatch`, `dry_run` defaults to `true`) and confirm
-  every leg of the cross-compile matrix — including the newer aarch64/armv7/
-  musllinux/win-arm64 targets and the wasm job — actually builds, since a
-  target added to the matrix but never exercised in CI is unverified, not
-  working.
+  cross-compile toolchain, or tagging scheme), manually run
+  `build_release_artifacts.yml` (`workflow_dispatch`) and confirm every leg of
+  the cross-compile matrix — including the newer aarch64/armv7/musllinux/
+  win-arm64 targets and the wasm job — actually builds, since a target added to
+  the matrix but never exercised in CI is unverified, not working. That run
+  reaches no publish path at all. Add the new platform to `expect-artifacts` in
+  the same change, or a release can ship without it.
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64).
@@ -434,12 +587,36 @@ Keep pushing these in low-conflict increments:
   route any new mark/chrome styling prop through `_validate.css_color` or
   `style_mapping` so no styling surface bypasses it.
 - Keep benchmark environment metadata and category IDs on every new generated report.
-- The release workflow's `workflow_dispatch` `dry_run` input (default `true`)
-  now builds and verifies every wheel/sdist/wasm artifact without publishing;
-  remaining follow-up is wiring an actual TestPyPI upload into that dry-run
-  path (today it only stops short of a real publish, it doesn't yet push to a
-  test index), plus tying it to version-bump/tag validation and refreshed
-  benchmark reports.
+- `build_release_artifacts.yml`'s `workflow_dispatch` (leave `tag` empty) builds
+  and verifies every wheel/sdist/wasm artifact without publishing; remaining
+  follow-up is wiring an actual TestPyPI upload into that dry-run path (today it
+  reaches no publish path at all, it doesn't yet push to a test index) plus
+  refreshed benchmark reports.
+- `reflex-release` is pinned at `0.1.0a3`, an alpha. Track its releases and bump
+  the pin as it stabilizes, keeping `cli-command` and the `Makefile`'s
+  `RELEASE_VERSION` on the same version — otherwise `make news` and the release
+  workflows run different pipelines. `sync --check` on every pull request catches
+  the half of a partial bump that reaches the workflows.
+- Two review findings land in `reflex-release`'s generated workflows, so they are
+  upstream fixes rather than local edits — patching them here would fork a file
+  `sync --check` then reports as drift forever, which is the arrangement this
+  repository just removed. Both were still open as of `0.1.0a3`, which did pick up
+  a third (an explicit `shell: bash` on every generated `run` step):
+  - `publish.yml`'s approval gate interpolates the captured `gh api` error into a
+    `::error::` message. A `gh` error line containing `::` would be re-parsed as a
+    workflow command, truncating the diagnostic. It cannot leak anything (the job
+    holds no secrets) and only affects a failure message, but it should be
+    sanitized before interpolation.
+  - `changelog.yml`'s header says "Two guards on every pull request" above three
+    numbered guards; the count went stale upstream when the `sync --check` step
+    was added.
+
+- `allow-self-review` is left at its default (`true`), so the `pypi`
+  environment's reviewer list is the only control over who approves an upload —
+  whoever dispatches a release can approve their own. Setting it to `false`
+  makes `publish.yml` require that the environment prevents self-review, i.e. a
+  real two-person rule. Enable "Prevent self-review" on the environment first;
+  the check fails closed if GitHub does not report it.
 - Keep the two example apps focused: `examples/reflex` on the bundled Reflex
   integration surfaces (figure vars, events, state-driven and streaming
   updates, `on_view_change`), and `examples/fastapi` on the framework-neutral
