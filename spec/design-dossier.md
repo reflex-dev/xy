@@ -817,6 +817,27 @@ state. Each client preserves its settled pan/zoom and re-requests that same view
 reconstruction, matching the existing context-loss contract rather than resetting
 charts to home.
 
+A client rebuild can itself fail transiently — under process-wide GPU pressure Chromium
+loses just-created resources mid-setup (the characteristic `shader compile: null`) — and
+the client then retries with backoff (50 ms doubling to a 1 s cap; off-screen and
+hidden-document retries defer to the visibility/intersection wake-ups). Throughout those
+retries the chart's Canvas2D presentation surface must keep showing the last
+successfully presented frame: surface backing stores are resized only when their
+dimensions actually change, because a canvas width/height write clears the canvas even
+at the same value, and an unguarded resize in the rebuild path turned every failed retry
+into a visible blank — a chart under sustained pressure flickered between drawn and
+empty until a retry finally succeeded. Recovery is seamless-or-stale, never blank; only
+`data-xy-ctx` reports the difference.
+
+Retries must also be as powerful as a page reload. A wedged driver can leave a context
+reporting itself live (`isContextLost()` false) while every rebuild against it fails;
+plain retries then never succeed, and the only user escape was refreshing the page.
+After three consecutive rebuild failures a client therefore calls
+`GLHost.recycleSurface()` — retire the current surface and rebuild every client on a
+fresh context, which is exactly what a reload buys — riding the existing loss/replace
+machinery and its backoff. The counter resets on the first successful rebuild, so
+ordinary transient pressure still recovers through cheap same-context retries.
+
 The governed per-chart path remains the compatibility fallback. It is used when shared
 hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document
 cannot create or use the shared host, and by default inside child frames. Setting

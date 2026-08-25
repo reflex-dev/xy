@@ -681,6 +681,7 @@ export class ChartView {
     this._governorRegistered = false;
     this._glHostRecoveryTimer = null;
     this._glHostRecoveryDelay = 0;
+    this._glHostRebuildFailures = 0;
     if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
@@ -2047,7 +2048,23 @@ export class ChartView {
             if (this.gl && !this.gl.isContextLost()) {
               try { this._destroyGlResources(); } catch (_cleanupError) {}
             }
-            this._scheduleGlHostClientRecovery();
+            // A host context can stay "live" (`isContextLost()` false) while a
+            // wedged driver fails every rebuild against it. Retrying on that
+            // same context can then never succeed — a state users previously
+            // escaped only by reloading the page. After three consecutive
+            // failures, recycle the shared surface instead: a fresh context is
+            // exactly what a reload buys. (The capability check keeps a v1
+            // host from an older duplicate bundle on plain retries.)
+            this._glHostRebuildFailures = (this._glHostRebuildFailures || 0) + 1;
+            if (
+              this._glHostRebuildFailures >= 3 &&
+              typeof this._glHost.recycleSurface === "function"
+            ) {
+              this._glHostRebuildFailures = 0;
+              this._glHost.recycleSurface(); // host-wide restored event drives the next attempt
+            } else {
+              this._scheduleGlHostClientRecovery();
+            }
           } else {
             this._scheduleContextRecovery();
           }
@@ -2069,6 +2086,7 @@ export class ChartView {
       }
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
+      this._glHostRebuildFailures = 0;
       this._ctxRecoveryDelay = 0;
       clearTimeout(this._glHostRecoveryTimer);
       this._glHostRecoveryTimer = null;
@@ -4358,14 +4376,22 @@ export class ChartView {
   _initGl(buffer) {
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
-    this.canvas.width = this.plot.w * dpr;
-    this.canvas.height = this.plot.h * dpr;
-    this.chrome.width = this.size.w * dpr;
-    this.chrome.height = this.size.h * dpr;
+    // A canvas backing-store write clears the canvas even when the value is
+    // unchanged, and _initGl also runs on every context-restore retry. The
+    // last presented frame must survive a rebuild that fails transiently
+    // under GPU pressure (§18) — wiping it here turned each failed retry
+    // into a visible blank/flicker until a retry finally succeeded.
+    const sizeSurface = (surface, w, h) => {
+      w = Math.trunc(w);
+      h = Math.trunc(h);
+      if (surface.width !== w) surface.width = w;
+      if (surface.height !== h) surface.height = h;
+    };
+    sizeSurface(this.canvas, this.plot.w * dpr, this.plot.h * dpr);
+    sizeSurface(this.chrome, this.size.w * dpr, this.size.h * dpr);
     this.chrome.style.width = this.size.w + "px";
     this.chrome.style.height = this.size.h + "px";
-    this.overlay.width = this.size.w * dpr;
-    this.overlay.height = this.size.h * dpr;
+    sizeSurface(this.overlay, this.size.w * dpr, this.size.h * dpr);
     this.overlay.style.width = this.size.w + "px";
     this.overlay.style.height = this.size.h + "px";
 

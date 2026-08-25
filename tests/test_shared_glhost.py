@@ -936,6 +936,211 @@ def test_shared_host_loss_restores_every_client_and_zoom(tmp_path: Path) -> None
     assert result["afterRange"]["y"] == pytest.approx(result["beforeRange"]["y"])
 
 
+_FAILED_REBUILD_FRAME_RETENTION_PROBE = r"""
+  (async () => {
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const holder = document.getElementById("chart");
+      holder.replaceChildren();
+      const view = xy.renderStandalone(holder, spec, buf);
+      view._drawNow();
+      view._raf = null;
+
+      const nonzero = () => {
+        const context = view._present2d;
+        return context.getImageData(
+          0,
+          0,
+          context.canvas.width,
+          context.canvas.height,
+        ).data.some((channel) => channel !== 0);
+      };
+      const host = view._glHost;
+      if (!host) throw new Error("probe did not acquire the shared host");
+      const extension = host.gl.getExtension("WEBGL_lose_context");
+      if (!extension) throw new Error("WEBGL_lose_context extension unavailable");
+      const drawnBefore = nonzero();
+
+      // Fail every client rebuild the way process-wide GPU pressure does:
+      // Chromium loses a just-created resource mid-compile and reports a null
+      // shader log — the message class the restore handler treats as transient.
+      const originalGetOrCreateShader = host.getOrCreateShader;
+      host.getOrCreateShader = () => {
+        throw new Error("shader compile: null");
+      };
+
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 5000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      const lossCount = view._contextLossCount;
+      extension.loseContext();
+      await waitUntil(() => view._contextLossCount >= lossCount + 1, "context loss fan-out");
+      extension.restoreContext();
+      // The host restores, every client rebuild fails, and the retry backoff
+      // holds the view in the lost state until compilation heals. A delay of
+      // 200 ms proves at least two rebuild attempts already failed.
+      await waitUntil(
+        () => view._glHostRecoveryDelay >= 200 && view.canvas.dataset.xyCtx === "lost",
+        "failed client rebuilds entering retry backoff",
+      );
+      const retainedDuringFailure = nonzero();
+
+      host.getOrCreateShader = originalGetOrCreateShader;
+      await waitUntil(
+        () => view.canvas.dataset.xyCtx === "live" && !view._glLost,
+        "client recovery after compilation heals",
+      );
+      view._drawNow();
+      view._raf = null;
+      const drawnAfterRecovery = nonzero();
+
+      document.body.setAttribute("data-xy-failed-rebuild-probe", JSON.stringify({
+        drawnBefore,
+        retainedDuringFailure,
+        drawnAfterRecovery,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-failed-rebuild-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def test_failed_client_rebuild_keeps_last_presented_frame(tmp_path: Path) -> None:
+    """A transiently failing restore must not blank the visible chart.
+
+    ``_initGl`` runs on every context-restore retry; sizing a canvas backing
+    store clears it even when the dimensions are unchanged, so an unguarded
+    resize wiped the last presented frame on each failed rebuild — a chart
+    under sustained GPU pressure visibly flickered between blank and drawn
+    until a retry finally succeeded (§18 recovery must be seamless).
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_FAILED_REBUILD_FRAME_RETENTION_PROBE),
+        tmp_path / "shared_glhost_failed_rebuild.html",
+        "data-xy-failed-rebuild-probe",
+        label="shared WebGL host failed-rebuild frame-retention probe",
+    )
+
+    assert result["drawnBefore"] is True, result
+    assert result["retainedDuringFailure"] is True, result
+    assert result["drawnAfterRecovery"] is True, result
+
+
+_POISONED_CONTEXT_ESCALATION_PROBE = r"""
+  (async () => {
+    try {
+      document.body.style.cssText = "margin:0;overflow:hidden";
+      const holder = document.getElementById("chart");
+      holder.replaceChildren();
+      const view = xy.renderStandalone(holder, spec, buf);
+      view._drawNow();
+      view._raf = null;
+
+      const host = view._glHost;
+      if (!host) throw new Error("probe did not acquire the shared host");
+      const extension = host.gl.getExtension("WEBGL_lose_context");
+      if (!extension) throw new Error("WEBGL_lose_context extension unavailable");
+
+      // Wedged-driver regime: the context keeps reporting itself live
+      // (isContextLost() false) yet every rebuild against it fails. Poison
+      // exactly this context object; a replacement context compiles fine.
+      const poisoned = host.gl;
+      const originalGetOrCreateShader = host.getOrCreateShader;
+      host.getOrCreateShader = function (type, source) {
+        if (this.gl === poisoned) throw new Error("shader compile: null");
+        return originalGetOrCreateShader.call(this, type, source);
+      };
+
+      const waitUntil = async (predicate, label) => {
+        const deadline = performance.now() + 5000;
+        while (!predicate()) {
+          if (performance.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      const generationBefore = host.generation;
+      const lossCount = view._contextLossCount;
+      extension.loseContext();
+      await waitUntil(() => view._contextLossCount >= lossCount + 1, "context loss fan-out");
+      extension.restoreContext();
+      // The restored-but-poisoned context fails three consecutive client
+      // rebuilds; the client must then recycle the shared surface and come
+      // back live on a fresh context — without a page reload.
+      await waitUntil(
+        () =>
+          host.gl !== poisoned &&
+          view.canvas.dataset.xyCtx === "live" &&
+          !view._glLost,
+        "escalation to a fresh surface",
+      );
+      view._drawNow();
+      view._raf = null;
+      const context = view._present2d;
+      const drawnOnFreshContext = context.getImageData(
+        0,
+        0,
+        context.canvas.width,
+        context.canvas.height,
+      ).data.some((channel) => channel !== 0);
+
+      document.body.setAttribute("data-xy-poisoned-escalation-probe", JSON.stringify({
+        surfaceReplaced: host.gl !== poisoned,
+        generationAdvanced: host.generation > generationBefore,
+        hostLive: !host.gl.isContextLost(),
+        drawnOnFreshContext,
+      }));
+    } catch (error) {
+      document.body.setAttribute(
+        "data-xy-poisoned-escalation-probe-error",
+        String((error && error.stack) || error),
+      );
+    }
+  })();
+"""
+
+
+def test_wedged_live_context_escalates_to_fresh_surface(tmp_path: Path) -> None:
+    """Rebuilds that keep failing on a live context must not retry forever.
+
+    A wedged driver can leave ``isContextLost()`` false while every compile
+    against that context fails; plain retries then never succeed and the only
+    user escape was a page reload. After three consecutive rebuild failures
+    the client recycles the shared surface — the in-page equivalent of that
+    reload — and recovers on the replacement context (§18).
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    result = run_browser_probe(
+        chromium,
+        _chart_html(_POISONED_CONTEXT_ESCALATION_PROBE),
+        tmp_path / "shared_glhost_poisoned_escalation.html",
+        "data-xy-poisoned-escalation-probe",
+        label="shared WebGL host wedged-context escalation probe",
+    )
+
+    assert result["surfaceReplaced"] is True, result
+    assert result["generationAdvanced"] is True, result
+    assert result["hostLive"] is True, result
+    assert result["drawnOnFreshContext"] is True, result
+
+
 def test_shared_glhost_source_contract() -> None:
     host = (ROOT / "js/src/42_glhost.ts").read_text(encoding="utf-8")
     chartview = (ROOT / "js/src/50_chartview.ts").read_text(encoding="utf-8")
