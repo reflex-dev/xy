@@ -249,7 +249,7 @@ pythonpath = ["."]
 # How the release workflows invoke the tool, pinned to one published version so
 # a local run and a CI run cannot drift apart. Bump it (and the `Makefile`'s
 # RELEASE_VERSION) and re-run `reflex-release sync`.
-cli-command = "uvx reflex-release@0.1.0a3"
+cli-command = "uvx reflex-release@0.1.0a4"
 
 # Dispatched once per published tag, on the tag itself, after the upload, the tag
 # and the GitHub release exist. The docs site ships the version it documents, and
