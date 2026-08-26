@@ -360,7 +360,7 @@ artifacts carry it. Three consequences worth knowing:
 | `build_release_artifacts.yml` | called by `publish.yml`, or manual for a dry run | **This repository's own**: the release matrix — eleven platform wheels, the runtime-verified PyEmscripten wheel, and the sdist. |
 | `deploy-docs-stg.yml` | dispatched by `publish.yml` per published tag, or manual | **This repository's own**: builds and deploys the docs site for the version just published. |
 
-The first four come from `reflex-release` (pinned at `0.1.0a3` in
+The first four come from `reflex-release` (pinned at `0.1.0a4` in
 `[tool.reflex-release] cli-command`), which owns their invariants and tests them
 where the tool lives. This repository deliberately does not re-assert their
 contents. The last two are its own, and they are the whole integration surface:
@@ -592,7 +592,7 @@ Keep pushing these in low-conflict increments:
   follow-up is wiring an actual TestPyPI upload into that dry-run path (today it
   reaches no publish path at all, it doesn't yet push to a test index) plus
   refreshed benchmark reports.
-- `reflex-release` is pinned at `0.1.0a3`, an alpha. Track its releases and bump
+- `reflex-release` is pinned at `0.1.0a4`, an alpha. Track its releases and bump
   the pin as it stabilizes, keeping `cli-command` and the `Makefile`'s
   `RELEASE_VERSION` on the same version — otherwise `make news` and the release
   workflows run different pipelines. `sync --check` on every pull request catches
@@ -600,8 +600,21 @@ Keep pushing these in low-conflict increments:
 - Two review findings land in `reflex-release`'s generated workflows, so they are
   upstream fixes rather than local edits — patching them here would fork a file
   `sync --check` then reports as drift forever, which is the arrangement this
-  repository just removed. Both were still open as of `0.1.0a3`, which did pick up
-  a third (an explicit `shell: bash` on every generated `run` step):
+  repository just removed. Both were still open as of `0.1.0a4`, which did pick up
+  two job-level `if` fixes in the publish path instead — the second of them
+  load-bearing for this repository, since `custom-build` is exactly the shape it
+  describes:
+  - `publish.yml`'s `publish` and `tag-and-release` jobs now carry explicit
+    status functions (`!cancelled() && needs.<job>.result == 'success'`). Without
+    one, GitHub evaluates an implicit `success()` over the whole transitive
+    dependency closure rather than the direct `needs`, so the build path that
+    *doesn't* run — here the tool's own `build` job, replaced by
+    `build_release_artifacts.yml` — would pass straight through `collect` and
+    the upload would silently never happen.
+  - `release_from_changelog.yml`'s health check no longer accepts every
+    `skipped` leg: a leg is healthy as `skipped` only when `detect` found no
+    packages for it, so a job GitHub skipped despite having work to publish is
+    now an error rather than a green run that shipped nothing.
   - `publish.yml`'s approval gate interpolates the captured `gh api` error into a
     `::error::` message. A `gh` error line containing `::` would be re-parsed as a
     workflow command, truncating the diagnostic. It cannot leak anything (the job
