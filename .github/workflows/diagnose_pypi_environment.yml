@@ -1,0 +1,84 @@
+name: Diagnose pypi environment gate
+
+# TEMPORARY DIAGNOSTIC — delete this file once the release pipeline publishes.
+#
+# publish.yml's `publish` job is skipped instantly, with no annotation, on every
+# release run. Its own `if:` provably evaluates true (the `prepare` job's
+# `check-dev-pins` step and the whole `collect` job share the same
+# `skipped != 'true'` guard and both ran), and both of its `needs` succeed — so
+# the skip is imposed by the `pypi` environment, not by the workflow.
+#
+# The one thing that would prove it is the environment's actual protection
+# rules, which publish.yml prints in its first step — a step that never runs,
+# because the gate skips the job before it starts. This workflow reads the same
+# API from a job with no `environment:`, so it always runs.
+
+on:
+  push:
+    branches: ["claude/pypi-publish-skip-debug-iugo6u"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # No `environment:`, so nothing can gate this job away.
+  inspect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Dump the pypi environment's protection rules
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "### pypi environment" >> "$GITHUB_STEP_SUMMARY"
+          echo "ref being evaluated: $GITHUB_REF (ref_name: $GITHUB_REF_NAME)"
+
+          echo "--- environments that exist (name is case-sensitive) ---"
+          gh api "repos/$GITHUB_REPOSITORY/environments" \
+            --jq '.environments[] | .name'
+
+          echo "--- repos/$GITHUB_REPOSITORY/environments/pypi ---"
+          if ! gh api "repos/$GITHUB_REPOSITORY/environments/pypi" > env.json; then
+            echo "::error::No environment named exactly 'pypi'. A job referencing a"
+            echo "::error::missing environment is not gated, so this is not the cause —"
+            echo "::error::but it means the name in Settings does not match publish.yml."
+            exit 1
+          fi
+          jq '{
+                protection_rules: [.protection_rules[]? | {type, prevent_self_review}],
+                deployment_branch_policy
+              }' env.json
+
+          echo "--- deployment branch/tag policies ---"
+          # Only populated when deployment_branch_policy.custom_branch_policies
+          # is true. "protected_branches": true means only branches with a
+          # protection rule may deploy, and r/pre-* release branches have none.
+          if jq -e '.deployment_branch_policy == null' env.json >/dev/null; then
+            echo "No branch restriction: every ref may deploy to pypi."
+          elif jq -e '.deployment_branch_policy.protected_branches' env.json >/dev/null; then
+            echo "::warning::Set to 'Protected branches only'. Release branches"
+            echo "::warning::(r/pre-*, r/hotfix/*) carry no protection rule, so the"
+            echo "::warning::publish job is skipped on every one of them."
+          else
+            gh api "repos/$GITHUB_REPOSITORY/environments/pypi/deployment-branch-policies" \
+              --jq '.branch_policies[] | "\(.type)\t\(.name)"'
+          fi
+
+  # If the gate is what skips publish.yml's upload, this job is skipped the same
+  # silent way. If it instead pauses for approval, the gate is not the cause and
+  # the skip is coming from somewhere else. Nobody should approve it: it uploads
+  # nothing and holds no credentials, and cancelling the run is the tidy exit.
+  gate-probe-do-not-approve:
+    needs: inspect
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    steps:
+      - name: Report that the gate let this ref through
+        shell: bash
+        run: echo "The pypi environment allowed $GITHUB_REF to start a deployment."
