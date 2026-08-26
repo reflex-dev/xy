@@ -83,3 +83,13 @@ jobs:
     steps:
       - shell: bash
         run: echo "reached the upload step"
+
+  # publish.yml's `tag-and-release` carries no `if` at all. If the propagation
+  # is transitive, the skipped `build` still reaches it even once `publish`
+  # is fixed, and the upstream fix has to cover this job too.
+  tag-and-release-as-generated:
+    needs: [prepare, publish-with-status-function]
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        run: echo "pushed the tag"
