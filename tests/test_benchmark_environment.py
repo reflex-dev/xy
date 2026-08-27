@@ -271,8 +271,9 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
 
 
 def test_context_governor_reserves_pending_restores() -> None:
-    """Concurrent visibility callbacks must count restores before their
-    asynchronous ``webglcontextrestored`` events acquire the contexts."""
+    """A governed re-acquire reserves with the governor before rebuilding on a
+    fresh canvas (never ``restoreContext()`` on the released one, §18), so an
+    off-screen peer is shed before the replacement context is created."""
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert "view._ctxPendingReservation" in client
@@ -282,8 +283,9 @@ def test_context_governor_reserves_pending_restores() -> None:
     assert "WebGL2 unavailable in this browser" not in init_gl
     recover = client.index("  _recoverContext() {")
     reserve = client.index("XY_CONTEXT_GOVERNOR.reserve(this);", recover)
-    restore = client.index("ext.restoreContext();", recover)
-    assert reserve < restore
+    rebuild = client.index("this._rebuildEvictedContext();", recover)
+    assert reserve < rebuild
+    assert ".restoreContext(" not in client[recover:rebuild]
 
     snapshot = client[client.index("_snapshotBeforeRelease()") : recover]
     draw = snapshot.index("this._drawNow();")

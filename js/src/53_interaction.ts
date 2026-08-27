@@ -70,7 +70,7 @@ Object.assign(ChartView.prototype, {
         lassoHandleDrag.moved = true;
         lassoHandleDrag.interactionId = ++this._interactionSeq;
       }
-      const rect = c.getBoundingClientRect();
+      const rect = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
       this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
@@ -159,11 +159,11 @@ Object.assign(ChartView.prototype, {
     }
 
     const dataAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       return this._dataFromCanvas(clientX - r.left, clientY - r.top);
     };
     const lassoPointAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
       const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
       return {
@@ -414,7 +414,7 @@ Object.assign(ChartView.prototype, {
       if (!this._interactionFlag("wheel_zoom", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
       this._queueWheelZoom(f, fx, fy);

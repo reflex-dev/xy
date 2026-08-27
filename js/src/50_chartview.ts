@@ -2008,10 +2008,8 @@ export class ChartView {
         }, 0);
       }
       // A governed release whose re-acquire raced ahead of this event deferred
-      // its restoreContext() (see _recoverContext). Schedule the retry on the
-      // next task rather than calling it here: restoreContext() invoked
-      // synchronously inside the webglcontextlost dispatch is also ignored by
-      // Chromium — it must run after the loss event fully unwinds.
+      // its rebuild (see _recoverContext). Schedule the retry on the next task
+      // rather than rebuilding here, after the loss event fully unwinds.
       if (governedRelease && this._ctxRecoverRequested && !this._destroyed && this._ctxVisible) {
         this._ctxRecoverRequested = false;
         setTimeout(() => {
@@ -2211,10 +2209,10 @@ export class ChartView {
     this._ctxSnapshot = null;
   }
 
-  // Re-acquire on scroll-into-view. Governed releases undo via
-  // restoreContext() -> the existing restored handler rebuilds; a real
-  // browser eviction cannot be force-restored, so the canvas is swapped for a
-  // fresh one and rebuilt from the retained spec + payload.
+  // Re-acquire on scroll-into-view / pointer entry. Governed releases and real
+  // browser evictions recover the same way: the canvas is swapped for a fresh
+  // one and rebuilt from the retained spec + payload (see below for why the
+  // released canvas is never restoreContext()ed).
   _recoverContext() {
     if (this._destroyed || !this._glLost) return;
     if (this._glHost) {
@@ -2225,29 +2223,28 @@ export class ChartView {
       return;
     }
     // Governed release, but its webglcontextlost event has not dispatched yet
-    // (scrolled back into view in the same task it was released). Chromium
-    // drops a restoreContext() issued before the loss event, stranding the
-    // context lost forever — so defer; the loss handler re-invokes us once the
-    // event lands (and restoreContext is then honored).
+    // (scrolled back into view in the same task it was released). The loss
+    // handler owns the loss bookkeeping (counter, seq bump, quiesce) and it is
+    // bound to the canvas being replaced — rebuilding first would strand that
+    // event on a canvas nobody listens to. Defer; the loss handler re-invokes
+    // us once the event lands.
     if (this._ctxReleasedExt && this._ctxLostPending) {
       this._ctxRecoverRequested = true;
       return;
     }
     this._ctxRecoveries += 1;
     if (this._ctxReleasedExt) {
-      const ext = this._ctxReleasedExt;
+      // Never restoreContext() the released canvas. Chromium (observed in 151)
+      // can bring that context back fully healthy — draws, readPixels and
+      // picking all succeed, the stamp reads "live" — while the compositor
+      // presents the canvas's frames as empty for good: a chart released while
+      // its tab sat hidden came back blank and no redraw could show it. Only a
+      // fresh canvas element presents again, so a governed release re-acquires
+      // exactly like a real eviction: cloned canvas + §18/§27 rebuild.
+      // Reserve first so the governor sheds an off-screen peer before this
+      // frame creates its replacement context.
       this._ctxReleasedExt = null;
-      try {
-        // Reserve before asking the browser to restore. The restored event is
-        // asynchronous, so the pending reservation must count against later
-        // recoveries in the same IntersectionObserver delivery.
-        XY_CONTEXT_GOVERNOR.reserve(this);
-        ext.restoreContext(); // restored event -> full rebuild
-        return;
-      } catch (_err) {
-        XY_CONTEXT_GOVERNOR.cancel(this);
-        // Extension refused (context was also evicted for real): fall through.
-      }
+      XY_CONTEXT_GOVERNOR.reserve(this);
     }
     this._rebuildEvictedContext();
   }
@@ -2363,10 +2360,18 @@ export class ChartView {
       return; // context pressure persists; the next visibility pass retries
     }
     this._ctxRecoveryDelay = 0;
+    this._contextRestoreCount += 1;
+    this._contextRecoveryError = null;
     this.canvas.dataset.xyCtx = "live";
     XY_CONTEXT_GOVERNOR._announceLive(); // rebuilt on a fresh canvas; peers rebalance
     this._scheduleViewRequest(this.view, { delay: 0 });
     this._dropContextSnapshot();
+    // Same contract as the restored handler: a loss is answered by exactly one
+    // restore, whichever path (§28 telemetry stays consistent across both).
+    this._dispatchChartEvent("context_restored", {
+      loss_count: this._contextLossCount,
+      restore_count: this._contextRestoreCount,
+    });
   }
 
   // Visibility feed for the governor: tracks least-recently-visible order and
