@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from pathlib import Path
 
@@ -1840,6 +1841,25 @@ _GOVERNED_FALLBACK_PROBE = r"""
       const equilibriumSum = lossSum();
       const revived = views.find((view) => view._glLost);
       const revivedIndex = views.indexOf(revived);
+      const revivedCanvasBefore = revived.canvas;
+      // A governed re-acquire must never restoreContext() the released canvas
+      // (Chromium can present it blank for good, §18): count every call.
+      let restoreContextCalls = 0;
+      const countRestores = (ext) => {
+        if (!ext || ext.__xyCounted) return ext;
+        const restore = ext.restoreContext.bind(ext);
+        ext.restoreContext = () => { restoreContextCalls += 1; restore(); };
+        ext.__xyCounted = true;
+        return ext;
+      };
+      // The extension cached at release time is the one a same-canvas
+      // restore would use; extensions fetched later go through the prototype.
+      const revivedExtCounted = !!countRestores(revived._ctxReleasedExt);
+      const getExtension = WebGL2RenderingContext.prototype.getExtension;
+      WebGL2RenderingContext.prototype.getExtension = function (name) {
+        const ext = getExtension.call(this, name);
+        return name === "WEBGL_lose_context" ? countRestores(ext) : ext;
+      };
       revived._recoverContext();
       await settleOn(
         "budget rotation after revival",
@@ -1848,6 +1868,13 @@ _GOVERNED_FALLBACK_PROBE = r"""
       const afterRevival = {
         revivedIndex,
         revivedStamp: revived.canvas.dataset.xyCtx,
+        revivedFreshCanvas:
+          revived.canvas !== revivedCanvasBefore &&
+          revived.canvas.isConnected &&
+          !revivedCanvasBefore.isConnected &&
+          revived.gl.canvas === revived.canvas,
+        restoreContextCalls,
+        revivedExtCounted,
         stamps: views.map((view) => view.canvas.dataset.xyCtx),
         lossCounts: views.map((view) => view._contextLossCount),
         restoreCounts: views.map((view) => view._contextRestoreCount),
@@ -1861,6 +1888,28 @@ _GOVERNED_FALLBACK_PROBE = r"""
         },
         zoomedRestoreCount: zoomed._contextRestoreCount,
       };
+      // Gestures must follow the view onto its fresh canvas: the interaction
+      // handlers move with it, and their geometry must read the live canvas,
+      // not the detached one they were bound to (wheel zoom went to
+      // +-Infinity off a zero rect after a rebuild).
+      const wheelBefore = [...revived._axisRange("x")];
+      const revivedRect = revived.canvas.getBoundingClientRect();
+      revived.canvas.dispatchEvent(new WheelEvent("wheel", {
+        deltaY: -600,
+        clientX: revivedRect.left + revivedRect.width / 2,
+        clientY: revivedRect.top + revivedRect.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }));
+      await settleOn(
+        "wheel zoom after revival",
+        () => {
+          const [x0, x1] = revived._axisRange("x");
+          return Number.isFinite(x0) && Number.isFinite(x1) &&
+            x1 - x0 < wheelBefore[1] - wheelBefore[0];
+        },
+      );
+      afterRevival.wheelZoom = { before: wheelBefore, after: [...revived._axisRange("x")] };
       document.body.setAttribute("data-xy-governed-fallback-probe", JSON.stringify({
         afterCreation,
         registryHostExists,
@@ -1924,10 +1973,12 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
         assert state["snapshots"] == 2, result
 
     creation = result["afterCreation"]
-    # Opting out really is per-chart native WebGL: one context per canvas, no
-    # shared host anywhere, and every view registered with the governor.
+    # Opting out really is per-chart native WebGL: every acquisition is its own
+    # context (no shared host anywhere — a governed revival rebuilds on a fresh
+    # canvas, so the cascade mints more than the four initial contexts), and
+    # every view is registered with the governor.
     assert creation["webgl2Acquisitions"] >= 4, result
-    assert creation["uniqueWebgl2Contexts"] == 4, result
+    assert creation["uniqueWebgl2Contexts"] == creation["webgl2Acquisitions"], result
     assert creation["hostless"] == [True] * 4, result
     assert creation["governorRegistered"] == [True] * 4, result
     assert creation["glHostMarkers"] == [None] * 4, result
@@ -1944,6 +1995,19 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
     assert_governed_equilibrium(revival)
     assert revival["stamps"][revival["revivedIndex"]] == "live", result
     assert revival["revivedStamp"] == "live", result
+    # The released canvas is retired, never restoreContext()ed: Chromium can
+    # bring a restored context back healthy yet present that canvas blank for
+    # good (a chart released while its tab sat hidden came back empty). Only
+    # a fresh canvas element presents again (§18).
+    assert revival["revivedFreshCanvas"] is True, result
+    assert revival["revivedExtCounted"] is True, result
+    assert revival["restoreContextCalls"] == 0, result
+    # Wheel zoom on the fresh canvas still zooms about the pointer: finite,
+    # narrower than before, inside the previous range.
+    before, after = revival["wheelZoom"]["before"], revival["wheelZoom"]["after"]
+    assert all(math.isfinite(v) for v in after), result
+    assert before[0] <= after[0] < after[1] <= before[1], result
+    assert after[1] - after[0] < before[1] - before[0], result
     assert revival["liveCount"] == 2, result
     assert sum(revival["lossCounts"]) > sum(creation["lossCounts"]), result
     assert revival["revivedLit"] > 0, result
