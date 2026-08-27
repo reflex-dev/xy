@@ -1097,6 +1097,20 @@ examples/reflex/  (repo root) Reflex showcase on the §3.6 data-bound API: a
                              toggles re-bin kernel-side, §34)
 examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
                              from a plain FastAPI app (no committed HTML)
+examples/bond/    (repo root) the 007 gun-barrel title sequence on the §3.6
+                             data-bound API: one fixed plan of six scatter
+                             layers fed by a single @reflex_xy.data var whose
+                             columns are a pure function of a cycle clock, so
+                             the ~12 Hz keyframe publish plus the engine's
+                             match="index" position interpolation render 60 fps
+                             motion. Row identity is stable by construction
+                             (an identity layer built once, a motion layer per
+                             frame), which is what makes the tween the correct
+                             in-between rather than a smear; on-page controls
+                             A/B the publish rate, the point budget
+                             (XY_BOND_POINTS, up to 400k) and interpolation
+                             on/off, and on_animation_end surfaces the engine's
+                             animation lifecycle as an ordinary Reflex event
 tests/reflex_adapter/        token/registry/var/data-var/plan/factory/bridge/
                              payload-asset units, component compile, framework
                              contract pins (R1/R7/R8), and a real-websocket

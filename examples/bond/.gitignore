@@ -1,0 +1,12 @@
+.states
+.web
+.web/
+.states/
+*.db
+__pycache__/
+*.py[cod]
+.venv/
+uv.lock
+reflex.lock/
+assets/external/
+assets/xy/

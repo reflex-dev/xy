@@ -7,9 +7,11 @@ checks skip when the extra is not importable.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import inspect
 import os
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +23,8 @@ EXAMPLES = ROOT / "examples"
 FASTAPI_DIR = EXAMPLES / "fastapi"
 REFLEX_DIR = EXAMPLES / "reflex"
 REFLEX_APP = REFLEX_DIR / "xy_reflex_demo" / "xy_reflex_demo.py"
+BOND_DIR = EXAMPLES / "bond"
+BOND_APP = BOND_DIR / "xy_bond_intro" / "xy_bond_intro.py"
 
 
 def _load(path: Path, name: str):
@@ -37,7 +41,7 @@ def _load(path: Path, name: str):
 
 def test_examples_commit_no_static_chart_html() -> None:
     tracked = subprocess.run(
-        ["git", "ls-files", "examples/reflex", "examples/fastapi"],
+        ["git", "ls-files", "examples/reflex", "examples/fastapi", "examples/bond"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -46,6 +50,7 @@ def test_examples_commit_no_static_chart_html() -> None:
     html = [p for p in tracked if p.endswith(".html")]
     assert html == [], f"the example apps must not commit static chart HTML: {html}"
     assert not (REFLEX_DIR / "assets" / "charts").exists()
+    assert not (BOND_DIR / "assets" / "charts").exists()
 
 
 # --- framework-neutral gallery builders (numpy + xy only) -------------------
@@ -220,6 +225,236 @@ def test_reflex_app_introspection_and_composition(tmp_path, monkeypatch) -> None
     assert len(columns["edges"]) == len(columns["counts"]) + 1
     assert columns["funnel_stage"].tolist() == ["Visit", "Signup", "Activate", "Pay"]
     assert len(columns["funnel_stage"]) == len(columns["funnel_value"])
+
+
+# --- Reflex app: the 007 gun-barrel intro (examples/bond) --------------------
+# The geometry is pure numpy, so the interesting invariants — constant row
+# counts, stable row identity, a clean loop — are testable without reflex, a
+# browser, or a server. Those three are what the engine's index-matched
+# interpolation actually depends on, so they are pinned here rather than left to
+# look right in a screenshot.
+
+
+def _bond_module(name: str):
+    """Import a bond example module by package path.
+
+    ``charts.py`` and the app use relative imports, so they cannot be loaded as
+    detached files the way the framework-neutral ``charts.py`` of the fastapi
+    example can.
+    """
+    if str(BOND_DIR) not in sys.path:
+        sys.path.insert(0, str(BOND_DIR))
+    return importlib.import_module(f"xy_bond_intro.{name}")
+
+
+@pytest.fixture(scope="module")
+def bond_scene():
+    return _bond_module("scene")
+
+
+def test_bond_row_counts_are_constant_across_the_whole_cycle(bond_scene) -> None:
+    """The contract `match="index"` interpolation rests on.
+
+    A layer that changed length between frames would fall back to snapping
+    (js/src/56_animation.ts records `snap:layout-mismatch`), and the sequence
+    would stutter instead of tween.
+    """
+    times = [i * bond_scene.CYCLE / 64 for i in range(64)]
+    shapes = [
+        {name: len(col) for name, col in bond_scene.frame_columns(t, points=8_000).items()}
+        for t in times
+    ]
+    assert all(shape == shapes[0] for shape in shapes[1:])
+    # Every layer ships x, y and a shade, all float32 (no JSON numbers, §29).
+    first = bond_scene.frame_columns(0.0, points=8_000)
+    assert set(first) == {
+        f"{layer}_{axis}"
+        for layer in ("wash", "rifle", "ring", "fig", "flash", "blood")
+        for axis in ("x", "y", "c")
+    }
+    assert all(col.dtype == "float32" for col in first.values())
+
+
+def test_bond_frames_are_a_pure_function_of_the_clock(bond_scene) -> None:
+    """The adapter re-runs a data method to rebuild columns on a fresh worker.
+
+    If a frame depended on anything but the clock, that rebuild would hand back
+    a different scene than the one the browser is mid-tween on.
+    """
+    import numpy as np
+
+    for t in (0.0, 3.7, 7.42, 11.9):
+        a = bond_scene.frame_columns(t, points=8_000)
+        b = bond_scene.frame_columns(t, points=8_000)
+        for name in a:
+            np.testing.assert_array_equal(a[name], b[name], err_msg=name)
+    # The cycle wraps rather than running off the end of the timeline.
+    for name, col in bond_scene.frame_columns(bond_scene.CYCLE + 1.25, points=8_000).items():
+        np.testing.assert_array_equal(col, bond_scene.frame_columns(1.25, points=8_000)[name])
+
+
+def test_bond_loop_seam_has_nothing_visible_to_tween(bond_scene) -> None:
+    """The last frame of the cycle and the first must agree.
+
+    Interpolation makes a discontinuity here *worse* than a snap: the blood
+    would streak back up the frame and the barrel dot would fly across it. The
+    fade beat exists to close that seam, so it is pinned.
+    """
+    import numpy as np
+
+    end = bond_scene.frame_columns(bond_scene.CYCLE - 1e-6, points=8_000)
+    start = bond_scene.frame_columns(0.0, points=8_000)
+    # Anything still lit at the seam has to be in the same place.
+    for layer in ("wash", "rifle", "ring", "flash", "blood"):
+        lit = np.maximum(end[f"{layer}_c"], start[f"{layer}_c"]) > 0.02
+        for axis in ("x", "y"):
+            drift = np.abs(end[f"{layer}_{axis}"][lit] - start[f"{layer}_{axis}"][lit])
+            assert drift.max(initial=0.0) < 0.05, f"{layer}_{axis} jumps at the loop seam"
+    # The blood is fully faded out by then, which is what licenses its depth
+    # snapping back to zero.
+    assert end["blood_c"].max() < 0.02
+
+
+def test_bond_scene_stays_inside_the_stage_or_is_deliberately_parked(bond_scene) -> None:
+    """Rows are parked outside the pinned domain, never smeared across it."""
+    lo_x, hi_x = bond_scene.WORLD_X
+    lo_y, hi_y = bond_scene.WORLD_Y
+    for t in (0.0, 4.0, 7.5, 9.0, 14.0):
+        columns = bond_scene.frame_columns(t, points=8_000)
+        for layer in ("wash", "rifle", "ring", "fig", "flash"):
+            xs, ys = columns[f"{layer}_x"], columns[f"{layer}_y"]
+            assert xs.min() >= lo_x - 0.9 and xs.max() <= hi_x + 0.9, (layer, t)
+            assert ys.min() >= lo_y - 2.0 and ys.max() <= hi_y + 2.0, (layer, t)
+        # Before the bleed the blood waits *above* the frame, not inside it.
+        if t < bond_scene.BEATS["bleed"][0]:
+            assert columns["blood_y"].min() > hi_y
+
+
+def test_bond_beats_tile_the_cycle_in_order(bond_scene) -> None:
+    beats = bond_scene.BEATS
+    for name, (start, end) in beats.items():
+        assert 0.0 <= start < end <= bond_scene.CYCLE, name
+    assert beats["open"][0] == 0.0
+    assert beats["fade"][1] == bond_scene.CYCLE
+    # The shot lands inside the aim beat's follow-through and starts the bleed.
+    assert beats["aim"][1] <= beats["fire"][0] < beats["fire"][1]
+    assert beats["bleed"][0] < beats["fire"][1]
+    assert bond_scene.beat_label(0.1) == "open"
+    assert bond_scene.beat_label(beats["fire"][0] + 0.01) == "fire"
+
+
+def test_bond_stage_aspect_matches_the_world(bond_scene) -> None:
+    """A circle only renders round if the plot rect carries this ratio."""
+    lo_x, hi_x = bond_scene.WORLD_X
+    lo_y, hi_y = bond_scene.WORLD_Y
+    assert pytest.approx((hi_x - lo_x) / (hi_y - lo_y)) == bond_scene.WORLD_ASPECT
+
+
+def test_bond_plan_is_scatter_only_and_pinned(bond_scene) -> None:
+    """Every mark interpolates, and nothing can rescale the stage.
+
+    `line` cannot draw a closed ring (it spans each column's min/max, filling
+    the disc), and `triangle_mesh` is not one of the kinds
+    `_preparePositionInterpolation` handles — so scatter is the only kind that
+    both draws the scene and tweens.
+    """
+    charts = _bond_module("charts")
+    columns = bond_scene.frame_columns(4.0, points=8_000)
+    figure = charts.gun_barrel_chart(height=200, data=columns).figure()
+    assert [trace.kind for trace in figure.traces] == ["scatter"] * 6
+    # Density binning would dissolve the silhouette into a heatmap, so every
+    # layer pins it off explicitly rather than relying on staying under the auto
+    # threshold. Checked at the largest budget the UI offers too, so raising it
+    # cannot quietly turn the artwork into a heatmap.
+    assert all(trace.force_density is False for trace in figure.traces)
+    assert not any(trace.use_density() for trace in figure.traces)
+    biggest = charts.gun_barrel_chart(
+        height=200, data=bond_scene.frame_columns(4.0, points=400_000)
+    ).figure()
+    assert not any(trace.use_density() for trace in biggest.traces)
+    assert figure.animation_options["match"] == "index"
+    assert figure.animation_options["update"] == "interpolate"
+    assert figure.animation_options["duration"] == charts.FRAME_MS
+    assert "position" in figure.animation_options["interpolate"]
+    # The flip-book branch is the same plan with the tween off — same marks,
+    # same row counts, only the update policy differs.
+    off = charts.gun_barrel_chart(height=200, interpolate=False, data=columns).figure()
+    assert off.animation_options["update"] == "none"
+    assert [trace.kind for trace in off.traces] == [trace.kind for trace in figure.traces]
+    assert [trace.n_points for trace in off.traces] == [trace.n_points for trace in figure.traces]
+
+
+def test_bond_frame_renders_pixels_standalone(bond_scene) -> None:
+    """One frame, no server: the plan paints, and the barrel is where it should be.
+
+    `to_png` is the same path the README's stills come from, so this is the
+    render guarantee behind the compile guarantee.
+    """
+    charts = _bond_module("charts")
+    columns = bond_scene.frame_columns(4.2, points=40_000)
+    height = 240
+    png = charts.gun_barrel_chart(height=height, data=columns).to_png(scale=1.0)
+    assert png.startswith(b"\x89PNG")
+    width, png_height = struct.unpack(">II", png[16:24])
+    assert png_height == height
+    assert width == round(height * bond_scene.WORLD_ASPECT)
+
+
+def test_bond_app_uses_the_data_bound_tier(bond_scene) -> None:
+    src = BOND_APP.read_text(encoding="utf-8")
+    for marker in (
+        "@reflex_xy.data",  # columns only; the plan never moves
+        "def scene(self) -> SceneCols",  # the R7 compile-time schema channel
+        "reflex_xy.chart(",
+        "data=Intro.scene",
+        "gun_barrel_marks(",  # the one plan, shared with the still renderer
+        "rx.cond(Intro.interpolate",  # both animation policies compile
+        "background=True",  # the clock
+        "time.monotonic() - self.clock",  # wall-anchored, never accumulated
+        "on_animation_end=Intro.frame_rendered",  # the browser paces publishing
+        "rx.match(",  # one compiled plan per tween duration
+        "inspect.getsource",  # introspected code accordions
+        "aspect_ratio=",  # the barrel stays round
+        "XY_BOND_POINTS",
+    ):
+        assert marker in src, marker
+    # Native linking, no iframe or postMessage bridge, and no committed HTML.
+    assert "postMessage" not in src
+    assert "iframe" not in src.lower()
+    # The scene and plan modules must stay framework-neutral.
+    scene_src = (BOND_DIR / "xy_bond_intro" / "scene.py").read_text(encoding="utf-8")
+    assert "import reflex" not in scene_src
+    assert "import xy" not in scene_src
+    charts_src = (BOND_DIR / "xy_bond_intro" / "charts.py").read_text(encoding="utf-8")
+    assert "import reflex" not in charts_src
+
+
+def test_bond_config_wires_the_xy_plugin() -> None:
+    cfg = (BOND_DIR / "rxconfig.py").read_text(encoding="utf-8")
+    assert "reflex_xy.XYPlugin()" in cfg
+    assert 'app_name="xy_bond_intro"' in cfg
+
+
+def test_bond_page_composes_and_validates_its_plan(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("reflex")
+    pytest.importorskip("reflex_xy")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("XY_BOND_POINTS", "8000")
+    module = _bond_module("xy_bond_intro")
+    # Composing the page compiles both cond branches' plans, which is where the
+    # marks' column names are checked against SceneCols.
+    assert module.index() is not None
+    assert "@reflex_xy.data" in module._source(module.Intro.scene)
+    assert "def scene" in module._source(module.Intro.scene)
+    assert "async def play" in module._source(module.Intro.play)
+    # The UI menus may only offer counts the scene can actually build.
+    for count in module.POINT_CHOICES.values():
+        assert count >= 2_000
+    # Untrusted select/slider payloads are resolved against the menus, not used.
+    assert module._choice("nonsense", module.POINT_CHOICES, 8_000) == 8_000
+    assert module._clamped_seconds([1e9]) == module.CYCLE
+    assert module._clamped_seconds("not a list") == 0.0
+    assert module._clamped_seconds([float("nan")]) == 0.0
 
 
 # --- retargeted browser smokes: import cleanly, pure helpers unit-tested -----

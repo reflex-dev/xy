@@ -630,15 +630,25 @@ Keep pushing these in low-conflict increments:
   makes `publish.yml` require that the environment prevents self-review, i.e. a
   real two-person rule. Enable "Prevent self-review" on the environment first;
   the check fails closed if GitHub does not report it.
-- Keep the two example apps focused: `examples/reflex` on the bundled Reflex
+- Keep the three example apps focused: `examples/reflex` on the bundled Reflex
   integration surfaces (figure vars, events, state-driven and streaming
-  updates, `on_view_change`), and `examples/fastapi` on the framework-neutral
-  gallery plus the live 100M drilldown. The one deliberate overlap is that
-  drilldown chart itself: `examples/reflex` §6 serves the identical dataset
-  adapter-natively (an `inline()` token, no transport code) so cross-host
-  behavior can be A/B'd against fastapi's hand-rolled transport; both honor
-  `XY_LIVE_POINTS`. Neither commits static chart HTML, and both surface their
-  own source via `inspect.getsource`.
+  updates, `on_view_change`), `examples/fastapi` on the framework-neutral
+  gallery plus the live 100M drilldown, and `examples/bond` on animation —
+  one fixed plan whose columns are a pure function of a clock, published as
+  ~12 Hz keyframes and tweened to 60 fps by the engine's `match="index"`
+  interpolation. The one deliberate overlap is the drilldown chart itself:
+  `examples/reflex` §6 serves the identical dataset adapter-natively (an
+  `inline()` token, no transport code) so cross-host behavior can be A/B'd
+  against fastapi's hand-rolled transport; both honor `XY_LIVE_POINTS`
+  (`examples/bond` sizes its own budget with `XY_BOND_POINTS`). None commits
+  static chart HTML, and all three surface their own source via
+  `inspect.getsource`.
+- `examples/bond` is the animation regression surface: its geometry module
+  imports neither `xy` nor `reflex`, so `tests/test_example_apps.py` pins the
+  invariants index-matched interpolation actually rests on — constant row
+  counts across the whole cycle, frames as a pure function of the clock, a loop
+  seam with nothing lit to tween across, and every layer pinned off density —
+  without a browser or a server, and pixel-checks one frame through `to_png`.
 - Add first-class docs for the supported-platform matrix and the clear-error
   behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree
