@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from pathlib import Path
 
@@ -1881,6 +1882,28 @@ _GOVERNED_FALLBACK_PROBE = r"""
         },
         zoomedRestoreCount: zoomed._contextRestoreCount,
       };
+      // Gestures must follow the view onto its fresh canvas: the interaction
+      // handlers move with it, and their geometry must read the live canvas,
+      // not the detached one they were bound to (wheel zoom went to
+      // +-Infinity off a zero rect after a rebuild).
+      const wheelBefore = [...revived._axisRange("x")];
+      const revivedRect = revived.canvas.getBoundingClientRect();
+      revived.canvas.dispatchEvent(new WheelEvent("wheel", {
+        deltaY: -600,
+        clientX: revivedRect.left + revivedRect.width / 2,
+        clientY: revivedRect.top + revivedRect.height / 2,
+        bubbles: true,
+        cancelable: true,
+      }));
+      await settleOn(
+        "wheel zoom after revival",
+        () => {
+          const [x0, x1] = revived._axisRange("x");
+          return Number.isFinite(x0) && Number.isFinite(x1) &&
+            x1 - x0 < wheelBefore[1] - wheelBefore[0];
+        },
+      );
+      afterRevival.wheelZoom = { before: wheelBefore, after: [...revived._axisRange("x")] };
       document.body.setAttribute("data-xy-governed-fallback-probe", JSON.stringify({
         afterCreation,
         registryHostExists,
@@ -1972,6 +1995,12 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
     # a fresh canvas element presents again (§18).
     assert revival["revivedFreshCanvas"] is True, result
     assert revival["restoreContextCalls"] == 0, result
+    # Wheel zoom on the fresh canvas still zooms about the pointer: finite,
+    # narrower than before, inside the previous range.
+    before, after = revival["wheelZoom"]["before"], revival["wheelZoom"]["after"]
+    assert all(math.isfinite(v) for v in after), result
+    assert before[0] <= after[0] < after[1] <= before[1], result
+    assert after[1] - after[0] < before[1] - before[0], result
     assert revival["liveCount"] == 2, result
     assert sum(revival["lossCounts"]) > sum(creation["lossCounts"]), result
     assert revival["revivedLit"] > 0, result
