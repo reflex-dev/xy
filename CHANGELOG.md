@@ -14,6 +14,23 @@ workflow materializes the pending fragments into a new section with
 
 <!-- towncrier release notes start -->
 
+## v0.0.7a2 (2026-08-26)
+
+### Bug Fixes
+
+- Charts no longer come back blank after the shared WebGL context budget
+  released them while their tab was hidden. A released chart used to revive with
+  `restoreContext()` on the same canvas, and Chrome can restore that context
+  fully healthy — draws, `readPixels`, and picking all succeed — while never
+  presenting the canvas element again, so the data layer stayed invisible under
+  intact axes until a page reload. Governed releases now re-acquire the way a
+  real eviction does: on a fresh canvas element, rebuilt from the retained spec
+  and payload.
+  Gestures follow the chart onto that fresh canvas: wheel zoom, drag, and hover
+  read their geometry from the live canvas rather than the one they were first
+  bound to, which previously sent a zoom after any context rebuild to infinity. ([#503](https://github.com/reflex-dev/xy/issues/503))
+
+
 ## v0.0.7a1 (2026-08-25)
 
 ### Features
