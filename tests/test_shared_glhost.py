@@ -1840,6 +1840,20 @@ _GOVERNED_FALLBACK_PROBE = r"""
       const equilibriumSum = lossSum();
       const revived = views.find((view) => view._glLost);
       const revivedIndex = views.indexOf(revived);
+      const revivedCanvasBefore = revived.canvas;
+      // A governed re-acquire must never restoreContext() the released canvas
+      // (Chromium can present it blank for good, §18): count every call.
+      let restoreContextCalls = 0;
+      const getExtension = WebGL2RenderingContext.prototype.getExtension;
+      WebGL2RenderingContext.prototype.getExtension = function (name) {
+        const ext = getExtension.call(this, name);
+        if (name === "WEBGL_lose_context" && ext && !ext.__xyCounted) {
+          const restore = ext.restoreContext.bind(ext);
+          ext.restoreContext = () => { restoreContextCalls += 1; restore(); };
+          ext.__xyCounted = true;
+        }
+        return ext;
+      };
       revived._recoverContext();
       await settleOn(
         "budget rotation after revival",
@@ -1848,6 +1862,12 @@ _GOVERNED_FALLBACK_PROBE = r"""
       const afterRevival = {
         revivedIndex,
         revivedStamp: revived.canvas.dataset.xyCtx,
+        revivedFreshCanvas:
+          revived.canvas !== revivedCanvasBefore &&
+          revived.canvas.isConnected &&
+          !revivedCanvasBefore.isConnected &&
+          revived.gl.canvas === revived.canvas,
+        restoreContextCalls,
         stamps: views.map((view) => view.canvas.dataset.xyCtx),
         lossCounts: views.map((view) => view._contextLossCount),
         restoreCounts: views.map((view) => view._contextRestoreCount),
@@ -1924,10 +1944,12 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
         assert state["snapshots"] == 2, result
 
     creation = result["afterCreation"]
-    # Opting out really is per-chart native WebGL: one context per canvas, no
-    # shared host anywhere, and every view registered with the governor.
+    # Opting out really is per-chart native WebGL: every acquisition is its own
+    # context (no shared host anywhere — a governed revival rebuilds on a fresh
+    # canvas, so the cascade mints more than the four initial contexts), and
+    # every view is registered with the governor.
     assert creation["webgl2Acquisitions"] >= 4, result
-    assert creation["uniqueWebgl2Contexts"] == 4, result
+    assert creation["uniqueWebgl2Contexts"] == creation["webgl2Acquisitions"], result
     assert creation["hostless"] == [True] * 4, result
     assert creation["governorRegistered"] == [True] * 4, result
     assert creation["glHostMarkers"] == [None] * 4, result
@@ -1944,6 +1966,12 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
     assert_governed_equilibrium(revival)
     assert revival["stamps"][revival["revivedIndex"]] == "live", result
     assert revival["revivedStamp"] == "live", result
+    # The released canvas is retired, never restoreContext()ed: Chromium can
+    # bring a restored context back healthy yet present that canvas blank for
+    # good (a chart released while its tab sat hidden came back empty). Only
+    # a fresh canvas element presents again (§18).
+    assert revival["revivedFreshCanvas"] is True, result
+    assert revival["restoreContextCalls"] == 0, result
     assert revival["liveCount"] == 2, result
     assert sum(revival["lossCounts"]) > sum(creation["lossCounts"]), result
     assert revival["revivedLit"] > 0, result

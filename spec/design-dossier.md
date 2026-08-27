@@ -760,14 +760,21 @@ already reports an off-screen iframe's chart as not-intersecting (it clips to th
 top-level viewport), so the visibility signal is correct across the frame boundary; the
 budget accounting was the only gap.
 
-Two subtleties the implementation must get right. **(1) Restore ordering.** A governed
-release is `WEBGL_lose_context.loseContext()`; re-acquire is `restoreContext()`. Chromium
-*silently drops* a `restoreContext()` issued before that context's `webglcontextlost`
-event has dispatched (or synchronously inside the dispatch), stranding the canvas lost
-forever — and a chart scrolled back into view in the same task it was shed hits exactly
-that window. Recovery therefore defers until the loss event lands (`_ctxLostPending`)
-and retries on a fresh task; a released chart that never re-acquired on scroll-in was the
-first symptom. **(2) Incremental shedding.** Frames over budget release *one* off-screen
+Two subtleties the implementation must get right. **(1) Re-acquire on a fresh canvas,
+after the loss event.** A governed release is `WEBGL_lose_context.loseContext()`; re-acquire
+is *never* `restoreContext()` on that canvas. Chromium (observed in 151) can restore the
+context fully healthy — draws, `readPixels` and picking all succeed, the stamp reads
+`live` — while the compositor presents that canvas element's frames as empty for good: a
+chart released by a peer tab while its own tab sat hidden came back blank, and no redraw
+(hover, resize, backing-store reset, a second lose/restore cycle) could show it. Only a
+fresh canvas element presents again, so a governed release re-acquires exactly like a real
+eviction: cloned canvas plus the §18/§27 rebuild (`_rebuildEvictedContext`), reserving
+with the governor first so an off-screen peer is shed before the replacement context is
+created. The rebuild still waits for the release's `webglcontextlost` event to land
+(`_ctxLostPending`, retried on a fresh task): the loss bookkeeping is bound to the canvas
+being replaced, and a chart scrolled back into view in the same task it was shed would
+otherwise strand that event. Either path answers a loss with exactly one
+`context_restored`. **(2) Incremental shedding.** Frames over budget release *one* off-screen
 view per event-loop turn, not the whole computed excess: several frames observing the
 same over-budget snapshot would each drop the full deficit and collectively over-release,
 so each sheds one, announces, and re-evaluates against the fresher count — converging on
