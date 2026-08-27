@@ -14,6 +14,76 @@ workflow materializes the pending fragments into a new section with
 
 <!-- towncrier release notes start -->
 
+## v0.0.7 (2026-08-26)
+
+### Features
+
+- Unanchored Cartesian legends now use content-aware placement when `loc` is set
+  to `"best"`. The initial static decision measures the legend against bounded
+  line, area, scatter, bar, and annotation geometry, while the browser remeasures
+  rendered pixels after responsive resize and settled view changes.
+  Initial/static placement takes the exact minimum with canonical tie order; after
+  the browser establishes a live winner, a five-percentage-point hysteresis keeps
+  near-uniform views from making the legend hop, while an empty candidate still
+  always beats an occupied one. Explicit locations, anchors, and polar legends
+  remain fixed. ([#496](https://github.com/reflex-dev/xy/issues/496))
+
+### Bug Fixes
+
+- Funnel labels no longer overlap on short vertical charts. Value labels sit
+  at the stage centers and drop-off labels at the boundaries between them, so
+  the two ladders interleave at half the stage pitch; both were budgeted
+  against a whole one, and every pitch between one and two line heights piled
+  them onto each other. The label ladder's plot-size estimate was also
+  optimistic — it scaled the chart height by a fraction, while the title band,
+  tick labels and margins actually cost a roughly fixed ~90px, so it claimed
+  153px of a real 92px plot at height 180 and placed labels that could not
+  fit. Cramped funnels now drop the derived drop-off percentage rather than
+  print it over the stage value; the tooltip and event payload still carry
+  every number, and roomy charts are unchanged. ([#481](https://github.com/reflex-dev/xy/issues/481))
+- Bar hover tooltips no longer rewrite themselves and jump when the kernel's
+  exact pick reply lands. The reply's row now follows the bar's orientation
+  (band center on the position axis, value end on the value axis) and is mapped
+  through the same display-value path as the local readout, so the refinement is
+  invisible instead of swapping a category label for its code and dragging the
+  anchor off the cursor. ([#499](https://github.com/reflex-dev/xy/issues/499))
+- Charts left running under GPU pressure no longer flicker blank or stay gone
+  until a page reload. Context-restore retries used to clear the presentation
+  canvas before every rebuild attempt, so each transient failure wiped the last
+  drawn frame; the canvas now resizes only when its dimensions actually change,
+  keeping the last good frame on screen until a rebuild succeeds. And when a
+  context stays "live" while every rebuild against it fails (a wedged driver),
+  three consecutive failures now recycle the shared WebGL surface — rebuilding
+  every chart on a fresh context, the in-page equivalent of the reload that was
+  previously the only escape. A genuine context loss — including one arriving
+  while a chart is still mid-retry from an earlier failure — resets that
+  escalation counter, so ordinary loss/restore churn keeps taking cheap
+  same-context retries. ([#501](https://github.com/reflex-dev/xy/issues/501))
+- Charts no longer come back blank after the shared WebGL context budget
+  released them while their tab was hidden. A released chart used to revive with
+  `restoreContext()` on the same canvas, and Chrome can restore that context
+  fully healthy — draws, `readPixels`, and picking all succeed — while never
+  presenting the canvas element again, so the data layer stayed invisible under
+  intact axes until a page reload. Governed releases now re-acquire the way a
+  real eviction does: on a fresh canvas element, rebuilt from the retained spec
+  and payload.
+  Gestures follow the chart onto that fresh canvas: wheel zoom, drag, and hover
+  read their geometry from the live canvas rather than the one they were first
+  bound to, which previously sent a zoom after any context rebuild to infinity. ([#503](https://github.com/reflex-dev/xy/issues/503))
+
+### Miscellaneous
+
+- Releases are now driven by `CHANGELOG.md` instead of by a hand-cut git tag.
+  Contributors add a [towncrier](https://towncrier.readthedocs.io/) news fragment
+  under `news/` (`make news NAME=1234.feature.md`), the *Dispatch release*
+  workflow materializes the pending fragments into a version section, and merging
+  that pull request publishes: the release matrix builds every wheel, the sdist
+  and the runtime-verified PyEmscripten wheel, a human approves the single
+  credentialed upload job, and only a successful upload creates the tag and the
+  GitHub release. `CHANGELOG.md` is generated from that point on — version
+  headings are no longer written by hand. ([#498](https://github.com/reflex-dev/xy/issues/498))
+
+
 ## v0.0.6 (2026-08-07)
 
 ### Added
