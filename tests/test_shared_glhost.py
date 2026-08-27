@@ -1845,15 +1845,20 @@ _GOVERNED_FALLBACK_PROBE = r"""
       // A governed re-acquire must never restoreContext() the released canvas
       // (Chromium can present it blank for good, §18): count every call.
       let restoreContextCalls = 0;
+      const countRestores = (ext) => {
+        if (!ext || ext.__xyCounted) return ext;
+        const restore = ext.restoreContext.bind(ext);
+        ext.restoreContext = () => { restoreContextCalls += 1; restore(); };
+        ext.__xyCounted = true;
+        return ext;
+      };
+      // The extension cached at release time is the one a same-canvas
+      // restore would use; extensions fetched later go through the prototype.
+      const revivedExtCounted = !!countRestores(revived._ctxReleasedExt);
       const getExtension = WebGL2RenderingContext.prototype.getExtension;
       WebGL2RenderingContext.prototype.getExtension = function (name) {
         const ext = getExtension.call(this, name);
-        if (name === "WEBGL_lose_context" && ext && !ext.__xyCounted) {
-          const restore = ext.restoreContext.bind(ext);
-          ext.restoreContext = () => { restoreContextCalls += 1; restore(); };
-          ext.__xyCounted = true;
-        }
-        return ext;
+        return name === "WEBGL_lose_context" ? countRestores(ext) : ext;
       };
       revived._recoverContext();
       await settleOn(
@@ -1869,6 +1874,7 @@ _GOVERNED_FALLBACK_PROBE = r"""
           !revivedCanvasBefore.isConnected &&
           revived.gl.canvas === revived.canvas,
         restoreContextCalls,
+        revivedExtCounted,
         stamps: views.map((view) => view.canvas.dataset.xyCtx),
         lossCounts: views.map((view) => view._contextLossCount),
         restoreCounts: views.map((view) => view._contextRestoreCount),
@@ -1994,6 +2000,7 @@ def test_disabled_shared_host_keeps_governed_native_contexts_working(
     # good (a chart released while its tab sat hidden came back empty). Only
     # a fresh canvas element presents again (§18).
     assert revival["revivedFreshCanvas"] is True, result
+    assert revival["revivedExtCounted"] is True, result
     assert revival["restoreContextCalls"] == 0, result
     # Wheel zoom on the fresh canvas still zooms about the pointer: finite,
     # narrower than before, inside the previous range.
