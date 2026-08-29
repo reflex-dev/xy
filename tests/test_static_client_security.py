@@ -628,7 +628,7 @@ def test_authored_markers_keep_lod_and_style_channels_cpu_readable() -> None:
     assert "s._cpuStyle = values;" in chartview
     assert "d._cpuStyle = values;" in lod
     assert "g._cpuStroke = this._columnView(" in chartview
-    assert "s._cpuStroke = this._asU8(" in chartview
+    assert "s._cpuStroke = this._wireColumnView(" in chartview
     assert "d._cpuStroke = values;" in lod
 
     draw_start = annotations.index("_drawAuthoredScatterMarkers(ctx) {")
