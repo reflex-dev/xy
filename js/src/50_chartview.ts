@@ -5050,12 +5050,7 @@ export class ChartView {
     g._sampleFadedOut = !s;
     if (changed) this._refreshReductionBadges();
     if (!s) return;
-    this._drawPoints(
-      s,
-      this._map(s.xMeta, x0, x1, s.xAxis),
-      this._map(s.yMeta, y0, y1, s.yAxis),
-      opacityScale * pick.alpha
-    );
+    this._drawPoints(s, [x0, x1], [y0, y1], opacityScale * pick.alpha);
   }
 
   // Resolve a validated `style.fill` gradient (wire: {space, dir, stops}) into
@@ -5282,23 +5277,22 @@ export class ChartView {
     g.tooltipRows = Array.isArray(t.tooltip_rows) ? t.tooltip_rows : null;
   }
 
-  _drawRibbons(g, xm, ym) {
+  _drawRibbons(g, xr, yr) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.ribbonProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
-    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
-    this._setAxisUniforms(prog, "u_t0", g.t0Meta, g.yAxis);
-    this._setAxisUniforms(prog, "u_t1", g.t1Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis, yr);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis, yr);
+    this._setAxisUniforms(prog, "u_t0", g.t0Meta, g.yAxis, yr);
+    this._setAxisUniforms(prog, "u_t1", g.t1Meta, g.yAxis, yr);
     // RIBBON_VS reads the SHARED mode/constant uniforms (the RECT_VS design);
-    // the per-column _setAxisUniforms calls above only cover the *meta pairs,
-    // so without these four writes log/symlog axes silently render as linear.
+    // the per-column _setAxisUniforms calls above only cover each column's
+    // map/meta pair, so without these four writes log/symlog axes silently
+    // render as linear.
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
@@ -5562,7 +5556,7 @@ export class ChartView {
     if (mixing) g._funnelGeomMixed = true;
   }
 
-  _drawFunnels(g, xm, ym) {
+  _drawFunnels(g, xr, yr) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.funnelProg;
@@ -5572,14 +5566,14 @@ export class ChartView {
     const horizontal = g.orientation === 1;
     const posAxis = horizontal ? g.xAxis : g.yAxis;
     const crossAxis = horizontal ? g.yAxis : g.xAxis;
-    gl.uniform2f(u("u_pmap"), ...(horizontal ? xm : ym));
-    gl.uniform2f(u("u_cmap"), ...(horizontal ? ym : xm));
-    this._setAxisUniforms(prog, "u_p0", g.x0Meta, posAxis);
-    this._setAxisUniforms(prog, "u_p1", g.x1Meta, posAxis);
-    this._setAxisUniforms(prog, "u_l0", g.y0Meta, crossAxis);
-    this._setAxisUniforms(prog, "u_h0", g.y1Meta, crossAxis);
-    this._setAxisUniforms(prog, "u_l1", g.x2Meta, crossAxis);
-    this._setAxisUniforms(prog, "u_h1", g.y2Meta, crossAxis);
+    const pr = horizontal ? xr : yr;
+    const cr = horizontal ? yr : xr;
+    this._setAxisUniforms(prog, "u_p0", g.x0Meta, posAxis, pr);
+    this._setAxisUniforms(prog, "u_p1", g.x1Meta, posAxis, pr);
+    this._setAxisUniforms(prog, "u_l0", g.y0Meta, crossAxis, cr);
+    this._setAxisUniforms(prog, "u_h0", g.y1Meta, crossAxis, cr);
+    this._setAxisUniforms(prog, "u_l1", g.x2Meta, crossAxis, cr);
+    this._setAxisUniforms(prog, "u_h1", g.y2Meta, crossAxis, cr);
     gl.uniform1i(u("u_pmode"), this._axisMode(posAxis));
     gl.uniform1f(u("u_pconstant"), this._axisConstant(posAxis));
     gl.uniform1i(u("u_cmode"), this._axisMode(crossAxis));
@@ -6044,19 +6038,81 @@ export class ChartView {
 
   // -- drawing --------------------------------------------------------------
 
+  // The view->clip affine for ONE column of ONE axis, in that column's own
+  // offset encoding (§4). The result is what `xyMap` consumes:
+  //
+  //   linear:      clip = (encoded - shift) * mul + add
+  //   log/symlog:  clip = xyAxisCoord(encoded, meta) * mul + add
+  //
+  // Linear axes fold the column's offset and scale into the constants HERE, in
+  // f64, so the shader never rebuilds the absolute coordinate in f32 (§16). A
+  // millisecond epoch (~1.7e12) has a ~130 s f32 quantum, which is what made
+  // high-rate time series render as stepped columns instead of a curve; folding
+  // keeps the intra-view spread at the encoded value's own precision.
+  //
+  // `shift` re-centres the multiply on the visible window so the two terms of
+  // the affine stay O(1) instead of large and near-cancelling once the view sits
+  // far from the encode offset (deep zoom). It is snapped to f32 with
+  // Math.fround so the value the shader subtracts is bit-identical to the one
+  // folded into `add` — an f64-only shift would reintroduce the very error it
+  // exists to remove. `dataMul` is the slope per *data* unit, which is what a
+  // data-space width (a bar's) must scale by; `mul` is per *encoded* unit.
+  // A non-affine axis has no such constant, so `dataMul` is 0 there and a
+  // caller needing a data-space span transforms both of its edges instead
+  // (BAR_VS) — a zero-width bar is a visible mistake, a plausible-looking
+  // coordinate-space slope is not.
+  //
+  // Marks pass WINDOWS around, not maps: several of them place four or six
+  // independently encoded columns per axis, and a map is only valid for the
+  // encoding it was folded from. `_setAxisUniforms` is the one caller, so the
+  // map and the meta it belongs to are written to the GPU together.
+  //
+  // A degenerate window or encoding yields the off-screen sentinel (mul 0,
+  // add -2) rather than an Infinity that would reach the shader as NaN.
   _map(meta, lo, hi, axisId = null) {
-    if (!axisId) {
-      const mul = 2 / ((hi - lo) * meta.scale);
-      const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
-      return [mul, add];
+    const offscreen = { mul: 0, add: -2, shift: 0, dataMul: 0 };
+    // Every non-degenerate exit goes through this. The constants travel to the
+    // GPU as f32, so an f64-finite value that overflows on upload is still an
+    // Infinity in the shader, and `encoded * Infinity` rasterizes as NaN —
+    // validate the f32 images, not the f64 ones.
+    const gpu = (mul, add, shift, dataMul) => {
+      if (!Number.isFinite(Math.fround(mul)) || !Number.isFinite(Math.fround(add))) {
+        return offscreen;
+      }
+      // `dataMul` feeds nothing but a data-space width (BAR_VS), so a window
+      // too narrow for f32 to hold its slope zeroes that alone: a zero-width
+      // bar is a visible mistake, an Infinity is a NaN clip coordinate, and
+      // positions — which never read it — keep working either way.
+      const width = Number.isFinite(Math.fround(dataMul)) ? dataMul : 0;
+      return { mul, add, shift, dataMul: width };
+    };
+    if (!axisId || this._axisMode(axisId) === 0) {
+      const span = hi - lo;
+      if (!Number.isFinite(span) || span === 0) return offscreen;
+      const scale = meta && Number.isFinite(meta.scale) ? meta.scale : 1;
+      const offset = meta && Number.isFinite(meta.offset) ? meta.offset : 0;
+      const dataMul = 2 / span;
+      // A zero encode scale encodes every value to 0, so the honest picture is
+      // "the whole column sits on its offset" — expressible exactly, with no
+      // division and no epsilon. Flooring |scale| instead would be wrong for
+      // the legitimately tiny scales an enormous finite domain produces
+      // (~1e-38): the fold has f64 to divide in, and must use the very scale
+      // the vertex buffer was encoded with, not a clamped stand-in.
+      if (scale === 0) return gpu(0, (offset - lo) * dataMul - 1, 0, dataMul);
+      const mul = dataMul / scale;
+      const shiftRaw = Math.fround(((lo + hi) / 2 - offset) * scale);
+      const shift = Number.isFinite(shiftRaw) ? shiftRaw : 0;
+      const add = (offset + shift / scale - lo) * dataMul - 1;
+      return gpu(mul, add, shift, dataMul);
     }
     const axis = this._axis(axisId);
     const c0 = this._axisCoord(axis, lo);
     const c1 = this._axisCoord(axis, hi);
-    if (![c0, c1].every(Number.isFinite) || c1 === c0) return [0, -2];
+    if (![c0, c1].every(Number.isFinite) || c1 === c0) return offscreen;
+    // Log-family axes decode before mapping, so one coordinate-space affine
+    // serves every column on the axis.
     const mul = 2 / (c1 - c0);
-    const add = -1 - c0 * mul;
-    return [mul, add];
+    return gpu(mul, -1 - c0 * mul, 0, 0);
   }
 
   _mapConst(value, lo, hi, axisId = null) {
@@ -6080,9 +6136,21 @@ export class ChartView {
     return 0;
   }
 
-  _setAxisUniforms(prog, prefix, meta, axisId) {
+  // Everything one encoded column needs, written together: the map, the meta it
+  // was folded from, and the axis transform. `range` is the axis window as
+  // `_axisRange` returns it; the fold happens HERE, against THIS column's own
+  // encoding, so a mark with four or six independently encoded columns can
+  // never hand the shader a map built for a sibling (which would be a wholly
+  // different transform, not a rounding difference). Programs that do not
+  // declare `${prefix}map` have no location to write, so the paired shaders and
+  // the per-column ones share one call shape.
+  _setAxisUniforms(prog, prefix, meta, axisId, range = null) {
     const gl = this.gl;
     const u = (n) => uniformOf(gl, prog, n);
+    if (range) {
+      const m = this._map(meta, range[0], range[1], axisId);
+      gl.uniform4f(u(`${prefix}map`), m.mul, m.add, m.shift, m.dataMul);
+    }
     gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
     gl.uniform1f(u(`${prefix}constant`), this._axisConstant(axisId));
@@ -6632,7 +6700,7 @@ export class ChartView {
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
   }
 
-  _drawPoints(g, xm, ym, opacityScale = 1) {
+  _drawPoints(g, xr, yr, opacityScale = 1) {
     opacityScale *= (g._transitionOpacity ?? 1) * (g._legendDim ?? 1);
     // Pyplot-authored contours and glyphs keep these resident point buffers
     // for picking/transitions but paint on the Canvas2D overlay below. Queue
@@ -6644,17 +6712,15 @@ export class ChartView {
     }
     const animationScale = g._transitionScale ?? 1;
     if (this._canDrawSimplePoints(g)) {
-      this._drawSimplePoints(g, xm, ym, opacityScale);
+      this._drawSimplePoints(g, xr, yr, opacityScale);
       return;
     }
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis, yr);
     this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
@@ -6768,15 +6834,13 @@ export class ChartView {
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
-  _drawSimplePoints(g, xm, ym, opacityScale = 1) {
+  _drawSimplePoints(g, xr, yr, opacityScale = 1) {
     const gl = this.gl;
     const prog = this.pointSimpleProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis, yr);
     this._setPolarUniforms(prog);
     gl.uniform1f(u("u_dpr"), this.dpr);
     const zoomStyle = this._pointZoomStyle(g);
@@ -6814,23 +6878,16 @@ export class ChartView {
     if (!Number.isInteger(index) || index < 0 || index >= g.n) return;
     const [x0, x1] = this._axisRange(g.xAxis);
     const [y0, y1] = this._axisRange(g.yAxis);
-    this._drawHoverPoint(
-      g,
-      index,
-      this._map(g.xMeta, x0, x1, g.xAxis),
-      this._map(g.yMeta, y0, y1, g.yAxis)
-    );
+    this._drawHoverPoint(g, index, [x0, x1], [y0, y1]);
   }
 
-  _drawHoverPoint(g, index, xm, ym) {
+  _drawHoverPoint(g, index, xr, yr) {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis, yr);
     this._setPolarUniforms(prog);
     // Size-channel points hover at their encoded size, not the scalar default
     // (sample traces keep no CPU copy of the size column; they fall back).
@@ -6968,15 +7025,13 @@ export class ChartView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  _drawLine(g, xm, ym, color = null, width = null, opacity = null) {
+  _drawLine(g, xr, yr, color = null, width = null, opacity = null) {
     if (g.n < 2) return;
     const gl = this.gl;
     gl.useProgram(this.lineProg);
     const u = (n) => uniformOf(gl, this.lineProg, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis, xr);
+    this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis, yr);
     this._setPolarUniforms(this.lineProg);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     const transitionOn = !!(g._transitionPrevXBuf && g._transitionPrevYBuf);
@@ -7023,18 +7078,16 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, segments);
   }
 
-  _drawSegments(g, xm, ym) {
+  _drawSegments(g, xr, yr) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.segmentProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
-    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis, yr);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis, yr);
     this._setPolarUniforms(prog);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
@@ -7150,16 +7203,14 @@ export class ChartView {
     return true;
   }
 
-  _drawMesh(g, xm, ym) {
+  _drawMesh(g, xr, yr) {
     if (g.n < 1) return;
     const gl = this.gl;
     const prog = this.meshProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
-    for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
+    for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis, xr);
+    for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis, yr);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * (g._legendDim ?? 1));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
@@ -7253,19 +7304,18 @@ export class ChartView {
     return true;
   }
 
-  _drawArea(g, xm, ym, bm) {
+  _drawArea(g, xr, yr) {
     if (g.n < 2) return;
     const gl = this.gl;
     const prog = this.areaProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
-    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis, yr);
     this._setPolarUniforms(prog);
-    this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
+    // The baseline rides the y axis but keeps its own offset encoding, so it
+    // folds the same window against its own meta.
+    this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis, yr);
     const reveal = Math.max(0, Math.min(1, g._transitionReveal ?? 1));
     gl.uniform1f(u("u_revealProgress"), reveal);
     gl.uniform1f(u("u_revealSegments"), g.n - 1);
@@ -7285,20 +7335,16 @@ export class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
   }
 
-  _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
+  _drawRects(g, xr, yr, edgePad = [0, 0, 0, 0]) {
     if (!g.n) return;
     const gl = this.gl;
     const prog = this.rectProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
-    gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
-    gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
-    gl.uniform2f(u("u_y1map"), y1[0], y1[1]);
-    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
-    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis, xr);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis, yr);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis, yr);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1f(u("u_xconstant"), this._axisConstant(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
@@ -7364,20 +7410,17 @@ export class ChartView {
     }
   }
 
-  _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
+  _drawBars(g, pr, vr, v0Const, v0EdgePad = 0) {
     if (!g.n) return;
     const gl = this.gl;
     const prog = this.barProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
-    gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
-    gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
-    gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
     const pAxis = g.orientation === 1 ? g.yAxis : g.xAxis;
     const vAxis = g.orientation === 1 ? g.xAxis : g.yAxis;
-    this._setAxisUniforms(prog, "u_p", g.posMeta, pAxis);
-    this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis);
-    this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis);
+    this._setAxisUniforms(prog, "u_p", g.posMeta, pAxis, pr);
+    this._setAxisUniforms(prog, "u_v1", g.value1Meta, vAxis, vr);
+    this._setAxisUniforms(prog, "u_v0", g.value0Meta, vAxis, vr);
     // Bars name their axes u_p/u_v rather than u_x/u_y, so they need this
     // explicitly — without it u_coordMode stays 0 and a polar bar chart draws
     // cartesian rectangles inside correct polar chrome.
@@ -8574,12 +8617,8 @@ export class ChartView {
       }
       const [px0, px1] = this._axisRange(pg.xAxis || g.xAxis);
       const [py0, py1] = this._axisRange(pg.yAxis || g.yAxis);
-      const xm = this._map(pg.xMeta, px0, px1, pg.xAxis || g.xAxis);
-      const ym = this._map(pg.yMeta, py0, py1, pg.yAxis || g.yAxis);
-      gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
-      gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-      this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis);
-      this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
+      this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis, [px0, px1]);
+      this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis, [py0, py1]);
       // The pick buffer must use the SAME transform as the colour pass. Left
       // cartesian under polar it still returns ids, so the picture stays right
       // while hover silently reports whichever row happens to sit at the
