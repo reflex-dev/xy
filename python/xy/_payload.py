@@ -505,12 +505,15 @@ class PayloadMixin(_Host):
         point used to draw in the domain-minimum color (+inf included). A mark
         whose color is undefined is not drawn — matplotlib's transparent "bad"
         color — and the same rows leave the pick/selection mapping, exactly as
-        an x/y NaN does. Channels carry no zone maps, so this is one
-        allocation-free native scan per continuous channel per build — the
-        same pass `_rect_finite_sel` already pays for the rectangle family;
-        `valid_indices_f64` allocates row ids only when a row is rejected.
-        Canonical keeps every row; real gap semantics (segment index list)
-        arrive with validity bitmaps.
+        an x/y NaN does. Channels carry no zone maps, so each continuous
+        channel is probed with NumPy's vectorized `isfinite().all()` — about
+        six times cheaper than the native multi-column scan on the all-finite
+        common case, which would otherwise cost this first-payload path ~17%
+        (CodSpeed `test_first_payload_scatter_continuous_channels`) — and only
+        a channel that actually holds a non-finite value joins the native
+        `valid_indices_f64` scan, which allocates row ids only for rejected
+        rows. Canonical keeps every row; real gap semantics (segment index
+        list) arrive with validity bitmaps.
         """
         candidates = [values for col, values in ((t.x, xv), (t.y, yv)) if col.zone.null_count]
         for channel in (t.color_ch, t.size_ch):
@@ -518,7 +521,7 @@ class PayloadMixin(_Host):
                 continue
             # A streaming append can leave a channel momentarily shorter than
             # the geometry; never index geometry with a foreign-length mask.
-            if len(channel.values) == len(xv):
+            if len(channel.values) == len(xv) and not np.isfinite(channel.values).all():
                 candidates.append(channel.values)
         if not candidates:
             return None

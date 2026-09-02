@@ -11,12 +11,13 @@ import re
 import warnings
 
 import numpy as np
-import pyarrow as pa
 import pytest
 
 import xy
 from xy import channels
 from xy.components import _MARK_APPLIERS
+
+pa = pytest.importorskip("pyarrow")  # the Python-floor CI job has no pyarrow
 
 # -- 1. log axis drops non-positive rows loudly ------------------------------
 
