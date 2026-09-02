@@ -40,6 +40,11 @@ CASES: list[tuple[list[float], float]] = [
     # Exact binary ties: JS toExponential rounds half-up, Python :e half-even.
     ([1.25e6, 1.75e6, 2.25e6], 5e5),
     ([9.95e6, 9.85e6], 1e5),
+    # Adjacent f64 values at a one-ulp step need all 17 significant digits.
+    (
+        [1e6, np.nextafter(1e6, np.inf), np.nextafter(np.nextafter(1e6, np.inf), np.inf)],
+        np.spacing(1e6),
+    ),
     # Subnormal steps: 10**e_step must not underflow to zero.
     ([1e-310, 2e-310, 3e-310], 1e-310),
     ([5e-320, 1e-319], 5e-320),
@@ -67,10 +72,26 @@ def test_exponential_labels_are_distinct_at_the_tick_step() -> None:
     assert _fmt_linear(2e6, float("nan")) == "2.0e6"
 
 
+def _node_type_stripping(node: str) -> list[str]:
+    """Flags that let this node import a .ts file, or None if it cannot.
+
+    Type stripping shipped behind --experimental-strip-types in 22.6 and is on
+    by default from 23.6 (and 22.18); older versions fail at the import.
+    """
+    version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout
+    major, minor = (int(part) for part in version.strip().lstrip("v").split(".")[:2])
+    if (major, minor) < (22, 6):
+        return None
+    return ["--experimental-strip-types"] if major == 22 else []
+
+
 def test_python_and_client_formatters_agree() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not available for the fmtLinear parity check")
+    strip_types = _node_type_stripping(node)
+    if strip_types is None:
+        pytest.skip("node >= 22.6 needed to import the TypeScript source directly")
     ticks_ts = (ROOT / "js" / "src" / "30_ticks.ts").resolve().as_uri()
     payload = base64.b64encode(json.dumps(CASES).encode()).decode("ascii")
     script = (
@@ -79,7 +100,7 @@ def test_python_and_client_formatters_agree() -> None:
         "console.log(JSON.stringify(cases.map(([ticks, step]) => ticks.map((v) => m.fmtLinear(v, step)))));"
     )
     completed = subprocess.run(
-        [node, "--no-warnings", "--input-type=module", "--eval", script],
+        [node, "--no-warnings", *strip_types, "--input-type=module", "--eval", script],
         cwd=ROOT,
         capture_output=True,
         text=True,

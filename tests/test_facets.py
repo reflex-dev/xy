@@ -405,3 +405,29 @@ def test_facet_by_array_must_match_row_count() -> None:
     # The right length still works and actually subsets.
     grid = xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "a"], data=df).figure()
     assert [t.n_points for fig in grid.figures for t in fig.traces] == [2, 1]
+
+
+def test_facet_row_check_covers_plugin_columns_and_skips_color_literals() -> None:
+    """Plugin marks resolve their declared columns from data= too, so those
+    are length-checked; a CSS color literal is paint even when the mapping
+    happens to hold a key of the same name."""
+
+    def build(ctx):
+        return [xy.scatter(x=ctx.columns["t"], y=ctx.columns["v"], name=ctx.name)]
+
+    xy.register_mark(xy.MarkPlugin(name="facetprobe", columns=("t", "v"), build=build))
+    try:
+        with pytest.raises(ValueError, match="column 't' has 3 rows"):
+            xy.facet_chart(
+                xy.mark("facetprobe", t="t", v="v"),
+                by=["a", "b"],
+                data={"t": [0.0, 1.0, 2.0], "v": [1.0, 2.0, 3.0]},
+            ).figure()
+    finally:
+        xy.unregister_mark("facetprobe")
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y", color="red"),
+        by=["a", "b", "a"],
+        data={"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0], "red": [9.0]},
+    ).figure()
+    assert len(grid.figures) == 2

@@ -5330,8 +5330,16 @@ def _facet_check_mark_channels(mark: Mark, n: int, data: Any = None) -> None:
 
     items = [("x", mark.x), ("y", mark.y)]
     items.extend((key, mark.props.get(key)) for key in _FACET_CHANNEL_PROPS)
+    plugin = plugins.get_mark_plugin(mark.kind)
+    if plugin is not None:
+        # Plugin marks resolve their declared columns from data= too.
+        items.extend((key, mark.props.get(key)) for key in plugin.columns)
     table = mark.data if mark.data is not None else data
     for channel, value in items:
+        if channel == "color" and isinstance(value, str) and _is_css_color_literal(value):
+            # `color="red"` is paint on every mark kind, even when the mapping
+            # happens to hold a "red" key; never a row column to length-check.
+            continue
         if isinstance(value, str) and isinstance(table, Mapping) and value in table:
             # A mapping table keeps short config values alongside row columns
             # (`facets._subset_data`), so a column is only checked once a mark
@@ -5354,6 +5362,14 @@ def _facet_check_mark_channels(mark: Mark, n: int, data: Any = None) -> None:
                 f"facet_chart cannot split raw {mark.kind} {channel}= values across "
                 "panels; pass column names with data= so each panel can subset its rows"
             )
+
+
+def _is_css_color_literal(value: str) -> bool:
+    try:
+        _validate.css_color(value, "color")
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _facet_row_count(column: Any) -> Optional[int]:

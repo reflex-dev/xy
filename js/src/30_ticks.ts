@@ -180,9 +180,10 @@ function fmtTime(ms, step) {
 // (1.25e6 at step 2.5e5 -> (6 - 5) + 1 = 2 -> "1.25e6"). One fixed decimal
 // labelled a 50,000-step axis "1.0e6, 1.1e6, 1.1e6, 1.2e6, …". Mirrors
 // `_exp_digits` in python/xy/_svg.py exactly.
-// Cap: enough for a 1e-3 step on a 1e6-magnitude axis (9), short of f64's
-// ~15.9 significant digits where more would only print representation noise.
-const EXP_DIGITS_MAX = 15;
+// Cap: 16 fractional digits are 17 significant, the most any two adjacent f64
+// values need to print distinctly (1e6 and its next float at a one-ulp step);
+// beyond that only representation noise would print.
+const EXP_DIGITS_MAX = 16;
 
 function expDigits(av, step) {
   if (!step || !Number.isFinite(step) || av === 0) return 1;

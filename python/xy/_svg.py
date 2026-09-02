@@ -673,10 +673,11 @@ def _fmt_time(ms: float, step: float) -> str:
     return f"{d.minute:02d}:{d.second:02d}.{d.microsecond // 1000:03d}"
 
 
-# Mantissa digits an exponential label may carry: enough for a 1e-3 step on
-# a 1e6-magnitude axis (9), short of f64's ~15.9 significant digits where
-# further digits would only print representation noise.
-_EXP_DIGITS_MAX = 15
+# Mantissa digits an exponential label may carry: 16 fractional digits are 17
+# significant, the most any two adjacent f64 values need to print distinctly
+# (1e6 and its next float at a one-ulp step); beyond that only representation
+# noise would print.
+_EXP_DIGITS_MAX = 16
 
 
 def _exp_digits(av: float, step: float) -> int:

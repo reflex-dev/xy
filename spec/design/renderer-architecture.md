@@ -372,7 +372,8 @@ With no `format=` on the axis, labels come from the step:
   `|v| ≥ 1e6` or `0 < |v| < 1e-4`. The mantissa carries as many digits as sit
   between the value's magnitude and the step's last significant digit
   (`expDigits`; `1.25e6` at step `2.5e5` → `(6 − 5) + 1 = 2` → `1.25e6`), at
-  least one and at most fifteen — a fixed single decimal labelled a
+  least one and at most sixteen (17 significant digits, what two adjacent f64
+  values need to stay distinct) — a fixed single decimal labelled a
   50,000-step axis `1.0e6, 1.1e6, 1.1e6, 1.2e6, …`. `python/xy/_svg.py::
   _exp_digits` is the same function, and `_fmt_exponential` reproduces
   `toExponential`'s half-up tie rounding on the exact binary value (Python's
