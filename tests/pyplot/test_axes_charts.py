@@ -186,8 +186,10 @@ def test_labels_title_reach_the_chart() -> None:
 
 def test_unsupported_kwarg_is_loud() -> None:
     _fig, ax = plt.subplots()
+    # ``zorder`` is an accepted Artist-level compat-noop now; a keyword no
+    # Matplotlib Line2D takes must still fail loudly.
     with pytest.raises(TypeError, match="unsupported keyword"):
-        ax.plot([0, 1], [1, 2], zorder=3)
+        ax.plot([0, 1], [1, 2], glow=3)
 
 
 def test_pie_chart_is_supported() -> None:

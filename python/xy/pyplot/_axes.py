@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import builtins
 import copy
+import functools
 import math
 import warnings
 
@@ -77,12 +78,15 @@ from ._ticker import (
 )
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
+    ARTIST_KWARG_KEEP,
+    ARTIST_KWARG_METHODS,
     LINESTYLE_TO_DASH,
     MPL_DASH_PATTERN,
     check_unsupported,
     line_kwargs,
     marker_size_to_scatter_size,
     not_implemented,
+    strip_artist_noops,
 )
 
 _UNSET = object()
@@ -117,6 +121,20 @@ _LEGEND_LOC_ANCHORS = {
     "upper center": (0.5, 1.0),
     "center": (0.5, 0.5),
 }
+# Matplotlib's numeric location codes (``Legend.codes``), index = code.
+_LEGEND_LOC_CODES = (
+    "best",
+    "upper right",
+    "upper left",
+    "lower left",
+    "lower right",
+    "right",
+    "center left",
+    "center right",
+    "lower center",
+    "upper center",
+    "center",
+)
 _BEST_LOC_ORDER = (
     "upper right",
     "upper left",
@@ -673,6 +691,8 @@ class _AxisProxy:
 
     def set_minor_locator(self, locator: Any) -> None:
         """Set the locator used for the independent unlabeled minor tick set."""
+        if self._is_units_registry_ticker(locator):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_locator")] = locator
         host._invalidate_shared_ticker_axis(key)
@@ -687,6 +707,8 @@ class _AxisProxy:
 
     def set_minor_formatter(self, formatter: Any) -> None:
         """Set a minor formatter, used when a labeled minor set is promoted."""
+        if self._is_units_registry_ticker(formatter):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "minor_formatter")] = as_formatter(formatter, "set_minor_formatter()")
         host._invalidate_shared_ticker_axis(key)
@@ -2102,8 +2124,13 @@ class Axes(PlotTypeMixin):
         matching matplotlib; ``norm`` and other unsupported keywords raise
         loudly. Returns a `PathCollection`.
         """
+        # Matplotlib's precedence: ``c``, then ``color``, then ``facecolors``/
+        # ``facecolor`` (``facecolors="none"`` draws hollow markers).
+        facecolors = kwargs.pop("facecolors", kwargs.pop("facecolor", None))
         if c is None and "color" in kwargs:
             c = kwargs.pop("color")
+        if c is None and facecolors is not None:
+            c = facecolors
         cmap = kwargs.pop("cmap", None)
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
@@ -2443,6 +2470,10 @@ class Axes(PlotTypeMixin):
         align = kwargs.pop("align", "center")
         if align not in {"center", "edge"}:
             raise ValueError("bar()/barh() align must be 'center' or 'edge'")
+        tick_label = kwargs.pop("tick_label", None)
+        if kwargs.pop("log", False):
+            # Matplotlib sets the value axis to log before adding the bars.
+            (self.set_yscale if orientation == "vertical" else self.set_xscale)("log")
         n_bars = int(np.asarray(vals).size)
         thickness_array = np.asarray(thickness, dtype=np.float64)
         if thickness_array.ndim == 0:
@@ -2458,6 +2489,10 @@ class Axes(PlotTypeMixin):
                 ) from None
         if not np.isfinite(thickness_value).all() or np.any(thickness_value <= 0.0):
             raise ValueError("bar thickness values must be finite and positive")
+        # `tick_label` ticks belong at the positions the caller passed, not at
+        # the bar centers `align="edge"` derives from them (Matplotlib puts one
+        # tick per input position under either alignment).
+        tick_label_positions = cats
         if align == "edge":
             try:
                 cats = np.asarray(cats, dtype=np.float64) + thickness_value / 2.0
@@ -2548,7 +2583,30 @@ class Axes(PlotTypeMixin):
             )
         container = BarContainer(self, entry)
         container.errorbar = errorbar
+        if tick_label is not None:
+            self._apply_bar_tick_labels(tick_label_positions, tick_label, n_bars, orientation)
         return container
+
+    def _apply_bar_tick_labels(
+        self, positions: Any, tick_label: Any, n_bars: int, orientation: str
+    ) -> None:
+        """``bar(tick_label=...)``: one tick per bar, labeled, on the position axis."""
+        if isinstance(tick_label, str) or not np.iterable(tick_label):
+            labels = [_plain_text(str(tick_label))] * n_bars
+        else:
+            labels = [_plain_text(str(value)) for value in tick_label]
+        if len(labels) != n_bars:
+            raise ValueError(
+                f"number of tick labels ({len(labels)}) does not match number of bars ({n_bars})"
+            )
+        try:
+            ticks = np.asarray(unit_converted_values(np.asarray(positions)), dtype=np.float64)
+        except (TypeError, ValueError):
+            raise not_implemented(
+                "bar(tick_label=...) with string category positions",
+                "numeric positions, or set_xticks(range(n), labels)",
+            ) from None
+        (self.set_xticks if orientation == "vertical" else self.set_yticks)(ticks, labels)
 
     def hist(
         self,
@@ -2584,6 +2642,9 @@ class Axes(PlotTypeMixin):
         linestyle = kwargs.pop("linestyle", kwargs.pop("ls", None))
         rwidth = kwargs.pop("rwidth", None)
         hatch = kwargs.pop("hatch", None)
+        log = bool(kwargs.pop("log", False))
+        bottom = kwargs.pop("bottom", None)
+        align = kwargs.pop("align", "mid")
         if (
             edgecolor is None
             and histtype in ("bar", "barstacked")
@@ -2595,6 +2656,13 @@ class Axes(PlotTypeMixin):
             raise ValueError("orientation must be 'vertical' or 'horizontal'")
         if histtype not in {"bar", "barstacked", "step", "stepfilled"}:
             raise ValueError(f"unsupported histtype {histtype!r}")
+        if align not in {"left", "mid", "right"}:
+            raise ValueError("hist() align must be 'left', 'mid', or 'right'")
+        if align != "mid" and histtype.startswith("step"):
+            raise not_implemented(f"hist(align={align!r}, histtype={histtype!r})", "align='mid'")
+        if log:
+            # Matplotlib puts the count axis on a log scale before drawing.
+            (self.set_yscale if orientation == "vertical" else self.set_xscale)("log")
 
         if np.isscalar(x):
             datasets = [np.atleast_1d(np.asarray(x, dtype=np.float64))]
@@ -2721,8 +2789,16 @@ class Axes(PlotTypeMixin):
         label_values = [] if label is None else np.atleast_1d(np.asarray(label, dtype=str)).tolist()
         labels = (label_values + [None] * len(datasets))[: len(datasets)]
         containers: list[BarContainer] = []
+        # ``bottom`` lifts every baseline (scalar or per bin) and seeds the
+        # stack; the returned counts stay raw, as Matplotlib's do.
         base = np.zeros(len(edges) - 1, dtype=np.float64)
+        if bottom is not None:
+            base = base + np.broadcast_to(np.asarray(bottom, dtype=np.float64), base.shape)
+        floor = base.copy()
         centers = (edges[:-1] + edges[1:]) * 0.5
+        if align != "mid":
+            # Matplotlib centers the bars on the left/right bin edges instead.
+            centers = centers + (-0.5 if align == "left" else 0.5) * np.diff(edges)
         # matplotlib's bin filling: a single (or stacked) series spans the full
         # bin so adjacent bars touch; only multiple side-by-side series shrink
         # to 0.8 of the bin, split evenly.  The shim previously applied the 0.8
@@ -2787,7 +2863,7 @@ class Axes(PlotTypeMixin):
         for index, values in enumerate(counts):
             group_start = len(self._entries)
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
-            current_base = base.copy() if stacked else np.zeros_like(values)
+            current_base = base.copy() if stacked else floor.copy()
             series_color = (
                 resolve_color(colors[index]) if colors[index] is not None else self._next_color()
             )
@@ -3029,8 +3105,14 @@ class Axes(PlotTypeMixin):
         if transform not in (None, "xaxis transform"):
             raise not_implemented("fill_between(transform=...)")
         check_unsupported(kwargs, "fill_between()")
+        from xy.components import _is_datetime_like
+
+        # Datetime x rides the same ms-since-epoch conversion plot() uses for
+        # the geometry, and is stored back as datetime64 so the axis stays a
+        # date axis (`_axis_holds_datetimes`) even when the fill is alone.
+        x_is_datetime = _is_datetime_like(x)
         xv, upper, lower = np.broadcast_arrays(
-            _masked_float(x),
+            _masked_float(unit_converted_values(x)),
             _masked_float(y1),
             _masked_float(y2),
         )
@@ -3089,7 +3171,7 @@ class Axes(PlotTypeMixin):
                 self._add(
                     "area",
                     {
-                        "x": sx,
+                        "x": _epoch_ms_to_datetime64(sx) if x_is_datetime else sx,
                         "y": su,
                         "kwargs": {
                             "base": sl,
@@ -3135,7 +3217,9 @@ class Axes(PlotTypeMixin):
                         self._add(
                             "area",
                             {
-                                "x": np.asarray(sx),
+                                "x": _epoch_ms_to_datetime64(sx)
+                                if x_is_datetime
+                                else np.asarray(sx),
                                 "y": np.asarray(su),
                                 "kwargs": {
                                     "base": np.asarray(sl),
@@ -3695,8 +3779,6 @@ class Axes(PlotTypeMixin):
             akw["opacity"] = float(alpha)
         if lw is not None and kind in ("hline", "vline"):
             akw["width"] = float(lw)
-        if label is not None:
-            akw["text"] = str(label)
         if span_start != 0.0 or span_end != 1.0:
             akw["style"] = {"span_start": span_start, "span_end": span_end}
         dash = LINESTYLE_TO_DASH.get(linestyle)
@@ -3708,7 +3790,23 @@ class Axes(PlotTypeMixin):
         )
         if marker_base_color is not None:
             akw.setdefault("color", marker_base_color)
+        if label is not None:
+            # matplotlib: ``label=`` names the artist for the legend and draws
+            # no text. The legend swatch is frozen from these kwargs
+            # (`_legend_item_from_entry`), so spell out the engine defaults
+            # the annotation would otherwise inherit (xy.hline/vline and
+            # xy.x_band/y_band signatures) to keep the swatch and the drawn
+            # rule or band identical.
+            akw["name"] = str(label)
+            if kind in ("hline", "vline"):
+                akw.setdefault("color", "#667085")
+            else:
+                akw.setdefault("color", "#64748b")
+                akw.setdefault("opacity", 0.14)
         entry = self._add(f"@{kind}", {"args": args, "kwargs": akw})
+        if kind in ("x_band", "y_band"):
+            # Filled legend swatch, as matplotlib's Rectangle handle for spans.
+            entry["_legend_kind"] = "area"
         if marker is not None:
             path_size = (
                 float(rcParams["lines.markersize"] if marker_size is None else marker_size)
@@ -3775,11 +3873,16 @@ class Axes(PlotTypeMixin):
         fontstyle = kwargs.pop("fontstyle", kwargs.pop("style", None))
         rotation = kwargs.pop("rotation", None)
         bbox = kwargs.pop("bbox", None)
+        alpha = kwargs.pop("alpha", None)
         check_unsupported(kwargs, "text()")
         # Matplotlib snapshots the active text default when the Text artist is
         # created.  Preserve that value on the entry so a later style-context
         # change cannot recolor an already-authored label at render time.
-        akw = {"color": resolve_color(rcParams["text.color"] if color is None else color)}
+        akw: dict[str, Any] = {
+            "color": resolve_color(rcParams["text.color"] if color is None else color)
+        }
+        if alpha is not None:
+            akw["opacity"] = float(alpha)  # the same slot Text.set_alpha() writes
         if bbox is not None:
             if not isinstance(bbox, Mapping):
                 raise TypeError("text() bbox must be a mapping or None")
@@ -3970,7 +4073,9 @@ class Axes(PlotTypeMixin):
         else raises loudly. Basic mathtext (``$...$``) is rendered.
         """
         props = self._axis_props("x")
-        props["label"] = _plain_text(label)
+        # visible=False: Matplotlib keeps the hidden Text; the shim's chrome
+        # has no hidden state, so the label is simply not written.
+        props["label"] = _plain_text(label) if kwargs.pop("visible", True) else ""
         _apply_axis_label_kwargs(props, kwargs, "set_xlabel()", point_scale=self._point_scale())
         self._invalidate()
 
@@ -3980,7 +4085,7 @@ class Axes(PlotTypeMixin):
         ``loc`` takes ``"bottom"``/``"center"``/``"top"`` for this axis.
         """
         props = self._axis_props("y")
-        props["label"] = _plain_text(label)
+        props["label"] = _plain_text(label) if kwargs.pop("visible", True) else ""
         _apply_axis_label_kwargs(props, kwargs, "set_ylabel()", point_scale=self._point_scale())
         self._invalidate()
 
@@ -3992,6 +4097,8 @@ class Axes(PlotTypeMixin):
         Basic mathtext (``$...$``) is rendered.
         """
         host = self._y2_of or self
+        if not kwargs.pop("visible", True):
+            title = ""  # hidden title: the chrome slot is cleared (see set_xlabel)
         loc = str(kwargs.pop("loc", rcParams["axes.titlelocation"])).lower()
         if loc not in {"left", "center", "right"}:
             raise ValueError("set_title() loc must be 'left', 'center', or 'right'")
@@ -4109,8 +4216,8 @@ class Axes(PlotTypeMixin):
                 current_start = auto_start
             if not np.isfinite(current_end) or current_end <= 0:
                 current_end = auto_end
-        start = float(current_start if left is None else left)
-        end = float(current_end if right is None else right)
+        start = self._limit_coordinate(current_start if left is None else left, "x")
+        end = self._limit_coordinate(current_end if right is None else right, "x")
         if not np.isfinite((start, end)).all():
             raise ValueError("Axis limits cannot be NaN or Inf")
         if spec["name"] == "log":
@@ -4172,8 +4279,8 @@ class Axes(PlotTypeMixin):
                 current_start = auto_start
             if not np.isfinite(current_end) or current_end <= 0:
                 current_end = auto_end
-        start = float(current_start if bottom is None else bottom)
-        end = float(current_end if top is None else top)
+        start = self._limit_coordinate(current_start if bottom is None else bottom, "y")
+        end = self._limit_coordinate(current_end if top is None else top, "y")
         if not np.isfinite((start, end)).all():
             raise ValueError("Axis limits cannot be NaN or Inf")
         if spec["name"] == "log":
@@ -4317,6 +4424,10 @@ class Axes(PlotTypeMixin):
     def _axis_holds_datetimes(self, axis: str) -> bool:
         from xy.components import _is_datetime_like
 
+        if self._axis_props(axis).get("type_") == "time":
+            # Pinned by artists whose stored geometry is already ms floats
+            # (fill_betweenx with datetime y).
+            return True
         key = "x" if axis == "x" else "y"
         return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
 
@@ -4342,6 +4453,29 @@ class Axes(PlotTypeMixin):
         x = self._data_coordinate(xy[0], "x")
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
+
+    def _tick_positions(self, ticks: Any, axis: str, props: dict[str, Any]) -> Any:
+        """Tick positions as engine floats; datetime-likes become ms since
+        epoch and pin the axis kind to ``time`` (as `fill_betweenx` does), so
+        ticks authored before any datetime artist still label as dates."""
+        from xy.components import _is_datetime_like
+
+        if _is_datetime_like(ticks):
+            props["type_"] = "time"
+            self._axis_props(axis)["type_"] = "time"
+            return unit_converted_values(ticks)
+        return ticks
+
+    def _limit_coordinate(self, value: Any, axis: str) -> float:
+        """A limit argument as the engine's float: numbers as they are,
+        datetime-likes (``datetime``, ``date``, ``datetime64``, ``Timestamp``,
+        and date strings on a datetime axis) as ms since epoch — the unit
+        ``plot()`` reports through ``get_xlim()``. Anything else keeps
+        ``float()``'s own TypeError/ValueError."""
+        if _is_number(value):
+            return float(value)
+        converted = self._data_coordinate(value, axis)
+        return float(value) if converted is None else converted
 
     def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
@@ -4407,6 +4541,26 @@ class Axes(PlotTypeMixin):
                         points.append(entry["xy2"])
                     yield np.asarray([point[index] for point in points], dtype=np.float64), True
                 continue
+            span_axis = _SPAN_AUTOSCALE_AXIS.get(entry.get("kind"))
+            if span_axis is not None:
+                # axhline/axvline/axhspan/axvspan update matplotlib's dataLim
+                # only along the axis they are positioned on; their infinite
+                # extent (and fractional xmin/xmax bounds) never widens the
+                # perpendicular axis. Positions are stored untransformed, so
+                # move them into the scale space the other entries live in.
+                if span_axis == axis:
+                    try:
+                        positions = numeric_or_categorical(list(entry["args"]))
+                    except (TypeError, ValueError):
+                        continue
+                    key = "y2" if axis == "y" and self._y2_of is not None else axis
+                    yield (
+                        np.asarray(
+                            _scale_values(positions, host._scale_specs[key]), dtype=np.float64
+                        ).reshape(-1),
+                        True,
+                    )
+                continue
             if entry.get("kind") == "bar":
                 kwargs = entry.get("kwargs", {})
                 orientation = kwargs.get("orientation", "vertical")
@@ -4461,9 +4615,12 @@ class Axes(PlotTypeMixin):
                 if factory == "stem" and axis == "y":
                     yield np.asarray(entry.get("kwargs", {}).get("base", 0.0)).reshape(-1), True
                 if factory == "errorbar":
-                    center = np.asarray(
-                        entry["args"][0 if axis == "x" else 1], dtype=np.float64
-                    ).reshape(-1)
+                    # Category positions (``bar(["a", "b"], ..., yerr=)``)
+                    # resolve like every other categorical coordinate.
+                    try:
+                        center = numeric_or_categorical(entry["args"][0 if axis == "x" else 1])
+                    except (TypeError, ValueError):
+                        continue
                     yield center, True
                     error = entry.get("kwargs", {}).get("xerr" if axis == "x" else "yerr")
                     if error is not None:
@@ -4653,6 +4810,30 @@ class Axes(PlotTypeMixin):
             base = np.asarray(entry.get("kwargs", {}).get("base", 0.0), dtype=np.float64)
             finite = base[np.isfinite(base)]
             if finite.size and np.any(np.abs(finite) > np.finfo(np.float64).eps):
+                return True
+        return False
+
+    def _has_span_autoscale(self, axis: str) -> bool:
+        """Whether a rule/span with a finite coordinate widens *axis*.
+
+        The engine derives an automatic domain from its traces alone, and rules
+        and bands are annotations, so their matplotlib ``dataLim`` contribution
+        (`_iter_entry_arrays`) has to reach the render as a materialized domain.
+        """
+        host = self._y2_of or self
+        y_axis = "y2" if self._y2_of is not None else "y"
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != y_axis:
+                continue
+            if _SPAN_AUTOSCALE_AXIS.get(entry.get("kind")) != axis:
+                continue
+            try:
+                values = np.asarray(
+                    unit_converted_values(np.asarray(entry["args"])), dtype=np.float64
+                )
+            except (TypeError, ValueError):
+                return True  # categorical positions are always finite coordinates
+            if np.isfinite(values).any():
                 return True
         return False
 
@@ -5146,13 +5327,20 @@ class Axes(PlotTypeMixin):
         )
 
     def ticklabel_format(self, **kwargs: Any) -> None:
-        """Configure the scalar tick-label formatter.
+        """Configure the scalar tick-label formatter, as Matplotlib does.
 
         Supported keywords: ``axis`` (``"both"``/``"x"``/``"y"``), ``style``
         (``"plain"`` or ``"sci"``/``"scientific"``), ``scilimits=(m, n)``
-        bounding the exponent range that stays plain, and ``useOffset``
-        (alias ``useoffset``). ``useLocale``/``useMathText`` must stay False
-        and anything else raises loudly.
+        bounding the exponent range that stays plain, ``useOffset`` (alias
+        ``useoffset``), and ``useMathText``. They configure the axis's
+        `ScalarFormatter` (installing one when the axis has no formatter yet)
+        and any other installed formatter raises ``AttributeError``, like
+        Matplotlib. ``useLocale=True`` and unknown keywords raise loudly.
+
+        Compat-noop: the shim has no offset-text slot, so offsets are never
+        factored out — labels carry the full value, and scientific style
+        writes the shared exponent on every label (``1.25e6``, or
+        ``1.25×10⁶`` under ``useMathText``) instead of once beside the axis.
         """
         axis = kwargs.pop("axis", "both")
         style = kwargs.pop("style", None)
@@ -5162,23 +5350,30 @@ class Axes(PlotTypeMixin):
         use_math_text = kwargs.pop("useMathText", None)
         if use_locale not in (None, False):
             raise not_implemented("ticklabel_format(useLocale=True)")
-        if use_math_text not in (None, False):
-            raise not_implemented("ticklabel_format(useMathText=True)")
         if kwargs:
             raise TypeError(
                 f"ticklabel_format() got unsupported keyword argument {next(iter(kwargs))!r}"
             )
         if axis not in {"both", "x", "y"}:
             raise ValueError("ticklabel_format() axis must be 'both', 'x', or 'y'")
-        if style not in {None, "plain", "sci", "scientific"}:
+        if style not in {None, "", "plain", "sci", "scientific"}:
             raise ValueError("ticklabel_format() style must be 'plain' or 'sci'")
         for item in ("x", "y") if axis == "both" else (axis,):
-            props = self._axis_props(item)
-            props["tick_label_format"] = {
-                "style": "sci" if style == "scientific" else style,
-                "scilimits": None if scilimits is None else tuple(scilimits),
-                "use_offset": use_offset,
-            }
+            host, key = _AxisProxy(self, item)._ticker_slot()
+            formatter = host._tickers.get((key, "major_formatter"))
+            if formatter is None:
+                formatter = host._tickers[(key, "major_formatter")] = ScalarFormatter()
+            elif not isinstance(formatter, ScalarFormatter):
+                raise AttributeError("This method only works with the ScalarFormatter")
+            if style:
+                formatter.set_scientific(style != "plain")
+            if scilimits is not None:
+                formatter.set_powerlimits(scilimits)
+            if use_offset is not None:
+                formatter.set_useOffset(use_offset)
+            if use_math_text is not None:
+                formatter.set_useMathText(bool(use_math_text))
+            host._invalidate_shared_ticker_axis(key)
         self._invalidate()
 
     def minorticks_on(self) -> None:
@@ -5331,7 +5526,11 @@ class Axes(PlotTypeMixin):
                 continue
             label = entry.get("kwargs", {}).get("name")
             if label and not str(label).startswith("_"):
-                handles.append(Artist(self, entry))
+                handles.append(
+                    Line2D(self, entry)
+                    if entry.get("kind") in ("@hline", "@vline")
+                    else Artist(self, entry)
+                )
                 labels.append(str(label))
         for container in host._containers:
             if not isinstance(container, (BarContainer, ErrorbarContainer)):
@@ -6547,6 +6746,7 @@ class Axes(PlotTypeMixin):
         props = host._axis["x"]
         if ticks is not None:
             spec = host._scale_specs["x"]
+            ticks = self._tick_positions(ticks, "x", props)
             host._auto_scale_axis_ticks.discard("x")
             host._tickers.pop(("x", "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
@@ -6588,6 +6788,7 @@ class Axes(PlotTypeMixin):
         props = host._axis[key]
         if ticks is not None:
             spec = host._scale_specs[key]
+            ticks = self._tick_positions(ticks, "y", props)
             host._auto_scale_axis_ticks.discard(key)
             host._tickers.pop((key, "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
@@ -6865,6 +7066,27 @@ class Axes(PlotTypeMixin):
         """
         host = self._y2_of or self
         reverse = bool(kwargs.pop("reverse", False))
+        # Keyword form: legend(handles=..., labels=...), legend(handles=...)
+        # (labels read off the handles), or legend(labels=...); each means the
+        # same as its positional spelling.
+        if "handles" in kwargs or "labels" in kwargs:
+            if args:
+                raise TypeError(
+                    "legend() takes handles/labels positionally or as keywords, not both"
+                )
+            keyword_handles = kwargs.pop("handles", None)
+            keyword_labels = kwargs.pop("labels", None)
+            if keyword_handles is not None and keyword_labels is not None:
+                args = tuple([list(keyword_handles), list(keyword_labels)])
+            elif keyword_handles is not None:
+                keyword_handles = list(keyword_handles)
+                args = tuple(
+                    [keyword_handles, [_handle_label(handle) for handle in keyword_handles]]
+                )
+            else:
+                # tuple([...]) keeps the variadic tuple type of *args, so the
+                # len(args) >= 2 branch below type-checks like the positional form.
+                args = tuple([list(keyword_labels)])
         if len(args) >= 2:
             handles = list(args[0])
             labels = [_plain_text(label) for label in args[1]]
@@ -6930,6 +7152,19 @@ class Axes(PlotTypeMixin):
         second, manually added legend honors the same loc/frame/font keywords.
         """
         loc = kwargs.pop("loc", rcParams["legend.loc"])
+        if isinstance(loc, (int, np.integer)) and not isinstance(loc, bool):
+            # Matplotlib's numeric location codes: 0 best ... 10 center.
+            if not 0 <= int(loc) < len(_LEGEND_LOC_CODES):
+                raise ValueError(f"legend loc code must be between 0 and 10, got {loc!r}")
+            loc = _LEGEND_LOC_CODES[int(loc)]
+        elif not isinstance(loc, str) and np.iterable(loc):
+            # ``loc=(x, y)`` places the legend's lower-left corner at that
+            # axes fraction — Matplotlib's definition of a tuple location.
+            point = tuple(float(value) for value in loc)
+            if len(point) != 2 or not all(np.isfinite(value) for value in point):
+                raise ValueError("legend loc tuple must hold two finite axes-fraction numbers")
+            kwargs["bbox_to_anchor"] = point
+            loc = "lower left"
         if not isinstance(loc, str) or loc not in {"best", *_LEGEND_LOC_ANCHORS}:
             raise ValueError(f"legend loc must be one of {['best', *sorted(_LEGEND_LOC_ANCHORS)]}")
         bbox_to_anchor = kwargs.pop("bbox_to_anchor", None)
@@ -7064,6 +7299,7 @@ class Axes(PlotTypeMixin):
         lines; anything else raises loudly.
         """
         host = self._y2_of or self
+        strip_artist_noops(kwargs)  # zorder=/clip_on=/... ride along on grid() too
         which = str(kwargs.pop("which", "major")).lower()
         axis = kwargs.pop("axis", "both")
         if which not in {"major", "minor", "both"}:
@@ -7220,19 +7456,30 @@ class Axes(PlotTypeMixin):
         authored_labels = list(props["tick_labels"]) if "tick_labels" in props else None
         lo, hi = self._ticker_view(key, props)
         auto_log = False
+        located: Optional[np.ndarray] = None
         if locator is not None:
             if isinstance(locator, Locator):
                 # Third-party locators only promise tick_values(); the density
                 # hint is an xy-locator protocol, never forced onto them.
                 locator._nbins_hint = nbins_hint
-            ticks = _locator_tick_values(
+            located = _locator_tick_values(
                 locator,
                 lo,
                 hi,
                 datetime_axis=self._axis_holds_datetimes("y" if key == "y2" else key),
             )
+            if located is None and formatter is None and not is_log:
+                # The locator has no usable tick_values() (matplotlib's abstract
+                # Locator base, pandas' period-ordinal TimeSeries_DateLocator):
+                # leave the axis kind's own ticks in place instead of failing
+                # the build or pinning AutoLocator numbers onto a date axis. A
+                # minor tier has no drawn majors to subdivide then, so it is
+                # dropped with it.
+                props.pop("minor_tick_values", None)
+                return
+        if located is not None:
             pad = (hi - lo) * 1e-9
-            ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
+            ticks = located[(located >= lo - pad) & (located <= hi + pad)]
         elif "tick_values" in props:
             ticks = np.asarray(
                 _scale_values(props["tick_values"], spec, inverse=True), dtype=float
@@ -7290,6 +7537,9 @@ class Axes(PlotTypeMixin):
             ticks,
             datetime_axis=self._axis_holds_datetimes("y" if key == "y2" else key),
         )
+        if minor is None:  # no usable tick_values(): no minor tier
+            props.pop("minor_tick_values", None)
+            return
         pad = (hi - lo) * 1e-9
         minor = minor[(minor >= lo - pad) & (minor <= hi + pad)]
         if len(ticks) and len(minor):
@@ -7562,7 +7812,7 @@ class Axes(PlotTypeMixin):
                     )
                 )
             elif kind == "@hline":
-                children.append(xy.hline(*e["args"], **kw))
+                children.append(xy.hline(*e["args"], **_without_legend_name(kw)))
                 if e.get("endpoint_marker"):
                     x_domain = (
                         (resolved_domains or {}).get("x")
@@ -7583,7 +7833,7 @@ class Axes(PlotTypeMixin):
             elif kind == "@arrow":
                 children.append(xy.arrow(*e["args"], **kw))
             elif kind == "@vline":
-                children.append(xy.vline(*e["args"], **kw))
+                children.append(xy.vline(*e["args"], **_without_legend_name(kw)))
                 if e.get("endpoint_marker"):
                     y_domain = (
                         (resolved_domains or {}).get("y")
@@ -7602,9 +7852,9 @@ class Axes(PlotTypeMixin):
                         )
                     )
             elif kind == "@x_band":
-                children.append(xy.x_band(*e["args"], **kw))
+                children.append(xy.x_band(*e["args"], **_without_legend_name(kw)))
             elif kind == "@y_band":
-                children.append(xy.y_band(*e["args"], **kw))
+                children.append(xy.y_band(*e["args"], **_without_legend_name(kw)))
             elif kind == "@text":
                 opacity = kw.get("opacity")
                 if opacity is not None and float(opacity) == 0.0:
@@ -8552,7 +8802,13 @@ class Axes(PlotTypeMixin):
                 props["domain"] = pinned
             else:
                 margin = self._effective_margin(axis)
-                if margin < 0.0 or self._has_nonzero_bar_baseline(axis):
+                if (
+                    margin < 0.0
+                    or self._has_nonzero_bar_baseline(axis)
+                    or self._has_span_autoscale(axis)
+                ):
+                    # `_auto_domain` already carries matplotlib's margins, so
+                    # it ships as the exact domain (never alongside `margin`).
                     props["domain"] = self._auto_domain(axis)
                 else:
                     props["margin"] = margin
@@ -8639,7 +8895,11 @@ class Axes(PlotTypeMixin):
                     )
                 else:
                     margin = self._twin._effective_margin("y")
-                    if margin < 0.0 or self._twin._has_nonzero_bar_baseline("y"):
+                    if (
+                        margin < 0.0
+                        or self._twin._has_nonzero_bar_baseline("y")
+                        or self._twin._has_span_autoscale("y")
+                    ):
                         y2_props["domain"] = self._twin._auto_domain("y")
                     else:
                         y2_props["margin"] = margin
@@ -8748,6 +9008,19 @@ class Axes(PlotTypeMixin):
             core_figure.legend_options["border_pad"] = self._legend_options["border_pad"]
         if self._legend_items is not None:
             core_figure.legend_options["items"] = list(self._legend_items)
+        elif (
+            self._legend
+            and self._legend_artist is None
+            and self._legend_handle is not None
+            and any(
+                entry.get("kind") in _SPAN_AUTOSCALE_AXIS and _legend_name(entry) is not None
+                for entry in self._entries
+            )
+        ):
+            # Rules and bands are annotations, not traces, so no renderer can
+            # derive their legend rows from trace names. Ship the item list
+            # legend() froze instead (matplotlib's legend is that snapshot too).
+            core_figure.legend_options["items"] = list(self._legend_handle.spec()["items"])
         best_ranges: Optional[
             tuple[Optional[tuple[float, float]], Optional[tuple[float, float]]]
         ] = None
@@ -9511,6 +9784,36 @@ def _masked_float(value: Any) -> np.ndarray:
     return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
 
 
+def _epoch_ms_to_datetime64(values: Any) -> np.ndarray:
+    """Finite ms-since-epoch floats back to ``datetime64[ms]`` (NaN → NaT)."""
+    array = np.asarray(values, dtype=np.float64).reshape(-1)
+    out = np.full(array.shape, np.datetime64("NaT", "ms"), dtype="datetime64[ms]")
+    finite = np.isfinite(array)
+    out[finite] = np.round(array[finite]).astype(np.int64).astype("datetime64[ms]")
+    return out
+
+
+# Annotation kinds whose data coordinate autoscales exactly one axis, as
+# matplotlib's axhline/axvline/axhspan/axvspan update dataLim.
+_SPAN_AUTOSCALE_AXIS = {"@hline": "y", "@vline": "x", "@y_band": "y", "@x_band": "x"}
+
+
+def _legend_name(entry: dict[str, Any]) -> Optional[str]:
+    """The entry's legend label, or None when unnamed or ``_``-hidden."""
+    name = (entry.get("kwargs") or {}).get("name")
+    if not name or str(name).startswith("_"):
+        return None
+    return str(name)
+
+
+def _without_legend_name(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Annotation kwargs minus the legend ``name``: xy's rule and band
+    annotations take ``text``, and matplotlib's ``label=`` draws no text."""
+    if "name" not in kwargs:
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key != "name"}
+
+
 def _resolve_imshow_sampling(
     source_shape: tuple[int, int],
     interpolation: str,
@@ -9756,18 +10059,35 @@ def _locator_tick_values(
     hi: float,
     *,
     datetime_axis: bool,
-) -> np.ndarray:
-    """Resolve ordinary and Matplotlib-date locators into engine units."""
-    if not _is_foreign_matplotlib_date_object(locator):
-        return np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
-    unit = 1.0 if not datetime_axis else _MILLISECONDS_PER_DAY
+) -> Optional[np.ndarray]:
+    """Resolve ordinary and Matplotlib-date locators into engine units.
+
+    Returns None when the locator has no usable ``tick_values()`` — the
+    abstract Locator base raises NotImplementedError, and so does pandas'
+    period-ordinal ``TimeSeries_DateLocator`` — unless it is bound to an axis
+    and callable, which is Matplotlib's own ``Locator.__call__`` protocol.
+    """
+    foreign = _is_foreign_matplotlib_date_object(locator)
+    unit = _MILLISECONDS_PER_DAY if foreign and datetime_axis else 1.0
+    bounds: tuple[Any, Any] = (lo, hi)
+    if foreign:
+        try:
+            bounds = (
+                _MATPLOTLIB_EPOCH + timedelta(days=float(lo) / unit),
+                _MATPLOTLIB_EPOCH + timedelta(days=float(hi) / unit),
+            )
+        except (OverflowError, OSError, ValueError):
+            return np.asarray([], dtype=float)
     try:
-        lo_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(lo) / unit)
-        hi_datetime = _MATPLOTLIB_EPOCH + timedelta(days=float(hi) / unit)
-    except (OverflowError, OSError, ValueError):
-        return np.asarray([], dtype=float)
-    values = np.asarray(locator.tick_values(lo_datetime, hi_datetime), dtype=float).reshape(-1)
-    return values * unit
+        values = locator.tick_values(*bounds)
+    except NotImplementedError:
+        if getattr(locator, "axis", None) is None or not callable(locator):
+            return None
+        try:
+            values = locator()
+        except (NotImplementedError, AttributeError, TypeError, ValueError):
+            return None
+    return np.asarray(values, dtype=float).reshape(-1) * unit
 
 
 def _formatter_tick_labels(
@@ -9820,7 +10140,7 @@ def _minor_locator_tick_values(
     major: np.ndarray,
     *,
     datetime_axis: bool,
-) -> np.ndarray:
+) -> Optional[np.ndarray]:
     if isinstance(locator, AutoMinorLocator) or type(locator).__name__ == "AutoMinorLocator":
         return _auto_minor_tick_values(locator, lo, hi, major)
     return _locator_tick_values(locator, lo, hi, datetime_axis=datetime_axis)
@@ -9869,3 +10189,59 @@ def _iter_plot_groups(args: tuple) -> list[tuple[Any, Any, Optional[str]]]:
     if not groups:
         raise TypeError("plot() requires at least y data")
     return groups
+
+
+def _handle_label(handle: Any) -> str:
+    """The label ``legend(handles=...)`` reads off a handle (Matplotlib's rule)."""
+    getter = getattr(handle, "get_label", None)
+    label = getter() if callable(getter) else None
+    return "" if label is None else str(label)
+
+
+def _hide_artists(result: Any) -> None:
+    """Apply ``visible=False`` to whatever a plotting call returned."""
+    if hasattr(result, "set_visible"):
+        result.set_visible(False)
+        return
+    if isinstance(result, (list, tuple)):
+        for item in result:
+            _hide_artists(item)
+        return
+    # Containers that are not Artists themselves (ErrorbarContainer,
+    # StreamplotSet, ...) expose their parts through these attributes.
+    for attribute in ("lines", "arrows", "patches", "wedges", "texts"):
+        parts = getattr(result, attribute, None)
+        if isinstance(parts, (list, tuple)):
+            _hide_artists(parts)
+
+
+def _accept_artist_kwargs(method: Any, keep: frozenset[str]) -> Any:
+    """Strip Matplotlib's Artist-level keywords before *method* validates its own.
+
+    ``visible=False`` hides every artist the call returns; the remaining names
+    are the documented compat-noops in ``ARTIST_NOOP_KWARGS``. Calls without
+    keywords take the untouched fast path.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if not kwargs:
+            return method(self, *args)
+        visible = strip_artist_noops(kwargs, keep)
+        result = method(self, *args, **kwargs)
+        if not visible:
+            _hide_artists(result)
+        return result
+
+    return wrapper
+
+
+for _method_name in ARTIST_KWARG_METHODS:
+    setattr(
+        Axes,
+        _method_name,
+        _accept_artist_kwargs(
+            getattr(Axes, _method_name), ARTIST_KWARG_KEEP.get(_method_name, frozenset())
+        ),
+    )
+del _method_name

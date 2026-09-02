@@ -8722,6 +8722,41 @@ export class ChartView {
     ];
   }
 
+  // Whether a legend category toggle removed shipped row `i` from the drawn
+  // set. A hidden series is out of every pipeline (interaction spec §10), and
+  // the CPU hover fallbacks below scan the UNFILTERED retained columns, so
+  // they must ask. `_visInv` is the shipped-row -> drawn-vertex map that
+  // `_filterScatterRows` maintains beside `_visMap` (-1 = hidden); reading it,
+  // rather than re-deriving the hidden set from the category codes, keeps the
+  // fallback in lockstep with what the GPU pick pass can see by construction.
+  _cpuRowHidden(g, i) {
+    const inv = g._visInv;
+    return !!inv && inv[i] < 0;
+  }
+
+  // How many retained rows a CPU hover scan covers. `g.n` is the DRAWN count,
+  // which a category filter shrinks below the retained columns: capping the
+  // scan at it left every visible row shipped after the cut unreachable while
+  // hidden rows before it still answered. A filtered trace is therefore scanned
+  // over exactly the rows `_visInv` carries visibility for (its length is the
+  // pre-filter count `_filterScatterRows` built it from) — deliberately that
+  // array and not a separately stored count, so the scan range and the
+  // hidden-row test can never disagree. An unfiltered trace keeps the `g.n`
+  // cap, which is load-bearing there (a smooth-resampled line's `n` exceeds
+  // its source columns; mismatched x/y lengths undershoot them).
+  //
+  // Growing the retained columns under a live filter would leave both stale,
+  // but cannot happen: `_filterScatterRows` runs only on a categorical color
+  // channel, and `append_data` (python/xy/interaction.py) rejects exactly
+  // those ("append does not support categorical color channels yet"), so a
+  // trace is appendable or category-filterable, never both. Whoever lifts that
+  // restriction must re-filter on append — `tests/test_legend_hidden_hover.py`
+  // fails here when they do.
+  _cpuScanLimit(g, ...lengths) {
+    const n = g._visInv ? g._visInv.length : g.n;
+    return Math.min(...lengths, n || lengths[0]);
+  }
+
   _nearestCpuIndex(g, dataX) {
     const cpu = g && g._cpu;
     if (!cpu || !cpu.x || !cpu.x.length) return -1;
@@ -8730,8 +8765,9 @@ export class ChartView {
     const target = this._axisCoord(axis, dataX);
     let best = -1;
     let bestDist = Infinity;
-    const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
+    const limit = this._cpuScanLimit(g, cpu.x.length);
     for (let i = 0; i < limit; i++) {
+      if (this._cpuRowHidden(g, i)) continue;
       const starts = g._transitionPrevXValues;
       const progress = g._transitionPositionProgress;
       const xEncoded = starts && Number.isFinite(progress)
@@ -8753,11 +8789,12 @@ export class ChartView {
     const xMeta = cpu.xMeta || g.xMeta;
     const yMeta = cpu.yMeta || g.yMeta;
     const progress = g._transitionPositionProgress;
-    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+    const limit = this._cpuScanLimit(g, cpu.x.length, cpu.y.length);
     const geom = this._polarGeometry();
     let best = -1;
     let bestDist = Infinity;
     for (let i = 0; i < limit; i++) {
+      if (this._cpuRowHidden(g, i)) continue;
       const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
         ? g._transitionPrevXValues[i] + (cpu.x[i] - g._transitionPrevXValues[i]) * progress
         : cpu.x[i];
@@ -8893,6 +8930,11 @@ export class ChartView {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
     const geom = this._polarGeometry();
+    // No hidden-row test here: a bar trace cannot carry a categorical color
+    // channel (only funnels and point series build one), so it never has
+    // category legend rows to toggle and never reaches `_filterScatterRows`.
+    // Bar legends are whole-trace rows, which `_hoverAt` skips via
+    // `_legendHidden` before it gets here. Recorded in interaction spec §10.
     const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
       const x = this._decodeValue(cpu.x, cpu.xMeta, i);

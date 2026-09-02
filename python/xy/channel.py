@@ -204,6 +204,11 @@ def handle_message(
     if not isinstance(content, dict):
         return None
     kind = content.get("type")
+    if not isinstance(kind, str):
+        # §1: `type` is the one field read before any coercion, so it must be
+        # safe to read — a list or dict here raised from the set membership
+        # test below instead of counting as an unknown kind.
+        return None
     if kind in {"animation_start", "animation_end"}:
         callback = (
             callbacks.on_animation_start
@@ -231,7 +236,7 @@ def handle_message(
                 x1,
                 content.get("px", 2048),
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         if update["traces"]:
             return {"type": "tier_update", "seq": seq, **update}, out
@@ -249,7 +254,7 @@ def handle_message(
                 content.get("w", 512),
                 content.get("h", 384),
             )
-        except (KeyError, TypeError, ValueError, IndexError):
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             return None
         if update["traces"]:
             return {"type": "density_update", "seq": seq, **update}, out
@@ -268,7 +273,7 @@ def handle_message(
                 hidden,
                 content.get("category"),
             )
-        except (KeyError, TypeError, ValueError, IndexError):
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             return None
         return None
     if kind == "pick":
@@ -286,6 +291,12 @@ def handle_message(
             )
         except (TypeError, ValueError):
             return None
+        except IndexError:
+            # Defense in depth: `pick` bounds the index against the readable
+            # rows, but a kind whose columns disagree with that bound must
+            # degrade to `row: null`, never raise — and it must still reply,
+            # or the client keeps showing the previous hover row.
+            row = None
         if row is not None and callbacks.on_hover is not None:
             callbacks.on_hover(row)
         # Reply ships even when row is None (stale drill_seq): the client
@@ -299,7 +310,7 @@ def handle_message(
             index = _integer_id(content.get("index", -1), "index")
             drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
             row = fig.pick(trace_id, index, drill_seq)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, IndexError):
             return None
         if row is not None and callbacks.on_click is not None:
             callbacks.on_click(row)
@@ -307,18 +318,14 @@ def handle_message(
     if kind == "view_change":
         try:
             raw_ranges = content.get("ranges")
-            ranges: dict[str, list[float]] = {}
+            pairs: dict[str, Any] = {}
             if isinstance(raw_ranges, dict):
-                for axis_id, raw_range in raw_ranges.items():
-                    if axis_id not in fig.axis_options:
-                        continue
-                    if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
-                        raise ValueError("invalid view range")
-                    lo, hi = float(raw_range[0]), float(raw_range[1])
-                    if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
-                        raise ValueError("invalid view range")
-                    ranges[axis_id] = [lo, hi]
-            if not ranges:
+                pairs = {
+                    axis_id: pair
+                    for axis_id, pair in raw_ranges.items()
+                    if axis_id in fig.axis_options
+                }
+            if not pairs:
                 x0, x1, y0, y1 = normalize_window(
                     content["x0"],
                     content["x1"],
@@ -326,7 +333,20 @@ def handle_message(
                     content["y1"],
                     require_area=False,
                 )
-                ranges = {"x": [x0, x1], "y": [y0, y1]}
+                pairs = {"x": [x0, x1], "y": [y0, y1]}
+            # Both shapes meet the rules `_validated_state_ranges` applies to a
+            # state patch — finite, ordered, non-zero span — so the durable
+            # cache this feeds (view-state.md §5.1) always round-trips back
+            # through `state_patch_message`. A flipped pair is reordered; a
+            # zero-span pair rejects the whole event.
+            ranges: dict[str, list[float]] = {}
+            for axis_id, raw_range in pairs.items():
+                if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
+                    raise ValueError("invalid view range")
+                lo, hi = float(raw_range[0]), float(raw_range[1])
+                if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
+                    raise ValueError("invalid view range")
+                ranges[axis_id] = [lo, hi] if lo < hi else [hi, lo]
             x_range = ranges.get("x")
             y_range = ranges.get("y")
             view = {
@@ -344,7 +364,7 @@ def handle_message(
                 view.update({"x0": x_range[0], "x1": x_range[1]})
             if y_range is not None:
                 view.update({"y0": y_range[0], "y1": y_range[1]})
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         # Every committed view event feeds the figure's durable-state cache
         # (view-state.md §5.1) — the reason end-phase events always ship —
@@ -371,7 +391,7 @@ def handle_message(
                 y0,
                 y1,
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         fig._record_selection({"range": {"x0": x0, "x1": x1, "y0": y0, "y1": y1}})
         return _selection_reply(
@@ -388,7 +408,7 @@ def handle_message(
             points = content["points"]
             sel = fig.select_polygon(points)
             polygon = [[float(point[0]), float(point[1])] for point in points]
-        except (IndexError, KeyError, TypeError, ValueError):
+        except (IndexError, KeyError, TypeError, ValueError, OverflowError):
             return None
         fig._record_selection({"polygon": polygon})
         return _selection_reply(
