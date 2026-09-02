@@ -51,5 +51,5 @@ def test_forced_scale_on_numeric_axis_and_linear_on_category_axis_still_work() -
 def test_empty_category_axis_still_rejects_forced_scale() -> None:
     # An empty object column registers the axis as categorical with no labels.
     chart = xy.bar_chart(xy.bar(x=np.array([], dtype=object), y=[]), xy.x_axis(type_="time"))
-    with pytest.raises(ValueError, match="x axis is categorical .*cannot be a time axis"):
+    with pytest.raises(ValueError, match=r"x axis is categorical .*cannot be a time axis"):
         chart.figure().build_payload()
