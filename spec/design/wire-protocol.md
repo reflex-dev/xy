@@ -48,6 +48,7 @@ Every request is a dict with a `type`. Coordinate fields are JSON numbers in
 | `select` | `x0`, `x1`, `y0`, `y1` | `selection` |
 | `select_polygon` | `points` | `selection` |
 | `select_clear` | — | `selection` (empty) |
+| `legend_toggle` | `trace`, `hidden`, `category?` | none (fire-and-forget; see below) |
 | `animation_start` | `phase` | none (`on_animation_start`) |
 | `animation_end` | `phase`, `cancelled?` | none (`on_animation_end`) |
 
@@ -209,7 +210,9 @@ a masked reply's `binning` gains a `-masked` suffix and the trace entry
 carries `filter: {hidden_categories: [...]}` — the filter state it was
 computed under (§37 filter_hash-lite) — which the client compares against
 its own current set, dropping stale-predicate replies (interaction spec
-§10). So that category rows exist to click at all, a categorical
+§10). A legend double-click isolate (interaction spec §10) is no message of
+its own: it ships one `legend_toggle` per row whose visibility changed, in
+legend order. So that category rows exist to click at all, a categorical
 density-tier first-paint entry carries a **slim** `color` spec —
 `{mode: "categorical", categories, palette}`, no per-point `buf` (the codes
 aggregated into the mean-color plane) — which legend chrome consumes and
