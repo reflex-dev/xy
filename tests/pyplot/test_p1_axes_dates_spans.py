@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import re
+import warnings
 
 import numpy as np
 import pytest
@@ -133,6 +134,38 @@ def test_ticklabel_format_cross_check_against_matplotlib():
     labels = _built(ax).axis_options["y"]["tick_labels"]
     assert set(labels) <= set(reference)
     assert len(labels) >= 5
+
+
+@pytest.mark.parametrize("values", [[1e300, 2e300], [1e-300, 2e-300]])
+@pytest.mark.parametrize("style", ["sci", "plain"])
+def test_ticklabel_format_survives_extreme_magnitudes(values, style):
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], values)
+    ax.ticklabel_format(style=style)
+    with warnings.catch_warnings():
+        # The formatter must neither raise (10.0 ** 309) nor warn (overflow).
+        warnings.simplefilter("error")
+        formatter = ax.yaxis.get_major_formatter()
+        labels = formatter.format_ticks(np.linspace(values[0], values[1], 6))
+    assert len(labels) == 6 and all(label for label in labels)
+    assert all(float(label) != 0.0 for label in labels)  # every label keeps its value
+    _export_all(fig)
+
+
+def test_scalar_formatter_extreme_labels_keep_their_value():
+    sci = ScalarFormatter()
+    sci.set_scientific(True)
+    assert sci.format_ticks([1e300, 1.5e300, 2e300]) == ["1.0e300", "1.5e300", "2.0e300"]
+    assert sci.format_ticks([1e-300, 1.5e-300, 2e-300]) == ["1.0e-300", "1.5e-300", "2.0e-300"]
+    plain = ScalarFormatter()
+    plain.set_scientific(False)
+    # More decimals than a double carries: fall back to %g rather than zeros.
+    assert plain.format_ticks([1e-300, 1.5e-300, 2e-300]) == ["1e-300", "1.5e-300", "2e-300"]
+    assert plain.format_ticks([1e300, 2e300])[0].startswith("1000000000000000052504760")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert len(sci.format_ticks(np.linspace(0.0, 1e308, 6))) == 6
+        assert len(plain.format_ticks(np.linspace(0.0, 1e308, 6))) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +434,37 @@ def test_set_xticks_accepts_datetime_likes():
     assert ax2.get_yticks() == pytest.approx([_ms("2024-01-01"), _ms("2024-01-02")])
     _export_all(fig)
     _export_all(fig2)
+
+
+def _svg_x_labels(fig) -> list[bytes]:
+    return re.findall(rb'text-anchor="middle">([^<]*)<', _export_all(fig)["svg"])
+
+
+def test_datetime_ticks_make_a_date_axis_in_either_order():
+    ticks = [dt.datetime(2024, 1, 1), dt.datetime(2024, 1, 2)]
+    fig, ax = plt.subplots()
+    ax.set_xticks(ticks)  # before any datetime artist: the axis was linear
+    ax.plot(_DATES, [1, 2, 3])
+    assert _svg_x_labels(fig) == [b"Jan 01", b"Jan 02"]
+    fig, ax = plt.subplots()
+    ax.plot(_DATES, [1, 2, 3])
+    ax.set_xticks(ticks)
+    assert _svg_x_labels(fig) == [b"Jan 01", b"Jan 02"]
+    fig, ax = plt.subplots()
+    ax.set_xticks(ticks)  # ticks alone are enough
+    assert ax._axis_holds_datetimes("x")
+    assert _svg_x_labels(fig) == [b"Jan 01", b"Jan 02"]
+    fig, ax = plt.subplots()
+    ax.set_yticks(ticks)
+    ax.plot([1, 2], ticks)
+    svg = _export_all(fig)["svg"]
+    assert re.findall(rb'text-anchor="end">([^<]*)<', svg) == [b"Jan 01", b"Jan 02"]
+    # Numeric ticks never pin the axis kind.
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    ax.set_xticks([0, 0.5, 1])
+    assert not ax._axis_holds_datetimes("x")
+    assert _svg_x_labels(fig) == [b"0.0", b"0.5", b"1.0"]
 
 
 def test_fill_between_accepts_datetimes_and_keeps_the_time_axis():

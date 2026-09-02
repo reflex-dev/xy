@@ -2788,7 +2788,7 @@ def get_cmap(name: Any = None, lut: int | None = None) -> Any:
         return name.resampled(int(lut)) if hasattr(name, "resampled") else name
     listed = qualitative_colormap(name)
     if listed is not None:
-        return listed if lut is None else ListedColormap(listed.colors, listed.name, N=int(lut))
+        return listed if lut is None else listed.resampled(int(lut))
     cmap = Cmap("viridis" if name is None else name)
     return cmap if lut is None else cmap.resampled(int(lut))
 

@@ -491,18 +491,24 @@ non-bool hidden) are dropped without mutating state.
   translates drawn vertices back to shipped rows so hover readouts and
   kernel picks stay exact; `_visInv` maps the kernel's shipped-space
   selection indices onto the filtered buffers. The **CPU hover fallback**
-  (`_nearestCpuIndex`, its polar sibling and `_barHover` — reached when the
+  (`_nearestCpuIndex` and its polar sibling — reached when the
   GPU pick pass misses, and the source of point tooltips) scans the
   *unfiltered* retained columns, so it consults `_visInv` too: a row it maps
   to `-1` is hidden and can neither become the hover target nor show a
   tooltip; the nearest *visible* row is picked instead, or nothing. The scan
-  covers the pre-filter row count (`_fullN`), not the drawn `g.n` — a
+  covers the pre-filter row count, not the drawn `g.n` — a
   category filter shrinks `g.n` below the retained columns, and capping the
   scan at it left every visible row shipped after the cut unreachable while
   hidden rows before it still answered (the two halves of one bug;
   `tests/test_legend_hidden_hover.py`). Unfiltered traces keep the `g.n`
   cap, which is load-bearing for smooth-resampled lines and mismatched x/y
-  lengths.
+  lengths. The bound is `_visInv`'s own length rather than a separately
+  stored count, so the range scanned and the hidden-row test cannot drift
+  apart; rows appended under a live filter would outrun both, which
+  `append_data` makes impossible by rejecting categorical color channels (a
+  trace is appendable or category-filterable, never both — lifting that
+  restriction means re-filtering on append). Before/after at
+  `spec/assets/legend-hidden-hover-before-after.png`.
 - **Category rows on a density-tier trace** (the rows exist because the
   first-paint density entry ships a slim categorical `color` spec —
   categories + palette, no per-point buffer; wire-protocol doc): local
@@ -529,7 +535,7 @@ non-bool hidden) are dropped without mutating state.
   `-masked`, and stamps it with `filter: {hidden_categories}`. The client
   compares that stamp against its current hidden set and drops
   stale-predicate replies; drills ship only visible rows with canonical
-  `shipped_sel`. Before/after at `spec/assets/legend-hidden-hover-before-after.png`.
+  `shipped_sel`.
 
 **Accessibility compatibility exception.** Legend-hidden ordinary point-series
 rows remain in keyboard traversal in their full retained CPU order, so a screen
@@ -537,6 +543,20 @@ reader can still inspect them and the announced `Point N of total` denominator
 does not change under a visual toggle. Funnel `stageNav` is geometry-semantic:
 it follows the currently visible stage/category geometry, and a whole hidden
 funnel contributes no stages to that walk.
+
+**Bar-family marks have no category rows.** Category rows exist only for a
+trace shipping `color.mode == "categorical"`, and no bar-emitting mark builds
+one: bar colors resolve to per-series constants or direct RGBA (only funnels
+and point series carry categorical color). A grouped or stacked bar chart's
+legend is therefore whole-trace rows, one per series, which take the
+whole-trace path above — draw, pick and hover all skip the series via
+`_legendHidden`. So no bar trace has a `_visInv`, and `_barHover` carries no
+hidden-row test. What a user sees: hiding a bar legend row hides that entire
+series, never one category within it. If a bar mark ever gains a categorical
+color channel, that filter must be built — including the bar geometry buffers
+(`posBuf`/`value1Buf`/`value0Buf`), which `_filterScatterRows` does not
+rebuild — before its rows can be toggled; `tests/test_legend_hidden_hover.py`
+fails when the channel appears.
 
 **Deliberate limits (recorded, not silent — §28):** toggles never rescale
 axes (the view is the user's; Fit Data is the re-fit tool). Toggle state

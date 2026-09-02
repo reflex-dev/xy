@@ -1298,13 +1298,18 @@ with, so what validates is exactly what renders:
   CSS reason instead of a misleading column-lookup error.
 - **A non-finite continuous `color=`/`size=` value is not drawn.** NaN and
   ±inf in a per-point numeric channel have no position on the ramp, so the
-  row leaves the shipped geometry, the pick/selection mapping, and the static
-  exports together — the same exclusion an x/y NaN gets (dossier §19), and
-  matplotlib's transparent "bad" colour. It is never painted as the domain
-  floor (the old behaviour, which drew a `+inf` point in the *minimum*
-  colour). The normalizers' floor for non-finite input remains only as a
-  vertex-safety net behind that exclusion. Missing-column names raise
-  `ValueError` on every surface, `facet_chart(by=...)` included.
+  row is excluded on every tier: direct point marks and the rectangle family
+  (`_finite_sel`, `_rect_finite_sel`), the density tier's count grid,
+  mean-colour plane, sample overlay and tile pyramid, and drill-in point
+  views (`channels.finite_channel_rows`). It leaves the shipped geometry,
+  the pick/selection mapping, and the static exports together — the same
+  exclusion an x/y NaN gets (dossier §19), and matplotlib's transparent
+  "bad" colour. It is never painted as the domain floor (the old behaviour,
+  which drew a `+inf` point in the *minimum* colour). The normalizers' floor
+  for non-finite input remains only as a vertex-safety net behind that
+  exclusion; the per-channel finite verdict is probed once and cached, so
+  the all-finite common case pays no per-request scan. Missing-column names
+  raise `ValueError` on every surface, `facet_chart(by=...)` included.
 
 ## What CSS cannot restyle
 

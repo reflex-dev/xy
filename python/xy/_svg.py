@@ -591,6 +591,14 @@ def _log_ticks(lo: float, hi: float, target: int = 6) -> tuple[list[float], list
     )
     if decades_in_view < 2:
         ticks, step = _linear_ticks(a, b, target)
+        # A positive subnormal window (1e-323..1.5e-323) is a few ulps wide:
+        # `(b - a) / target` underflows to 0, `_nice_step` answers 1, and the
+        # first multiple of that lies past `b` — no ticks again. The window's
+        # own endpoints are always representable, so they stand in as the
+        # ticks (the formatter is exponential there regardless of step). A
+        # degenerate lo == hi keeps `_linear_ticks`' single tick.
+        if len(ticks) < 2 and a < b:
+            ticks, step = [a, b], b - a
         return ticks, ticks, step
     mults = (1, 2, 5) if max(1, e1 - e0) <= max(2, target) else (1,)
     label_every = max(1, int(np.ceil((e1 - e0 + 1) / max(1, target))))

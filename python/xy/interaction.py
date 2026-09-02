@@ -172,20 +172,26 @@ def legend_toggle(
             t._legend_vis_cache = None
 
 
-def _pick_row_count(t: "Trace") -> int:
-    """Rows a pick may read: the readout columns' length, capped by `n_points`.
+# Kinds whose readout rows are bins, not samples: `n_points` there is the
+# sample count, which can be larger (1000 samples over 27 bars) or smaller
+# (5 samples over 20 bars) than the row count, so it bounds nothing.
+_BINNED_ROW_KINDS = frozenset({"histogram", "hexbin"})
 
-    `n_points` is the mark count the wire advertises, and for aggregate kinds
-    it is not the length of the columns `row_dict` indexes — a histogram or
-    hexbin advertises its sample count over a few dozen bin rows, an errorbar
-    its points over three segment endpoints each. An index must name both an
-    advertised mark and a readable row (§16: exact or nothing), so the bound
-    is the smaller of the two. Grid marks keep only the outer edges in x/y;
-    their readable rows are the cells.
+
+def _pick_row_count(t: "Trace") -> int:
+    """Rows a pick may read (§16: exact or nothing, so never past a column).
+
+    Binned aggregates are bounded by their bin rows and grid marks by their
+    cells (x/y hold only the outer edges there). Every other kind must name
+    both an advertised mark and a readable row: an errorbar advertises its
+    points over three segment endpoints each, so the bound is the smaller of
+    `n_points` and the column length.
     """
     if t.grid_shape is not None:
         rows, cols = t.grid_shape
-        return min(t.n_points, rows * cols)
+        return rows * cols
+    if t.kind in _BINNED_ROW_KINDS:
+        return len(t.x)
     return min(t.n_points, len(t.x))
 
 
@@ -648,13 +654,20 @@ def _ensure_pyramid(t: Trace) -> int | None:
     x1 += (x1 - x0) * 1e-9
     y1 += (y1 - y0) * 1e-9
     base_dim = _pyramid_base_dim_for(t)
-    bin_colors = trace_bin_colors(t)
-    if bin_colors is not None:
-        handle = kernels.pyramid_build_color(
-            t.x.values, t.y.values, x0, x1, y0, y1, base_dim, **bin_colors
-        )
+    # Rows whose continuous color/size is non-finite are not drawn (§19), so
+    # they are not counted or averaged here either; the pyramid then stays
+    # valid for every view of such a trace (only the legend mask bypasses it).
+    rows = channels.finite_channel_rows(t)
+    if rows is None:
+        xs, ys = t.x.values, t.y.values
+        bin_colors = trace_bin_colors(t)
     else:
-        handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, base_dim)
+        xs, ys = t.x.values[rows], t.y.values[rows]
+        bin_colors = channels.resolve_bin_colors(t.color_ch, rows)
+    if bin_colors is not None:
+        handle = kernels.pyramid_build_color(xs, ys, x0, x1, y0, y1, base_dim, **bin_colors)
+    else:
+        handle = kernels.pyramid_build(xs, ys, x0, x1, y0, y1, base_dim)
     t._pyr_handle = handle
     t._pyr_base_dim = base_dim
     t._pyr_colored = bool(handle) and bin_colors is not None
@@ -919,7 +932,18 @@ def density_view(
     # any aggregation. Everything downstream — counts, tier decisions, grids,
     # drill selections — then runs in visible-row space; drill selections are
     # translated back to canonical via `vis_rows` before they ship or persist.
-    vis_rows = _legend_visible_rows(t)
+    legend_rows = _legend_visible_rows(t)
+    # Rows whose continuous color/size is non-finite are not drawn (§19) and
+    # join the same visible-row space, so counts, mean colors, and drill
+    # selections all skip them; None on the common all-finite path. Only the
+    # legend mask disables the pyramid below — it is built over finite rows.
+    finite_rows = channels.finite_channel_rows(t)
+    if finite_rows is None:
+        vis_rows = legend_rows
+    elif legend_rows is None:
+        vis_rows = finite_rows
+    else:
+        vis_rows = np.intersect1d(legend_rows, finite_rows, assume_unique=True)
     if vis_rows is not None:
         xv, yv = xv[vis_rows], yv[vis_rows]
     # Nonlinear axes aggregate in scale coordinates (§28) so grid cells are
@@ -963,7 +987,7 @@ def density_view(
     # the pyramid holds UNFILTERED counts, and §34's whole point is that a
     # static aggregate is wrong under any dynamic predicate — the masked view
     # takes the honest Tier-B re-bin below, recorded via the binning label.
-    pyr = None if (nonlinear or vis_rows is not None) else _ensure_pyramid(t)
+    pyr = None if (nonlinear or legend_rows is not None) else _ensure_pyramid(t)
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
         # Serve from the pyramid when the window is clearly aggregate territory,
@@ -1091,10 +1115,14 @@ def density_view(
             if padded is not None:
                 lo_x, hi_x, lo_y, hi_y, sel = padded
                 sel = _drop_hidden_rows(t, sel)
+                if finite_rows is not None:
+                    # The padded window was re-selected from canonical rows;
+                    # drop the undrawable ones the way the view rows did.
+                    sel = np.intersect1d(sel, finite_rows, assume_unique=True)
             reply, reply_buffers = _drill_points(
                 fig, t, sel, len(sel), lo_x, hi_x, lo_y, hi_y, w, h, blend_visible=visible
             )
-            if vis_rows is not None:
+            if legend_rows is not None:
                 reply["traces"][0]["filter"] = _legend_filter_spec(t)
             return reply, reply_buffers
 
@@ -1143,7 +1171,7 @@ def density_view(
         "tier": plan.tier,
         "visible": visible,
         "reduction": plan.reduction,
-        "binning": binning if vis_rows is None else binning + "-masked",
+        "binning": binning if legend_rows is None else binning + "-masked",
         "density": density,
     }
     if vis_rows is not None:

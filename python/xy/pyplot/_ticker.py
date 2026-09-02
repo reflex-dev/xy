@@ -551,31 +551,48 @@ class ScalarFormatter(Formatter):
         self.set_locs(ticks)
         return [self(float(value), position) for position, value in enumerate(ticks)]
 
+    # Exponents are clamped so every ``10.0 ** n`` below stays a finite double
+    # (``10.0 ** 309`` raises OverflowError, ``10.0 ** -324`` underflows to 0).
+    _EXPONENT_LIMIT = 300
+    # ``np.round(x, decimals)`` scales by ``10 ** decimals`` internally, and a
+    # double carries ~16 significant digits, so longer labels are pure noise.
+    _MAX_DECIMALS = 20
+
+    @classmethod
+    def _bounded_exponent(cls, exponent: float) -> int:
+        return int(max(-cls._EXPONENT_LIMIT, min(cls._EXPONENT_LIMIT, exponent)))
+
     def _order_of_magnitude(self, locs: np.ndarray) -> int:
         finite = locs[np.isfinite(locs)]
         if not self._scientific or finite.size == 0 or not np.any(finite):
             return 0
-        oom = int(math.floor(math.log10(float(np.max(np.abs(finite[finite != 0]))))))
+        oom = self._bounded_exponent(
+            math.floor(math.log10(float(np.max(np.abs(finite[finite != 0])))))
+        )
         low, high = self._powerlimits
         if low == high != 0:  # fixed exponent, as matplotlib
-            return low
+            return self._bounded_exponent(low)
         return oom if (oom <= low or oom >= high) else 0
 
-    def _decimals(self, locs: np.ndarray, oom: int) -> int:
+    def _decimals(self, locs: np.ndarray, oom: int) -> Optional[int]:
         # Port of matplotlib ScalarFormatter._set_format over the located
         # ticks (no view-interval fallback: the Axes hands us the full set).
+        # None: the ticks need more decimals than a double can carry, so the
+        # caller falls back to ``%g`` instead of printing value-less zeros.
         finite = locs[np.isfinite(locs)]
         if finite.size == 0:
             return 0
-        scaled = finite / 10.0**oom
+        scaled = finite * 10.0 ** (-oom)  # multiply: never raises, unlike ``/ 10.0**oom``
         loc_range = float(np.ptp(scaled)) if scaled.size > 1 else 0.0
         if loc_range == 0:
             loc_range = float(np.max(np.abs(scaled)))
-        if loc_range == 0:
+        if loc_range == 0 or not math.isfinite(loc_range):
             loc_range = 1.0
-        loc_range_oom = int(math.floor(math.log10(loc_range)))
+        loc_range_oom = self._bounded_exponent(math.floor(math.log10(loc_range)))
         sigfigs = max(0, 3 - loc_range_oom)
-        thresh = 1e-3 * 10**loc_range_oom
+        if sigfigs > self._MAX_DECIMALS:
+            return None
+        thresh = 10.0 ** (loc_range_oom - 3)
         while sigfigs >= 0:
             if np.abs(scaled - np.round(scaled, decimals=sigfigs)).max() < thresh:
                 sigfigs -= 1
@@ -590,7 +607,9 @@ class ScalarFormatter(Formatter):
         locs = self._locs if self._locs.size else np.asarray([float(value)])
         oom = self._order_of_magnitude(locs)
         decimals = self._decimals(locs, oom)
-        mantissa = f"{float(value) / 10.0**oom:.{decimals}f}"
+        if decimals is None:
+            return f"{float(value):g}"
+        mantissa = f"{float(value) * 10.0 ** (-oom):.{decimals}f}"
         if oom == 0:
             return mantissa
         if self._use_math_text:

@@ -205,6 +205,13 @@ class ListedColormap:
         self.name = str(name)
         self.N = len(table)
 
+    def resampled(self, lutsize: int) -> "ListedColormap":
+        """Matplotlib's ``ListedColormap.resampled``: sample the palette at
+        ``lutsize`` evenly spaced positions (``get_cmap("tab10", 4)`` picks
+        entries 0, 3, 6, 9; more entries than the palette holds repeat ends)."""
+        count = max(1, int(lutsize))
+        return ListedColormap(self(np.linspace(0.0, 1.0, count)), name=self.name)
+
     def __call__(self, values: object) -> object:
         array = np.asarray(values)
         if np.issubdtype(array.dtype, np.integer):

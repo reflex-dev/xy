@@ -49,7 +49,15 @@ export function logTicks(lo, hi, target = 6) {
   }
   if (decadesInView < 2) {
     const linear = linearTicks(a, b, target);
-    return { ticks: linear.ticks, labels: linear.ticks, step: linear.step, log: true };
+    // A positive subnormal window (1e-323..1.5e-323) is a few ulps wide:
+    // `(b - a) / target` underflows to 0, niceStep answers 1, and the first
+    // multiple of that lies past `b` — no ticks again. The window's own
+    // endpoints are always representable, so they stand in as the ticks
+    // (the formatter is exponential there regardless of step). A degenerate
+    // lo === hi keeps linearTicks' single tick.
+    const ticks = linear.ticks.length < 2 && a < b ? [a, b] : linear.ticks;
+    const step = ticks === linear.ticks ? linear.step : b - a;
+    return { ticks, labels: ticks, step, log: true };
   }
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];

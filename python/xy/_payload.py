@@ -506,23 +506,19 @@ class PayloadMixin(_Host):
         whose color is undefined is not drawn — matplotlib's transparent "bad"
         color — and the same rows leave the pick/selection mapping, exactly as
         an x/y NaN does. Channels carry no zone maps, so each continuous
-        channel is probed with NumPy's vectorized `isfinite().all()` — about
+        channel is probed once with NumPy's vectorized `isfinite().all()`
+        (cached on the channel, `channels.nonfinite_channel_arrays`) — about
         six times cheaper than the native multi-column scan on the all-finite
         common case, which would otherwise cost this first-payload path ~17%
         (CodSpeed `test_first_payload_scatter_continuous_channels`) — and only
         a channel that actually holds a non-finite value joins the native
         `valid_indices_f64` scan, which allocates row ids only for rejected
-        rows. Canonical keeps every row; real gap semantics (segment index
-        list) arrive with validity bitmaps.
+        rows. The density tier applies the same rule through
+        `channels.finite_channel_rows`. Canonical keeps every row; real gap
+        semantics (segment index list) arrive with validity bitmaps.
         """
         candidates = [values for col, values in ((t.x, xv), (t.y, yv)) if col.zone.null_count]
-        for channel in (t.color_ch, t.size_ch):
-            if channel is None or channel.mode != "continuous" or channel.values is None:
-                continue
-            # A streaming append can leave a channel momentarily shorter than
-            # the geometry; never index geometry with a foreign-length mask.
-            if len(channel.values) == len(xv) and not np.isfinite(channel.values).all():
-                candidates.append(channel.values)
+        candidates.extend(channels.nonfinite_channel_arrays(t, len(xv)))
         if not candidates:
             return None
         return kernels.valid_indices_f64(tuple(candidates))
@@ -1303,10 +1299,19 @@ class PayloadMixin(_Host):
         # so every cell covers the same strip of *screen*. The wire keeps raw
         # `x_range`/`y_range` endpoints; renderers interpolate between their
         # scale coordinates.
-        bx, (bx0, bx1) = self._binning_coords(t.x_axis, t.x.values, xr)
-        by, (by0, by1) = self._binning_coords(t.y_axis, t.y.values, yr)
+        # Rows whose continuous color/size is non-finite are not drawn on any
+        # tier (§19): they leave the count grid, the mean-color plane, and the
+        # sample overlay here exactly as they leave the direct tier through
+        # `_finite_sel`. None on the common all-finite path (cached probe).
+        rows = channels.finite_channel_rows(t)
+        xs, ys = t.x.values, t.y.values
+        if rows is not None:
+            xs, ys = xs[rows], ys[rows]
+        bx, (bx0, bx1) = self._binning_coords(t.x_axis, xs, xr)
+        by, (by0, by1) = self._binning_coords(t.y_axis, ys, yr)
         full_identity = (
-            (not categorical or compact_categorical)
+            rows is None
+            and (not categorical or compact_categorical)
             and not (t.x.zone.null_count or t.y.zone.null_count)
             and t.x.min >= xr[0]
             and t.x.max <= xr[1]
@@ -1323,7 +1328,7 @@ class PayloadMixin(_Host):
             visible = int(t.n_points)
             sel = np.empty(0, dtype=np.uint32)
             sample_sel = None
-            grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+            grid = kernels.bin_2d(xs, ys, xr[0], xr[1], yr[0], yr[1], w, h)
         elif full_identity and not pw.point_overlay:
             # Raster export: no overlay is drawn, so take the plain grid kernel
             # instead of the fused grid+sample variants below. `bin_2d` is the
@@ -1380,6 +1385,10 @@ class PayloadMixin(_Host):
             # Fused single pass: grid (bin_2d semantics) + visible rows
             # (range_indices semantics) without re-reading full columns twice.
             grid, sel = kernels.bin_2d_indices(bx, by, bx0, bx1, by0, by1, w, h)
+            if rows is not None:
+                # The fused kernel indexed the narrowed arrays; the sample
+                # overlay and pick bookkeeping speak canonical rows.
+                sel = rows[sel]
             visible = int(len(sel))
         encoded_grid, gmax = kernels.density_log_u8(grid)
         # The density surface wears the data's own colors (LOD doc §2): count
@@ -1394,8 +1403,15 @@ class PayloadMixin(_Host):
         )
         dropped_channels = list(t.per_item_channel_names())
         # Cached full-column resolution (LOD doc §2): the O(N) quantize pass
-        # is shared with the pyramid build and every later grid reply.
-        bin_colors = interaction.trace_bin_colors(t)
+        # is shared with the pyramid build and every later grid reply. A trace
+        # with non-finite channel rows resolves over its finite rows instead,
+        # row-aligned with the narrowed `bx`/`by` (uncached, like a legend
+        # mask: the cache is full-column by definition).
+        bin_colors = (
+            interaction.trace_bin_colors(t)
+            if rows is None
+            else channels.resolve_bin_colors(t.color_ch, rows)
+        )
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,

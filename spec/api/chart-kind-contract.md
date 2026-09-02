@@ -61,7 +61,11 @@ by the string `K` on the wire (`trace.kind`).
   and polylines) and `_rect_finite_sel` (rectangles) both reject rows whose
   continuous color/size value is non-finite, alongside x/y NaN (§19), so a
   mark with an undefined color is not drawn rather than painted at the ramp
-  floor. A kernel that builds its own selection must apply that rule too.
+  floor; the density tier (grid, mean-color plane, sample overlay, pyramid,
+  drill) narrows to `channels.finite_channel_rows(t)` for the same reason. A
+  kernel that builds its own selection must apply that rule too — take the
+  candidate arrays from `channels.nonfinite_channel_arrays(t, n)`, whose
+  per-channel finite verdict is cached so the all-finite case never rescans.
 
 #### The ribbon geometry contract
 

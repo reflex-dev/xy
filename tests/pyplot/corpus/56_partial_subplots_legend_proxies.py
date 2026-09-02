@@ -18,7 +18,8 @@ top_left.legend(
 top_left.grid(True, zorder=0)
 
 bottom = plt.subplot(2, 1, 2)
-bars = bottom.bar(["a", "b", "c"], [1, 2, 3], yerr=[0.1, 0.2, 0.3], tick_label=None)
+bars = bottom.bar([0, 1, 2], [1, 2, 3], yerr=[0.1, 0.2, 0.3], tick_label=["a", "b", "c"])
+assert [t.get_text() for t in bottom.get_xticklabels()] == ["a", "b", "c"]
 for rect in bars:
     bottom.text(
         rect.get_x() + rect.get_width() / 2,

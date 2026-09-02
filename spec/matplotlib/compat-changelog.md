@@ -4,7 +4,16 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
-## Artist keywords, legend forms, partial subplot grids — 2026-09-01
+## Artist keywords, legend forms, partial subplot grids — 2026-09-01 (Matplotlib 3.11.0 reference)
+
+Reference: the released `matplotlib==3.11.0` wheel (in-test comparisons of
+legend labels, subplot rectangles, histogram geometry, bar rectangles, and
+qualitative palettes); the pinned inventory snapshot `v3.11.0-348-gbde111fb4e`
+is unchanged. Inventory: no methods added or removed (66). Compatibility
+levels: no family level changes; the option-level moves are `pcolormesh`/
+`pcolor`/`tripcolor`/`tricontour(f)` `antialiased=`, `quiver`/`streamplot`/
+`quiverkey` `zorder=`, and `colorbar(fraction=)` from *unsupported* to
+*accepted no-op*, and `plt.cm.<name>` from a name string to a colormap object.
 
 - Matplotlib's Artist-level keywords (`zorder`, `clip_on`, `rasterized`,
   `antialiased`/`aa`, `snap`, `gid`, `url`, `picker`, `in_layout`,

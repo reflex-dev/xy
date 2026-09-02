@@ -236,7 +236,7 @@ def handle_message(
                 x1,
                 content.get("px", 2048),
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         if update["traces"]:
             return {"type": "tier_update", "seq": seq, **update}, out
@@ -254,7 +254,7 @@ def handle_message(
                 content.get("w", 512),
                 content.get("h", 384),
             )
-        except (KeyError, TypeError, ValueError, IndexError):
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             return None
         if update["traces"]:
             return {"type": "density_update", "seq": seq, **update}, out
@@ -273,7 +273,7 @@ def handle_message(
                 hidden,
                 content.get("category"),
             )
-        except (KeyError, TypeError, ValueError, IndexError):
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             return None
         return None
     if kind == "pick":
@@ -289,11 +289,14 @@ def handle_message(
                 index,
                 drill_seq,
             )
-        except (TypeError, ValueError, IndexError):
-            # IndexError is defense in depth: `pick` bounds the index against
-            # the readable rows, but a kind whose columns disagree with its
-            # advertised count must degrade to `row: null`, never raise.
+        except (TypeError, ValueError):
             return None
+        except IndexError:
+            # Defense in depth: `pick` bounds the index against the readable
+            # rows, but a kind whose columns disagree with that bound must
+            # degrade to `row: null`, never raise — and it must still reply,
+            # or the client keeps showing the previous hover row.
+            row = None
         if row is not None and callbacks.on_hover is not None:
             callbacks.on_hover(row)
         # Reply ships even when row is None (stale drill_seq): the client
@@ -361,7 +364,7 @@ def handle_message(
                 view.update({"x0": x_range[0], "x1": x_range[1]})
             if y_range is not None:
                 view.update({"y0": y_range[0], "y1": y_range[1]})
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         # Every committed view event feeds the figure's durable-state cache
         # (view-state.md §5.1) — the reason end-phase events always ship —
@@ -388,7 +391,7 @@ def handle_message(
                 y0,
                 y1,
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             return None
         fig._record_selection({"range": {"x0": x0, "x1": x1, "y0": y0, "y1": y1}})
         return _selection_reply(
@@ -405,7 +408,7 @@ def handle_message(
             points = content["points"]
             sel = fig.select_polygon(points)
             polygon = [[float(point[0]), float(point[1])] for point in points]
-        except (IndexError, KeyError, TypeError, ValueError):
+        except (IndexError, KeyError, TypeError, ValueError, OverflowError):
             return None
         fig._record_selection({"polygon": polygon})
         return _selection_reply(

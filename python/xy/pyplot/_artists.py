@@ -332,8 +332,8 @@ class Artist:
 
 def _line_proxy_entries(
     xdata: Any, ydata: Any, kwargs: dict[str, Any]
-) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
-    """Spec entries for a Matplotlib-style ``Line2D(xdata, ydata, **style)`` proxy.
+) -> tuple[dict[str, Any], Optional[dict[str, Any]], bool]:
+    """Spec entries plus the ``visible`` flag for a ``Line2D(xdata, ydata, **style)`` proxy.
 
     The proxy never renders; ``legend(handles=...)`` freezes it into a swatch
     through the same ``_legend_item_from_entry`` path plotted lines use, so
@@ -342,7 +342,7 @@ def _line_proxy_entries(
     when the legend attaches.
     """
     kwargs = dict(kwargs)
-    strip_artist_noops(kwargs)
+    visible = strip_artist_noops(kwargs)
     marker = kwargs.pop("marker", None)
     markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
     markerfacecolor = kwargs.pop("markerfacecolor", kwargs.pop("mfc", None))
@@ -392,8 +392,9 @@ def _line_proxy_entries(
         # Marker-only proxy (``linestyle="none", marker="o"``): the swatch is
         # the marker itself, exactly as a marker-only ``plot`` is a scatter.
         marker_entry["kwargs"]["name"] = line_kw.get("name")
-        return marker_entry, None
-    return {"kind": "line", "x": xdata, "y": ydata, "kwargs": line_kw, "_proxy": True}, marker_entry
+        return marker_entry, None, visible
+    line_entry = {"kind": "line", "x": xdata, "y": ydata, "kwargs": line_kw, "_proxy": True}
+    return line_entry, marker_entry, visible
 
 
 class Line2D(Artist):
@@ -412,8 +413,16 @@ class Line2D(Artist):
             return
         if len(args) != 2:
             raise TypeError("Line2D(xdata, ydata, **style) requires x and y data")
-        entry, self._proxy_marker_entry = _line_proxy_entries(args[0], args[1], kwargs)
+        entry, self._proxy_marker_entry, visible = _line_proxy_entries(args[0], args[1], kwargs)
         super().__init__(None, entry)
+        if not visible:
+            self.set_visible(False)
+
+    def _companion_entries(self) -> list[dict[str, Any]]:
+        # The marker overlay of ``plot(..., marker=)`` (or a proxy's marker) is
+        # part of the same Matplotlib Line2D: visibility, alpha, and transform
+        # mutations must move it too, not only the line.
+        return [entry for entry in self._marker_entries() if entry is not self._entry]
 
     @staticmethod
     def _segment_args_from_xy(x: Any, y: Any) -> tuple[Any, Any, Any, Any]:
@@ -1144,8 +1153,11 @@ class Patch(Artist):
             entry = _patch_proxy_entry(style, "Patch()")
         elif style:
             raise TypeError(f"Patch() got unexpected keyword argument {next(iter(style))!r}")
+        visible = bool(entry.pop("_proxy_visible", True))
         super().__init__(axes, entry)
         self._outline_entries = list(outline_entries or [])
+        if not visible:
+            self.set_visible(False)
 
     def _companion_entries(self) -> list[dict[str, Any]]:
         return self._outline_entries
@@ -1183,7 +1195,7 @@ class Patch(Artist):
 def _patch_proxy_entry(style: dict[str, Any], where: str) -> dict[str, Any]:
     """Spec entry for a ``Patch``/``Rectangle`` legend proxy, in bar-swatch shape."""
     kwargs = dict(style)
-    strip_artist_noops(kwargs)
+    visible = strip_artist_noops(kwargs)
     color = kwargs.pop("color", None)
     facecolor = kwargs.pop("facecolor", kwargs.pop("fc", None))
     edgecolor = kwargs.pop("edgecolor", kwargs.pop("ec", None))
@@ -1222,7 +1234,8 @@ def _patch_proxy_entry(style: dict[str, Any], where: str) -> dict[str, Any]:
         )
     if hatch:
         entry_kwargs["hatch"] = str(hatch)
-    return {"kind": "bar", "kwargs": entry_kwargs, "_proxy": True}
+    # Consumed by Patch.__init__, which owns the handle that can be hidden.
+    return {"kind": "bar", "kwargs": entry_kwargs, "_proxy": True, "_proxy_visible": visible}
 
 
 class Rectangle(Patch):

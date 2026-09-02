@@ -170,7 +170,7 @@ def test_py_within_decade_falls_back_to_linear_ticks() -> None:
 def test_ts_and_py_generators_agree() -> None:
     """Same positions, same step, same label text on both sides — the static
     exports must tick the axis exactly where the browser does."""
-    cases = [*WIDE, *NARROW, (0.2, 0.7), (2, 30), (0.5, 5), (3.0, 3.0)]
+    cases = [*WIDE, *NARROW, (0.2, 0.7), (2, 30), (0.5, 5), (3.0, 3.0), *SUBNORMAL]
     js_results = _node_log_ticks(cases)
     for (lo, hi), js in zip(cases, js_results, strict=True):
         py = _py_log_ticks(lo, hi)
@@ -180,6 +180,24 @@ def test_ts_and_py_generators_agree() -> None:
         assert py["text"] == js["text"], (lo, hi, js, py)
         assert py["logText"] == js["logText"], (lo, hi, js, py)
         assert 1 <= len(js["ticks"]) <= 200
+
+
+# Positive subnormal windows: `(b - a) / target` underflows inside the linear
+# fallback (a 1-ulp span / 6 is 0), so it yields nothing; the window's own
+# endpoints stand in as the ticks. Both are formatted exponentially.
+SUBNORMAL = [(1e-323, 1.5e-323), (5e-324, 1e-323), (2.5e-323, 4e-323)]
+
+
+def test_subnormal_window_ticks_its_endpoints() -> None:
+    js_results = _node_log_ticks(SUBNORMAL)
+    for (lo, hi), js in zip(SUBNORMAL, js_results, strict=True):
+        py = _py_log_ticks(lo, hi)
+        for got in (js, py):
+            assert got["ticks"] == [lo, hi], (lo, hi, got)
+            assert got["labels"] == [lo, hi], (lo, hi, got)
+            assert got["step"] == hi - lo > 0, (lo, hi, got)
+            assert len(set(got["text"])) == 2, (lo, hi, got)  # two distinct labels
+        assert py["text"] == js["text"], (lo, hi, js, py)
 
 
 def test_within_decade_always_shows_a_readable_tick_count() -> None:

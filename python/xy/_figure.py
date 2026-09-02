@@ -2013,17 +2013,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
             for column, values in zip(geometry, (x0v, x1v, y0v, y1v), strict=True)
             if column is not None and column.zone.null_count
         ]
-        if t.color_ch and t.color_ch.mode == "continuous":
-            values = t.color_ch.values
-            if values is None:
-                raise ValueError(f"{t.kind} continuous color channel missing values")
-            candidates.append(values)
-        elif t.color_ch and t.color_ch.mode == "categorical":
-            codes = t.color_ch.codes
-            if codes is None:
-                raise ValueError(f"{t.kind} categorical color channel missing codes")
-            # Resolved categorical codes are u8/u32 and therefore always
-            # finite; no source-sized pass is needed for them.
+        # A rectangle whose continuous color or size is non-finite is not
+        # drawn either (§19) — the same rule, probe, and helper as the point
+        # tier's `_finite_sel`: the cached `isfinite().all()` verdict keeps
+        # the all-finite common case off the native scan, and a channel is a
+        # candidate only when it really holds a non-finite value. Resolved
+        # categorical codes are u8/u32 and therefore always finite; no
+        # source-sized pass is needed for them.
+        candidates.extend(channels.nonfinite_channel_arrays(t, len(x0v)))
         if not candidates:
             return None
         return kernels.valid_indices_f64(tuple(candidates))

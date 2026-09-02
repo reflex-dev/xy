@@ -573,3 +573,143 @@ def test_bar_with_string_categories_and_error_bars_autoscales() -> None:
     assert ax.get_ylim() == pytest.approx((-0.54, 2.54))
     assert ax.get_xlim()[1] >= 3.3
     assert len(ax.get_yticklabels()) == 3
+
+
+# --- review round: visibility of proxies and chrome, partial-grid layout ------
+
+
+def test_legend_proxies_honor_visible_and_propagate_to_their_marker() -> None:
+    hidden_line = plt.Line2D([0], [0], color="r", marker="o", visible=False)
+    assert not hidden_line.get_visible()
+    assert hidden_line._entry["kwargs"]["opacity"] == 0.0
+    assert hidden_line._proxy_marker_entry["kwargs"]["opacity"] == 0.0
+    assert not plt.Patch(facecolor="r", visible=False).get_visible()
+    assert not plt.Rectangle((0, 0), 1, 1, visible=False).get_visible()
+    shown = plt.Line2D([0], [0], color="b", marker="s", alpha=0.5)
+    shown.set_visible(False)
+    assert shown._proxy_marker_entry["kwargs"]["opacity"] == 0.0
+    shown.set_visible(True)
+    assert shown._proxy_marker_entry["kwargs"]["opacity"] == 0.5
+    assert shown._entry["kwargs"]["opacity"] == 0.5
+
+
+def test_plotted_line_visibility_moves_its_marker_overlay_too() -> None:
+    _fig, ax = plt.subplots()
+    (line,) = ax.plot([0, 1], [0, 1], marker="o", visible=False)
+    kinds = [(entry["kind"], entry["kwargs"].get("opacity")) for entry in ax._entries]
+    assert kinds == [("line", 0.0), ("scatter", 0.0)]
+    line.set_visible(True)
+    assert [entry["kwargs"]["opacity"] for entry in ax._entries] == [1.0, 1.0]
+    line.set_alpha(0.4)
+    assert [entry["kwargs"]["opacity"] for entry in ax._entries] == [0.4, 0.4]
+
+
+def test_chrome_setters_apply_visible_to_their_text() -> None:
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    ax.set_title("HIDDENTITLE", visible=False)
+    ax.set_xlabel("HIDDENX", visible=False)
+    ax.set_ylabel("SHOWNY", visible=True)
+    svg = _svg(fig)
+    assert "HIDDENTITLE" not in svg and "HIDDENX" not in svg
+    assert "SHOWNY" in svg
+    assert ax.get_title() == ""
+    ax.set_title("SHOWNTITLE", visible=True, zorder=2)
+    assert "SHOWNTITLE" in _svg(fig)
+
+
+def test_partial_grid_records_its_dimensions_for_tight_layout() -> None:
+    plt.subplot(221)
+    plt.plot([0, 1])
+    plt.subplot(224)
+    plt.plot([1, 0])
+    fig = plt.gcf()
+    assert (fig._nrows, fig._ncols) == (2, 2)
+    fig.tight_layout()
+    fig.savefig(BytesIO(), format="png")
+    partial = [np.asarray(ax.get_position().bounds) for ax in fig.axes]
+    plt.close("all")
+    full_fig, axes = plt.subplots(2, 2)
+    axes[0, 0].plot([0, 1])
+    axes[1, 1].plot([1, 0])
+    full_fig.tight_layout()
+    full_fig.savefig(BytesIO(), format="png")
+    full = [
+        np.asarray(axes[0, 0].get_position().bounds),
+        np.asarray(axes[1, 1].get_position().bounds),
+    ]
+    # Row geometry (bottom, height) and the figure-edge margins are the 2x2
+    # grid's; only the inter-column gap differs, because Matplotlib (and xy)
+    # size that gap from the chrome of *adjacent* panels, which a 221/224
+    # figure does not have. Matplotlib 3.11 shows the same width difference.
+    for got, want in zip(partial, full, strict=True):
+        np.testing.assert_allclose(got[[1, 3]], want[[1, 3]], atol=1e-6)
+    np.testing.assert_allclose(partial[0][0], full[0][0], atol=1e-6)  # left margin
+    np.testing.assert_allclose(partial[1][0] + partial[1][2], full[1][0] + full[1][2], atol=1e-6)
+    for rect in partial:  # each panel stays inside its own quadrant
+        assert rect[2] < 0.5 and rect[3] < 0.5
+    assert partial[0][0] < 0.5 < partial[1][0]
+
+
+def test_get_cmap_lut_resamples_qualitative_palettes_like_matplotlib() -> None:
+    mpl = _matplotlib()
+    mpl.use("Agg")
+    import matplotlib.pyplot as mplt
+    from matplotlib.colors import to_hex
+
+    for name, count in (("tab10", 4), ("tab10", 12), ("tab10_r", 4), ("Paired", 5)):
+        ours = plt.get_cmap(name, count)
+        reference = mplt.get_cmap(name, count)
+        assert ours.N == count == reference.N
+        assert [to_hex(c) for c in ours.colors] == [to_hex(c) for c in reference.colors], name
+        assert ours.name == reference.name
+    assert [to_hex(c) for c in plt.get_cmap("tab10", 4).colors] == [
+        "#1f77b4",
+        "#d62728",
+        "#e377c2",
+        "#17becf",
+    ]
+
+
+@pytest.mark.parametrize("align", ["left", "right", "mid"])
+@pytest.mark.parametrize("rwidth", [None, 0.5])
+def test_hist_align_bar_rectangles_match_matplotlib(align: str, rwidth) -> None:
+    mpl = _matplotlib()
+    mpl.use("Agg")
+    import matplotlib.pyplot as mplt
+
+    data = [1, 2, 2, 3, 3.5, 2.2]
+    _fig, ax = plt.subplots()
+    _n, _e, patches = ax.hist(data, bins=3, align=align, rwidth=rwidth)
+    _n, _e, grouped = ax.hist([data, data], bins=3, align=align, rwidth=rwidth)
+    mfig, max_ = mplt.subplots()
+    _n, _e, reference = max_.hist(data, bins=3, align=align, rwidth=rwidth)
+    _n, _e, reference_grouped = max_.hist([data, data], bins=3, align=align, rwidth=rwidth)
+    geometry = [(r.get_x(), r.get_width()) for r in patches]
+    expected = [(r.get_x(), r.get_width()) for r in reference]
+    np.testing.assert_allclose(geometry, expected, atol=1e-9)
+    for ours, theirs in zip(grouped, reference_grouped, strict=True):
+        np.testing.assert_allclose(
+            [(r.get_x(), r.get_width()) for r in ours],
+            [(r.get_x(), r.get_width()) for r in theirs],
+            atol=1e-9,
+        )
+    mplt.close(mfig)
+
+
+@pytest.mark.parametrize(
+    ("colors", "expected"),
+    [
+        (["red", "green", "blue"], "red"),  # 3 names: first entry wins, not RGB
+        (["red", "green", "blue", "black"], "red"),  # 4 names: not RGBA either
+        (["red", "green"], "red"),
+        (["red", "green", "blue", "black", "white"], "red"),
+        ((1.0, 0.0, 0.0), "rgb(255,0,0)"),  # one numeric RGB tuple is one color
+        ((1.0, 0.0, 0.0, 0.5), "rgba(255,0,0,0.5)"),
+        ("red", "red"),
+    ],
+)
+def test_hlines_vlines_colors_read_names_first_and_rgba_tuples_whole(colors, expected) -> None:
+    _fig, ax = plt.subplots()
+    assert ax.hlines(0.5, 0, 1, colors=colors)._entry["kwargs"]["color"] == expected
+    assert ax.vlines(0.5, 0, 1, colors=colors)._entry["kwargs"]["color"] == expected

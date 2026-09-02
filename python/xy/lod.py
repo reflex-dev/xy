@@ -150,7 +150,10 @@ def normalize_window(
         raise ValueError("view window bounds must be finite")
     try:
         vals = [float(v) for v in (x0, x1, y0, y1)]
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, OverflowError) as e:
+        # OverflowError is the oversized-integer case: a JSON literal with more
+        # digits than f64 can hold is client data like any other, so it must
+        # reject rather than escape the dispatcher.
         raise ValueError("view window bounds must be finite") from e
     if not all(np.isfinite(vals)):
         raise ValueError("view window bounds must be finite")
@@ -177,7 +180,7 @@ def screen_shape(w: int, h: int) -> tuple[int, int]:
     try:
         wf = float(w)
         hf = float(h)
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, OverflowError) as e:
         raise ValueError("screen dimensions must be finite") from e
     if not np.isfinite(wf) or not np.isfinite(hf):
         raise ValueError("screen dimensions must be finite")
@@ -277,7 +280,7 @@ def _float_param(
         raise ValueError(f"{label} must be finite")
     try:
         out = float(cast(Any, value))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{label} must be finite") from exc
     if not np.isfinite(out):
         raise ValueError(f"{label} must be finite")

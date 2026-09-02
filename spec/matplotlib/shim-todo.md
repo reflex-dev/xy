@@ -712,6 +712,12 @@ streamplot
   positions it fails loudly (the category axis owns its labels).
 - `hist(align="left"/"right")` is implemented for the bar histtypes only; the
   step families accept `align="mid"` and fail loudly otherwise.
+- `set_title`/`set_xlabel`/`set_ylabel(visible=False)` clear the text rather
+  than keeping a hidden `Text`, so `get_title()` reports `""`; Matplotlib
+  would still report the hidden string.
+- `tight_layout` on a partial numbered grid (`subplot(221)`+`subplot(224)`)
+  sizes the inter-column gap from adjacent panels only, so panel widths differ
+  slightly from a full `subplots(2, 2)` — Matplotlib 3.11 behaves the same way.
 
 ### P1 audit fixes — 2026-09-01
 

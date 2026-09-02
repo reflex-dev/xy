@@ -378,14 +378,29 @@ def test_the_selected_face_metrics_drive_the_anchor() -> None:
     assert _text_width_px(b"iii", 10.0, "Courier") == 18.0  # 600 per mille, every glyph
     assert _text_width_px(b"iii", 10.0, "Helvetica") == pytest.approx(6.66)  # 222 x 3
     assert _text_width_px(b"iii", 10.0, "Times-Roman") == pytest.approx(8.34)  # 278 x 3
-    # Oblique faces share their upright advances.
-    for face in ("Helvetica", "Times"):
-        upright, slanted = {
-            "Helvetica": ("Helvetica", "Helvetica-Oblique"),
-            "Times": ("Times-Roman", "Times-Italic"),
-        }[face]
-        assert _text_width_px(b"W", 10.0, upright) == _text_width_px(b"W", 10.0, upright)
-        assert _text_width_px(b"Wm", 12.0, slanted) > 0
+    # The Oblique faces are slanted copies of their uprights and share their
+    # advances glyph for glyph (Adobe core-14 AFMs)...
+    sample = b"Wiam 0.5"
+    for upright, slanted in (
+        ("Helvetica", "Helvetica-Oblique"),
+        ("Helvetica-Bold", "Helvetica-BoldOblique"),
+        ("Courier", "Courier-Oblique"),
+        ("Courier-Bold", "Courier-BoldOblique"),
+    ):
+        assert _text_width_px(sample, 10.0, slanted) == _text_width_px(sample, 10.0, upright)
+    # ...whereas Times-Italic and Times-BoldItalic are their own designs with
+    # their own AFM tables, so the writer must not borrow the upright widths.
+    # Per-mille advances from matplotlib's bundled Times-*.afm: W 944/833,
+    # a 444/500, m 778/722 (Roman/Italic); W 1000/889 (Bold/BoldItalic).
+    assert _text_width_px(b"W", 10.0, "Times-Roman") == pytest.approx(9.44)
+    assert _text_width_px(b"W", 10.0, "Times-Italic") == pytest.approx(8.33)
+    assert _text_width_px(b"am", 10.0, "Times-Roman") == pytest.approx(12.22)  # 444 + 778
+    assert _text_width_px(b"am", 10.0, "Times-Italic") == pytest.approx(12.22)  # 500 + 722
+    assert _text_width_px(b"W", 10.0, "Times-Bold") == pytest.approx(10.0)
+    assert _text_width_px(b"W", 10.0, "Times-BoldItalic") == pytest.approx(8.89)
+    assert _text_width_px(sample, 10.0, "Times-Italic") != _text_width_px(
+        sample, 10.0, "Times-Roman"
+    )
     # End-anchored y tick labels start elsewhere once the face changes width.
     xs = np.linspace(0.0, 6.0, 50)
     sans = xy.line_chart(xy.line(xs, np.sin(xs)), width=400, height=300).to_image("pdf")

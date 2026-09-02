@@ -20,8 +20,13 @@ returns either `None` or `(message, buffers)`, where `buffers` is a list of
 binary attachments the reply's spec entries index into by position.
 
 - Non-dict `content`, an unknown or non-string `type`, a missing required
-  field, or a value that fails coercion returns `None`. Client-supplied data
-  never raises; exceptions from *user callbacks* do propagate. A dropped
+  field, or a value that fails coercion returns `None`. Coercion failure
+  includes the oversized-integer case: JSON admits an integer literal of any
+  length, and `float()` on one past the f64 ceiling raises `OverflowError`
+  rather than `ValueError`, so every numeric field — window bounds, `px`/`w`/
+  `h`, polygon points, legend categories — rejects it like any other bad
+  value. Client-supplied data never raises; exceptions from *user callbacks*
+  do propagate. A dropped
   message mutates nothing: `type` is checked before any other field is read,
   and every kind validates its whole payload before touching drill
   bookkeeping, the view-state cache, or legend predicates
@@ -102,11 +107,15 @@ subset version the client picked against; a non-current seq translates
 through the kernel's bounded subset history when it is still remembered (the
 client may be drawing a retired cached point window, LOD doc T13) and
 resolves to `row: null` otherwise — never to a row in a dead index space.
-`index` must also name a readable row: where a mark's advertised `n_points`
-is not the length of its readout columns — a histogram's or hexbin's sample
-count over its bin rows, an errorbar's points over its segment endpoints —
-the bound is the smaller of the two, and an index past it resolves to
-`row: null` rather than an exception.
+`index` must also name a readable row. Binned aggregates (histogram, hexbin)
+are bounded by their bin rows — `n_points` there is the sample count, which
+may exceed or fall short of the row count and bounds nothing — grid marks by
+their cells, and every other kind by the smaller of `n_points` and its
+readout columns (an errorbar advertises its points over three segment
+endpoints each). An index past the bound resolves to `row: null` rather than
+an exception; should a lookup still raise `IndexError`, the dispatcher
+answers with the same `row: null` reply (carrying `seq`) so the client clears
+its hover row, while `TypeError`/`ValueError` coercion failures stay silent.
 
 **`click`** — same fields and same `fig.pick` resolution as `pick`, minus
 `seq`; it fires `on_click` and returns nothing.
@@ -244,9 +253,8 @@ accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.
 
 **`pick_result`** — `{type, seq, row}`. `row` is `null` when the index is out
-of range (past the advertised count or the readable rows, whichever is
-smaller — §2 `pick`) or `drill_seq` was stale; the reply ships regardless so
-the client clears its hover state. A point row is
+of range (past the readable rows, §2 `pick`) or `drill_seq` was stale; the
+reply ships regardless so the client clears its hover state. A point row is
 `{trace, index, x, y, x_kind, y_kind}` plus `color_value` or `color_category`
 and `size_value` when those channels exist. A heatmap row is
 `{trace, index, row, col}` plus `color_value` when the cell is finite. Picks

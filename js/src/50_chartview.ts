@@ -8737,12 +8737,23 @@ export class ChartView {
   // How many retained rows a CPU hover scan covers. `g.n` is the DRAWN count,
   // which a category filter shrinks below the retained columns: capping the
   // scan at it left every visible row shipped after the cut unreachable while
-  // hidden rows before it still answered. `_fullN` is the pre-filter count
-  // `_filterScatterRows` records; an unfiltered trace keeps the `g.n` cap,
-  // which is load-bearing there (a smooth-resampled line's `n` exceeds its
-  // source columns; mismatched x/y lengths undershoot them).
+  // hidden rows before it still answered. A filtered trace is therefore scanned
+  // over exactly the rows `_visInv` carries visibility for (its length is the
+  // pre-filter count `_filterScatterRows` built it from) — deliberately that
+  // array and not a separately stored count, so the scan range and the
+  // hidden-row test can never disagree. An unfiltered trace keeps the `g.n`
+  // cap, which is load-bearing there (a smooth-resampled line's `n` exceeds
+  // its source columns; mismatched x/y lengths undershoot them).
+  //
+  // Growing the retained columns under a live filter would leave both stale,
+  // but cannot happen: `_filterScatterRows` runs only on a categorical color
+  // channel, and `append_data` (python/xy/interaction.py) rejects exactly
+  // those ("append does not support categorical color channels yet"), so a
+  // trace is appendable or category-filterable, never both. Whoever lifts that
+  // restriction must re-filter on append — `tests/test_legend_hidden_hover.py`
+  // fails here when they do.
   _cpuScanLimit(g, ...lengths) {
-    const n = g._fullN !== undefined ? g._fullN : g.n;
+    const n = g._visInv ? g._visInv.length : g.n;
     return Math.min(...lengths, n || lengths[0]);
   }
 
@@ -8919,11 +8930,13 @@ export class ChartView {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
     const geom = this._polarGeometry();
-    const limit = this._cpuScanLimit(g, cpu.x.length, cpu.y.length);
+    // No hidden-row test here: a bar trace cannot carry a categorical color
+    // channel (only funnels and point series build one), so it never has
+    // category legend rows to toggle and never reaches `_filterScatterRows`.
+    // Bar legends are whole-trace rows, which `_hoverAt` skips via
+    // `_legendHidden` before it gets here. Recorded in interaction spec §10.
+    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
     for (let i = 0; i < limit; i++) {
-      // Categorical bars filter through `_filterScatterRows` too (§10), so a
-      // hidden bar's footprint must not answer hover either.
-      if (this._cpuRowHidden(g, i)) continue;
       const x = this._decodeValue(cpu.x, cpu.xMeta, i);
       const y = this._decodeValue(cpu.y, cpu.yMeta, i);
       const value0 = g.value0Mode === 1 && cpu.value0

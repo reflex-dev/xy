@@ -195,3 +195,176 @@ def test_hidden_category_points_do_not_hover(tmp_path: Path) -> None:
     assert result["restoredN"] == len(ROWS), result
     assert result["restored"]["neighbour"]["target"] == HIDDEN_WITH_NEIGHBOUR, result
     assert "beta" in result["restored"]["neighbour"]["tooltip"], result
+
+
+# --------------------------------------------------------------------------
+# Scope tripwires for the two paths the CPU hover fallback deliberately does
+# NOT guard. Both hold because a categorical color channel is unreachable
+# there; if either fact changes, the hover fallback needs the guard and these
+# fail pointing at it (js/src/50_chartview.ts `_cpuScanLimit` / `_barHover`,
+# interaction spec §10).
+# --------------------------------------------------------------------------
+
+
+def test_bar_marks_cannot_carry_a_categorical_color_channel() -> None:
+    """So a bar trace never has category legend rows to toggle.
+
+    `_filterScatterRows` is gated on `colorMode === 2`; the client builds
+    category legend rows only for `color.mode === "categorical"`. No
+    bar-emitting mark produces one — bar colors resolve to per-series
+    constants or direct RGBA — so a bar's legend rows are whole-trace rows,
+    which `_hoverAt` already skips via `_legendHidden`. Hence no hidden-row
+    test inside `_barHover`.
+    """
+    from xy._figure import Figure
+
+    builders = {
+        "bar": lambda f: f.bar(["A", "B", "C"], [3.0, 5.0, 2.0]),
+        "barh": lambda f: f.bar(["A", "B"], [3.0, 5.0], orientation="horizontal"),
+        "grouped": lambda f: f.bar(["A", "B"], [[1.0, 2.0], [3.0, 4.0]], series=["a", "b"]),
+        "stacked": lambda f: f.bar(
+            ["A", "B"], [[1.0, 2.0], [3.0, 4.0]], series=["a", "b"], mode="stacked"
+        ),
+        "per_series_css": lambda f: f.bar(["A", "B"], [3.0, 5.0], color=["red"]),
+        # Numeric RGB(A) per item -> direct_rgba, the other per-row bar paint.
+        "direct_paints": lambda f: f.bar(
+            ["A", "B"], [3.0, 5.0], color=np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        ),
+    }
+    for label, build in builders.items():
+        fig = Figure()
+        build(fig)
+        for trace in fig.build_payload()[0]["traces"]:
+            if "bar" not in trace:
+                continue
+            mode = (trace.get("color") or {}).get("mode")
+            assert mode != "categorical", (label, trace.get("color"))
+
+
+def test_append_rejects_categorical_color_so_a_live_filter_cannot_go_stale() -> None:
+    """So `_visInv` can never be outrun by rows appended under a live filter.
+
+    `_filterScatterRows` (and the `_visInv` the hover scan is bounded by) runs
+    only on a categorical color channel; `append_data` rejects exactly those.
+    A trace is appendable or category-filterable, never both. Lifting that
+    restriction means re-filtering on append — see `_cpuScanLimit`.
+    """
+    from xy._figure import Figure
+
+    fig = Figure()
+    fig.scatter(np.arange(4.0), np.arange(4.0), color=np.array(["a", "b", "a", "b"]))
+    fig.build_payload()
+    assert fig.traces[0].color_ch.mode == "categorical"
+    for kwargs in ({}, {"color": ["a"]}):
+        with pytest.raises(ValueError, match="categorical color channels"):
+            fig.append(0, [4.0], [4.0], **kwargs)
+
+
+_BAR_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    window.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    view.comm = { send: () => {} };
+    let rows = [];
+    for (let i = 0; i < 200; i++) {
+      rows = [...document.querySelectorAll('[data-xy-slot="legend_item"]')];
+      if (rows.length >= 3) break;
+      await sleep(25);
+    }
+    if (rows.length < 3) throw new Error(`expected 3 legend rows, got ${rows.length}`);
+    const byName = (name) => rows.find((row) => row.textContent === name);
+    // Hover the middle of bar `i` of trace `ti`, read from its own retained
+    // columns so the probe does not have to model grouped-bar offsets.
+    const hoverBar = (ti, i) => {
+      const g = view.gpuTraces[ti];
+      const cpu = g._cpu;
+      const dx = view._decodeValue(cpu.x, cpu.xMeta, i);
+      const dy = view._decodeValue(cpu.y, cpu.yMeta, i);
+      const [lx, ly] = view._projectDataPoint("x", "y", dx, dy / 2);
+      const hit = view._hoverAt(lx - view.plot.x, ly - view.plot.y);
+      return hit ? { trace: hit.trace, index: hit.index } : null;
+    };
+    const middleBefore = hoverBar(1, 1);
+    const lastBefore = hoverBar(2, 1);
+    // Legend rows for a grouped bar chart are WHOLE-TRACE rows (no category
+    // rows exist: bars carry no categorical color channel).
+    const catRows = rows.filter((row) => row.dataset.xyLegendCategory !== undefined);
+    byName("s2").dispatchEvent(new MouseEvent("click"));
+    view._drawNow();
+    const middleAfter = hoverBar(1, 1);
+    const lastAfter = hoverBar(2, 1);
+    const hiddenFlag = !!view.gpuTraces[1]._legendHidden;
+    // Bars are not a point-pick mark, so they never enter the GPU pick pass
+    // (`pickCount` is never even assigned): `_hoverAt` is the whole hover
+    // path for a bar, which is why the hidden-series guard has to live there.
+    const g1 = view.gpuTraces[1];
+    const cpu1 = g1._cpu;
+    const [hx, hy] = view._projectDataPoint(
+      "x", "y",
+      view._decodeValue(cpu1.x, cpu1.xMeta, 1),
+      view._decodeValue(cpu1.y, cpu1.yMeta, 1) / 2,
+    );
+    const pickAtHidden = view._pickAt(hx - view.plot.x, hy - view.plot.y);
+    const pickCountRaw = g1.pickCount ?? null;
+
+    document.body.setAttribute(
+      "data-xy-bar-hidden",
+      JSON.stringify({
+        middleBefore, lastBefore, middleAfter, lastAfter,
+        hiddenFlag, pickCountRaw, catRowCount: catRows.length,
+        pickAtHidden: pickAtHidden ? pickAtHidden.trace : null,
+        legendNames: rows.map((row) => row.textContent),
+      })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-bar-hidden-error", String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+
+def test_hidden_bar_series_does_not_hover(tmp_path: Path) -> None:
+    """The bar guarantee that does exist: a whole-trace legend hide takes the
+    series out of draw, pick and hover, and leaves its neighbours alone."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+    chart = xy.bar_chart(
+        xy.bar(
+            x=["A", "B", "C"],
+            y=[[3.0, 5.0, 2.0], [4.0, 1.0, 6.0], [2.0, 3.0, 5.0]],
+            series=["s1", "s2", "s3"],
+        ),
+        xy.legend(),
+        width=520,
+        height=340,
+    )
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, _BAR_PROBE),
+        tmp_path / "bar_hidden_hover.html",
+        "data-xy-bar-hidden",
+        label="hidden bar series hover",
+    )
+    assert result["legendNames"] == ["s1", "s2", "s3"], result
+    assert result["catRowCount"] == 0, result  # whole-trace rows, not category rows
+    assert result["middleBefore"] == {"trace": 1, "index": 1}, result
+    assert result["lastBefore"] == {"trace": 2, "index": 1}, result
+    # Hidden series: out of draw/pick and out of hover. Bars never join the
+    # GPU pick pass (no `pointPick`), so `_hoverAt` is the entire hover path.
+    assert result["hiddenFlag"] is True, result
+    assert result["pickAtHidden"] is None, result
+    assert not result["pickCountRaw"], result
+    assert result["middleAfter"] != {"trace": 1, "index": 1}, result
+    assert result["middleAfter"] is None or result["middleAfter"]["trace"] != 1, result
+    # Its neighbour is untouched.
+    assert result["lastAfter"] == {"trace": 2, "index": 1}, result

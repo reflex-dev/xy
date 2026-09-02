@@ -22,17 +22,41 @@ import pytest
 import xy
 from xy._svg import _escape_attr, escape
 
-#: Every code point XML 1.0 cannot carry, as `Char` excludes them.
+#: Representatives of every code point XML 1.0 cannot carry. `escape` strips
+#: five disjoint regions — U+0000-0008, U+000B-000C, U+000E-001F, the 2048
+#: surrogates U+D800-DFFF, and U+FFFE-FFFF — and this samples each: the C0
+#: controls exhaustively (29 of them, one parametrized case each) and the two
+#: larger blocks by their endpoints. Enumerating all 2048 surrogates would add
+#: nothing: the helper strips them with one contiguous `range`, so an endpoint
+#: pair pins that range's bounds, and the two neighbours just outside it
+#: (U+D7FF, U+E000) are in `XML_LEGAL_EDGE` below, which is what an off-by-one
+#: would actually break.
 XML_ILLEGAL = (
     [chr(c) for c in range(0x20) if c not in (0x09, 0x0A, 0x0D)]
     + ["￾", "￿"]
-    + ["\ud800", "\udfff"]  # lone surrogates
+    + ["\ud800", "\udfff"]  # lone surrogates: the block's endpoints
 )
 
 #: Neighbours the rule must NOT touch: the three legal controls, DEL, the C1
 #: range, no-break space (not `isprintable`, so it takes the slow path), the
-#: replacement character and an astral code point.
-XML_LEGAL_EDGE = ["\t", "\n", "\r", "\x7f", "\x80", "\x9f", "\xa0", "�", "\U0001f600"]
+#: code points immediately outside the surrogate block, U+FFFD itself (the
+#: replacement character this rule deliberately does not substitute), and the
+#: first and last astral code points.
+XML_LEGAL_EDGE = [
+    "\t",
+    "\n",
+    "\r",
+    "\x7f",
+    "\x80",
+    "\x9f",
+    "\xa0",
+    "\ud7ff",
+    "\ue000",
+    "�",
+    "\U0001f600",
+    "\U00010000",
+    "\U0010ffff",
+]
 
 
 def _ident(ch: str) -> str:
@@ -67,6 +91,26 @@ def test_escape_drops_every_xml_illegal_code_point(ch: str) -> None:
 @pytest.mark.parametrize("ch", XML_LEGAL_EDGE, ids=_ident)
 def test_escape_keeps_every_legal_neighbour(ch: str) -> None:
     assert escape(f"a{ch}b") == f"a{ch}b"
+
+
+def test_the_stripped_set_is_exactly_the_xml_char_production() -> None:
+    # The sampled tables above are representatives; this is the exhaustive
+    # statement they stand in for, checked against XML 1.0 §2.2 `Char` over
+    # every code point. It is what makes endpoint sampling sufficient.
+    from xy._svg import _XML_ILLEGAL
+
+    def legal(cp: int) -> bool:
+        return (
+            cp in (0x09, 0x0A, 0x0D)
+            or 0x20 <= cp <= 0xD7FF
+            or 0xE000 <= cp <= 0xFFFD
+            or 0x10000 <= cp <= 0x10FFFF
+        )
+
+    assert {cp for cp in range(0x110000) if not legal(cp)} == set(_XML_ILLEGAL)
+    # ...and the sampled tables really do land in that set, and outside it.
+    assert all(ord(ch) in _XML_ILLEGAL for ch in XML_ILLEGAL)
+    assert all(ord(ch) not in _XML_ILLEGAL for ch in XML_LEGAL_EDGE)
 
 
 def test_escape_still_escapes_markup_around_dropped_characters() -> None:

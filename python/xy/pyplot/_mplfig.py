@@ -391,6 +391,9 @@ class Figure:
                 grid = _GridSpec(self, nrows, ncols)
                 rect = grid.cell_rect((row, row + 1), (col, col + 1))
                 ax = self.add_axes(rect)
+                # add_axes() models free-form panels as a 1×N row; record the
+                # requested grid so tight_layout & co. size chrome for it.
+                self._nrows, self._ncols = nrows, ncols
                 ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
                 ax._subplot_key = subplot_key
                 ax._subplot_claimed = True

@@ -249,6 +249,11 @@ ARTIST_KWARG_KEEP: dict[str, frozenset[str]] = {
     "pcolorfast": frozenset({"rasterized"}),
     "imshow": frozenset({"clip_on"}),
     "matshow": frozenset({"clip_on"}),
+    # Chrome setters return no artist to hide, so they apply ``visible``
+    # to the stored title/label state themselves.
+    "set_title": frozenset({"visible"}),
+    "set_xlabel": frozenset({"visible"}),
+    "set_ylabel": frozenset({"visible"}),
 }
 
 
@@ -262,6 +267,8 @@ def strip_artist_noops(kwargs: dict[str, Any], keep: frozenset[str] = frozenset(
     for name in ARTIST_NOOP_KWARGS:
         if name in kwargs and name not in keep:
             kwargs.pop(name)  # compat-noop: no engine equivalent (see ARTIST_NOOP_KWARGS)
+    if "visible" in keep:
+        return True  # the method applies ``visible`` to its own state
     visible = kwargs.pop("visible", True)
     return True if visible is None else bool(visible)
 

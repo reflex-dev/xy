@@ -347,7 +347,14 @@ ladder cannot describe the window and `logTicks` returns `linearTicks(lo, hi,
 target)` instead: linearly spaced "nice" positions across the span, every one
 labelled, with `step` set to the linear step so `fmtLinear` gives the axis one
 shared decimal count (`0.30, 0.31, …`, §6.2), and `log: true` still set. This is
-what matplotlib and Plotly do on a sub-decade log window. The rule is
+what matplotlib and Plotly do on a sub-decade log window. A positive
+*subnormal* window (`1e-323..1.5e-323`, a few ulps wide) defeats even that:
+`(hi − lo) / target` underflows to 0, `niceStep` answers 1 and no multiple of
+it lands inside the window. When the linear fallback yields fewer than two
+ticks on a non-degenerate window, the ordered endpoints `[lo, hi]` are the
+ticks (both labelled, `step = hi − lo`); they are always representable and
+`fmtLinear` is exponential there regardless of step. A degenerate `lo === hi`
+keeps `linearTicks`' single tick. The rule is
 range-based, so wide windows are byte-identical to before (`0.5..50` has two
 decades in view and keeps `0.5 1 2 5 10 20 50`), and it is mirrored exactly by
 `_log_ticks` in `python/xy/_svg.py` — which `axis_ticks` (SVG and, through it,

@@ -4069,7 +4069,9 @@ class Axes(PlotTypeMixin):
         else raises loudly. Basic mathtext (``$...$``) is rendered.
         """
         props = self._axis_props("x")
-        props["label"] = _plain_text(label)
+        # visible=False: Matplotlib keeps the hidden Text; the shim's chrome
+        # has no hidden state, so the label is simply not written.
+        props["label"] = _plain_text(label) if kwargs.pop("visible", True) else ""
         _apply_axis_label_kwargs(props, kwargs, "set_xlabel()", point_scale=self._point_scale())
         self._invalidate()
 
@@ -4079,7 +4081,7 @@ class Axes(PlotTypeMixin):
         ``loc`` takes ``"bottom"``/``"center"``/``"top"`` for this axis.
         """
         props = self._axis_props("y")
-        props["label"] = _plain_text(label)
+        props["label"] = _plain_text(label) if kwargs.pop("visible", True) else ""
         _apply_axis_label_kwargs(props, kwargs, "set_ylabel()", point_scale=self._point_scale())
         self._invalidate()
 
@@ -4091,6 +4093,8 @@ class Axes(PlotTypeMixin):
         Basic mathtext (``$...$``) is rendered.
         """
         host = self._y2_of or self
+        if not kwargs.pop("visible", True):
+            title = ""  # hidden title: the chrome slot is cleared (see set_xlabel)
         loc = str(kwargs.pop("loc", rcParams["axes.titlelocation"])).lower()
         if loc not in {"left", "center", "right"}:
             raise ValueError("set_title() loc must be 'left', 'center', or 'right'")
@@ -4445,6 +4449,18 @@ class Axes(PlotTypeMixin):
         x = self._data_coordinate(xy[0], "x")
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
+
+    def _tick_positions(self, ticks: Any, axis: str, props: dict[str, Any]) -> Any:
+        """Tick positions as engine floats; datetime-likes become ms since
+        epoch and pin the axis kind to ``time`` (as `fill_betweenx` does), so
+        ticks authored before any datetime artist still label as dates."""
+        from xy.components import _is_datetime_like
+
+        if _is_datetime_like(ticks):
+            props["type_"] = "time"
+            self._axis_props(axis)["type_"] = "time"
+            return unit_converted_values(ticks)
+        return ticks
 
     def _limit_coordinate(self, value: Any, axis: str) -> float:
         """A limit argument as the engine's float: numbers as they are,
@@ -6726,7 +6742,7 @@ class Axes(PlotTypeMixin):
         props = host._axis["x"]
         if ticks is not None:
             spec = host._scale_specs["x"]
-            ticks = unit_converted_values(ticks)  # datetime-likes → ms since epoch
+            ticks = self._tick_positions(ticks, "x", props)
             host._auto_scale_axis_ticks.discard("x")
             host._tickers.pop(("x", "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
@@ -6768,7 +6784,7 @@ class Axes(PlotTypeMixin):
         props = host._axis[key]
         if ticks is not None:
             spec = host._scale_specs[key]
-            ticks = unit_converted_values(ticks)  # datetime-likes → ms since epoch
+            ticks = self._tick_positions(ticks, "y", props)
             host._auto_scale_axis_ticks.discard(key)
             host._tickers.pop((key, "major_locator"), None)
             props["tick_values"] = list(map(float, _scale_values(ticks, spec)))

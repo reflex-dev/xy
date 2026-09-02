@@ -7222,8 +7222,15 @@ def sankey_chart(
         lead = ()
     else:
         # `sankey_chart()` keeps its historical shape: an empty diagram that
-        # the layout refuses by name at figure build.
-        lead = (sankey(links, **mark_kwargs),)
+        # the layout refuses by name at figure build. Sankey keywords without
+        # links are refused here too, by name — otherwise the generic
+        # empty-links error at build would never mention the stray keyword.
+        if mark_kwargs:
+            raise ValueError(
+                f"sankey_chart got {sorted(mark_kwargs)} without links; pass the "
+                "links positionally or set these options on an xy.sankey(...) child"
+            )
+        lead = (sankey(links),)
     children = (
         *lead,
         x_axis(domain=(-0.09, 1.09), show=False),

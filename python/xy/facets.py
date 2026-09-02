@@ -35,7 +35,11 @@ def _subset_data(data: Any, mask: np.ndarray, n: int) -> Any:
         out: dict[Any, Any] = {}
         for key, value in data.items():
             if hasattr(value, "to_numpy"):
-                arr = value.to_numpy()
+                # Arrow-aware: a pyarrow string/dictionary/chunked column
+                # refuses the default zero-copy `to_numpy()`; the facet key
+                # column itself comes through here after `_facet_values`
+                # already materialized it (`columns.label_ndarray`).
+                arr = columns.label_ndarray(value)
             elif isinstance(value, np.ndarray):
                 arr = value
             elif isinstance(value, (list, tuple)):
@@ -93,9 +97,12 @@ def _facet_values(data: Any, by: Any) -> tuple[np.ndarray, list[str]]:
                 raise ValueError(f"facet column {by!r} not found in data")
             raw = data[by]
         elif hasattr(data, "__getitem__"):
+            # Only the lookup contract's own failures mean "no such column"
+            # (the same trio `components._resolve` normalizes); a backend
+            # error inside `__getitem__` is a real error and propagates.
             try:
                 raw = data[by]
-            except Exception as exc:
+            except (KeyError, TypeError, IndexError) as exc:
                 raise ValueError(f"facet column {by!r} not found in data") from exc
         else:
             raise TypeError("facet_chart by= as a string requires mapping/table data")

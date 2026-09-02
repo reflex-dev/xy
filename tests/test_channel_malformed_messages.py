@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -57,8 +58,33 @@ def _recording_callbacks(fired: list[str]) -> ChannelCallbacks:
 
 _NON_STRING_TYPES = [["view"], {"type": "view"}, 3, 1.5, None, b"pick", ("pick",)]
 
+# A JSON client may send an integer literal of any length; `float()` on one
+# raises OverflowError, which is neither TypeError nor ValueError. 10**400 is
+# the smallest convenient literal past the f64 ceiling that pytest can still
+# render as a test id (`int.__repr__` refuses past 4300 digits).
+_HUGE_INT = 10**400
+
 _MALFORMED: list[dict[str, Any]] = [
     *[{"type": kind} for kind in _NON_STRING_TYPES],
+    {"type": "view", "x0": 0, "x1": _HUGE_INT},
+    {"type": "view", "x0": 0.0, "x1": 1.0, "px": _HUGE_INT},
+    {"type": "density_view", "trace": 0, "x0": 0, "x1": _HUGE_INT, "y0": 0, "y1": 1},
+    {
+        "type": "density_view",
+        "trace": 0,
+        "x0": 0.0,
+        "x1": 1.0,
+        "y0": 0.0,
+        "y1": 1.0,
+        "w": _HUGE_INT,
+    },
+    {"type": "view_change", "ranges": {"x": [0, _HUGE_INT], "y": [0, 1]}},
+    {"type": "view_change", "x0": 0, "x1": _HUGE_INT, "y0": 0, "y1": 1},
+    {"type": "select", "x0": 0, "x1": _HUGE_INT, "y0": 0, "y1": 1},
+    {"type": "select_polygon", "points": [[0, 0], [1, _HUGE_INT], [2, 2]]},
+    {"type": "legend_toggle", "trace": 0, "hidden": True, "category": _HUGE_INT},
+    {"type": "pick", "trace": 0, "index": _HUGE_INT},
+    {"type": "click", "trace": 0, "index": _HUGE_INT},
     {"type": "view", "x0": 1e-310, "x1": 2e-310},
     {"type": "view", "x0": 0.0, "x1": 1.0, "px": [512]},
     {"type": "density_view", "trace": 0, "x0": 1e-310, "x1": 2e-310, "y0": -1.0, "y1": 1.0},
@@ -186,6 +212,40 @@ def test_pick_keeps_advertised_count_bound_when_columns_are_longer() -> None:
     assert miss is not None and miss[0]["row"] is None
 
 
+def test_pick_histogram_with_more_bins_than_samples_reads_every_bar() -> None:
+    # 5 samples over 20 bars: `n_points` (5) is below the row count, and every
+    # bar is a real mark — the bound is the bin rows, not the sample count.
+    fig = Figure().histogram(np.array([0.5, 1.5, 4.5, 12.5, 19.5]), bins=20)
+    fig.build_payload()
+    t = fig.traces[0]
+    assert t.kind == "histogram" and len(t.x) == 20 and t.n_points == 5
+    hit = handle_message(fig, {"type": "pick", "trace": 0, "index": 15})
+    miss = handle_message(fig, {"type": "pick", "trace": 0, "index": 20})
+    assert hit is not None and hit[0]["row"] is not None
+    assert hit[0]["row"]["index"] == 15
+    assert miss is not None and miss[0]["row"] is None
+
+
+def test_pick_index_error_from_lookup_still_replies_null_row(monkeypatch: Any) -> None:
+    # The defensive IndexError path must answer, not drop: a silent drop
+    # would leave the client's previous hover row on screen.
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+    fig.build_payload()
+
+    def _raise(self: Figure, *args: Any, **kwargs: Any) -> None:
+        raise IndexError("column shorter than advertised")
+
+    monkeypatch.setattr(Figure, "pick", _raise)
+    fired: list[str] = []
+    reply = handle_message(
+        fig, {"type": "pick", "trace": 0, "index": 1, "seq": 9}, None, _recording_callbacks(fired)
+    )
+    assert reply == ({"type": "pick_result", "seq": 9, "row": None}, None)
+    assert fired == []
+    # `click` has no reply to carry the clear, so it stays a silent no-op.
+    assert handle_message(fig, {"type": "click", "trace": 0, "index": 1}, None) is None
+
+
 def test_pick_heatmap_bound_is_the_grid_not_the_edge_columns() -> None:
     # Grid marks keep only the outer edges in x/y; the readable rows are the
     # cells, so the bound must not collapse to `len(t.x) == 2`.
@@ -226,20 +286,42 @@ def test_density_view_subnormal_span_is_dropped_without_drill_mutation(
 
 
 @pytest.mark.parametrize("span", [3e-308, 1e-300, 1e-200, 1e-100, 1e-20, 1e-6])
-def test_density_view_tiny_normal_spans_reply_or_drop_without_raising(span: float) -> None:
-    # Spans that survive `normalize_window` but still out-resolve the drill
-    # ladder (`extent / (pad * span)` overflowing f64, or a sub-ulp block) must
-    # fall back to the raw window, not raise from `aligned_window`.
+def test_density_view_tiny_normal_spans_are_served_from_the_raw_window(span: float) -> None:
+    # Spans that survive `normalize_window` but out-resolve the drill ladder
+    # (`extent / (pad * span)` overflows f64) must fall back to the raw view
+    # window instead of raising from `aligned_window`.
+    #
+    # The window is anchored at 0.0, not at some mid-domain value: 50.0 has an
+    # ulp of ~7e-15, so `50.0 + span` collapses back to 50.0 for every span
+    # here but the last, and the message would be dropped by the zero-span
+    # rule without ever reaching the ladder.
+    x0, x1 = 0.0, span
+    assert x1 > x0, "span must survive the addition or this case tests nothing"
+
+    calls: list[tuple[float, ...]] = []
+    original = lod.aligned_window
+
+    def _spy(*args: float) -> tuple[float, float]:
+        calls.append(args)
+        return original(*args)
+
     fig = _density_scatter()
     fig.build_payload()
-    reply = handle_message(
-        fig,
-        {"type": "density_view", "trace": 0, "x0": 50.0, "x1": 50.0 + span, "y0": 0.0, "y1": 100.0},
-    )
-    if reply is not None:
-        entry = reply[0]["traces"][0]
-        assert entry["mode"] in {"points", "density"}
-        assert all(math.isfinite(v) for v in (*entry["x_range"], *entry["y_range"]))
+    with mock.patch.object(lod, "aligned_window", _spy):
+        reply = handle_message(
+            fig, {"type": "density_view", "trace": 0, "x0": x0, "x1": x1, "y0": 0.0, "y1": 100.0}
+        )
+
+    # A reply, not a drop — proof the request reached the drill path rather
+    # than dying in validation, which is what made the old anchor vacuous.
+    assert reply is not None
+    assert calls, "aligned_window was never reached"
+    entry = reply[0]["traces"][0]
+    assert entry["mode"] == "points"
+    assert all(math.isfinite(v) for v in (*entry["x_range"], *entry["y_range"]))
+    # The shipped window still contains the requested one (containment is the
+    # `aligned_window` contract, including on the pass-through fallbacks).
+    assert entry["x_range"][0] <= x0 and entry["x_range"][1] >= x1
 
 
 def test_normalize_window_rejects_subnormal_spans_only_when_area_is_required() -> None:
@@ -262,15 +344,21 @@ def test_normalize_window_rejects_subnormal_spans_only_when_area_is_required() -
 @pytest.mark.parametrize(
     "lo,hi,extent_lo,extent_hi",
     [
-        (1e-310, 2e-310, -1.0, 1.0),  # quotient overflows to inf
-        (0.0, 3e-308, 0.0, 4.0),  # finite ratio, level 1024: 2**1024 is not a float
-        (0.0, 1e-320, 0.0, 1e-300),  # subnormal block
-        (0.0, 1e-10, -1e250, 1e250),  # huge reach over a tiny block
+        # The two hardened branches, at pad=1.0: an infinite extent/span
+        # quotient, and a finite one whose level still reaches 1024 (where the
+        # old `extent / (1 << level)` could not build the divisor).
+        (1e-310, 2e-310, -1.0, 1.0),
+        (0.0, 3e-308, 0.0, 4.0),
+        # Deep-but-representable ladder rungs (levels ~67 and ~865): the
+        # ordinary arithmetic, kept as the surrounding coverage.
+        (0.0, 1e-320, 0.0, 1e-300),
+        (0.0, 1e-10, -1e250, 1e250),
     ],
 )
 def test_aligned_window_extreme_spans_never_raise_and_contain(
     lo: float, hi: float, extent_lo: float, extent_hi: float
 ) -> None:
+    assert hi > lo, "span must be representable at this offset or the case is vacuous"
     for pad in (1.0, 2.0, 4.0, 8.0):
         a, b = lod.aligned_window(lo, hi, extent_lo, extent_hi, pad)
         assert math.isfinite(a) and math.isfinite(b)

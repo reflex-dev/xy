@@ -415,6 +415,13 @@ _DASH_SEGMENT_PATTERNS: dict[str, tuple[tuple[float, float], ...]] = {
 _LINESTYLE_TO_FMT_TOKEN = {"solid": "-", "dashed": "--", "dashdot": "-.", "dotted": ":"}
 
 
+def _is_rgba_channels(value: Any) -> bool:
+    """True for one numeric RGB(A) tuple; false for a sequence of color names."""
+    return len(value) in (3, 4) and all(
+        np.isscalar(item) and not isinstance(item, (str, bytes)) for item in value
+    )
+
+
 def _dash_segment_pattern(where: str, linestyle: Any) -> Optional[tuple[tuple[float, float], ...]]:
     """Dash pattern for a linestyle token or name; None means solid."""
     if linestyle is None:
@@ -1393,8 +1400,9 @@ class PlotTypeMixin:
             and not isinstance(chosen_color, str)
             and len(chosen_color)
             # A single RGB(A) tuple (``colors=plt.cm.tab10(3)``) is one color,
-            # not a per-line sequence, exactly as ``vlines`` reads it.
-            and not (len(chosen_color) in (3, 4) and all(np.isscalar(v) for v in chosen_color))
+            # not a per-line sequence, exactly as ``vlines`` reads it. Strings
+            # are numpy scalars too, so a 3- or 4-name list must be excluded.
+            and not _is_rgba_channels(chosen_color)
         ):
             chosen_color = chosen_color[0]
         entry = self._add(
@@ -1455,7 +1463,7 @@ class PlotTypeMixin:
             color is not None
             and not isinstance(color, str)
             and len(color)
-            and not (len(color) in (3, 4) and all(np.isscalar(value) for value in color))
+            and not _is_rgba_channels(color)
         ):
             color = color[0]
         transform = kwargs.pop("transform", None)
