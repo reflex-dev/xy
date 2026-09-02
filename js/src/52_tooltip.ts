@@ -559,6 +559,7 @@ Object.assign(ChartView.prototype, {
     this._hoverTargets = null;
     this._bandRows = null;
     this._bandCursor = null;
+    this._bandTitleValue = undefined;
     if (this._bandPicks) this._bandPicks.clear();
     this._hideTooltipCursor();
   },
@@ -620,6 +621,14 @@ Object.assign(ChartView.prototype, {
         const [value, kind] = this._tooltipLookup(first, field);
         return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
       });
+    } else if (this._bandTitleValue !== undefined && this._bandTitleValue !== null) {
+      // A bar band is titled by its category centre, not the anchor slot; the
+      // centre is an axis coordinate, so it takes the same label lookup as a
+      // row value.
+      const [value, kind] = this._sourceDisplayValue(
+        hits[0] && hits[0].g, along, this._bandTitleValue, first[`${along}_kind`],
+      );
+      title = this._formatTooltipValue(value, kind, formats[along]);
     } else if (first[along] !== undefined) {
       title = this._formatTooltipValue(first[along], first[`${along}_kind`], formats[along]);
     }

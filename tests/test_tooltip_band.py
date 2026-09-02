@@ -394,3 +394,273 @@ def test_browser_nearest_hover_highlight_is_visible() -> None:
     assert payload["target"] == [0, 1], payload
     assert payload["before"] < 10, payload
     assert payload["after"] > payload["before"] + 60, payload
+
+
+# --- Edge cases (§7.3): the probes below share one helper prelude; each
+# reports through `data-xy-bandedge` and drives `view._hover` like the ones
+# above.
+
+_EDGE_HELPERS = """
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const view = window.__fcProbeView;
+  if (!view) throw new Error("no probe view captured");
+  view._drawNow(); view._raf = null;
+  const sent = []; view.comm = { send: (m) => sent.push(m) };
+  const hovers = []; document.addEventListener("xy:hover", (e) => hovers.push(e.detail));
+  for (let i = 0; i < 200 && !view.gpuTraces[0]._cpu; i++) await sleep(25);
+  const rect = view.canvas.getBoundingClientRect();
+  const g0 = view.gpuTraces[0];
+  const proj = (x, y, g = g0) => {
+    const [px, py] = view._projectDataPoint(g.xAxis, g.yAxis, x, y);
+    return [px - view.plot.x, py - view.plot.y];
+  };
+  const hover = (x, y) => view._hover({ clientX: rect.left + x, clientY: rect.top + y });
+  const tip = view.tooltip;
+  const cursor = () => view.root.querySelector('[data-xy-slot="tooltip_cursor"]');
+  const state = () => ({
+    shown: tip.style.display === "block",
+    title: tip.querySelector('[data-xy-slot="tooltip_title"]')?.textContent ?? null,
+    rows: [...tip.querySelectorAll('[data-xy-slot="tooltip_row"]')].map((r) => r.textContent),
+    targets: (view._hoverTargets || []).length,
+    cursorShown: !!cursor() && cursor().style.display === "block",
+    cursorLeft: cursor() ? parseFloat(cursor().style.left) : null,
+    cursorTop: cursor() ? parseFloat(cursor().style.top) : null,
+  });
+  const done = (obj) => document.body.setAttribute("data-xy-bandedge", JSON.stringify(obj));
+"""
+
+
+def _edge_probe(body: str) -> str:
+    return (
+        "<script>(async () => { try {"
+        + _EDGE_HELPERS
+        + body
+        + """
+  } catch (err) { document.body.setAttribute("data-xy-bandedge-error", String((err && err.stack) || err)); }
+})();</script>"""
+    )
+
+
+def _run_edge(chart, body: str, label: str) -> dict:
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("headless chromium not found")
+    document = probe_document(chart, _edge_probe(body))
+    with tempfile.TemporaryDirectory() as td:
+        return run_browser_probe(
+            chromium, document, Path(td) / "edge.html", "data-xy-bandedge", label=label
+        )
+
+
+_CATS = ["A", "B", "C", "D", "E"]
+_PV5 = [4.0, 3.0, 5.0, 2.0, 6.0]
+_UV5 = [2.0, 5.0, 1.0, 4.0, 3.0]
+
+
+def test_browser_grouped_bars_form_one_band_per_category() -> None:
+    """Recharts' classic case: a grouped BarChart lists every series of the
+    category the pointer is over, from any x inside the group, with one cursor
+    on the category centre and the category label as the title."""
+    chart = xy.bar_chart(
+        xy.bar(_CATS, [_PV5, _UV5], series=["pv", "uv"]),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [bx] = proj(1, 0);
+  const slots = view.gpuTraces.map((g) => g._cpu.x[1] / (g._cpu.xMeta.scale || 1) + g._cpu.xMeta.offset);
+  hover(bx, 8); const centre = state();
+  hover(bx - 25, 8); const leftSlot = state();
+  hover(bx + 25, 8); const rightSlot = state();
+  const [cx] = proj(2, 0);
+  hover((bx + cx) / 2 + 2, 8); const pastGap = state();
+  done({ slots, centre, leftSlot, rightSlot, pastGap, bx, plotX: view.plot.x, hovers: hovers.length,
+         picks: sent.filter((m) => m.type === "pick").length });
+""",
+        "grouped bars band",
+    )
+    slots = payload["slots"]
+    assert slots[0] < 1.0 < slots[1], slots  # the two slots straddle the category
+    for key in ("centre", "leftSlot", "rightSlot"):
+        s = payload[key]
+        assert s["shown"] is True and s["title"] == "B", (key, s)
+        assert s["rows"] == ["pv3", "uv5"], (key, s)
+        assert s["cursorShown"] is True, (key, s)
+        # One cursor on the category centre (root coordinates), whichever slot
+        # the pointer is over.
+        assert abs(s["cursorLeft"] - (payload["bx"] + payload["plotX"])) < 1.0, (key, s, payload)
+    assert payload["pastGap"]["title"] == "C", payload["pastGap"]
+    # Three pointer positions in one band: one hover event, one pick per series.
+    assert payload["hovers"] == 2 and payload["picks"] == 4, payload
+
+
+def test_browser_horizontal_bars_band_along_y() -> None:
+    chart = xy.bar_chart(
+        xy.bar(_CATS, [_PV5, _UV5], series=["pv", "uv"], orientation="horizontal"),
+        xy.tooltip(mode="y"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [, by] = proj(0, 1); hover(view.plot.w - 8, by); done({ atB: state(), plotY: view.plot.y, by });
+""",
+        "horizontal bars band",
+    )
+    s = payload["atB"]
+    assert s["shown"] is True and s["title"] == "B" and s["rows"] == ["pv3", "uv5"], s
+    assert s["cursorShown"] is True, s
+    assert abs(s["cursorTop"] - (payload["by"] + payload["plotY"])) < 1.0, (s, payload)
+
+
+def test_browser_band_respects_each_series_own_x_grid() -> None:
+    """A series with no point at the band coordinate is omitted, not guessed:
+    two series on interleaved grids alternate bands at the midpoints."""
+    chart = xy.line_chart(
+        xy.line([0, 1, 2, 3, 4, 5, 6], [1, 2, 3, 2, 1, 2, 3], name="whole"),
+        xy.line([0.5, 1.5, 2.5, 3.5, 4.5, 5.5], [3, 2, 1, 2, 3, 2], name="half"),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [x2] = proj(2, 0), [x25] = proj(2.5, 0);
+  hover(x2 + 1, 8); const at2 = state();
+  hover((x2 + x25) / 2 - 0.6, 8); const beforeMid = state();
+  hover((x2 + x25) / 2 + 0.6, 8); const pastMid = state();
+  done({ at2, beforeMid, pastMid });
+""",
+        "interleaved grids",
+    )
+    assert payload["at2"]["rows"] == ["whole3"] and payload["at2"]["title"] == "2", payload
+    assert payload["beforeMid"]["rows"] == ["whole3"], payload
+    assert payload["pastMid"]["rows"] == ["half1"] and payload["pastMid"]["title"] == "2.5", payload
+
+
+def test_browser_band_boundary_is_the_axis_midpoint_on_log_scales() -> None:
+    chart = xy.line_chart(
+        xy.line([1, 10, 100, 1000], [1, 2, 3, 4], name="s"),
+        xy.x_axis(type_="log"),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [logMid] = proj(Math.sqrt(1000), 0), [linMid] = proj(55, 0);
+  hover(logMid - 2, 8); const under = state();
+  hover(logMid + 2, 8); const over = state();
+  hover(linMid, 8); const linear = state();
+  done({ under, over, linear });
+""",
+        "log band boundary",
+    )
+    assert payload["under"]["title"] == "10", payload
+    assert payload["over"]["title"] == "100", payload
+    # The linear midpoint (55) is well past the log midpoint: still 100.
+    assert payload["linear"]["title"] == "100", payload
+
+
+def test_browser_hidden_band_tooltip_keeps_the_hover_contract() -> None:
+    chart = xy.line_chart(
+        xy.line([0, 1, 2], [1, 2, 3], name="a"),
+        xy.tooltip(show=False, mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [x1] = proj(1, 0); hover(x1, 8);
+  done({ s: state(), hovers: hovers.map((h) => [(h.points || []).length, h.row && h.row.x]),
+         picks: sent.filter((m) => m.type === "pick").length });
+""",
+        "show=False band",
+    )
+    s = payload["s"]
+    assert s["shown"] is False and s["cursorShown"] is False, s
+    assert s["targets"] == 1, s  # active dot state stays, like nearest mode
+    assert payload["hovers"] == [[1, 1]] and payload["picks"] == 1, payload
+
+
+def test_browser_band_survives_context_loss_and_destroy() -> None:
+    """The band-dot scratch VAO belongs to one GL context: a restore must not
+    bind the dead handle (which made the recovery frame fail its error check
+    and stranded the chart), and destroy must delete it."""
+    chart = xy.line_chart(
+        xy.line([0, 1, 2, 3], [1, 2, 3, 4], name="a"),
+        xy.line([0, 1, 2, 3], [4, 3, 2, 1], name="b"),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [x1] = proj(1, 0); hover(x1, 8); view._drawNow();
+  const vao = view._bandDotVao;
+  const host = view._glHost;
+  const ext = (host ? host.gl : view.gl).getExtension("WEBGL_lose_context");
+  if (!ext) throw new Error("WEBGL_lose_context unavailable");
+  const waitUntil = async (pred, label) => {
+    const deadline = performance.now() + 5000;
+    while (!pred()) { if (performance.now() > deadline) throw new Error("timeout " + label); await sleep(20); }
+  };
+  const lc = view._contextLossCount, rc = view._contextRestoreCount;
+  ext.loseContext(); await waitUntil(() => view._contextLossCount >= lc + 1, "loss");
+  ext.restoreContext();
+  await waitUntil(() => view._contextRestoreCount >= rc + 1 && view.canvas.dataset.xyCtx === "live", "restore");
+  const restored = { vaoReplaced: !!view._bandDotVao && view._bandDotVao !== vao, targets: (view._hoverTargets || []).length };
+  hover(x1 + 1, 8); view._drawNow();
+  const after = { ...state(), glError: view.gl.getError() };
+  view.destroy();
+  done({ hadVao: !!vao, restored, after, vaoAfterDestroy: view._bandDotVao });
+""",
+        "band context loss",
+    )
+    assert payload["hadVao"] is True, payload
+    assert payload["restored"]["vaoReplaced"] is True, payload
+    assert payload["after"]["shown"] is True and payload["after"]["glError"] == 0, payload
+    assert payload["after"]["rows"] == ["a2", "b3"], payload
+    assert payload["vaoAfterDestroy"] is None, payload
+
+
+def test_browser_three_grouped_series_snap_to_the_chain_not_the_pointer() -> None:
+    """From the gap after a category the pointer is nearer the *previous*
+    category's slot of the far series than to this category's; bar series
+    snap to the band chain, so all three slots read as one band."""
+    chart = xy.bar_chart(
+        xy.bar(_CATS, [_PV5, _UV5, [1.0, 2.0, 3.0, 4.0, 5.0]], series=["pv", "uv", "amt"]),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [bx] = proj(1, 0), [cx] = proj(2, 0);
+  hover(bx - 22, 8); const leftSlotB = state();
+  hover((bx + cx) / 2 + 2, 8); const gapIntoC = state();
+  hover((bx + cx) / 2 - 2, 8); const gapIntoB = state();
+  done({ leftSlotB, gapIntoC, gapIntoB, bx, cx, plotX: view.plot.x });
+""",
+        "three grouped series",
+    )
+    assert payload["leftSlotB"]["rows"] == ["pv3", "uv5", "amt2"], payload["leftSlotB"]
+    assert payload["gapIntoC"]["title"] == "C", payload["gapIntoC"]
+    assert payload["gapIntoC"]["rows"] == ["pv5", "uv1", "amt3"], payload["gapIntoC"]
+    assert payload["gapIntoB"]["title"] == "B", payload["gapIntoB"]
+    assert payload["gapIntoB"]["rows"] == ["pv3", "uv5", "amt2"], payload["gapIntoB"]
+    assert abs(payload["gapIntoC"]["cursorLeft"] - (payload["cx"] + payload["plotX"])) < 1.0, (
+        payload
+    )

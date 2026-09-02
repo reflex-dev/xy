@@ -414,10 +414,19 @@ Wire: `tooltip.mode`, shipped only when not `"nearest"`.
   a different x) joins it (`_bandHits`). Index-aligned series therefore read
   as one band whose boundaries fall halfway between adjacent points; a
   series with no point at that coordinate is omitted rather than guessed.
-- Eligible series are point and line marks with retained CPU columns.
-  Density tiers, bars, rectangles, ribbons, funnels, heatmaps and segments
-  keep their own hover geometry and never join a band; legend-hidden series
-  are out (§10). Polar charts have no band axis and fall back to nearest.
+- Eligible series are point, line and area marks with retained CPU columns,
+  and bars. A bar's footprint along its position axis (`pos ± width/2`, in
+  plot pixels) is its band extent: the pointer anywhere over the bar selects
+  it, and bars whose footprints touch chain into one band — so the slots of
+  a grouped category read as one band listing every series, a stacked
+  category as one band of cumulative tops (the same rows nearest mode
+  shows), and two bar calls with a gap between them as two bands. The
+  cursor and the title then sit on the chain's centre — the category — not
+  on the anchor slot, and the title takes the category label lookup. Bars
+  get no active dot: the bar is the mark. Density tiers, rectangles,
+  ribbons, funnels, heatmaps and segments keep their own hover geometry and
+  never join a band; legend-hidden series are out (§10). Polar charts have
+  no band axis and fall back to nearest.
 - The tooltip shows the band coordinate as its title (or the authored
   `title` template resolved against the anchor series' row), then one row per
   series in band order: the series name painted in the series colour, then
@@ -442,6 +451,17 @@ Wire: `tooltip.mode`, shipped only when not `"nearest"`.
   `pick` goes to the kernel per series; each exact reply replaces its own row
   and re-renders, and the last one re-dispatches `xy:hover` with
   `exact: true`.
+- `xy.tooltip(show=False, mode="x")` keeps the hover contract — `xy:hover`
+  with `points[]`, the kernel picks, the active dots — and drops only the
+  tooltip element and the cursor line, as nearest mode drops only the
+  element.
+- The active dots draw through a scratch VAO owned by the view's current GL
+  context. `_initGl` forgets it before rebuilding (a handle from a lost
+  context binds with `INVALID_OPERATION`, and the recovery frame's error
+  check would then reject every restore while a band was up — §18) and
+  `destroy()` deletes it, so a band tooltip neither strands a context
+  restore nor leaks into the shared host
+  (`tests/test_tooltip_band.py::test_browser_band_survives_context_loss_and_destroy`).
 - Keyboard traversal is unchanged: it walks single points, and starting it
   clears the band. Static exports are unaffected (tooltips are live-only).
 

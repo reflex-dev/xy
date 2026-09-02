@@ -4385,6 +4385,10 @@ export class ChartView {
   }
 
   _initGl(buffer) {
+    // The band-dot scratch VAO belongs to the context being (re)built: a
+    // handle from a lost context binds with INVALID_OPERATION, and the
+    // recovery frame's error check then rejects every restore attempt.
+    this._releaseBandDotResources();
     const dpr = window.devicePixelRatio || 1;
     this.dpr = dpr;
     // A canvas backing-store write clears the canvas even at an unchanged
@@ -6813,7 +6817,7 @@ export class ChartView {
       // index (§7.3).
       for (const hit of this._hoverTargets) {
         const g = hit.g;
-        if (!g || g.tier === "density" || g._legendHidden || !g._cpu) continue;
+        if (!g || g.tier === "density" || g._legendHidden || !g._cpu || g.trace.bar) continue;
         const cpu = g._cpu;
         const xMeta = cpu.xMeta || g.xMeta;
         const yMeta = cpu.yMeta || g.yMeta;
@@ -6849,6 +6853,26 @@ export class ChartView {
   // `encoded` draws one dot from explicit encoded coordinates (and metas)
   // through a scratch buffer instead of `g`'s vertex buffers at `index`;
   // its optional `color` (unit RGBA) replaces the hover-state paint.
+  // Drop the band-dot scratch objects: deleted when their context is still
+  // live (destroy, host rebuild), merely forgotten when it died with them.
+  _releaseBandDotResources() {
+    const gl = this.gl;
+    if (gl && this._bandDotVao) {
+      try {
+        if (!gl.isContextLost()) {
+          gl.deleteVertexArray(this._bandDotVao);
+          gl.deleteBuffer(this._bandDotBufX);
+          gl.deleteBuffer(this._bandDotBufY);
+        }
+      } catch (_err) {
+        // A context torn down under us: the handles are already gone.
+      }
+    }
+    this._bandDotVao = null;
+    this._bandDotBufX = null;
+    this._bandDotBufY = null;
+  }
+
   _drawHoverPoint(g, index, xm, ym, encoded: any = null) {
     const gl = this.gl;
     const prog = this.pointProg;
@@ -8863,34 +8887,112 @@ export class ChartView {
   // boundaries halfway between adjacent points, while a series with no point
   // at that coordinate is left out rather than guessed. The perpendicular
   // coordinate is ignored entirely.
+  // One band candidate for a series: its point nearest `target` along the
+  // band axis, projected, with a bar's footprint along its position axis
+  // (`pos ± width/2`) as the extent — a point's extent is its coordinate.
+  _bandCandidate(g, dim, target) {
+    const idx = this._nearestCpuIndexAlong(g, dim, target);
+    if (idx < 0) return null;
+    const [x, y] = this._cpuPointValue(g, idx);
+    const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y);
+    const px = dim === "x" ? chartX - this.plot.x : chartY - this.plot.y;
+    if (!Number.isFinite(px)) return null;
+    let lo = px;
+    let hi = px;
+    const bar = !!g.trace.bar;
+    if (bar && (g.orientation === 1 ? "y" : "x") === dim && g.width > 0) {
+      const half = g.width / 2;
+      const pos = dim === "x" ? x : y;
+      const [ax, ay] = this._projectDataPoint(
+        g.xAxis, g.yAxis, dim === "x" ? pos - half : x, dim === "y" ? pos - half : y,
+      );
+      const [bx, by] = this._projectDataPoint(
+        g.xAxis, g.yAxis, dim === "x" ? pos + half : x, dim === "y" ? pos + half : y,
+      );
+      const a = dim === "x" ? ax - this.plot.x : ay - this.plot.y;
+      const b = dim === "x" ? bx - this.plot.x : by - this.plot.y;
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        lo = Math.min(a, b);
+        hi = Math.max(a, b);
+      }
+    }
+    return { trace: g.trace.id, index: idx, g, px, lo, hi, bar, x, y, dist: 0, synthetic: true };
+  }
+
+  _bandTarget(g, dim, cssX, cssY) {
+    const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
+    return dim === "x" ? dataX : dataY;
+  }
+
   _bandHits(cssX, cssY, dim) {
     const candidates = [];
     for (const g of this.gpuTraces) {
       if (g.tier === "density" || g._legendHidden) continue;
-      // Marks with their own hover geometry never join a band (§7.3).
-      if (g.heatmap || g.trace.bar || g._cpuRibbon || g._cpuFunnel || g._cpuRect || g._segmentCpu) continue;
+      // Marks with their own hover geometry never join a band (§7.3); bars
+      // do, by their footprint along the position axis.
+      if (g.heatmap || g._cpuRibbon || g._cpuFunnel || g._cpuRect || g._segmentCpu) continue;
       if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
-      const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
-      const target = dim === "x" ? dataX : dataY;
+      const target = this._bandTarget(g, dim, cssX, cssY);
       if (!Number.isFinite(target)) continue;
-      const idx = this._nearestCpuIndexAlong(g, dim, target);
-      if (idx < 0) continue;
-      const [x, y] = this._cpuPointValue(g, idx);
-      const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y);
-      const px = dim === "x" ? chartX - this.plot.x : chartY - this.plot.y;
-      if (!Number.isFinite(px)) continue;
-      candidates.push({ trace: g.trace.id, index: idx, g, px, x, y, dist: 0, synthetic: true });
+      const c = this._bandCandidate(g, dim, target);
+      if (c) candidates.push(c);
     }
     if (!candidates.length) return null;
     const cursor = dim === "x" ? cssX : cssY;
+    // The anchor is the candidate whose footprint is nearest the pointer;
+    // ties go to the nearer centre.
+    const gap = (c) => (cursor < c.lo ? c.lo - cursor : cursor > c.hi ? cursor - c.hi : 0);
     let anchor = candidates[0];
     for (const c of candidates) {
-      if (Math.abs(c.px - cursor) < Math.abs(anchor.px - cursor)) anchor = c;
+      const d = gap(c) - gap(anchor);
+      if (d < 0 || (d === 0 && Math.abs(c.px - cursor) < Math.abs(anchor.px - cursor))) anchor = c;
     }
-    // Same projected coordinate within half a CSS pixel: f32 decode noise,
-    // not a different value.
-    const hits = candidates.filter((c) => Math.abs(c.px - anchor.px) <= 0.5);
-    return { hits, anchor, dim };
+    // Half a CSS pixel of slack: f32 decode noise, not a different value.
+    let lo = anchor.lo - 0.5;
+    let hi = anchor.hi + 0.5;
+    if (anchor.bar) {
+      // Grouped slots of one category touch: chain bars whose footprints
+      // touch the band. A bar series snaps to the *chain*, not the pointer —
+      // from the gap past a category, the pointer is nearer the previous
+      // category's slot of the next series than to this category's — so
+      // re-snap each bar series to the chain centre and widen until stable.
+      for (let pass = 0; pass <= candidates.length; pass++) {
+        const mid = (lo + hi) / 2;
+        let changed = false;
+        for (let k = 0; k < candidates.length; k++) {
+          const c = candidates[k];
+          if (!c.bar) continue;
+          const target = this._bandTarget(
+            c.g, dim, dim === "x" ? mid : cssX, dim === "y" ? mid : cssY,
+          );
+          if (!Number.isFinite(target)) continue;
+          const next = this._bandCandidate(c.g, dim, target);
+          if (next && next.index !== c.index) {
+            candidates[k] = next;
+            changed = true;
+          }
+        }
+        let grew = false;
+        for (const c of candidates) {
+          if (!c.bar || c.hi < lo || c.lo > hi) continue;
+          if (c.lo - 0.5 < lo) { lo = c.lo - 0.5; grew = true; }
+          if (c.hi + 0.5 > hi) { hi = c.hi + 0.5; grew = true; }
+        }
+        if (!changed && !grew) break;
+      }
+    }
+    const hits = candidates.filter((c) => (c.bar ? c.hi >= lo && c.lo <= hi : c.px >= lo && c.px <= hi));
+    let center = null;
+    if (hi - lo > 1.5) {
+      // A footprint band: the cursor and title sit on its centre (the
+      // category), not on the anchor slot.
+      const mid = (lo + hi) / 2;
+      const [cx, cy] = this._dataFromCanvas(
+        dim === "x" ? mid : cssX, dim === "y" ? mid : cssY, anchor.g.xAxis, anchor.g.yAxis,
+      );
+      center = { x: dim === "x" ? cx : anchor.x, y: dim === "y" ? cy : anchor.y };
+    }
+    return { hits, anchor, dim, center };
   }
 
   _hoverBand(e, cssX, cssY, dim) {
@@ -8912,8 +9014,10 @@ export class ChartView {
     if (key === this._bandKey) {
       // Same band: the content and the cursor stay; only the tooltip follows
       // the pointer (Recharts' cursor model, §7.3).
-      const rect = this.root.getBoundingClientRect();
-      this._placeTooltip(e.clientX - rect.left, e.clientY - rect.top);
+      if (this.spec.show_tooltip !== false) {
+        const rect = this.root.getBoundingClientRect();
+        this._placeTooltip(e.clientX - rect.left, e.clientY - rect.top);
+      }
       return;
     }
     this._bandKey = key;
@@ -8924,9 +9028,18 @@ export class ChartView {
     this._lastRow = this._bandRows[0];
     this._tooltipAnchor = null;
     const ag = band.anchor.g;
-    this._bandCursor = { dim, xAxis: ag.xAxis, yAxis: ag.yAxis, x: band.anchor.x, y: band.anchor.y };
-    this._renderBandTooltip(e.clientX, e.clientY);
-    this._positionTooltipCursor();
+    const at = band.center || band.anchor;
+    this._bandTitleValue = band.center ? (dim === "x" ? at.x : at.y) : undefined;
+    // `show=False` keeps the hover contract (events, picks, active dots) and
+    // drops only the tooltip chrome, as the nearest mode does.
+    if (this.spec.show_tooltip === false) {
+      this._bandCursor = null;
+      this._hideTooltipCursor();
+    } else {
+      this._bandCursor = { dim, xAxis: ag.xAxis, yAxis: ag.yAxis, x: at.x, y: at.y };
+      this._renderBandTooltip(e.clientX, e.clientY);
+      this._positionTooltipCursor();
+    }
     this._dispatchBandHover(e.clientX, e.clientY, false);
     this._requestBandPicks();
     this._drawKeepPick();
@@ -9473,6 +9586,7 @@ export class ChartView {
     this.quad = null;
     if (this.quadVao && !this._glHost) gl.deleteVertexArray(this.quadVao);
     this.quadVao = null;
+    this._releaseBandDotResources();
     for (const p of this._progCache ? this._progCache.values() : []) {
       if (p) gl.deleteProgram(p);
     }
