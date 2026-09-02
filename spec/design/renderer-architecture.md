@@ -377,7 +377,9 @@ With no `format=` on the axis, labels come from the step:
   _exp_digits` is the same function, and `_fmt_exponential` reproduces
   `toExponential`'s half-up tie rounding on the exact binary value (Python's
   `:e` is half-even: `1.25e6` at one digit would otherwise read `1.3e6` live
-  and `1.2e6` in the PNG), so the two agree label for label. Otherwise it derives the decimal count
+  and `1.2e6` in the PNG), so the two agree label for label
+  (`spec/assets/tick-labels-1e6-before-after.png`: a 50,000-step axis before
+  and after). Otherwise it derives the decimal count
   from the tick step — `ceil(−log10(step))`, then increments while the step is
   not representable at that precision to within a thousandth of itself — and
   caps at 8 decimals. Ticks on one axis therefore share a decimal count.
