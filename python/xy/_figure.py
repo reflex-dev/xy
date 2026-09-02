@@ -1660,7 +1660,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         axis = self._axis_dim(axis_id)
         forced = self.axis_options.get(axis_id, {}).get("type")
         categories = self._axis_categories.get(axis_id)
-        if categories and forced in ("time", "log", "symlog"):
+        # Membership, not truthiness: an empty categorical mark registers the
+        # axis with no labels yet, and it is still a category axis.
+        if categories is not None and forced in ("time", "log", "symlog"):
             # A category axis is linear by construction (positions are the
             # label indices). Forcing time turned the labels into 1970 epoch
             # ticks; forcing log put category 0 off the axis. G3: a scale

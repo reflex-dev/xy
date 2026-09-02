@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,3 +46,10 @@ def test_forced_scale_on_numeric_axis_and_linear_on_category_axis_still_work() -
         .build_payload()
     )
     assert spec["axes"]["y"].get("scale") == "log" and spec["axes"]["x"]["kind"] == "category"
+
+
+def test_empty_category_axis_still_rejects_forced_scale() -> None:
+    # An empty object column registers the axis as categorical with no labels.
+    chart = xy.bar_chart(xy.bar(x=np.array([], dtype=object), y=[]), xy.x_axis(type_="time"))
+    with pytest.raises(ValueError, match="x axis is categorical .*cannot be a time axis"):
+        chart.figure().build_payload()
