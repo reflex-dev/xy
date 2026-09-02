@@ -372,9 +372,12 @@ With no `format=` on the axis, labels come from the step:
   `|v| ≥ 1e6` or `0 < |v| < 1e-4`. The mantissa carries as many digits as sit
   between the value's magnitude and the step's last significant digit
   (`expDigits`; `1.25e6` at step `2.5e5` → `(6 − 5) + 1 = 2` → `1.25e6`), at
-  least one and at most eight — a fixed single decimal labelled a 50,000-step
-  axis `1.0e6, 1.1e6, 1.1e6, 1.2e6, …`. `python/xy/_svg.py::_exp_digits` is
-  the same function, so the PNG and the browser agree. Otherwise it derives the decimal count
+  least one and at most fifteen — a fixed single decimal labelled a
+  50,000-step axis `1.0e6, 1.1e6, 1.1e6, 1.2e6, …`. `python/xy/_svg.py::
+  _exp_digits` is the same function, and `_fmt_exponential` reproduces
+  `toExponential`'s half-up tie rounding on the exact binary value (Python's
+  `:e` is half-even: `1.25e6` at one digit would otherwise read `1.3e6` live
+  and `1.2e6` in the PNG), so the two agree label for label. Otherwise it derives the decimal count
   from the tick step — `ceil(−log10(step))`, then increments while the step is
   not representable at that precision to within a thousandth of itself — and
   caps at 8 decimals. Ticks on one axis therefore share a decimal count.

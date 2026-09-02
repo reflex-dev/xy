@@ -5325,10 +5325,24 @@ def _strict_bool(value: Any, label: str) -> bool:
 _FACET_CHANNEL_PROPS = ("color", "size", "upper", "yerr", "xerr", "base", "z", "x", "group")
 
 
-def _facet_check_mark_channels(mark: Mark, n: int) -> None:
+def _facet_check_mark_channels(mark: Mark, n: int, data: Any = None) -> None:
+    from .facets import _FACET_ROWS_MISMATCH
+
     items = [("x", mark.x), ("y", mark.y)]
     items.extend((key, mark.props.get(key)) for key in _FACET_CHANNEL_PROPS)
+    table = mark.data if mark.data is not None else data
     for channel, value in items:
+        if isinstance(value, str) and isinstance(table, Mapping) and value in table:
+            # A mapping table keeps short config values alongside row columns
+            # (`facets._subset_data`), so a column is only checked once a mark
+            # channel names it as row data — then its length must be the
+            # by= length, or every panel would draw the whole column.
+            rows = _facet_row_count(table[value])
+            if rows is not None and rows != n:
+                raise ValueError(
+                    _FACET_ROWS_MISMATCH.format(n=n, rows=rows, what=f"column {value!r}")
+                )
+            continue
         if value is None or isinstance(value, (str, bytes)) or np.isscalar(value):
             continue
         try:
@@ -5340,6 +5354,20 @@ def _facet_check_mark_channels(mark: Mark, n: int) -> None:
                 f"facet_chart cannot split raw {mark.kind} {channel}= values across "
                 "panels; pass column names with data= so each panel can subset its rows"
             )
+
+
+def _facet_row_count(column: Any) -> Optional[int]:
+    """Row count of a 1-D column value, None for scalars and matrices."""
+    if hasattr(column, "to_numpy"):
+        column = column.to_numpy()
+    elif isinstance(column, (list, tuple)):
+        try:
+            column = np.asarray(column)
+        except ValueError:
+            return None
+    if isinstance(column, np.ndarray) and column.ndim == 1:
+        return len(column)
+    return None
 
 
 def _facet_mark(mark: Mark, mask: np.ndarray, n: int) -> Mark:
@@ -5432,7 +5460,7 @@ class FacetChart(Component):
         base_title = self.props.get("title")
         for child in self.children:
             if isinstance(child, Mark):
-                _facet_check_mark_channels(child, n)
+                _facet_check_mark_channels(child, n, data)
         masks = [codes == code for code in range(len(unique_labels))]
 
         def build_panels(preseed: dict[str, list[str]]) -> list[Figure]:

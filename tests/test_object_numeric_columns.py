@@ -47,6 +47,11 @@ def test_object_numeric_missing_values_are_nan_not_categories() -> None:
     col = fig.traces[0].x
     assert col.kind == "float"
     assert np.isnan(col.values[1]) and col.values[0] == 1.0 and col.values[2] == 3.0
+    # §29: the hole-filling pass is a copy and is reported as one, on top of
+    # the object->f64 cast every object column pays.
+    clean = Figure()
+    clean.scatter(np.array([1, 2, 3], dtype=object), [1.0, 2.0, 3.0])
+    assert col.ingest_copies == clean.traces[0].x.ingest_copies + 1
     # pandas' NA scalar is a hole too, not a category or a TypeError.
     fig2 = Figure()
     fig2.scatter(np.array([1, pd.NA, 3], dtype=object), [1.0, 2.0, 3.0])

@@ -35,6 +35,14 @@ CASES: list[tuple[list[float], float]] = [
     ([1e300, 2e300, 3e300], 1e300),
     ([1e6, 2e6, 3e6], 1e6),
     ([12345678.0, 12345679.0, 12345680.0], 1.0),
+    # A 1e-3 step at 1e6 magnitude needs nine mantissa digits (cap was 8).
+    ([1000000.001, 1000000.002, 1000000.003], 1e-3),
+    # Exact binary ties: JS toExponential rounds half-up, Python :e half-even.
+    ([1.25e6, 1.75e6, 2.25e6], 5e5),
+    ([9.95e6, 9.85e6], 1e5),
+    # Subnormal steps: 10**e_step must not underflow to zero.
+    ([1e-310, 2e-310, 3e-310], 1e-310),
+    ([5e-320, 1e-319], 5e-320),
 ]
 
 
@@ -45,6 +53,12 @@ def test_exponential_labels_are_distinct_at_the_tick_step() -> None:
     assert [_fmt_linear(v, 5e4) for v in (1e6, 1.05e6, 1.3e6)] == ["1.00e6", "1.05e6", "1.30e6"]
     assert _fmt_linear(1.25e6, 2.5e5) == "1.25e6"
     assert _fmt_linear(1e6 + 20, 20.0) == "1.00002e6"
+    assert _fmt_linear(1000000.002, 1e-3) == "1.000000002e6"
+    # Ties round half-up like JavaScript, not half-even like Python's :e.
+    assert _fmt_linear(1.25e6, 5e5) == "1.3e6"
+    assert _fmt_linear(-1.25e6, 5e5) == "-1.3e6"
+    assert _fmt_linear(9.95e6, 1e6) == "1.0e7"
+    assert _fmt_linear(2e-310, 1e-310) == "2.0e-310"
     # Below the exponential threshold nothing changed.
     assert [_fmt_linear(v, 0.25) for v in (0.0, 0.25, 0.5)] == ["0.00", "0.25", "0.50"]
     assert _fmt_linear(5e-13, 5e-13) == "5.0e-13"

@@ -391,6 +391,14 @@ def test_facet_by_array_must_match_row_count() -> None:
         xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b"], data=df).figure()
     with pytest.raises(ValueError, match="by= has 4 values but data has 3 rows"):
         xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "c", "d"], data=df).figure()
+    # Mapping data keeps its short-config pass-through, so a mapping column is
+    # checked where a mark channel names it as row data.
+    with pytest.raises(ValueError, match="column 'x' has 3 rows"):
+        xy.facet_chart(
+            xy.scatter(x="x", y="y"),
+            by=["a", "b"],
+            data={"x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0], "config": [1, 2]},
+        ).figure()
     # Mark-level data= tables are split by the same by= and must match too.
     with pytest.raises(ValueError, match="by= has 2 values but data has 3 rows"):
         xy.facet_chart(xy.scatter(x="x", y="y", data=df), by=["a", "b"]).figure()

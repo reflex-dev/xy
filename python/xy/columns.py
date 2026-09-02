@@ -583,7 +583,10 @@ def _canonicalize(data: Any) -> tuple[npt.NDArray[np.float64], str, int]:
         if arr.dtype == object and any(isinstance(value, (bool, np.bool_)) for value in arr):
             raise ValueError("columns must be real numeric or datetime-like, not boolean")
         if arr.dtype == object:
-            arr = object_missing_to_nan(arr)
+            cleaned = object_missing_to_nan(arr)
+            if cleaned is not arr:
+                copies += 1  # the hole-filling pass is a real copy (§29)
+            arr = cleaned
         try:
             arr, copies = _astype_counted(arr, np.float64, copies)
         except (TypeError, ValueError) as e:

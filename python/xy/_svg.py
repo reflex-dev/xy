@@ -23,6 +23,7 @@ import math
 import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from os import PathLike
 from typing import Any, NamedTuple, Optional, cast
@@ -672,6 +673,12 @@ def _fmt_time(ms: float, step: float) -> str:
     return f"{d.minute:02d}:{d.second:02d}.{d.microsecond // 1000:03d}"
 
 
+# Mantissa digits an exponential label may carry: enough for a 1e-3 step on
+# a 1e6-magnitude axis (9), short of f64's ~15.9 significant digits where
+# further digits would only print representation noise.
+_EXP_DIGITS_MAX = 15
+
+
 def _exp_digits(av: float, step: float) -> int:
     """Mantissa digits so exponential tick labels stay distinct at `step`.
 
@@ -679,24 +686,43 @@ def _exp_digits(av: float, step: float) -> int:
     "1.0e6, 1.1e6, 1.1e6, 1.2e6, 1.2e6, 1.3e6, 1.3e6". The mantissa needs the
     digits between the value's magnitude and the step's last significant
     digit: for 1.25e6 at step 2.5e5 that is (6 - 5) + 1 = 2 -> "1.25e6".
-    Mirrors `fmtLinear` in js/src/30_ticks.ts exactly.
+    Mirrors `expDigits` in js/src/30_ticks.ts exactly.
     """
     if not step or not np.isfinite(step) or av == 0:
         return 1
     step = abs(step)
-    e_step = int(np.floor(np.log10(step)))
+    # Clamped so 10**e_step cannot underflow to 0 (a step below 1e-300 needs
+    # no more label digits than the cap allows anyway).
+    e_step = max(int(np.floor(np.log10(step))), -300)
     mantissa = step / 10.0**e_step
     k = 0
     while k < 8 and abs(round(mantissa, k) - mantissa) > mantissa / 1000.0:
         k += 1
-    return max(1, min(8, int(np.floor(np.log10(av))) - e_step + k))
+    return max(1, min(_EXP_DIGITS_MAX, int(np.floor(np.log10(av))) - e_step + k))
+
+
+def _fmt_exponential(v: float, digits: int) -> str:
+    """`v` as `d.ddde±N` with JavaScript's `toExponential` rounding.
+
+    Exact ties round half-up on the magnitude ("pick the larger n" in the
+    ECMAScript spec); Python's own `:e` rounds them half-even, so 1.25e6 at
+    one digit would read "1.3e6" in the browser and "1.2e6" in the PNG.
+    `Decimal(float)` is the exact binary value, so both sides see the same tie.
+    """
+    exact = Decimal(abs(v))
+    exponent = exact.adjusted()
+    quantum = Decimal(1).scaleb(-digits)
+    mantissa = exact.scaleb(-exponent).quantize(quantum, rounding=ROUND_HALF_UP)
+    if mantissa >= 10:  # 9.99 -> 10.0 carries into the exponent
+        mantissa = mantissa.scaleb(-1).quantize(quantum, rounding=ROUND_HALF_UP)
+        exponent += 1
+    return f"{'-' if v < 0 else ''}{mantissa}e{exponent}"
 
 
 def _fmt_linear(v: float, step: float) -> str:
     av = abs(v)
     if av >= 1e6 or (av != 0 and av < 1e-4):
-        digits = _exp_digits(av, step)
-        return f"{v:.{digits}e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
+        return _fmt_exponential(v, _exp_digits(av, step))
     dec = max(0, int(np.ceil(-np.log10(abs(step))))) if step else 0
     # A non-nice step (pi/2, 0.3333…) needs enough decimals to keep adjacent
     # ticks distinct; widen until the step itself round-trips at that precision.

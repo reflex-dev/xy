@@ -180,14 +180,20 @@ function fmtTime(ms, step) {
 // (1.25e6 at step 2.5e5 -> (6 - 5) + 1 = 2 -> "1.25e6"). One fixed decimal
 // labelled a 50,000-step axis "1.0e6, 1.1e6, 1.1e6, 1.2e6, …". Mirrors
 // `_exp_digits` in python/xy/_svg.py exactly.
+// Cap: enough for a 1e-3 step on a 1e6-magnitude axis (9), short of f64's
+// ~15.9 significant digits where more would only print representation noise.
+const EXP_DIGITS_MAX = 15;
+
 function expDigits(av, step) {
   if (!step || !Number.isFinite(step) || av === 0) return 1;
   step = Math.abs(step);
-  const eStep = Math.floor(Math.log10(step));
+  // Clamped so 10 ** eStep cannot underflow to 0 (a step below 1e-300 needs
+  // no more label digits than the cap allows anyway).
+  const eStep = Math.max(Math.floor(Math.log10(step)), -300);
   const mantissa = step / 10 ** eStep;
   let k = 0;
   while (k < 8 && Math.abs(Number(mantissa.toFixed(k)) - mantissa) > mantissa / 1000) k++;
-  return Math.max(1, Math.min(8, Math.floor(Math.log10(av)) - eStep + k));
+  return Math.max(1, Math.min(EXP_DIGITS_MAX, Math.floor(Math.log10(av)) - eStep + k));
 }
 
 export function fmtLinear(v, step) {
