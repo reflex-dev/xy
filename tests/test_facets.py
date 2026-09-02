@@ -380,3 +380,20 @@ def test_stairs_tooltip_channels_are_not_mislabeled() -> None:
     assert tooltip["aliases"] == {"v": "y", "e": "x"}
     assert tooltip["sources"]["v"] == [{"trace": 0, "channel": "y"}]
     assert tooltip["sources"]["e"] == [{"trace": 0, "channel": "x"}]
+
+
+def test_facet_by_array_must_match_row_count() -> None:
+    """A by= array of the wrong length used to hand every panel the full
+    table (two panels, each drawing all three rows) instead of erroring."""
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [10.0, 20.0, 30.0]})
+    with pytest.raises(ValueError, match="by= has 2 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b"], data=df).figure()
+    with pytest.raises(ValueError, match="by= has 4 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "c", "d"], data=df).figure()
+    # Mark-level data= tables are split by the same by= and must match too.
+    with pytest.raises(ValueError, match="by= has 2 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y", data=df), by=["a", "b"]).figure()
+    # The right length still works and actually subsets.
+    grid = xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "a"], data=df).figure()
+    assert [t.n_points for fig in grid.figures for t in fig.traces] == [2, 1]

@@ -582,6 +582,8 @@ def _canonicalize(data: Any) -> tuple[npt.NDArray[np.float64], str, int]:
             raise ValueError("columns must be real numeric or datetime-like")
         if arr.dtype == object and any(isinstance(value, (bool, np.bool_)) for value in arr):
             raise ValueError("columns must be real numeric or datetime-like, not boolean")
+        if arr.dtype == object:
+            arr = object_missing_to_nan(arr)
         try:
             arr, copies = _astype_counted(arr, np.float64, copies)
         except (TypeError, ValueError) as e:
@@ -623,6 +625,23 @@ def _is_datetime_object_array(arr: npt.NDArray[Any]) -> bool:
             continue
         return isinstance(value, (dt.datetime, dt.date, np.datetime64))
     return False
+
+
+def object_missing_to_nan(arr: npt.NDArray[Any]) -> npt.NDArray[Any]:
+    """Object array with None / pandas NA / NaT / NaN entries replaced by NaN.
+
+    NumPy turns `None` into NaN on `astype(float)` but refuses `pd.NA`; a
+    numeric object column with either kind of hole must ingest as numeric with
+    NaN (§19: nulls are NaN, never a category).
+    """
+    if arr.dtype != object:
+        return arr
+    missing = np.fromiter((_is_object_missing(v) for v in arr.flat), dtype=bool, count=arr.size)
+    if not missing.any():
+        return arr
+    out = arr.astype(object, copy=True)
+    out.reshape(-1)[missing] = np.nan
+    return out
 
 
 def _is_object_missing(value: Any) -> bool:

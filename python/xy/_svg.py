@@ -672,10 +672,31 @@ def _fmt_time(ms: float, step: float) -> str:
     return f"{d.minute:02d}:{d.second:02d}.{d.microsecond // 1000:03d}"
 
 
+def _exp_digits(av: float, step: float) -> int:
+    """Mantissa digits so exponential tick labels stay distinct at `step`.
+
+    One fixed decimal labelled 1,000,000 … 1,300,000 at a 50,000 step as
+    "1.0e6, 1.1e6, 1.1e6, 1.2e6, 1.2e6, 1.3e6, 1.3e6". The mantissa needs the
+    digits between the value's magnitude and the step's last significant
+    digit: for 1.25e6 at step 2.5e5 that is (6 - 5) + 1 = 2 -> "1.25e6".
+    Mirrors `fmtLinear` in js/src/30_ticks.ts exactly.
+    """
+    if not step or not np.isfinite(step) or av == 0:
+        return 1
+    step = abs(step)
+    e_step = int(np.floor(np.log10(step)))
+    mantissa = step / 10.0**e_step
+    k = 0
+    while k < 8 and abs(round(mantissa, k) - mantissa) > mantissa / 1000.0:
+        k += 1
+    return max(1, min(8, int(np.floor(np.log10(av))) - e_step + k))
+
+
 def _fmt_linear(v: float, step: float) -> str:
     av = abs(v)
     if av >= 1e6 or (av != 0 and av < 1e-4):
-        return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
+        digits = _exp_digits(av, step)
+        return f"{v:.{digits}e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
     dec = max(0, int(np.ceil(-np.log10(abs(step))))) if step else 0
     # A non-nice step (pi/2, 0.3333…) needs enough decimals to keep adjacent
     # ticks distinct; widen until the step itself round-trips at that precision.

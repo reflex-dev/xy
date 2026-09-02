@@ -368,8 +368,13 @@ so a pathological domain cannot produce an unbounded loop or DOM label count.
 
 With no `format=` on the axis, labels come from the step:
 
-- `fmtLinear` switches to one-decimal exponential (with `e+` normalized to `e`)
-  when `|v| ≥ 1e6` or `0 < |v| < 1e-4`. Otherwise it derives the decimal count
+- `fmtLinear` switches to exponential (with `e+` normalized to `e`) when
+  `|v| ≥ 1e6` or `0 < |v| < 1e-4`. The mantissa carries as many digits as sit
+  between the value's magnitude and the step's last significant digit
+  (`expDigits`; `1.25e6` at step `2.5e5` → `(6 − 5) + 1 = 2` → `1.25e6`), at
+  least one and at most eight — a fixed single decimal labelled a 50,000-step
+  axis `1.0e6, 1.1e6, 1.1e6, 1.2e6, …`. `python/xy/_svg.py::_exp_digits` is
+  the same function, so the PNG and the browser agree. Otherwise it derives the decimal count
   from the tick step — `ceil(−log10(step))`, then increments while the step is
   not representable at that precision to within a thousandth of itself — and
   caps at 8 decimals. Ticks on one axis therefore share a decimal count.
