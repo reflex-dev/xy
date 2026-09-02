@@ -76,13 +76,15 @@ def _node_type_stripping(node: str) -> list[str]:
     """Flags that let this node import a .ts file, or None if it cannot.
 
     Type stripping shipped behind --experimental-strip-types in 22.6 and is on
-    by default from 23.6 (and 22.18); older versions fail at the import.
+    by default from 23.6; older versions fail at the import. The flag is still
+    accepted where stripping is already on, so every version below 23.6 gets it
+    (22.x included, whether or not it is a 22.18+ default-on release).
     """
     version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout
     major, minor = (int(part) for part in version.strip().lstrip("v").split(".")[:2])
     if (major, minor) < (22, 6):
         return None
-    return ["--experimental-strip-types"] if major == 22 else []
+    return ["--experimental-strip-types"] if (major, minor) < (23, 6) else []
 
 
 def test_python_and_client_formatters_agree() -> None:
