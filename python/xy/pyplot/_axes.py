@@ -9468,10 +9468,6 @@ def _pow_label(value: float, base: float = 10.0) -> str:
     return f"{base:g}" + str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
 
 
-def _pow10_label(value: float) -> str:
-    return _pow_label(value, 10.0)
-
-
 def _plain_text(value: Any) -> str:
     text = str(value)
     converted = mathtext_to_unicode(text)
