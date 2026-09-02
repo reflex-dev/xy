@@ -28,6 +28,7 @@ CHART_DOM_SLOTS: tuple[str, ...] = (
     "tooltip_row",
     "tooltip_label",
     "tooltip_value",
+    "tooltip_cursor",
     "modebar",
     "modebar_drag_handle",
     "modebar_control_group",
