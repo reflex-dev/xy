@@ -1466,6 +1466,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return self._range("y")
 
     def _range(self, axis_id: str, *, use_domain: bool = True) -> tuple[float, float]:
+        # Before the log branch below can complain about positive values.
+        self._check_forced_scale(axis_id)
         opts = self.axis_options.get(axis_id, {})
         fixed = opts.get("domain")
         if use_domain and fixed is not None:
@@ -1656,21 +1658,24 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return np.sign(v) * np.log1p(np.abs(v) / constant)
         return v
 
-    def _axis_kind(self, axis_id: str) -> str:
-        axis = self._axis_dim(axis_id)
+    def _check_forced_scale(self, axis_id: str) -> None:
+        """A category axis is linear by construction (positions are the label
+        indices): forcing time turned the labels into 1970 epoch ticks and
+        forcing log put category 0 off the axis. G3: a scale conflict is a
+        build-time error, not a coercion. Membership, not truthiness — an empty
+        categorical mark registers the axis with no labels yet."""
         forced = self.axis_options.get(axis_id, {}).get("type")
         categories = self._axis_categories.get(axis_id)
-        # Membership, not truthiness: an empty categorical mark registers the
-        # axis with no labels yet, and it is still a category axis.
         if categories is not None and forced in ("time", "log", "symlog"):
-            # A category axis is linear by construction (positions are the
-            # label indices). Forcing time turned the labels into 1970 epoch
-            # ticks; forcing log put category 0 off the axis. G3: a scale
-            # conflict is a build-time error, not a coercion.
             raise ValueError(
                 f"{axis_id} axis is categorical ({len(categories)} categories from the "
                 f"marks) and cannot be a {forced} axis; drop type_= or pass numeric positions"
             )
+
+    def _axis_kind(self, axis_id: str) -> str:
+        axis = self._axis_dim(axis_id)
+        self._check_forced_scale(axis_id)
+        forced = self.axis_options.get(axis_id, {}).get("type")
         if forced == "time":
             return "time"
         if axis_id in self._axis_categories:
