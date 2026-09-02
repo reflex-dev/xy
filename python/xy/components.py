@@ -278,6 +278,7 @@ class Legend(Component):
     highlight: bool = True
     toggle: bool = True
     anchor: Optional[tuple[float, ...]] = None
+    isolate: bool = True
 
 
 @dataclass
@@ -3129,6 +3130,7 @@ def legend(
     title: Optional[str] = None,
     highlight: bool = True,
     toggle: bool = True,
+    isolate: bool = True,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -3148,6 +3150,10 @@ def legend(
             dimming the others (live client only; exports are static).
         toggle: Whether clicking a legend entry hides/shows its series or
             category (live client only; exports are static).
+        isolate: Whether double-clicking a legend entry isolates its series
+            or category — hiding every other entry, or restoring all of them
+            when it is already the only one showing (live client only;
+            exports are static). Independent of ``toggle``.
         render: Opaque renderer supplied by an adapter.
         class_name: DOM class name applied to the legend.
         style: Legend style overrides.
@@ -3167,6 +3173,7 @@ def legend(
         title=_optional_string(title, "legend title"),
         highlight=_strict_bool(highlight, "legend highlight"),
         toggle=_strict_bool(toggle, "legend toggle"),
+        isolate=_strict_bool(isolate, "legend isolate"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -4025,6 +4032,9 @@ class Chart(Component):
             if not _strict_bool(node.toggle, "legend toggle"):
                 # Click-to-toggle likewise defaults on, opt-out only.
                 fig.legend_options["toggle"] = False
+            if not _strict_bool(node.isolate, "legend isolate"):
+                # Double-click isolate: same default-on, opt-out-only rule.
+                fig.legend_options["isolate"] = False
             if node.style:
                 # Carry the frame/frameon styling into the static-export spec so
                 # the raster/SVG legend can honor frameon=False (transparent bg).
