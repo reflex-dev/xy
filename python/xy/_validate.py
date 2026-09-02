@@ -765,9 +765,19 @@ def colormap_stops(value: Any, label: str) -> list[list[int]]:
         anchors.setdefault(0, 0.0)
         anchors.setdefault(count - 1, 1.0)
         keys = sorted(anchors)
-        previous = 0.0
+        previous = anchors[keys[0]]
         for i in keys:
-            previous = anchors[i] = max(anchors[i], previous)
+            # CSS clamps an out-of-order gradient stop to its predecessor; for
+            # a colormap that quietly turned `[(1, red), (0, blue)]` into 255
+            # red texels and one blue one. A value→color map has no spatial
+            # reading to fall back on, so a decreasing position is an error.
+            if anchors[i] < previous:
+                raise ValueError(
+                    f"{label} stop positions must be non-decreasing: {label}[{i}] at "
+                    f"{anchors[i]:g} follows a stop at {previous:g}; reverse the stop order "
+                    "instead"
+                )
+            previous = anchors[i]
         positions = [0.0] * count
         for i0, i1 in itertools.pairwise(keys):
             v0, v1 = anchors[i0], anchors[i1]

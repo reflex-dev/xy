@@ -380,3 +380,54 @@ def test_stairs_tooltip_channels_are_not_mislabeled() -> None:
     assert tooltip["aliases"] == {"v": "y", "e": "x"}
     assert tooltip["sources"]["v"] == [{"trace": 0, "channel": "y"}]
     assert tooltip["sources"]["e"] == [{"trace": 0, "channel": "x"}]
+
+
+def test_facet_by_array_must_match_row_count() -> None:
+    """A by= array of the wrong length used to hand every panel the full
+    table (two panels, each drawing all three rows) instead of erroring."""
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [10.0, 20.0, 30.0]})
+    with pytest.raises(ValueError, match="by= has 2 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b"], data=df).figure()
+    with pytest.raises(ValueError, match="by= has 4 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "c", "d"], data=df).figure()
+    # Mapping data keeps its short-config pass-through, so a mapping column is
+    # checked where a mark channel names it as row data.
+    with pytest.raises(ValueError, match="column 'x' has 3 rows"):
+        xy.facet_chart(
+            xy.scatter(x="x", y="y"),
+            by=["a", "b"],
+            data={"x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0], "config": [1, 2]},
+        ).figure()
+    # Mark-level data= tables are split by the same by= and must match too.
+    with pytest.raises(ValueError, match="by= has 2 values but data has 3 rows"):
+        xy.facet_chart(xy.scatter(x="x", y="y", data=df), by=["a", "b"]).figure()
+    # The right length still works and actually subsets.
+    grid = xy.facet_chart(xy.scatter(x="x", y="y"), by=["a", "b", "a"], data=df).figure()
+    assert [t.n_points for fig in grid.figures for t in fig.traces] == [2, 1]
+
+
+def test_facet_row_check_covers_plugin_columns_and_skips_color_literals() -> None:
+    """Plugin marks resolve their declared columns from data= too, so those
+    are length-checked; a CSS color literal is paint even when the mapping
+    happens to hold a key of the same name."""
+
+    def build(ctx):
+        return [xy.scatter(x=ctx.columns["t"], y=ctx.columns["v"], name=ctx.name)]
+
+    xy.register_mark(xy.MarkPlugin(name="facetprobe", columns=("t", "v"), build=build))
+    try:
+        with pytest.raises(ValueError, match="column 't' has 3 rows"):
+            xy.facet_chart(
+                xy.mark("facetprobe", t="t", v="v"),
+                by=["a", "b"],
+                data={"t": [0.0, 1.0, 2.0], "v": [1.0, 2.0, 3.0]},
+            ).figure()
+    finally:
+        xy.unregister_mark("facetprobe")
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y", color="red"),
+        by=["a", "b", "a"],
+        data={"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0], "red": [9.0]},
+    ).figure()
+    assert len(grid.figures) == 2
