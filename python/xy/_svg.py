@@ -692,10 +692,12 @@ def _exp_digits(av: float, step: float) -> int:
     if not step or not np.isfinite(step) or av == 0:
         return 1
     step = abs(step)
-    # Clamped so 10**e_step cannot underflow to 0 (a step below 1e-300 needs
-    # no more label digits than the cap allows anyway).
-    e_step = max(int(np.floor(np.log10(step))), -300)
-    mantissa = step / 10.0**e_step
+    e_step = int(np.floor(np.log10(step)))
+    # 10**e_step underflows to 0 below 1e-308 and 10**-e_step overflows above
+    # 1e308, so a subnormal step is scaled in two stages instead of clamped —
+    # clamping threw the step's real exponent away and collapsed labels on a
+    # (legal) subnormal axis.
+    mantissa = (step * 1e300) * 10.0 ** (-e_step - 300) if e_step < -300 else step / 10.0**e_step
     k = 0
     while k < 8 and abs(round(mantissa, k) - mantissa) > mantissa / 1000.0:
         k += 1

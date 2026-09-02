@@ -188,10 +188,12 @@ const EXP_DIGITS_MAX = 16;
 function expDigits(av, step) {
   if (!step || !Number.isFinite(step) || av === 0) return 1;
   step = Math.abs(step);
-  // Clamped so 10 ** eStep cannot underflow to 0 (a step below 1e-300 needs
-  // no more label digits than the cap allows anyway).
-  const eStep = Math.max(Math.floor(Math.log10(step)), -300);
-  const mantissa = step / 10 ** eStep;
+  const eStep = Math.floor(Math.log10(step));
+  // 10 ** eStep underflows to 0 below 1e-308 and 10 ** -eStep overflows above
+  // 1e308, so a subnormal step is scaled in two stages instead of clamped —
+  // clamping threw the step's real exponent away and collapsed labels on a
+  // (legal) subnormal axis.
+  const mantissa = eStep < -300 ? (step * 1e300) * 10 ** (-eStep - 300) : step / 10 ** eStep;
   let k = 0;
   while (k < 8 && Math.abs(Number(mantissa.toFixed(k)) - mantissa) > mantissa / 1000) k++;
   return Math.max(1, Math.min(EXP_DIGITS_MAX, Math.floor(Math.log10(av)) - eStep + k));

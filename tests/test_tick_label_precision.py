@@ -45,8 +45,10 @@ CASES: list[tuple[list[float], float]] = [
         [1e6, np.nextafter(1e6, np.inf), np.nextafter(np.nextafter(1e6, np.inf), np.inf)],
         np.spacing(1e6),
     ),
-    # Subnormal steps: 10**e_step must not underflow to zero.
+    # Subnormal steps: 10**e_step must not underflow to zero, and the step's
+    # real exponent still sets the digit count (1.00e-310 vs 1.05e-310).
     ([1e-310, 2e-310, 3e-310], 1e-310),
+    ([1.00e-310, 1.05e-310, 1.10e-310], 5e-312),
     ([5e-320, 1e-319], 5e-320),
 ]
 
@@ -64,6 +66,7 @@ def test_exponential_labels_are_distinct_at_the_tick_step() -> None:
     assert _fmt_linear(-1.25e6, 5e5) == "-1.3e6"
     assert _fmt_linear(9.95e6, 1e6) == "1.0e7"
     assert _fmt_linear(2e-310, 1e-310) == "2.0e-310"
+    assert _fmt_linear(1.05e-310, 5e-312) == "1.05e-310"
     # Below the exponential threshold nothing changed.
     assert [_fmt_linear(v, 0.25) for v in (0.0, 0.25, 0.5)] == ["0.00", "0.25", "0.50"]
     assert _fmt_linear(5e-13, 5e-13) == "5.0e-13"
