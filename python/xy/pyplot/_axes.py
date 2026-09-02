@@ -2489,6 +2489,10 @@ class Axes(PlotTypeMixin):
                 ) from None
         if not np.isfinite(thickness_value).all() or np.any(thickness_value <= 0.0):
             raise ValueError("bar thickness values must be finite and positive")
+        # `tick_label` ticks belong at the positions the caller passed, not at
+        # the bar centers `align="edge"` derives from them (Matplotlib puts one
+        # tick per input position under either alignment).
+        tick_label_positions = cats
         if align == "edge":
             try:
                 cats = np.asarray(cats, dtype=np.float64) + thickness_value / 2.0
@@ -2580,7 +2584,7 @@ class Axes(PlotTypeMixin):
         container = BarContainer(self, entry)
         container.errorbar = errorbar
         if tick_label is not None:
-            self._apply_bar_tick_labels(cats, tick_label, n_bars, orientation)
+            self._apply_bar_tick_labels(tick_label_positions, tick_label, n_bars, orientation)
         return container
 
     def _apply_bar_tick_labels(

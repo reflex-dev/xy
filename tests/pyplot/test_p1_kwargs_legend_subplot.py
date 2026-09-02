@@ -713,3 +713,38 @@ def test_hlines_vlines_colors_read_names_first_and_rgba_tuples_whole(colors, exp
     _fig, ax = plt.subplots()
     assert ax.hlines(0.5, 0, 1, colors=colors)._entry["kwargs"]["color"] == expected
     assert ax.vlines(0.5, 0, 1, colors=colors)._entry["kwargs"]["color"] == expected
+
+
+@pytest.mark.parametrize("align", ["center", "edge"])
+@pytest.mark.parametrize("width", [0.8, 0.5, 1.0])
+def test_bar_tick_labels_sit_at_the_input_positions(align: str, width: float) -> None:
+    """`align="edge"` moves the bars, never the `tick_label` ticks.
+
+    The edge shift is a bar-geometry offset; matplotlib puts one tick per
+    position the caller passed under either alignment, so passing the shifted
+    centers put every label half a bar width off.
+    """
+    mpl = pytest.importorskip("matplotlib.pyplot")
+
+    reference, ax = mpl.subplots()
+    ax.bar([0, 1, 2], [1, 2, 3], width=width, align=align, tick_label=["a", "b", "c"])
+    expected = [float(v) for v in ax.get_xticks()]
+    mpl.close(reference)
+
+    _fig, ours = plt.subplots()
+    ours.bar([0, 1, 2], [1, 2, 3], width=width, align=align, tick_label=["a", "b", "c"])
+    assert [float(v) for v in ours.get_xticks()] == expected
+    assert [t.get_text() for t in ours.get_xticklabels()] == ["a", "b", "c"]
+
+
+def test_barh_tick_labels_sit_at_the_input_positions() -> None:
+    mpl = pytest.importorskip("matplotlib.pyplot")
+
+    reference, ax = mpl.subplots()
+    ax.barh([0, 1, 2], [1, 2, 3], height=0.8, align="edge", tick_label=["a", "b", "c"])
+    expected = [float(v) for v in ax.get_yticks()]
+    mpl.close(reference)
+
+    _fig, ours = plt.subplots()
+    ours.barh([0, 1, 2], [1, 2, 3], height=0.8, align="edge", tick_label=["a", "b", "c"])
+    assert [float(v) for v in ours.get_yticks()] == expected

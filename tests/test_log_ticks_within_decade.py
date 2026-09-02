@@ -284,8 +284,11 @@ def test_browser_log_axis_zoomed_inside_a_decade_keeps_ticks(tmp_path: Path) -> 
     }
     assert tuple(narrow) in py_options, (narrow, py_options)
 
-    # The SVG export of the same window ticks it the same way (raster shares
-    # `axis_ticks`, so PNG/PDF follow).
+    # The SVG export of the same window ticks it *identically* — not merely at
+    # some valid density (raster shares `axis_ticks`, so PNG/PDF follow). The
+    # browser check above has to allow any density an axis of this size could
+    # ask for, because the test cannot know the live plot width; this one
+    # compares against what the browser actually produced.
     svg = xy.line_chart(
         xy.line(x=xs, y=[float(i) for i in range(25)]),
         xy.x_axis(type_="log", domain=(0.3, 0.35)),
@@ -294,4 +297,4 @@ def test_browser_log_axis_zoomed_inside_a_decade_keeps_ticks(tmp_path: Path) -> 
     ).to_svg()
     svg_labels = _svg_x_tick_texts(svg, 0.3, 0.35)
     assert 3 <= len(svg_labels) <= 8, svg_labels
-    assert tuple(svg_labels) in py_options, (svg_labels, py_options)
+    assert tuple(svg_labels) == tuple(narrow), (svg_labels, narrow)
