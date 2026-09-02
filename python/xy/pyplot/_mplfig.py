@@ -375,11 +375,18 @@ class Figure:
         else:
             nrows, ncols, index = _parse_subplot_args(args)
             subplot_key = ("grid", nrows, ncols, index - 1)
-            if any(a._figure_rect is not None for a in self._axes):
-                # matplotlib mixes numbered subplots into figures that already
-                # hold free-form axes; keep the figure free-form via the cell
-                # rectangle. Figure.add_subplot() deliberately does not reuse
-                # an existing match; pyplot.subplot() owns activation/reuse.
+            if (nrows, ncols) != (1, 1) or any(a._figure_rect is not None for a in self._axes):
+                # A numbered cell of a multi-cell grid creates only that cell,
+                # at its GridSpec rectangle, as Matplotlib does: ``subplot(221)``
+                # then ``subplot(224)`` leaves two axes (not four with two
+                # empty frames), and grids of another shape may join the same
+                # figure later (``subplot(2, 1, 2)`` under a 2x2 top row) as
+                # long as the cells do not overlap. Only the whole-figure
+                # ``111`` keeps the uniform single-chart path. The same
+                # rectangle path mixes numbered subplots into figures that
+                # already hold free-form axes. Figure.add_subplot()
+                # deliberately does not reuse an existing match;
+                # pyplot.subplot() owns activation/reuse.
                 row, col = divmod(index - 1, ncols)
                 grid = _GridSpec(self, nrows, ncols)
                 rect = grid.cell_rect((row, row + 1), (col, col + 1))
@@ -636,6 +643,11 @@ class Figure:
     def gca(self) -> Axes:
         if self._current_ax is not None and self._current_ax in self._axes:
             return self._current_ax
+        if self._axes:
+            # Axes exist but none is current (the current one was removed):
+            # fall back to the first without materializing grid placeholders
+            # for a figure whose numbered subplots own explicit rectangles.
+            return self._axes[0]
         return self._axes_at(0)
 
     def sca(self, ax: Axes) -> Axes:
@@ -1246,6 +1258,9 @@ class Figure:
             if not np.isfinite(pad_value) or pad_value < 0.0:
                 raise ValueError("colorbar() pad must be a finite nonnegative number")
             options["pad"] = pad_value
+        # Matplotlib's ``fraction`` steals that share of the parent axes for
+        # the bar; xy reserves a fixed colorbar strip instead.
+        kwargs.pop("fraction", None)  # compat-noop: the colorbar strip has a fixed width
         if cax is not None:
             options["placement"] = "axes"
         if shrink != 1.0:
@@ -2452,10 +2467,16 @@ class GridSpec(_GridSpec):
 def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:
     if len(args) == 1 and isinstance(args[0], int) and args[0] >= 111:
         code = args[0]
-        return code // 100, (code // 10) % 10, code % 10
-    if len(args) == 3:
-        return int(args[0]), int(args[1]), int(args[2])
-    raise ValueError(f"unsupported add_subplot args: {args!r}")
+        nrows, ncols, index = code // 100, (code // 10) % 10, code % 10
+    elif len(args) == 3:
+        nrows, ncols, index = int(args[0]), int(args[1]), int(args[2])
+    else:
+        raise ValueError(f"unsupported add_subplot args: {args!r}")
+    if nrows < 1 or ncols < 1:
+        raise ValueError("Number of rows and columns must be positive")
+    if not 1 <= index <= nrows * ncols:
+        raise ValueError(f"num must be an integer with 1 <= num <= {nrows * ncols}, not {index}")
+    return nrows, ncols, index
 
 
 def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) -> Any:

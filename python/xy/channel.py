@@ -204,6 +204,11 @@ def handle_message(
     if not isinstance(content, dict):
         return None
     kind = content.get("type")
+    if not isinstance(kind, str):
+        # §1: `type` is the one field read before any coercion, so it must be
+        # safe to read — a list or dict here raised from the set membership
+        # test below instead of counting as an unknown kind.
+        return None
     if kind in {"animation_start", "animation_end"}:
         callback = (
             callbacks.on_animation_start
@@ -284,7 +289,10 @@ def handle_message(
                 index,
                 drill_seq,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, IndexError):
+            # IndexError is defense in depth: `pick` bounds the index against
+            # the readable rows, but a kind whose columns disagree with its
+            # advertised count must degrade to `row: null`, never raise.
             return None
         if row is not None and callbacks.on_hover is not None:
             callbacks.on_hover(row)
@@ -299,7 +307,7 @@ def handle_message(
             index = _integer_id(content.get("index", -1), "index")
             drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
             row = fig.pick(trace_id, index, drill_seq)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, IndexError):
             return None
         if row is not None and callbacks.on_click is not None:
             callbacks.on_click(row)
@@ -307,18 +315,14 @@ def handle_message(
     if kind == "view_change":
         try:
             raw_ranges = content.get("ranges")
-            ranges: dict[str, list[float]] = {}
+            pairs: dict[str, Any] = {}
             if isinstance(raw_ranges, dict):
-                for axis_id, raw_range in raw_ranges.items():
-                    if axis_id not in fig.axis_options:
-                        continue
-                    if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
-                        raise ValueError("invalid view range")
-                    lo, hi = float(raw_range[0]), float(raw_range[1])
-                    if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
-                        raise ValueError("invalid view range")
-                    ranges[axis_id] = [lo, hi]
-            if not ranges:
+                pairs = {
+                    axis_id: pair
+                    for axis_id, pair in raw_ranges.items()
+                    if axis_id in fig.axis_options
+                }
+            if not pairs:
                 x0, x1, y0, y1 = normalize_window(
                     content["x0"],
                     content["x1"],
@@ -326,7 +330,20 @@ def handle_message(
                     content["y1"],
                     require_area=False,
                 )
-                ranges = {"x": [x0, x1], "y": [y0, y1]}
+                pairs = {"x": [x0, x1], "y": [y0, y1]}
+            # Both shapes meet the rules `_validated_state_ranges` applies to a
+            # state patch — finite, ordered, non-zero span — so the durable
+            # cache this feeds (view-state.md §5.1) always round-trips back
+            # through `state_patch_message`. A flipped pair is reordered; a
+            # zero-span pair rejects the whole event.
+            ranges: dict[str, list[float]] = {}
+            for axis_id, raw_range in pairs.items():
+                if not isinstance(raw_range, (tuple, list)) or len(raw_range) != 2:
+                    raise ValueError("invalid view range")
+                lo, hi = float(raw_range[0]), float(raw_range[1])
+                if not math.isfinite(lo) or not math.isfinite(hi) or lo == hi:
+                    raise ValueError("invalid view range")
+                ranges[axis_id] = [lo, hi] if lo < hi else [hi, lo]
             x_range = ranges.get("x")
             y_range = ranges.get("y")
             view = {

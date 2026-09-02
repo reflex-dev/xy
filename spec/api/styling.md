@@ -212,7 +212,15 @@ and minor-grid tier. `minor_tick_values=[...]` supplies its positions without
 labels; major `tick_values`/`tick_labels` remain unchanged. On log axes,
 `nonpositive="clip"` maps non-positive mark coordinates below the visible
 range, while `"mask"` makes those endpoints non-renderable in the browser,
-SVG, and native raster paths.
+SVG, and native raster paths. Point and polyline marks (`scatter`, `line`,
+`area`, `error_band`) never ship a non-positive coordinate on a log axis at
+all — the kernel drops those rows before the wire, under every policy. That
+drop is allowed but never silent (dossier §28): with no `nonpositive=` set,
+the payload build emits a `RuntimeWarning` naming the axis, the number of
+points dropped, and the remedies (`nonpositive="clip"|"mask"` to state the
+policy explicitly, which silences the warning, or `type_="symlog"` to show
+zero and negative values). Rectangle and segment families ship every row and
+let the renderer apply the policy per endpoint, so they neither drop nor warn.
 
 | Axis style key | Value |
 | --- | --- |
@@ -1288,6 +1296,15 @@ with, so what validates is exactly what renders:
   string is a `data=` column name. The full named-color table counts, so
   `color="rebeccapurple"` is a color, and a color-shaped typo reports its
   CSS reason instead of a misleading column-lookup error.
+- **A non-finite continuous `color=`/`size=` value is not drawn.** NaN and
+  ±inf in a per-point numeric channel have no position on the ramp, so the
+  row leaves the shipped geometry, the pick/selection mapping, and the static
+  exports together — the same exclusion an x/y NaN gets (dossier §19), and
+  matplotlib's transparent "bad" colour. It is never painted as the domain
+  floor (the old behaviour, which drew a `+inf` point in the *minimum*
+  colour). The normalizers' floor for non-finite input remains only as a
+  vertex-safety net behind that exclusion. Missing-column names raise
+  `ValueError` on every surface, `facet_chart(by=...)` included.
 
 ## What CSS cannot restyle
 

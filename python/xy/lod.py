@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import numbers
+import sys
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -155,7 +156,10 @@ def normalize_window(
         raise ValueError("view window bounds must be finite")
     lo_x, hi_x = min(vals[0], vals[1]), max(vals[0], vals[1])
     lo_y, hi_y = min(vals[2], vals[3]), max(vals[2], vals[3])
-    if require_area and (lo_x == hi_x or lo_y == hi_y):
+    if require_area and (hi_x - lo_x < sys.float_info.min or hi_y - lo_y < sys.float_info.min):
+        # Zero and subnormal spans alike: everything downstream divides by the
+        # span (the drill ladder's level, the grid's cell width, the client's
+        # data->clip map), and a subnormal has no finite reciprocal in f64.
         raise ValueError("view window must have non-zero width and height")
     return lo_x, hi_x, lo_y, hi_y
 
@@ -787,10 +791,24 @@ def aligned_window(
         return lo, hi
     if pad * span >= extent:
         return min(extent_lo, lo), max(extent_hi, hi)
-    level = max(0, math.ceil(math.log2(extent / (pad * span))))
-    block = extent / (1 << level)
-    b0 = math.floor((lo - extent_lo) / block)
-    b1 = math.ceil((hi - extent_lo) / block)
+    ratio = extent / (pad * span)
+    if not math.isfinite(ratio):
+        # A span this far below the extent has no ladder rung — the quotient
+        # overflowed f64 — so it passes through like the other degenerate
+        # inputs (the caller then drills the raw view window).
+        return lo, hi
+    level = max(0, math.ceil(math.log2(ratio)))
+    # `ldexp`, not `extent / (1 << level)`: a finite ratio still reaches level
+    # 1024, and 2**1024 is not a float.
+    block = math.ldexp(extent, -level)
+    q0 = (lo - extent_lo) / block if block > 0.0 else math.inf
+    q1 = (hi - extent_lo) / block if block > 0.0 else math.inf
+    if not (math.isfinite(q0) and math.isfinite(q1)):
+        # A sub-ulp block (subnormal extent, or a window far outside it) puts
+        # the grid beyond f64; containment is the contract, so pass through.
+        return lo, hi
+    b0 = math.floor(q0)
+    b1 = math.ceil(q1)
     # The min/max guards absorb the one-ulp case where a bound lands exactly
     # on a grid line and float rounding would nudge the snapped edge inside
     # the window — containment is the contract, alignment the optimization.

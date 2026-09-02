@@ -8722,6 +8722,30 @@ export class ChartView {
     ];
   }
 
+  // Whether a legend category toggle removed shipped row `i` from the drawn
+  // set. A hidden series is out of every pipeline (interaction spec §10), and
+  // the CPU hover fallbacks below scan the UNFILTERED retained columns, so
+  // they must ask. `_visInv` is the shipped-row -> drawn-vertex map that
+  // `_filterScatterRows` maintains beside `_visMap` (-1 = hidden); reading it,
+  // rather than re-deriving the hidden set from the category codes, keeps the
+  // fallback in lockstep with what the GPU pick pass can see by construction.
+  _cpuRowHidden(g, i) {
+    const inv = g._visInv;
+    return !!inv && inv[i] < 0;
+  }
+
+  // How many retained rows a CPU hover scan covers. `g.n` is the DRAWN count,
+  // which a category filter shrinks below the retained columns: capping the
+  // scan at it left every visible row shipped after the cut unreachable while
+  // hidden rows before it still answered. `_fullN` is the pre-filter count
+  // `_filterScatterRows` records; an unfiltered trace keeps the `g.n` cap,
+  // which is load-bearing there (a smooth-resampled line's `n` exceeds its
+  // source columns; mismatched x/y lengths undershoot them).
+  _cpuScanLimit(g, ...lengths) {
+    const n = g._fullN !== undefined ? g._fullN : g.n;
+    return Math.min(...lengths, n || lengths[0]);
+  }
+
   _nearestCpuIndex(g, dataX) {
     const cpu = g && g._cpu;
     if (!cpu || !cpu.x || !cpu.x.length) return -1;
@@ -8730,8 +8754,9 @@ export class ChartView {
     const target = this._axisCoord(axis, dataX);
     let best = -1;
     let bestDist = Infinity;
-    const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
+    const limit = this._cpuScanLimit(g, cpu.x.length);
     for (let i = 0; i < limit; i++) {
+      if (this._cpuRowHidden(g, i)) continue;
       const starts = g._transitionPrevXValues;
       const progress = g._transitionPositionProgress;
       const xEncoded = starts && Number.isFinite(progress)
@@ -8753,11 +8778,12 @@ export class ChartView {
     const xMeta = cpu.xMeta || g.xMeta;
     const yMeta = cpu.yMeta || g.yMeta;
     const progress = g._transitionPositionProgress;
-    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+    const limit = this._cpuScanLimit(g, cpu.x.length, cpu.y.length);
     const geom = this._polarGeometry();
     let best = -1;
     let bestDist = Infinity;
     for (let i = 0; i < limit; i++) {
+      if (this._cpuRowHidden(g, i)) continue;
       const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
         ? g._transitionPrevXValues[i] + (cpu.x[i] - g._transitionPrevXValues[i]) * progress
         : cpu.x[i];
@@ -8893,8 +8919,11 @@ export class ChartView {
     const cpu = g._cpu;
     const horizontal = g.orientation === 1;
     const geom = this._polarGeometry();
-    const limit = Math.min(cpu.x.length, cpu.y.length, g.n || cpu.x.length);
+    const limit = this._cpuScanLimit(g, cpu.x.length, cpu.y.length);
     for (let i = 0; i < limit; i++) {
+      // Categorical bars filter through `_filterScatterRows` too (§10), so a
+      // hidden bar's footprint must not answer hover either.
+      if (this._cpuRowHidden(g, i)) continue;
       const x = this._decodeValue(cpu.x, cpu.xMeta, i);
       const y = this._decodeValue(cpu.y, cpu.yMeta, i);
       const value0 = g.value0Mode === 1 && cpu.value0

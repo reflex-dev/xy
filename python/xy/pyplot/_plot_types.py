@@ -36,6 +36,7 @@ from ._artists import (
     Text,
     Wedge,
     _contour_legend_colors,
+    unit_converted_values,
 )
 from ._colors import (
     PROP_CYCLE,
@@ -1368,6 +1369,8 @@ class PlotTypeMixin:
         """
         width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
+        # Matplotlib forwards the singular LineCollection spelling too.
+        linestyles = kwargs.pop("linestyle", kwargs.pop("ls", linestyles))
         data = kwargs.pop("data", None)
         y, xmin, xmax = (_from_data(value, data) for value in (y, xmin, xmax))
         transform = kwargs.pop("transform", None)
@@ -1385,7 +1388,14 @@ class PlotTypeMixin:
         if dash_pattern is not None:
             sx0, sy0, sx1, sy1 = _dashed_segments(sx0, sy0, sx1, sy1, dash_pattern)
         chosen_color = colors
-        if chosen_color is not None and not isinstance(chosen_color, str) and len(chosen_color):
+        if (
+            chosen_color is not None
+            and not isinstance(chosen_color, str)
+            and len(chosen_color)
+            # A single RGB(A) tuple (``colors=plt.cm.tab10(3)``) is one color,
+            # not a per-line sequence, exactly as ``vlines`` reads it.
+            and not (len(chosen_color) in (3, 4) and all(np.isscalar(v) for v in chosen_color))
+        ):
             chosen_color = chosen_color[0]
         entry = self._add(
             "@mark",
@@ -1439,6 +1449,7 @@ class PlotTypeMixin:
     ) -> PolyCollection:
         width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
+        linestyles = kwargs.pop("linestyle", kwargs.pop("ls", linestyles))
         color = kwargs.pop("color", colors)
         if (
             color is not None
@@ -1553,8 +1564,15 @@ class PlotTypeMixin:
         if data is not None:
             # resolve string keys before any float coercion sees them
             y, x1, x2 = (_from_data(value, data) for value in (y, x1, x2))
+        from xy.components import _is_datetime_like
+
+        if _is_datetime_like(y):
+            # Datetime y takes plot()'s ms-since-epoch conversion; the mesh
+            # coordinates are plain floats, so pin the axis kind for the
+            # engine's date ticks (`Axes._axis_holds_datetimes` honours it).
+            self._axis_props("y")["type_"] = "time"
         yv, left, right = np.broadcast_arrays(
-            _masked_float(y),
+            _masked_float(unit_converted_values(y)),
             _masked_float(x1),
             _masked_float(x2),
         )
@@ -3161,12 +3179,13 @@ class PlotTypeMixin:
         and markers. ``ecolor``/``elinewidth``/``capsize`` style the bars,
         ``errorevery`` subsamples them, and the ``*lims`` flags zero the
         limited side. Line keywords (``color``/``c``, ``linewidth``/``lw``,
-        ``alpha``, ``label``, ...) style the line; ``barsabove``,
-        ``capthick``, ``elinestyle``, and unknown keywords raise loudly.
+        ``alpha``, ``label``, ``marker``/``markersize``, ``mfc``/``mec``/
+        ``mew``, ...) style the line and its markers; ``capthick`` sets the
+        cap stroke; ``barsabove``, ``elinestyle``, and unknown keywords raise
+        loudly.
         """
         unsupported = {
             "barsabove": True if barsabove else None,
-            "capthick": capthick,
             "elinestyle": elinestyle,
         }
         check_unsupported(
@@ -3266,6 +3285,9 @@ class PlotTypeMixin:
         base = line_kwargs(kwargs)
         marker = kwargs.pop("marker", None)
         markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
+        markerfacecolor = kwargs.pop("markerfacecolor", kwargs.pop("mfc", None))
+        markeredgecolor = kwargs.pop("markeredgecolor", kwargs.pop("mec", None))
+        markeredgewidth = kwargs.pop("markeredgewidth", kwargs.pop("mew", None))
         check_unsupported(kwargs, "errorbar()")
         # When ecolor is omitted, the bars inherit the resolved data-series
         # color, exactly as matplotlib does: an explicit color kwarg wins, then
@@ -3333,7 +3355,10 @@ class PlotTypeMixin:
                         # resize keeps the marker size fixed, while a DPI change
                         # re-resolves points to the new output pixels.
                         "_mpl_line_marker_path_points": 2.0 * resolved_capsize,
-                        "_mpl_line_marker_stroke_points": float(rcParams["lines.markeredgewidth"]),
+                        # Matplotlib: capthick defaults to markeredgewidth.
+                        "_mpl_line_marker_stroke_points": float(
+                            rcParams["lines.markeredgewidth"] if capthick is None else capthick
+                        ),
                     },
                 )
                 cap_artists.append(Artist(self, cap_entry))
@@ -3371,6 +3396,12 @@ class PlotTypeMixin:
                 line_kwargs_for_plot["marker"] = marker
             if markersize is not None:
                 line_kwargs_for_plot["markersize"] = markersize
+            if markerfacecolor is not None:
+                line_kwargs_for_plot["markerfacecolor"] = markerfacecolor
+            if markeredgecolor is not None:
+                line_kwargs_for_plot["markeredgecolor"] = markeredgecolor
+            if markeredgewidth is not None:
+                line_kwargs_for_plot["markeredgewidth"] = markeredgewidth
             data_line = self.plot(x, y, fmt, **line_kwargs_for_plot)[0]
         return ErrorbarContainer(Artist(self, entry), data_line, cap_artists)
 

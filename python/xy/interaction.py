@@ -172,6 +172,23 @@ def legend_toggle(
             t._legend_vis_cache = None
 
 
+def _pick_row_count(t: "Trace") -> int:
+    """Rows a pick may read: the readout columns' length, capped by `n_points`.
+
+    `n_points` is the mark count the wire advertises, and for aggregate kinds
+    it is not the length of the columns `row_dict` indexes — a histogram or
+    hexbin advertises its sample count over a few dozen bin rows, an errorbar
+    its points over three segment endpoints each. An index must name both an
+    advertised mark and a readable row (§16: exact or nothing), so the bound
+    is the smaller of the two. Grid marks keep only the outer edges in x/y;
+    their readable rows are the cells.
+    """
+    if t.grid_shape is not None:
+        rows, cols = t.grid_shape
+        return min(t.n_points, rows * cols)
+    return min(t.n_points, len(t.x))
+
+
 def pick(
     fig: "Figure", trace_id: int, index: int, drill_seq: Optional[int] = None
 ) -> Optional[dict[str, Any]]:
@@ -208,7 +225,7 @@ def pick(
         if idx < 0 or idx >= len(shipped_sel):
             return None
         idx = int(shipped_sel[idx])
-    if idx < 0 or idx >= t.n_points:
+    if idx < 0 or idx >= _pick_row_count(t):
         return None
     return row_dict(fig, t, idx)
 
@@ -291,7 +308,7 @@ def selection_rows(
             if max_rows is not None and len(rows) >= max_rows:
                 return rows, len(rows) < total
             idx = int(raw_idx)
-            if 0 <= idx < t.n_points:
+            if 0 <= idx < _pick_row_count(t):
                 rows.append(row_dict(fig, t, idx))
     return rows, len(rows) < total
 

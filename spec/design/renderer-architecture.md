@@ -338,6 +338,23 @@ mantissa-1 ticks are labelled, and only every `labelEvery` decade where
 `labelEvery = ceil((decades + 1) / target)` — so minor ticks draw unlabelled.
 If thinning produces nothing, every tick is labelled.
 
+*Within-decade fallback.* The decade ladder is multiplicative: inside one
+decade it has at most the 2 and 5 mantissas to offer, and a window such as
+`0.3..0.35`, `2..3` or `100..110` holds none of them — so every zoom past ~3x on
+a log axis used to lose all ticks, labels and grid. When **fewer than two**
+decade (mantissa-1) ticks fall inside the domain (same `1e-12` slack), the
+ladder cannot describe the window and `logTicks` returns `linearTicks(lo, hi,
+target)` instead: linearly spaced "nice" positions across the span, every one
+labelled, with `step` set to the linear step so `fmtLinear` gives the axis one
+shared decimal count (`0.30, 0.31, …`, §6.2), and `log: true` still set. This is
+what matplotlib and Plotly do on a sub-decade log window. The rule is
+range-based, so wide windows are byte-identical to before (`0.5..50` has two
+decades in view and keeps `0.5 1 2 5 10 20 50`), and it is mirrored exactly by
+`_log_ticks` in `python/xy/_svg.py` — which `axis_ticks` (SVG and, through it,
+the native raster/PNG/PDF path), the static colorbars and pyplot's
+`get_xticks` all consume — so a static export ticks a zoomed log axis where the
+browser does (`tests/test_log_ticks_within_decade.py` pins the parity). Before/after at `spec/assets/log-axis-decade-before-after.png` (a log-x view of `[0.3, 0.35]`).
+
 An authored `tick_values` array is the labelled major tier. An optional
 `minor_tick_values` array is drawn separately with `minor_style`; it never
 participates in label formatting or collision handling. Pyplot uses this
@@ -373,6 +390,17 @@ With no `format=` on the axis, labels come from the step:
   from the tick step — `ceil(−log10(step))`, then increments while the step is
   not representable at that precision to within a thousandth of itself — and
   caps at 8 decimals. Ticks on one axis therefore share a decimal count.
+- `fmtLog` labels a log tick from its own value, not the step: the fewest
+  decimals (up to 8) that reproduce it, with the same exponential switch as
+  `fmtLinear`. On the 1/2/5 ladder that is the decade's magnitude (`0.002`,
+  `20`); it exists because the ladder's `step` of 1 makes `fmtLinear` collapse
+  every sub-unit decade to `0`. It also keeps the within-decade linear ticks a
+  log *colorbar* carries distinct (`2.2, 2.4` rather than `2, 2`). `fmtAxis`
+  routes a sub-unit log tick whose label collapsed to zero here — unless the
+  tick step is itself sub-unit (the within-decade fallback, or authored linear
+  `tick_values`), in which case `fmtLinear(v, step)` wins so the axis keeps
+  one shared decimal count. `_fmt_log` / `_fmt_axis` in `python/xy/_svg.py`
+  mirror both rules.
 - `fmtTime` picks the unit from the step: year alone for January on
   month-or-coarser steps, otherwise `Mon YYYY`; `Mon DD` at day steps; `HH:MM`
   at minute steps; `HH:MM:SS` at second steps; `MM:SS.mmm` below. All fields

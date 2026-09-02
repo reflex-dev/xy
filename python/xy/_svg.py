@@ -33,21 +33,51 @@ from . import _fontmetrics, _native, _paint, _png, _textblock
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE, polar_bar_segments
 
+#: Code points XML 1.0 §2.2 excludes from the ``Char`` production: the C0
+#: controls other than tab, newline and carriage return, the surrogate range,
+#: and the two non-characters U+FFFE/U+FFFF. No escape can represent them — a
+#: character reference to U+0001 is itself not well-formed — so the writer
+#: drops them (`escape`). Everything else, including DEL and the C1 range, is
+#: legal and passes through untouched.
+_XML_ILLEGAL: dict[int, None] = {c: None for c in range(0x20) if c not in (0x09, 0x0A, 0x0D)}
+_XML_ILLEGAL.update(dict.fromkeys(range(0xD800, 0xE000)))
+_XML_ILLEGAL.update({0xFFFE: None, 0xFFFF: None})
+
 
 def escape(data: str, entities: dict[str, str] | None = None) -> str:
-    """Escape ``&``, ``<`` and ``>`` in a string of data.
+    """Escape ``&``, ``<`` and ``>`` in a string of data, and drop the code
+    points XML cannot carry at all.
 
-    Byte-for-byte equivalent to :func:`xml.sax.saxutils.escape`, vendored so a
-    static export does not import it. That one function costs ~7.5 ms of cold
-    start: ``xml.sax.saxutils`` pulls in ``urllib.request``, which pulls in
+    Equivalent to :func:`xml.sax.saxutils.escape` on every string the stdlib
+    can produce a well-formed document from, vendored so a static export does
+    not import it. That one function costs ~7.5 ms of cold start:
+    ``xml.sax.saxutils`` pulls in ``urllib.request``, which pulls in
     ``http.client``, ``ssl``, ``socket`` and the whole ``email`` package — 35+
     modules for three ``str.replace`` calls. Nothing else in xy needs them, and
     a cold ``to_png`` at 10M points spent more time on that import than on
     binning ten million points.
 
-    ``tests/test_svg_escape.py`` differentially fuzzes this against the stdlib
-    so it cannot drift.
+    Where it deliberately differs: the stdlib passes C0 control characters
+    through, and an ``a\x01b`` legend name or tick label then yields SVG that
+    no XML parser accepts and a PDF export that refuses the document, while
+    the HTML and PNG paths (which are not XML) succeed. Those code points are
+    *removed* — not replaced with U+FFFD — because a browser renders a control
+    character as nothing, so dropping it keeps the vector text visually in
+    step with the live chart (spec/api/export.md §2). Tab, newline and
+    carriage return are legal XML and are kept; every raw text sink in this
+    writer (labels, titles, legend names, annotation text, attribute values
+    via `_escape_attr`) routes through here, so this is the single choke point.
+
+    ``tests/test_svg_escape.py`` differentially fuzzes the escaping against the
+    stdlib so it cannot drift; ``tests/test_export_text_safety.py`` pins the
+    control-character rule.
     """
+    # `isprintable` is a C-level scan that is False for every C0 control (and
+    # for a few legal characters such as no-break space, which merely take the
+    # slower path); it keeps the hot path — thousands of tick labels — at the
+    # cost of the three replaces alone.
+    if not data.isprintable():
+        data = data.translate(_XML_ILLEGAL)
     # must do ampersand first
     data = data.replace("&", "&amp;")
     data = data.replace(">", "&gt;")
@@ -542,12 +572,26 @@ def _angular_ticks(lo: float, hi: float, unit: str, target: int = 6) -> tuple[li
 
 
 def _log_ticks(lo: float, hi: float, target: int = 6) -> tuple[list[float], list[float], float]:
-    """Returns (ticks, labeled_ticks, step)."""
+    """Returns (ticks, labeled_ticks, step). Mirrors `logTicks` in js/src/30_ticks.ts.
+
+    The decade ladder is multiplicative: inside one decade it has at most the
+    2 and 5 mantissas to offer, and a window like 0.3..0.35 or 100..110 holds
+    none of them, so a log axis zoomed past ~3x exported with no ticks at all.
+    With fewer than two decades in view the ladder cannot describe the window;
+    tick it linearly across the span instead (renderer-architecture §6.1), with
+    the nice linear step so `_fmt_linear` shares one decimal count along the
+    axis and every tick labelled."""
     a, b = min(lo, hi), max(lo, hi)
     if a <= 0 or b <= 0 or not (np.isfinite(a) and np.isfinite(b)):
         return [], [], 1.0
     e0 = int(np.floor(np.log10(a)))
     e1 = int(np.ceil(np.log10(b)))
+    decades_in_view = sum(
+        1 for e in range(e0, e1 + 1) if a * (1 - 1e-12) <= 10.0**e <= b * (1 + 1e-12)
+    )
+    if decades_in_view < 2:
+        ticks, step = _linear_ticks(a, b, target)
+        return ticks, ticks, step
     mults = (1, 2, 5) if max(1, e1 - e0) <= max(2, target) else (1,)
     label_every = max(1, int(np.ceil((e1 - e0 + 1) / max(1, target))))
     out: list[float] = []
@@ -743,12 +787,19 @@ def _fmt_log(v: float) -> str:
 
     Decade ticks are multiplicative, so the linear formatter's
     step-derived precision rounds every decade under 1.0 to a bare "0" —
-    0.001 and 0.01 became two identical, wrong labels."""
+    0.001 and 0.01 became two identical, wrong labels. Uses the fewest
+    decimals (up to 8) that reproduce the value: identical to the old
+    magnitude rule on the 1/2/5 ladder, and distinct labels for the
+    within-decade linear ticks a log colorbar now carries (§6.1), which the
+    magnitude rule collapsed to "2 2 2 3 3 3" for a 2..3 range.
+    Mirrors `fmtLog` in js/src/30_ticks.ts."""
     av = abs(v)
     if av >= 1e6 or (av != 0 and av < 1e-4):
         return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
-    dec = max(0, int(np.ceil(-np.log10(av)))) if av and av < 1 else 0
-    return f"{v:.{min(dec, 8)}f}"
+    dec = 0
+    while dec < 8 and abs(round(av, dec) - av) > av * 1e-9:
+        dec += 1
+    return f"{v:.{dec}f}"
 
 
 # Everything a formatted number can carry that is not part of its value:
@@ -820,10 +871,13 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
         return _fmt_time_spec(v, axis.get("format")) or _fmt_time(v, step)
     formatted = _fmt_number_spec(v, axis.get("format"))
     # A fixed-decimal spec collapses sub-unit decades ("0.001" at `.0f`), and so
-    # does the linear fallback; the magnitude-derived label is the useful one
-    # either way. Mirrors `fmtAxis`.
+    # does the linear fallback under the ladder's step of 1; the value-derived
+    # label is the useful one either way — except on the within-decade linear
+    # tick set (renderer-architecture §6.1), whose sub-unit step gives
+    # `_fmt_linear` the one shared decimal count an axis reads by ("0.30,
+    # 0.31, ...") where the per-value `_fmt_log` goes ragged. Mirrors `fmtAxis`.
     if axis.get("scale") == "log" and 0 < v < 1 and _collapsed_to_zero(formatted):
-        return _fmt_log(v)
+        return _fmt_linear(v, step) if 0 < step < 1 else _fmt_log(v)
     return formatted if formatted is not None else _fmt_linear(v, step)
 
 

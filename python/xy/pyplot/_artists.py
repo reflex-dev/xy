@@ -18,6 +18,14 @@ import numpy as np
 from ._colors import resolve_color, resolve_rgba_array, scalar_float
 from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
+from ._translate import (
+    LINESTYLE_TO_DASH,
+    MPL_DASH_PATTERN,
+    check_unsupported,
+    line_kwargs,
+    not_implemented,
+    strip_artist_noops,
+)
 
 
 class _PatchFacade:
@@ -91,7 +99,8 @@ class Artist:
             axes._register_artist(self)
 
     def _touch(self) -> None:
-        self._axes._invalidate()
+        if self._axes is not None:  # legend proxies (Line2D([0], [0], ...)) own no axes
+            self._axes._invalidate()
 
     def _companion_entries(self) -> list[dict[str, Any]]:
         """Extra spec entries this one handle stands for, beside ``_entry``.
@@ -264,6 +273,9 @@ class Artist:
 
         if self._entry.get("kind") == "scatter":
             return [self._entry]
+        if self._axes is None:  # legend proxy: its marker rides on the handle
+            proxy_entry = getattr(self, "_proxy_marker_entry", None)
+            return [proxy_entry] if proxy_entry is not None else []
 
         entries = getattr(self._axes, "_entries", [])
         try:
@@ -318,8 +330,90 @@ class Artist:
     set_ms = set_markersize
 
 
+def _line_proxy_entries(
+    xdata: Any, ydata: Any, kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
+    """Spec entries for a Matplotlib-style ``Line2D(xdata, ydata, **style)`` proxy.
+
+    The proxy never renders; ``legend(handles=...)`` freezes it into a swatch
+    through the same ``_legend_item_from_entry`` path plotted lines use, so
+    the style vocabulary here mirrors ``Axes.plot``. Point-unit sizes stay in
+    points (``_mpl_*_points``) because the owning figure's DPI is only known
+    when the legend attaches.
+    """
+    kwargs = dict(kwargs)
+    strip_artist_noops(kwargs)
+    marker = kwargs.pop("marker", None)
+    markersize = kwargs.pop("markersize", kwargs.pop("ms", None))
+    markerfacecolor = kwargs.pop("markerfacecolor", kwargs.pop("mfc", None))
+    markeredgecolor = kwargs.pop("markeredgecolor", kwargs.pop("mec", None))
+    markeredgewidth = kwargs.pop("markeredgewidth", kwargs.pop("mew", None))
+    style = line_kwargs(kwargs)
+    check_unsupported(kwargs, "Line2D()")
+    color = style.get("color") or resolve_color(rcParams["lines.color"])
+    width = float(style.get("width", rcParams["lines.linewidth"]))
+    opacity = float(style.get("opacity", 1.0))
+    linestyle = style.get("linestyle")
+    dash_name = LINESTYLE_TO_DASH.get(linestyle) if linestyle is not None else None
+    dash_points: Optional[list[float]] = None
+    if style.get("dash") is not None:
+        dash_points = [float(value) for value in style["dash"]]
+    elif dash_name not in (None, "none"):
+        dash_points = list(MPL_DASH_PATTERN[dash_name])
+    marker_entry: Optional[dict[str, Any]] = None
+    if marker is not None and str(marker).lower() != "none":
+        from ._markers import marker_render_spec
+
+        edge_visible = not (isinstance(markeredgecolor, str) and markeredgecolor.lower() == "none")
+        marker_kwargs: dict[str, Any] = {
+            "color": (
+                resolve_color(markerfacecolor) if markerfacecolor not in (None, "auto") else color
+            ),
+            "opacity": opacity,
+            **marker_render_spec(marker),
+            "_mpl_marker_size_points": float(
+                rcParams["lines.markersize"] if markersize is None else markersize
+            ),
+        }
+        if edge_visible:
+            marker_kwargs["stroke"] = (
+                resolve_color(markeredgecolor) if markeredgecolor not in (None, "auto") else color
+            )
+            marker_kwargs["_mpl_marker_stroke_points"] = float(
+                rcParams["lines.markeredgewidth"] if markeredgewidth is None else markeredgewidth
+            )
+        marker_entry = {"kind": "scatter", "x": xdata, "y": ydata, "kwargs": marker_kwargs}
+    line_kw: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
+    if style.get("name") is not None:
+        line_kw["name"] = style["name"]
+    if dash_points:
+        line_kw["_mpl_dash_points"] = dash_points
+    if dash_name == "none" and marker_entry is not None:
+        # Marker-only proxy (``linestyle="none", marker="o"``): the swatch is
+        # the marker itself, exactly as a marker-only ``plot`` is a scatter.
+        marker_entry["kwargs"]["name"] = line_kw.get("name")
+        return marker_entry, None
+    return {"kind": "line", "x": xdata, "y": ydata, "kwargs": line_kw, "_proxy": True}, marker_entry
+
+
 class Line2D(Artist):
-    """Handle for plt.plot lines (and their marker overlays)."""
+    """Handle for plt.plot lines (and their marker overlays).
+
+    Also constructible the Matplotlib way — ``Line2D([0], [0], color="r",
+    linestyle="--", marker="o", label="fit")`` — as a legend proxy artist. A
+    proxy owns no axes and draws nothing; ``legend(handles=[...])`` freezes
+    its style into a swatch exactly as it does for a plotted line.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._proxy_marker_entry: Optional[dict[str, Any]] = None
+        if len(args) == 2 and isinstance(args[1], dict) and not kwargs:
+            super().__init__(args[0], args[1])  # (axes, entry): a plotted line
+            return
+        if len(args) != 2:
+            raise TypeError("Line2D(xdata, ydata, **style) requires x and y data")
+        entry, self._proxy_marker_entry = _line_proxy_entries(args[0], args[1], kwargs)
+        super().__init__(None, entry)
 
     @staticmethod
     def _segment_args_from_xy(x: Any, y: Any) -> tuple[Any, Any, Any, Any]:
@@ -953,6 +1047,67 @@ class BarPatch:
             else float(np.asarray(current)[self._index])
         )
 
+    def _geometry(self) -> tuple[float, float, float, float]:
+        """Matplotlib's Rectangle ``(x, y, width, height)`` for this bar.
+
+        Data space, so the ``ax.text(r.get_x() + r.get_width() / 2,
+        r.get_height(), ...)`` labeling idiom lands on the bar. Category
+        positions resolve through the axes' category order (0, 1, 2, ...),
+        as Matplotlib's category converter does.
+        """
+        kw = self._entry["kwargs"]
+        orientation = kw.get("orientation", "vertical")
+        raw_center = np.asarray(self._entry.get("x", ())).reshape(-1)[self._index]
+        try:
+            center = float(np.asarray(unit_converted_values([raw_center]), dtype=np.float64)[0])
+        except (TypeError, ValueError):
+            axis = "x" if orientation == "vertical" else "y"
+            center = self._container._axes._categorical_position(axis, raw_center)
+        values = np.asarray(self._entry.get("y", ()), dtype=np.float64).reshape(-1)
+        value = float(values[self._index])
+        base = float(
+            np.broadcast_to(np.asarray(kw.get("base", 0.0), dtype=np.float64), values.shape)[
+                self._index
+            ]
+        )
+        thickness = float(
+            np.broadcast_to(np.asarray(kw.get("width", 0.8), dtype=np.float64), values.shape)[
+                self._index
+            ]
+        )
+        if orientation == "vertical":
+            return (center - thickness / 2.0, base, thickness, value)
+        return (base, center - thickness / 2.0, value, thickness)
+
+    def get_x(self) -> float:
+        return self._geometry()[0]
+
+    def get_y(self) -> float:
+        return self._geometry()[1]
+
+    def get_width(self) -> float:
+        return self._geometry()[2]
+
+    def get_height(self) -> float:
+        return self._geometry()[3]
+
+    def get_xy(self) -> tuple[float, float]:
+        x, y, _w, _h = self._geometry()
+        return (x, y)
+
+    def get_center(self) -> tuple[float, float]:
+        x, y, w, h = self._geometry()
+        return (x + w / 2.0, y + h / 2.0)
+
+    def get_bbox(self) -> Bbox:
+        return Bbox.from_bounds(*self._geometry())
+
+    def get_label(self) -> Any:
+        labels = self._entry.get("patch_labels")
+        if labels is not None:
+            return labels[self._index]
+        return self._entry["kwargs"].get("name")
+
 
 class StepPatch(Artist):
     """Handle for ``stairs`` output backed by a compact core stairs mark."""
@@ -976,15 +1131,42 @@ class Patch(Artist):
 
     def __init__(
         self,
-        axes: Any,
-        entry: dict[str, Any],
+        axes: Any = None,
+        entry: dict[str, Any] | None = None,
         outline_entries: list[dict[str, Any]] | None = None,
+        **style: Any,
     ) -> None:
+        if entry is None:
+            # Matplotlib's constructor form — ``Patch(facecolor="r",
+            # label="area")`` — builds a legend proxy that owns no axes.
+            if axes is not None or outline_entries is not None:
+                raise TypeError("Patch(**style) proxies take keyword styling only")
+            entry = _patch_proxy_entry(style, "Patch()")
+        elif style:
+            raise TypeError(f"Patch() got unexpected keyword argument {next(iter(style))!r}")
         super().__init__(axes, entry)
         self._outline_entries = list(outline_entries or [])
 
     def _companion_entries(self) -> list[dict[str, Any]]:
         return self._outline_entries
+
+    # -- Matplotlib patch property surface (legend proxies and add_patch ducks)
+
+    def get_facecolor(self) -> Any:
+        return self._entry["kwargs"].get("color", "none")
+
+    def get_edgecolor(self) -> Any:
+        return self._entry["kwargs"].get("stroke", "none")
+
+    def get_linewidth(self) -> float:
+        return float(self._entry["kwargs"].get("stroke_width", 0.0))
+
+    def get_fill(self) -> bool:
+        face = self._entry["kwargs"].get("color")
+        return face is not None and str(face).lower() not in ("none", "transparent")
+
+    def get_hatch(self) -> Any:
+        return self._entry["kwargs"].get("hatch")
 
     def remove(self) -> None:
         for entry in self._outline_entries:
@@ -996,6 +1178,96 @@ class Patch(Artist):
         for entry in self._outline_entries:
             entry["_zorder"] = float(level)
         super().set_zorder(level)
+
+
+def _patch_proxy_entry(style: dict[str, Any], where: str) -> dict[str, Any]:
+    """Spec entry for a ``Patch``/``Rectangle`` legend proxy, in bar-swatch shape."""
+    kwargs = dict(style)
+    strip_artist_noops(kwargs)
+    color = kwargs.pop("color", None)
+    facecolor = kwargs.pop("facecolor", kwargs.pop("fc", None))
+    edgecolor = kwargs.pop("edgecolor", kwargs.pop("ec", None))
+    linewidth = kwargs.pop("linewidth", kwargs.pop("lw", None))
+    alpha = kwargs.pop("alpha", None)
+    label = kwargs.pop("label", None)
+    hatch = kwargs.pop("hatch", None)
+    fill = kwargs.pop("fill", True)
+    linestyle = kwargs.pop("linestyle", kwargs.pop("ls", None))
+    check_unsupported(kwargs, where)
+    if linestyle is not None and LINESTYLE_TO_DASH.get(linestyle) not in (None, "none"):
+        raise not_implemented(f"{where[:-2]}(linestyle={linestyle!r})", "a solid outline")
+    if color is not None:
+        facecolor = color if facecolor is None else facecolor
+        edgecolor = color if edgecolor is None else edgecolor
+
+    def paint(value: Any, default: Any) -> Optional[str]:
+        if value is None:
+            value = default
+        if value is None or (isinstance(value, str) and value.lower() == "none"):
+            return None
+        return resolve_color(value)
+
+    face = paint(facecolor, rcParams["patch.facecolor"]) if fill else None
+    edge = paint(edgecolor, None)
+    entry_kwargs: dict[str, Any] = {
+        "color": face if face is not None else "transparent",
+        "opacity": 1.0 if alpha is None else float(alpha),
+    }
+    if label is not None:
+        entry_kwargs["name"] = str(label)
+    if edge is not None:
+        entry_kwargs["stroke"] = edge
+        entry_kwargs["stroke_width"] = float(
+            rcParams["patch.linewidth"] if linewidth is None else linewidth
+        )
+    if hatch:
+        entry_kwargs["hatch"] = str(hatch)
+    return {"kind": "bar", "kwargs": entry_kwargs, "_proxy": True}
+
+
+class Rectangle(Patch):
+    """``Rectangle((x, y), width, height, **style)``: a legend proxy that also
+    quacks like a Matplotlib rectangle for ``add_patch`` (``get_x`` and co.).
+
+    ``angle`` other than 0 is rejected rather than drawn unrotated.
+    """
+
+    def __init__(
+        self, xy: Any, width: float, height: float, *, angle: float = 0.0, **style: Any
+    ) -> None:
+        if float(angle) != 0.0:
+            raise not_implemented("Rectangle(angle=...)", "an unrotated rectangle")
+        self._xy = (float(xy[0]), float(xy[1]))
+        self._width = float(width)
+        self._height = float(height)
+        super().__init__(None, _patch_proxy_entry(style, "Rectangle()"))
+
+    def get_x(self) -> float:
+        return self._xy[0]
+
+    def get_y(self) -> float:
+        return self._xy[1]
+
+    def get_xy(self) -> tuple[float, float]:
+        return self._xy
+
+    def get_width(self) -> float:
+        return self._width
+
+    def get_height(self) -> float:
+        return self._height
+
+    def get_bbox(self) -> Bbox:
+        return Bbox.from_bounds(self._xy[0], self._xy[1], self._width, self._height)
+
+    def set_xy(self, xy: Any) -> None:
+        self._xy = (float(xy[0]), float(xy[1]))
+
+    def set_width(self, width: float) -> None:
+        self._width = float(width)
+
+    def set_height(self, height: float) -> None:
+        self._height = float(height)
 
 
 class StemContainer:
@@ -1649,8 +1921,29 @@ def _legend_item_from_entry(
     gap_color = kw.get("_gapcolor")
     if isinstance(gap_color, str):
         style["legend_gap_color"] = gap_color
+    # Legend proxies (``Line2D([0], [0], ...)``) keep point-unit styling until
+    # a legend attaches them to a figure; scale it here like ``Axes._mpl_dash``
+    # and ``plot`` do for plotted lines.
+    dash_points = kw.get("_mpl_dash_points")
+    if dash_points:
+        width_points = float(kw.get("width", rcParams["lines.linewidth"]))
+        style["dash"] = [round(float(v) * width_points * point_scale, 4) for v in dash_points]
+    if kind == "scatter":
+        size_points = kw.get("_mpl_marker_size_points")
+        stroke_points = kw.get("_mpl_marker_stroke_points", 0.0)
+        if size_points is not None:
+            style["size"] = (float(size_points) + float(stroke_points)) * point_scale
+            if stroke_points:
+                style["stroke_width"] = float(stroke_points) * point_scale
     if marker_entry is not None:
         style["legend_marker"] = _legend_marker_style(marker_entry)
+        marker_kw = marker_entry.get("kwargs") or {}
+        marker_points = marker_kw.get("_mpl_marker_size_points")
+        if marker_points is not None:
+            stroke_points = float(marker_kw.get("_mpl_marker_stroke_points", 0.0))
+            style["legend_marker"]["size"] = (float(marker_points) + stroke_points) * point_scale
+            if stroke_points:
+                style["legend_marker"]["stroke_width"] = stroke_points * point_scale
     if kind == "scatter":
         symbol = kw.get("symbol")
         if symbol:

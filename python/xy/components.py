@@ -30,6 +30,7 @@ behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import hashlib
 import math
@@ -38,7 +39,7 @@ import uuid
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
+from functools import cache, lru_cache
 from os import PathLike
 from typing import Any, Literal, Optional, TypeAlias, Union
 
@@ -184,7 +185,9 @@ class Mark(Component):
     """A data series inside a chart: one mark kind plus its data/encodings.
 
     Built by the mark constructors (`scatter`, `line`, `bar`, ...) rather
-    than directly; ``props`` carries the kind-specific options verbatim.
+    than directly; ``props`` carries the kind-specific options verbatim. A
+    hand-built Mark may leave ``props`` partial: at chart build the missing
+    keys take the kind's factory defaults (`_with_factory_defaults`).
     """
 
     kind: str  # chart mark registry key
@@ -3779,7 +3782,7 @@ class Chart(Component):
         if self._figure is not None:
             return self._figure
 
-        marks = [c for c in self.children if isinstance(c, Mark)]
+        marks = [_with_factory_defaults(c) for c in self.children if isinstance(c, Mark)]
         annotations = [c for c in self.children if isinstance(c, Annotation)]
         axis_children = [c for c in self.children if isinstance(c, Axis)]
         for axis in axis_children:
@@ -6351,6 +6354,63 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "violin": _apply_violin,
 }
 
+# The factory that builds each built-in kind, keyed like `_MARK_APPLIERS`.
+# `Mark` is a public dataclass, so a caller may construct `xy.Mark(kind=...)`
+# by hand with a partial (or empty) `props`; the appliers index `m.props[...]`
+# and leaked `KeyError: 'size'`. The factory signature is the one source of
+# truth for a kind's defaults (chart-grammar rule G0: one implementation, one
+# set of defaults), so a bare Mark borrows them from a no-argument factory
+# call instead of a second, hand-copied table that would drift.
+_MARK_FACTORIES: dict[str, Callable[..., Mark]] = {
+    "area": area,
+    "bar": bar,
+    "box": box,
+    "column": column,
+    "contour": contour,
+    "ecdf": ecdf,
+    "errorbar": errorbar,
+    "error_band": error_band,
+    "hexbin": hexbin,
+    "heatmap": heatmap,
+    "histogram": histogram,
+    "scatter": scatter,
+    "segments": segments,
+    "line": line,
+    "step": step,
+    "stairs": stairs,
+    "stem": stem,
+    "ribbon": ribbon,
+    "sankey": sankey,
+    "funnel": funnel,
+    "triangle_mesh": triangle_mesh,
+    "violin": violin,
+}
+
+
+@cache
+def _factory_default_props(kind: str) -> Optional[Mapping[str, Any]]:
+    """The props a data-less factory call sets for `kind`, or None for a
+    plugin kind (plugins read `props.get`, see `_plugin_applier`)."""
+    factory = _MARK_FACTORIES.get(kind)
+    if factory is None:
+        return None
+    return dict(factory().props)
+
+
+def _with_factory_defaults(m: Mark) -> Mark:
+    """A Mark whose `props` carry every key its factory would have set.
+
+    Factory-built marks already do and pass through untouched; a hand-built
+    `xy.Mark` is completed with the factory defaults, explicit props winning.
+    Defaults are copied per mark (a `[]` links default must not be shared).
+    """
+    defaults = _factory_default_props(m.kind)
+    if defaults is None or defaults.keys() <= m.props.keys():
+        return m
+    props = {key: copy.deepcopy(value) for key, value in defaults.items()}
+    props.update(m.props)
+    return replace(m, props=props)
+
 
 def _plugin_column(values: Any) -> Any:
     """A plugin's declared column, as canonical f64 when it is numeric.
@@ -7108,11 +7168,17 @@ def sankey_chart(
             ("Equities", "Growth", 61000),
         ])
 
-    Keyword arguments that belong to `xy.sankey` (``nodes``, ``colors``,
-    ``node_width``, ``link_opacity``, ``labels``, …) are forwarded there;
-    everything else (``width``, ``height``, ``title``, …) styles the chart.
-    The diagram lives in a unit box with a small margin, y inverted so flow
-    reads top-down like every other Sankey.
+    The first positional may equally be the mark itself, the way every
+    sibling ``*_chart`` accepts its mark — ``xy.sankey_chart(xy.sankey(links,
+    node_width=0.03))`` — or any other child (``xy.legend(...)``); links and
+    a mark build the same figure. Keyword arguments that belong to `xy.sankey`
+    (``nodes``, ``colors``, ``node_width``, ``link_opacity``, ``labels``, …)
+    are forwarded there when links are given positionally; beside an explicit
+    ``xy.sankey(...)`` child they would describe a second, ghost diagram, so
+    that mix is refused — set them on the mark. Everything else (``width``,
+    ``height``, ``title``, …) styles the chart. The diagram lives in a unit
+    box with a small margin, y inverted so flow reads top-down like every
+    other Sankey.
     """
     mark_keys = (
         "nodes",
@@ -7126,11 +7192,43 @@ def sankey_chart(
         "label_size",
     )
     mark_kwargs = {key: props.pop(key) for key in mark_keys if key in props}
+    rest: list[Component] = list(children)
+    if isinstance(links, Component):
+        # `sankey_chart(xy.sankey(...))` used to reach `list(links)` inside
+        # the factory and die with "'Mark' object is not iterable" — the one
+        # `*_chart` that rejected its own mark while its docstring said to
+        # prefer it.
+        rest.insert(0, links)
+        links = None
+    explicit = [c for c in rest if isinstance(c, Mark) and c.kind == "sankey"]
+    if links is not None:
+        lead: tuple[Component, ...] = (sankey(links, **mark_kwargs),)
+    elif explicit:
+        if mark_kwargs:
+            raise ValueError(
+                f"sankey_chart got {sorted(mark_kwargs)} alongside an explicit "
+                "xy.sankey(...) child; set these on the mark itself"
+            )
+        lead = ()
+    elif rest:
+        # Chrome-only children build a mark-free chart, like the sibling
+        # factories; sankey keywords without any links are refused rather
+        # than describing a diagram that has nothing to lay out.
+        if mark_kwargs:
+            raise ValueError(
+                f"sankey_chart got {sorted(mark_kwargs)} without links; pass the "
+                "links positionally or set these options on an xy.sankey(...) child"
+            )
+        lead = ()
+    else:
+        # `sankey_chart()` keeps its historical shape: an empty diagram that
+        # the layout refuses by name at figure build.
+        lead = (sankey(links, **mark_kwargs),)
     children = (
-        sankey(links, **mark_kwargs),
+        *lead,
         x_axis(domain=(-0.09, 1.09), show=False),
         y_axis(domain=(-0.05, 1.05), reverse=True, show=False),
-        *children,
+        *rest,
     )
     return Chart("sankey_chart", children, **props)
 

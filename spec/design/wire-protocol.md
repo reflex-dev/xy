@@ -19,9 +19,13 @@ emits it (§2).
 returns either `None` or `(message, buffers)`, where `buffers` is a list of
 binary attachments the reply's spec entries index into by position.
 
-- Non-dict `content`, an unknown `type`, a missing required field, or a value
-  that fails coercion returns `None`. Client-supplied data never raises;
-  exceptions from *user callbacks* do propagate.
+- Non-dict `content`, an unknown or non-string `type`, a missing required
+  field, or a value that fails coercion returns `None`. Client-supplied data
+  never raises; exceptions from *user callbacks* do propagate. A dropped
+  message mutates nothing: `type` is checked before any other field is read,
+  and every kind validates its whole payload before touching drill
+  bookkeeping, the view-state cache, or legend predicates
+  (`tests/test_channel_malformed_messages.py` fuzzes this).
 - Replies are return values, not sends. Python-side callbacks therefore fire
   before the reply leaves the process.
 - The `buffers` argument is accepted and unused: no inbound message carries
@@ -82,6 +86,15 @@ first payload's recorded count — sits within the points band
 covering texture stands, however blurry; traces with no recorded counts
 always request.
 
+Window bounds pass through `lod.normalize_window`, which rejects non-finite
+values and spans below the smallest normal double (`sys.float_info.min`):
+every consumer divides by the span — the drill ladder's level, the grid's
+cell width, the client's data→clip map — and a subnormal span has no finite
+reciprocal in f64, so such a request is dropped with no drill-state change.
+A normal span that still out-resolves the power-of-two ladder
+(`lod.aligned_window`: the extent-to-span quotient overflows, or a block
+would fall below an ulp) drills the raw view window instead of a padded one.
+
 **`pick`** — `trace` and `index` pass through `_integer_id`. `index` is a
 *shipped-vertex* index, translated kernel-side to a canonical row when the
 shipped copy dropped non-finite rows. `drill_seq`, when present, is the drill
@@ -89,6 +102,11 @@ subset version the client picked against; a non-current seq translates
 through the kernel's bounded subset history when it is still remembered (the
 client may be drawing a retired cached point window, LOD doc T13) and
 resolves to `row: null` otherwise — never to a row in a dead index space.
+`index` must also name a readable row: where a mark's advertised `n_points`
+is not the length of its readout columns — a histogram's or hexbin's sample
+count over its bin rows, an errorbar's points over its segment endpoints —
+the bound is the smaller of the two, and an index past it resolves to
+`row: null` rather than an exception.
 
 **`click`** — same fields and same `fig.pick` resolution as `pick`, minus
 `seq`; it fires `on_click` and returns nothing.
@@ -96,7 +114,11 @@ resolves to `row: null` otherwise — never to a row in a dead index space.
 **`view_change`** — a per-axis `ranges` map (`{axisId: [lo, hi]}`) plus a
 `source` string (default `"view"`, stringified kernel-side), the changed `axes`,
 a `phase` (default `"end"`), and an `interaction_id`; a legacy `{x0, x1, y0, y1}`
-message with no `ranges` is still accepted and normalized kernel-side. There is
+message with no `ranges` is still accepted and normalized kernel-side. Each
+range is coerced with `float()`, must be finite, and is stored ascending — a
+flipped pair is reordered, a zero-span pair rejects the whole event — so the
+cache holds only what `Figure.state_patch_message` accepts and `view_state()`
+output always feeds back into a state patch (view-state.md §5.1). There is
 no `view_change` interaction flag: the client sends `phase: "end"` events
 unconditionally (rAF-coalesced — one message per gesture; they feed the
 kernel's `view_state()` cache, view-state.md §5.1) and streams `"update"`
@@ -222,8 +244,9 @@ accepts `msg.trace` and `msg.stale` for pending-request bookkeeping — no
 current kernel path emits either field.
 
 **`pick_result`** — `{type, seq, row}`. `row` is `null` when the index is out
-of range or `drill_seq` was stale; the reply ships regardless so the client
-clears its hover state. A point row is
+of range (past the advertised count or the readable rows, whichever is
+smaller — §2 `pick`) or `drill_seq` was stale; the reply ships regardless so
+the client clears its hover state. A point row is
 `{trace, index, x, y, x_kind, y_kind}` plus `color_value` or `color_category`
 and `size_value` when those channels exist. A heatmap row is
 `{trace, index, row, col}` plus `color_value` when the cell is finite. Picks

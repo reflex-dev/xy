@@ -500,8 +500,9 @@ def append_continuous(channel: Any, values: npt.NDArray[np.float64], label: str)
     Geometry columns already use a capacity-doubling buffer for streaming;
     channel arrays need the same contract. The domain expands monotonically so
     a newly appended value is not silently clamped to the old color/size scale.
-    Non-finite values remain valid channel inputs and are handled by the
-    existing normalization policy; they do not expand the domain.
+    Non-finite values remain valid channel inputs — the emitters skip those
+    rows at build (`_payload._finite_sel`, §19) — and they do not expand the
+    domain.
     """
     if channel.mode != "continuous" or channel.values is None:
         raise ValueError(f"{label} channel is not continuous")
@@ -731,9 +732,13 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
+
     Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex
-    (design dossier §19); the validity story tightens with real bitmaps
-    later."""
+    (design dossier §19). That floor is a safety net, not a rendering: the
+    emitters exclude rows whose continuous color/size is non-finite before
+    shipping (`_payload._finite_sel`, `_figure._rect_finite_sel`), so on the
+    build path such a value is never drawn rather than drawn in the minimum
+    color. The validity story tightens with real bitmaps later."""
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 

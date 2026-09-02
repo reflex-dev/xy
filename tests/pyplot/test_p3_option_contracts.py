@@ -176,38 +176,21 @@ _Z = np.arange(16.0).reshape(4, 4)
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], minlength=0), "minlength"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], norm=Normalize(0, 1)), "norm"),
         (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], clim=(0, 1)), "clim"),
-        (lambda ax: ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], zorder=3), "zorder"),
         (lambda ax: ax.contour(_Z, linestyles="dashed"), "linestyles"),
         (lambda ax: ax.contourf(_Z, corner_mask="legacy"), "corner_mask"),
         (lambda ax: ax.streamplot(*_stream_args(), transform="data"), "transform"),
-        (lambda ax: ax.streamplot(*_stream_args(), zorder=2), "zorder"),
         (lambda ax: ax.streamplot(*_stream_args(), minlength=0.5), "minlength"),
         (lambda ax: ax.streamplot(*_stream_args(), arrowstyle="->"), "arrowstyle"),
-        (lambda ax: ax.pcolormesh(_Z, antialiased=False), "antialiased"),
-        (lambda ax: ax.pcolor(_Z, antialiased=False), "antialiased"),
         (lambda ax: ax.table(cellText=[["a"]], loc="top"), "loc"),
         (
             lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", fontproperties={"size": 9}),
             "fontproperties",
         ),
-        (lambda ax: ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", zorder=5), "zorder"),
         (lambda ax: ax.bar_label(ax.bar([0], [1]), fontproperties="serif"), "fontproperties"),
         (lambda ax: ax.spy(np.eye(3), aspect="auto"), "aspect"),
         (
-            lambda ax: ax.tripcolor([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=True),
-            "antialiased",
-        ),
-        (
-            lambda ax: ax.tricontour([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=False),
-            "antialiased",
-        ),
-        (
             lambda ax: ax.tricontour([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], linestyles="dashed"),
             "linestyles",
-        ),
-        (
-            lambda ax: ax.tricontourf([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=True),
-            "antialiased",
         ),
         (lambda ax: ax.eventplot([[1, 2]], linestyles="steps"), "linestyle"),
         (
@@ -236,6 +219,20 @@ def test_p3_options_are_rejected_instead_of_silently_discarded(call, match: str)
 
 def _quiver(ax):
     return ax.quiver([0, 1], [0, 1], [1, 0], [0, 1])
+
+
+def test_artist_level_antialiased_and_zorder_are_accepted_noops() -> None:
+    """``antialiased``/``aa``/``zorder`` are Artist-level compat-noops (compat.md)."""
+    _fig, ax = plt.subplots()
+    ax.quiver([0, 1], [0, 1], [1, 0], [0, 1], zorder=3)
+    ax.streamplot(*_stream_args(), zorder=2)
+    ax.quiverkey(_quiver(ax), 0.5, 0.5, 1, "k", zorder=5)
+    ax.pcolormesh(_Z, antialiased=False)
+    ax.pcolor(_Z, aa=False)
+    ax.tripcolor([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=True)
+    ax.tricontour([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=False)
+    ax.tricontourf([0, 1, 2], [0, 1, 0], [1.0, 2.0, 3.0], antialiased=True)
+    assert ax._entries
 
 
 def test_matplotlib_default_option_values_pass_through() -> None:

@@ -56,7 +56,12 @@ by the string `K` on the wire (`trace.kind`).
   from one path. Most kernels should call the `Figure._ship_channels(t, sel,
   pw.ship_scalar, pw.ship_u8)` wrapper in `_payload.py`. A categorical channel
   carries its own palette (`ColorChannel.palette`, resolved at build against the
-  figure's cycle), so no palette is threaded through the ship call.
+  figure's cycle), so no palette is threaded through the ship call. Pass the
+  *same* row selection you shipped geometry with: `Figure._finite_sel` (points
+  and polylines) and `_rect_finite_sel` (rectangles) both reject rows whose
+  continuous color/size value is non-finite, alongside x/y NaN (§19), so a
+  mark with an undefined color is not drawn rather than painted at the ramp
+  floor. A kernel that builds its own selection must apply that rule too.
 
 #### The ribbon geometry contract
 

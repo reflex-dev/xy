@@ -493,16 +493,36 @@ class PayloadMixin(_Host):
 
     @staticmethod
     def _finite_sel(t: Trace, xv: np.ndarray, yv: np.ndarray) -> np.ndarray | None:
-        """Indices where both x and y are finite, or None if nothing to drop.
+        """Indices where x, y, and every continuous channel are finite, or
+        None if nothing to drop.
 
         Non-finite (NaN or ±inf) never reaches a vertex buffer — it silently
         corrupts primitives, driver-dependently (§19). Zone maps count both as
-        null, so we only scan when a null is present. Canonical keeps every row;
-        real gap semantics (segment index list) arrive with validity bitmaps.
+        null for x/y, so those are scanned only when a null is present.
+
+        A continuous color/size value that is NaN or ±inf has no place on its
+        ramp either: the normalizers floor every non-finite input, so such a
+        point used to draw in the domain-minimum color (+inf included). A mark
+        whose color is undefined is not drawn — matplotlib's transparent "bad"
+        color — and the same rows leave the pick/selection mapping, exactly as
+        an x/y NaN does. Channels carry no zone maps, so this is one
+        allocation-free native scan per continuous channel per build — the
+        same pass `_rect_finite_sel` already pays for the rectangle family;
+        `valid_indices_f64` allocates row ids only when a row is rejected.
+        Canonical keeps every row; real gap semantics (segment index list)
+        arrive with validity bitmaps.
         """
-        if not (t.x.zone.null_count or t.y.zone.null_count):
+        candidates = [values for col, values in ((t.x, xv), (t.y, yv)) if col.zone.null_count]
+        for channel in (t.color_ch, t.size_ch):
+            if channel is None or channel.mode != "continuous" or channel.values is None:
+                continue
+            # A streaming append can leave a channel momentarily shorter than
+            # the geometry; never index geometry with a foreign-length mask.
+            if len(channel.values) == len(xv):
+                candidates.append(channel.values)
+        if not candidates:
             return None
-        return np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
+        return kernels.valid_indices_f64(tuple(candidates))
 
     def _visible_mask_needed(
         self,

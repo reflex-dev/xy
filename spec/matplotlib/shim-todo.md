@@ -263,7 +263,7 @@ appear frequently in ordinary scripts and notebooks.
 
 - [x] `plt.autoscale()`, `Axes.autoscale()`, `autoscale_view()`, and `relim()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies explicit bounds, relim, autoscale, and tight autoscale behavior.
 - [x] `get/set_xbound`, `get/set_ybound`, x/y margins, and sticky-edge behavior. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies bound setters/getters and margin-aware automatic domains. Sticky edges are derived from the entry list rather than from artist metadata (`Axes._entry_sticky_edges`): rectangle baselines for bar/histogram/contour, the outer cell edge for mesh and image entries (`imshow`/`pcolormesh`/`hist2d`/`specgram`), and 0/1 for `ecdf`. An axis whose sticky edges pin *both* ends ships a materialized `domain` instead of a `margin` (`Axes._fully_sticky_domain`), which is how a mesh stays flush with its outer cell edge; one-sided baselines still ship a `margin` and are anchored by the engine. Evidence: `tests/pyplot/test_mesh_autoscale_regressions.py`.
-- [x] `ticklabel_format()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies stored style, scientific limits, and offset policy.
+- [x] `ticklabel_format()`, configuring the axis `ScalarFormatter` as Matplotlib does (plain fixed labels; scientific mantissas outside `scilimits` with the exponent written on every label because the shim has no offset text — `useOffset` is a documented compat-noop). Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies the configured formatter, and `tests/pyplot/test_p1_axes_dates_spans.py::test_ticklabel_format_*` verify the plain/sci/mathtext labels against Matplotlib 3.11 and that every exporter renders them (the stored-props version crashed `savefig` with `x_axis() got an unexpected keyword argument 'tick_label_format'`).
 - [x] `minorticks_on()` and `minorticks_off()` with an explicit minor-tick model. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies explicit minor tick state toggles.
 - [x] `get_xlabel`, `get_ylabel`, `get_title`, `get_xaxis`, and `get_yaxis`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies label/title getters and axis proxy identity.
 - [x] `get_legend()` and `get_legend_handles_labels()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies legend presence and labeled handles.
@@ -308,6 +308,10 @@ method accepts the call.
       mask crossings, transforms and complete step semantics.
 - [x] `arrow`/`axline`: head shape/overhang, transforms and style fidelity.
 - [x] `axhline`/`axvline`/spans: linestyles and transform fidelity.
+- [x] `axhline`/`axvline`/spans: Matplotlib's `dataLim` autoscale (own axis
+      only) and `label=` legend rows with matching swatches. Evidence:
+      `tests/pyplot/test_p1_axes_dates_spans.py::test_spans_and_rules_autoscale_on_their_own_axis`
+      and `::test_span_labels_reach_legend_with_matching_swatches`.
 - [x] `errorbar`: upper/lower limit flags, cap thickness, bars-above ordering,
       independent line styles, errorevery and full container semantics.
 
@@ -385,7 +389,14 @@ method accepts the call.
       `NotImplementedError` rather than being accepted.
 - [x] Define a bounded units/converter story for datetime, timedelta and common
       categorical inputs; do not attempt the entire Matplotlib units registry
-      unless real usage requires it.
+      unless real usage requires it. Datetime-likes are accepted wherever
+      `plot()` accepts them, including `set_xlim`/`set_ylim`,
+      `set_xticks`/`set_yticks`, `fill_between` and `fill_betweenx`
+      (`tests/pyplot/test_p1_axes_dates_spans.py::test_set_xlim_*`,
+      `::test_set_xticks_*`, `::test_fill_between*`). Locators without a
+      usable `tick_values()` (pandas' minor `TimeSeries_DateLocator`) fall
+      back to the axis kind's own ticks (`::test_unusable_minor_locator_*`,
+      `::test_pandas_period_tickers_are_noops_on_both_tiers`).
 - [x] Add date locators/formatters sufficient for ordinary time-series plots.
 
 ## P4 — Artist, collection, transform and container compatibility
@@ -686,6 +697,49 @@ streamplot
 - `get_xticks()` on category/time axes falls back to linear ticks; tick
   density ignores figure size.
 - Family-level claims in `compatibility.json` have no executable backing.
+- Artist-level keywords are accepted no-ops on plotting calls (`zorder=`,
+  `clip_on=`, `rasterized=`, ...) while the matching setters keep their
+  stricter contracts: `line.set_clip_on(False)` and `line.set_rasterized(True)`
+  raise `NotImplementedError`, and `set_zorder()` (like `annotate(zorder=)` and
+  `clabel(zorder=)`) really reorders entries. `zorder=` on a plotting call is
+  ignored on purpose: xy's marks all default to one z-level, so honoring the
+  kwarg would reorder the automatic legend (which follows entry order) for the
+  common "emphasize one series" idiom.
+- `get_yticklabels()`/`get_xticklabels()` on a category axis (`barh(["a", "b"])`)
+  return the numeric positions `0, 1, 2` until the chart is built; the
+  category strings only exist in the rendered output.
+- `bar(tick_label=...)` relabels numeric positions only; with string category
+  positions it fails loudly (the category axis owns its labels).
+- `hist(align="left"/"right")` is implemented for the bar histtypes only; the
+  step families accept `align="mid"` and fail loudly otherwise.
+
+### P1 audit fixes — 2026-09-01
+
+Four clusters of everyday Matplotlib idioms that raised on the shim, each
+covered by `tests/pyplot/test_p1_kwargs_legend_subplot.py` (Matplotlib 3.11
+compared directly where the semantics are "match mpl") and by the corpus
+snippet `56_partial_subplots_legend_proxies.py`:
+
+- Legend: `legend(handles=, labels=)` keyword forms, integer `loc` codes 0–10,
+  `loc=(x, y)` tuples (lower-left anchor), and proxy handles —
+  `plt.Line2D([0], [0], ...)`, `plt.Patch(...)`, `plt.Rectangle(...)` — that
+  freeze into swatches through `_legend_item_from_entry` with point-unit dash
+  patterns and marker sizes scaled at attach time.
+- Artist-level keywords: one table (`ARTIST_NOOP_KWARGS`) and one wrapper
+  installed over every inventory method (`ARTIST_KWARG_METHODS` in
+  `_translate.py`, applied at the end of `_axes.py`) strips the accepted
+  no-ops and applies `visible=False` to the returned artists;
+  `ARTIST_KWARG_KEEP` lists the methods that consume a name themselves.
+- `subplot(n, m, i)` creates only cell *i* as a GridSpec-positioned axes, so
+  partial grids draw no empty frames and grids of different shapes share a
+  figure; the uniform placeholder grid is now used only by `subplots()`,
+  `subplot2grid`, and the whole-figure `111`.
+- Kwargs and attributes: `scatter(facecolors=)`, `bar(tick_label=, log=)`,
+  `hist(bottom=, align=, log=)`, `text(alpha=)`, `hlines`/`vlines(linestyle=)`,
+  `errorbar(capthick=, mfc=, mec=, mew=)`, `colorbar(fraction=)` (no-op),
+  `plt.tick_params`/`plt.margins`/`plt.locator_params`, callable `plt.cm.*`
+  objects plus the qualitative palettes, `BarPatch` rectangle geometry
+  getters, and error-bar centre autoscale on category axes.
 
 ### Bottom line
 

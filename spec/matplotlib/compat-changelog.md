@@ -4,6 +4,28 @@ This changelog records changes to the upstream compatibility target and to the
 meaning of xy's compatibility levels. It complements the project changelog,
 which covers user-visible releases across the whole package.
 
+## Artist keywords, legend forms, partial subplot grids — 2026-09-01
+
+- Matplotlib's Artist-level keywords (`zorder`, `clip_on`, `rasterized`,
+  `antialiased`/`aa`, `snap`, `gid`, `url`, `picker`, `in_layout`,
+  `agg_filter`, `sketch_params`, `path_effects`, ...) move from *unsupported*
+  (`TypeError`) to *accepted no-op* on every plotting method; `visible=False`
+  hides the returned artists. `pcolormesh(antialiased=False)` and
+  `quiver(zorder=)`, previously rejected as material options, are now no-ops.
+- `legend()` gains the `handles=`/`labels=` keyword forms, integer `loc`
+  codes, tuple `loc`, and proxy handles (`plt.Line2D`, `plt.Patch`,
+  `plt.Rectangle` constructors).
+- `subplot(n, m, i)` / `add_subplot(n, m, i)` create only the requested cell;
+  partial grids no longer draw empty frames and mixed grid shapes no longer
+  raise "cannot reshape".
+- `plt.cm.<name>` returns a callable colormap object instead of a name string
+  (`.name` still resolves to the engine table); qualitative palettes are
+  available as `ListedColormap`s.
+- `colorbar(fraction=)` is an accepted no-op; `scatter(facecolors=)`,
+  `bar(tick_label=, log=)`, `hist(bottom=, align=, log=)`, `text(alpha=)`,
+  `hlines`/`vlines(linestyle=)`, `errorbar(capthick=, mfc=, mec=, mew=)`, and
+  `plt.tick_params`/`plt.margins`/`plt.locator_params` are supported.
+
 ## Patch bodies and geometry — 2026-07-30 (Matplotlib 3.11.1 reference)
 
 - `xy.pyplot.Axes.add_patch` now fills a patch instead of drawing only its

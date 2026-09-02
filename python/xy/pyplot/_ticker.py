@@ -485,10 +485,118 @@ class Formatter:
 
 
 class ScalarFormatter(Formatter):
-    """The default: the shim's ``%g`` rendering of tick values."""
+    """The default: the shim's ``%g`` rendering of tick values.
+
+    ``Axes.ticklabel_format`` configures it the way Matplotlib configures its
+    ``ScalarFormatter`` (``set_scientific``/``set_powerlimits``/
+    ``set_useOffset``/``set_useMathText``). Once any of those is called the
+    formatter labels the located tick set with Matplotlib's plain or
+    scientific policy: a shared decimal count derived from the tick spacing
+    (``_set_format``), and — when the ticks' order of magnitude falls outside
+    ``powerlimits`` — mantissas over a shared exponent. Matplotlib writes that
+    exponent (and any ``useOffset`` offset) once, as the axis offset text; the
+    shim has no offset-text slot, so the exponent is written on every label
+    (``1.25e6`` or ``1.25×10⁶`` under ``useMathText``) and offsets are never
+    factored out — labels always carry the full value (compat-noop,
+    spec/matplotlib/compat.md).
+    """
+
+    def __init__(
+        self,
+        useOffset: Optional[bool | float] = None,
+        useMathText: Optional[bool] = None,
+        useLocale: Optional[bool] = None,
+    ) -> None:
+        del useLocale  # accepted for signature parity; locale grouping is out of scope
+        self._configured = False
+        self._scientific = True
+        # matplotlib's ``axes.formatter.limits`` default
+        self._powerlimits: tuple[int, int] = (-5, 6)
+        self._use_offset: bool | float = True if useOffset is None else useOffset
+        self._use_math_text = bool(useMathText)
+        self._locs = np.asarray([], dtype=float)
+        if useOffset is not None or useMathText is not None:
+            self._configured = True
+
+    def set_scientific(self, scientific: bool) -> None:
+        self._scientific = bool(scientific)
+        self._configured = True
+
+    def set_powerlimits(self, limits: Any) -> None:
+        low, high = limits
+        self._powerlimits = (int(low), int(high))
+        self._configured = True
+
+    def set_useOffset(self, value: bool | float) -> None:
+        self._use_offset = value
+        self._configured = True
+
+    def get_useOffset(self) -> bool | float:
+        return self._use_offset
+
+    def set_useMathText(self, value: bool) -> None:
+        self._use_math_text = bool(value)
+        self._configured = True
+
+    def get_useMathText(self) -> bool:
+        return self._use_math_text
+
+    def set_locs(self, locs: Any) -> None:
+        self._locs = np.asarray(locs, dtype=float).reshape(-1)
+
+    def format_ticks(self, values: Any) -> list[str]:
+        ticks = np.asarray(values, dtype=float).reshape(-1)
+        if not self._configured:
+            return [f"{value:g}" for value in ticks]
+        self.set_locs(ticks)
+        return [self(float(value), position) for position, value in enumerate(ticks)]
+
+    def _order_of_magnitude(self, locs: np.ndarray) -> int:
+        finite = locs[np.isfinite(locs)]
+        if not self._scientific or finite.size == 0 or not np.any(finite):
+            return 0
+        oom = int(math.floor(math.log10(float(np.max(np.abs(finite[finite != 0]))))))
+        low, high = self._powerlimits
+        if low == high != 0:  # fixed exponent, as matplotlib
+            return low
+        return oom if (oom <= low or oom >= high) else 0
+
+    def _decimals(self, locs: np.ndarray, oom: int) -> int:
+        # Port of matplotlib ScalarFormatter._set_format over the located
+        # ticks (no view-interval fallback: the Axes hands us the full set).
+        finite = locs[np.isfinite(locs)]
+        if finite.size == 0:
+            return 0
+        scaled = finite / 10.0**oom
+        loc_range = float(np.ptp(scaled)) if scaled.size > 1 else 0.0
+        if loc_range == 0:
+            loc_range = float(np.max(np.abs(scaled)))
+        if loc_range == 0:
+            loc_range = 1.0
+        loc_range_oom = int(math.floor(math.log10(loc_range)))
+        sigfigs = max(0, 3 - loc_range_oom)
+        thresh = 1e-3 * 10**loc_range_oom
+        while sigfigs >= 0:
+            if np.abs(scaled - np.round(scaled, decimals=sigfigs)).max() < thresh:
+                sigfigs -= 1
+            else:
+                break
+        return sigfigs + 1
 
     def __call__(self, value: float, pos: Optional[int] = None) -> str:
-        return f"{value:g}"
+        del pos
+        if not self._configured:
+            return f"{value:g}"
+        locs = self._locs if self._locs.size else np.asarray([float(value)])
+        oom = self._order_of_magnitude(locs)
+        decimals = self._decimals(locs, oom)
+        mantissa = f"{float(value) / 10.0**oom:.{decimals}f}"
+        if oom == 0:
+            return mantissa
+        if self._use_math_text:
+            times = "×"  # noqa: RUF001 - intentional multiplication sign
+            return f"{mantissa}{times}10{str(oom).translate(_SUPERSCRIPT_DIGITS)}"
+        return f"{mantissa}e{oom}"
 
 
 _SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")

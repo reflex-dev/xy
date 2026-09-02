@@ -490,7 +490,19 @@ non-bool hidden) are dropped without mutating state.
   CPU copy, are read back once (`getBufferSubData`) and cached. `_visMap`
   translates drawn vertices back to shipped rows so hover readouts and
   kernel picks stay exact; `_visInv` maps the kernel's shipped-space
-  selection indices onto the filtered buffers.
+  selection indices onto the filtered buffers. The **CPU hover fallback**
+  (`_nearestCpuIndex`, its polar sibling and `_barHover` — reached when the
+  GPU pick pass misses, and the source of point tooltips) scans the
+  *unfiltered* retained columns, so it consults `_visInv` too: a row it maps
+  to `-1` is hidden and can neither become the hover target nor show a
+  tooltip; the nearest *visible* row is picked instead, or nothing. The scan
+  covers the pre-filter row count (`_fullN`), not the drawn `g.n` — a
+  category filter shrinks `g.n` below the retained columns, and capping the
+  scan at it left every visible row shipped after the cut unreachable while
+  hidden rows before it still answered (the two halves of one bug;
+  `tests/test_legend_hidden_hover.py`). Unfiltered traces keep the `g.n`
+  cap, which is load-bearing for smooth-resampled lines and mismatched x/y
+  lengths.
 - **Category rows on a density-tier trace** (the rows exist because the
   first-paint density entry ships a slim categorical `color` spec —
   categories + palette, no per-point buffer; wire-protocol doc): local
@@ -517,7 +529,7 @@ non-bool hidden) are dropped without mutating state.
   `-masked`, and stamps it with `filter: {hidden_categories}`. The client
   compares that stamp against its current hidden set and drops
   stale-predicate replies; drills ship only visible rows with canonical
-  `shipped_sel`.
+  `shipped_sel`. Before/after at `spec/assets/legend-hidden-hover-before-after.png`.
 
 **Accessibility compatibility exception.** Legend-hidden ordinary point-series
 rows remain in keyboard traversal in their full retained CPU order, so a screen

@@ -26,6 +26,8 @@ export function linearTicks(lo, hi, target = 6) {
   return { ticks: out, step };
 }
 
+// Mirrored by `_log_ticks` in python/xy/_svg.py — the static exporters must
+// tick a log axis exactly where the browser does (renderer-architecture §6.1).
 export function logTicks(lo, hi, target = 6) {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
   const a = Math.min(lo, hi);
@@ -33,6 +35,22 @@ export function logTicks(lo, hi, target = 6) {
   if (a <= 0 || b <= 0) return { ticks: [], step: 1 };
   const e0 = Math.floor(Math.log10(a));
   const e1 = Math.ceil(Math.log10(b));
+  // The decade ladder is multiplicative: inside one decade it has at most the
+  // 2 and 5 mantissas to offer, and a window like 0.3..0.35 or 100..110 holds
+  // none of them — every zoom past ~3x on a log axis lost all ticks, labels
+  // and grid. With fewer than two decades in view the ladder cannot describe
+  // the window, so tick it linearly across the span (matplotlib/Plotly do the
+  // same). `step` is the nice linear step so fmtLinear shares one decimal
+  // count along the axis (§6.2); every tick is labelled.
+  let decadesInView = 0;
+  for (let e = e0; e <= e1; e++) {
+    const v = Math.pow(10, e);
+    if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) decadesInView++;
+  }
+  if (decadesInView < 2) {
+    const linear = linearTicks(a, b, target);
+    return { ticks: linear.ticks, labels: linear.ticks, step: linear.step, log: true };
+  }
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
   const out = [];
@@ -258,13 +276,18 @@ function fmtTimeSpec(ms, format) {
 
 // Decade ticks are multiplicative, so the linear formatter's step-derived
 // precision rounds every decade under 1.0 to a bare "0" — 0.001 and 0.01 read
-// as two identical, wrong labels. Label these from their own magnitude.
+// as two identical, wrong labels. Label these from their own value: the fewest
+// decimals (up to 8) that reproduce it. For the 1/2/5 ladder that is exactly
+// the old magnitude rule (0.002 -> 3 decimals, 20 -> none); it differs only
+// for the within-decade linear ticks a log colorbar now carries (§6.1), which
+// the magnitude rule collapsed to "2 2 2 3 3 3" for a 2..3 range.
 // Mirrored by `_fmt_log` in python/xy/_svg.py.
 export function fmtLog(v) {
   const av = Math.abs(v);
   if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
-  const dec = av && av < 1 ? Math.max(0, Math.ceil(-Math.log10(av))) : 0;
-  return v.toFixed(Math.min(dec, 8));
+  let dec = 0;
+  while (dec < 8 && Math.abs(Number(av.toFixed(dec)) - av) > av * 1e-9) dec++;
+  return v.toFixed(dec);
 }
 
 // Whether a formatted label has lost the value it was meant to show. Tests the
@@ -300,8 +323,14 @@ export function fmtAxis(axis, v, tickStep) {
   const formatted = fmtNumberSpec(v, axis && axis.format);
   if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1) {
     // A fixed-decimal spec collapses sub-unit decades; so does the linear
-    // fallback. Either way the magnitude-derived label is the useful one.
-    if (collapsedToZero(formatted)) return fmtLog(v);
+    // fallback under the ladder's step of 1. Either way the value-derived
+    // label is the useful one — except on the within-decade linear tick set
+    // (§6.1), whose sub-unit step gives fmtLinear the one shared decimal
+    // count an axis reads by ("0.30, 0.31, ...") where the per-value fmtLog
+    // would go ragged ("0.3, 0.31, ..."). Mirrored by `_fmt_axis`.
+    if (collapsedToZero(formatted)) {
+      return tickStep > 0 && tickStep < 1 ? fmtLinear(v, tickStep) : fmtLog(v);
+    }
   }
   return formatted || fmtLinear(v, tickStep);
 }

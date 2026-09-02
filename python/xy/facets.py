@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import channels, export
+from . import channels, columns, export
 from ._png import encode as encode_png
 from ._png import png_truecolor
 from ._raster import render_raster
@@ -83,23 +83,27 @@ def _facet_values(data: Any, by: Any) -> tuple[np.ndarray, list[str]]:
     (mixed/unsortable values) fall back to a single Python pass. Rows group by
     their `category_label` display string, matching categorical channels.
     """
+    # A missing column is a ValueError, the same type (and message shape) every
+    # other column-name resolution in the API raises (`components._resolve`);
+    # a KeyError here made facet_chart the one place a typo'd name needed a
+    # different `except`.
     if isinstance(by, str):
         if isinstance(data, Mapping):
             if by not in data:
-                raise KeyError(f"facet column {by!r} not found in data")
+                raise ValueError(f"facet column {by!r} not found in data")
             raw = data[by]
         elif hasattr(data, "__getitem__"):
             try:
                 raw = data[by]
             except Exception as exc:
-                raise KeyError(f"facet column {by!r} not found in data") from exc
+                raise ValueError(f"facet column {by!r} not found in data") from exc
         else:
             raise TypeError("facet_chart by= as a string requires mapping/table data")
     else:
         raw = by
-    if hasattr(raw, "to_numpy"):
-        raw = raw.to_numpy()
-    arr = np.asarray(raw)
+    # Label materialization, not f64 ingest: a pyarrow string/dictionary
+    # column needs the copying conversion (`columns.label_ndarray`).
+    arr = columns.label_ndarray(raw)
     if arr.ndim != 1:
         raise ValueError("facet_chart by= must resolve to a 1-D column")
     if arr.dtype == object:
