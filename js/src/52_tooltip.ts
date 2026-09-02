@@ -7,6 +7,7 @@ import { ChartView } from "./50_chartview";
 
 Object.assign(ChartView.prototype, {
   _showTooltip(hit, clientX, clientY) {
+    this._clearBandHover();
     const row = this._localRow(hit);
     this._lastRow = row;
     this._setTooltipAnchor(hit, row, clientX, clientY);
@@ -479,7 +480,7 @@ Object.assign(ChartView.prototype, {
 
   _tooltipLines(items) {
     return items.map((item) => (
-      item.kind === "field" ? `${item.label}: ${item.value}` : item.value
+      item.kind === "field" || item.kind === "series" ? `${item.label}: ${item.value}` : item.value
     ));
   },
 
@@ -492,10 +493,13 @@ Object.assign(ChartView.prototype, {
         row.textContent = item.value;
       } else {
         this._applySlot(row, "tooltip_row");
-        if (item.kind === "field") {
+        if (item.kind === "field" || item.kind === "series") {
           const label = document.createElement("span");
           this._applySlot(label, "tooltip_label");
           label.textContent = item.label;
+          // A band row names a series; painting the name in the series
+          // colour is the swatch (renderer-owned state, inline like hover).
+          if (item.kind === "series" && item.color) label.style.color = item.color;
           row.appendChild(label);
         }
         const value = document.createElement("span");
@@ -545,6 +549,182 @@ Object.assign(ChartView.prototype, {
   _hideTooltip() {
     this.tooltip.style.display = "none";
     this._tooltipAnchor = null;
+    this._clearBandHover();
+  },
+
+  // -- shared-axis bands (interaction spec §7.3) ------------------------------
+
+  _clearBandHover() {
+    this._bandKey = null;
+    this._hoverTargets = null;
+    this._bandRows = null;
+    this._bandCursor = null;
+    if (this._bandPicks) this._bandPicks.clear();
+    this._hideTooltipCursor();
+  },
+
+  _ensureTooltipCursor() {
+    if (this._tooltipCursor) return this._tooltipCursor;
+    const el = document.createElement("div");
+    el.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:3;";
+    this._applySlot(el, "tooltip_cursor");
+    this.root.appendChild(el);
+    this._tooltipCursor = el;
+    return el;
+  },
+
+  // The cursor is anchored in data space like a point tooltip: reprojected on
+  // every draw, hidden when its coordinate leaves the plot.
+  _positionTooltipCursor() {
+    const a = this._bandCursor;
+    if (!a) { this._hideTooltipCursor(); return; }
+    const el = this._ensureTooltipCursor();
+    const [lx, ly] = this._projectDataPoint(a.xAxis, a.yAxis, a.x, a.y);
+    const p = this.plot;
+    const pos = a.dim === "x" ? lx : ly;
+    const lo = a.dim === "x" ? p.x : p.y;
+    const hi = a.dim === "x" ? p.x + p.w : p.y + p.h;
+    if (!Number.isFinite(pos) || pos < lo || pos > hi) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    if (a.dim === "x") {
+      el.style.left = `${lx}px`;
+      el.style.top = `${p.y}px`;
+      el.style.width = "1px";
+      el.style.height = `${p.h}px`;
+    } else {
+      el.style.left = `${p.x}px`;
+      el.style.top = `${ly}px`;
+      el.style.width = `${p.w}px`;
+      el.style.height = "1px";
+    }
+  },
+
+  _hideTooltipCursor() {
+    if (this._tooltipCursor) this._tooltipCursor.style.display = "none";
+  },
+
+  // One title for the band coordinate (or the authored template against the
+  // anchor series' row), then one row per series: its name in its colour and
+  // its value along the other axis — or the authored fields minus the band
+  // field — through the same format grammar as a point tooltip.
+  _bandTooltipItems(rows, hits) {
+    const tooltip = this.spec.tooltip || {};
+    const formats = tooltip.format || {};
+    const along = this._tooltipBandMode() || "x";
+    const across = along === "x" ? "y" : "x";
+    const first = rows[0];
+    const items: any[] = [];
+    let title;
+    if (typeof tooltip.title === "string") {
+      title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+        const [value, kind] = this._tooltipLookup(first, field);
+        return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
+      });
+    } else if (first[along] !== undefined) {
+      title = this._formatTooltipValue(first[along], first[`${along}_kind`], formats[along]);
+    }
+    if (title) items.push({ kind: "title", value: title });
+    const fields = Array.isArray(tooltip.fields)
+      ? tooltip.fields.filter((f) => typeof f === "string" && f !== along)
+      : null;
+    rows.forEach((row, i) => {
+      const g = hits[i] && hits[i].g;
+      const name = this._tooltipSeriesName(row) || `series ${i + 1}`;
+      let value;
+      if (fields && fields.length) {
+        value = fields
+          .map((f) => {
+            const [v, k] = this._tooltipLookup(row, f);
+            return v === undefined ? null : this._formatTooltipValue(v, k, formats[f]);
+          })
+          .filter((v) => v !== null)
+          .join("  ");
+      } else {
+        const v = row[across];
+        value = v === undefined ? "" : this._formatTooltipValue(v, row[`${across}_kind`], formats[across]);
+      }
+      items.push({ kind: "series", label: name, value, color: this._seriesColorCss(g) });
+    });
+    return items;
+  },
+
+  // The band tooltip follows the pointer (§7.3): a band has several points,
+  // and the cursor line already marks where it is.
+  _renderBandTooltip(clientX, clientY, options: any = {}) {
+    const rows = this._bandRows;
+    const hits = this._hoverTargets;
+    if (!rows || !rows.length || !hits || this.spec.show_tooltip === false) {
+      this._hideTooltip();
+      return;
+    }
+    const items = this._bandTooltipItems(rows, hits);
+    if (!this._customTooltip) this._renderBuiltinTooltip(items);
+    if (this.a11yLive && options.announce !== false) {
+      const announcement = this._tooltipLines(items).join(", ");
+      if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+    }
+    this.tooltip.style.display = "block";
+    const rect = this.root.getBoundingClientRect();
+    this._placeTooltip(clientX - rect.left, clientY - rect.top);
+  },
+
+  _dispatchBandHover(clientX, clientY, exact) {
+    if (!this._interactionFlag("hover")) return;
+    const rows = this._bandRows;
+    const hits = this._hoverTargets;
+    if (!rows || !hits || !rows.length) return;
+    const points = hits.map((h, i) => this._hoverPoint(rows[i], h));
+    this._dispatchChartEvent("hover", {
+      row: rows[0],
+      trace: hits[0].trace,
+      index: hits[0].index,
+      ...(exact ? { exact: true } : {}),
+      view: this._eventView("hover"),
+      ...this._hoverPayload(rows[0], hits[0], clientX, clientY, exact, points),
+    });
+  },
+
+  // One exact pick per series in the band; replies are matched by seq to
+  // their row (`_applyBandPickResult`), never to the single-pick `_pickSeq`.
+  _requestBandPicks() {
+    if (!this.comm || !this._hoverTargets) return;
+    if (!this._bandPicks) this._bandPicks = new Map();
+    this._bandPicks.clear();
+    this._hoverTargets.forEach((h, i) => {
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      this._bandPicks.set(this._pickSeq, i);
+      this.comm.send({ type: "pick", seq: this._pickSeq, trace: h.trace, index: h.index });
+    });
+  },
+
+  _applyBandPickResult(msg) {
+    const slot = this._bandPicks.get(msg.seq);
+    this._bandPicks.delete(msg.seq);
+    const rows = this._bandRows;
+    if (!msg.row || !rows || slot === undefined || slot >= rows.length) return;
+    const rowG = this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
+    if (!rowG) return;
+    for (const channel of ["x", "y"]) {
+      if (typeof msg.row[channel] !== "number") continue;
+      const [value, kind] = this._sourceDisplayValue(
+        rowG, channel, msg.row[channel], msg.row[`${channel}_kind`],
+      );
+      msg.row[channel] = value;
+      if (kind === undefined) delete msg.row[`${channel}_kind`];
+    }
+    const local = rows[slot];
+    if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+      for (const [key, value] of Object.entries(local)) {
+        if (msg.row[key] === undefined) msg.row[key] = value;
+      }
+    }
+    rows[slot] = msg.row;
+    // The primary row mirrors the single-pick path's `_lastRow` contract.
+    if (slot === 0) this._lastRow = rows[0];
+    const xy = this._lastHoverXY;
+    if (!xy) return;
+    this._renderBandTooltip(xy.clientX, xy.clientY, { announce: false });
+    if (this._bandPicks.size === 0) this._dispatchBandHover(xy.clientX, xy.clientY, true);
   },
 
   // A hidden retained anchor is off-screen and may return after another draw.

@@ -6561,8 +6561,10 @@ export class ChartView {
     }
     // Presentation now owns the GL pixels. Do DOM/2D overlay work afterward
     // so the shared default framebuffer is copied immediately after GPU work.
-    // Keep a visible tooltip anchored through pan, zoom, and linked views.
+    // Keep a visible tooltip anchored through pan, zoom, and linked views —
+    // and a band cursor on its snapped coordinate (§7.3).
     this._repositionTooltip();
+    if (this._bandCursor) this._positionTooltipCursor();
     // Hover-only frames leave the pick snapshot valid (see draw()); direct
     // _drawNow() callers never set the flag, so they invalidate as before.
     if (!this._rafKeepPick) this._pickDirty = true;
@@ -6805,6 +6807,28 @@ export class ChartView {
   }
 
   _drawHoverState() {
+    if (this._hoverTargets && this._hoverTargets.length) {
+      // A band's dots come from the retained CPU columns, not the vertex
+      // buffers: a smoothed or stepped line's vertex index is not its data
+      // index (§7.3).
+      for (const hit of this._hoverTargets) {
+        const g = hit.g;
+        if (!g || g.tier === "density" || g._legendHidden || !g._cpu) continue;
+        const cpu = g._cpu;
+        const xMeta = cpu.xMeta || g.xMeta;
+        const yMeta = cpu.yMeta || g.yMeta;
+        const [x0, x1] = this._axisRange(g.xAxis);
+        const [y0, y1] = this._axisRange(g.yAxis);
+        this._drawHoverPoint(
+          g,
+          0,
+          this._map(xMeta, x0, x1, g.xAxis),
+          this._map(yMeta, y0, y1, g.yAxis),
+          { x: cpu.x[hit.index], y: cpu.y[hit.index], xMeta, yMeta, color: g.color },
+        );
+      }
+      return;
+    }
     const hit = this._hoverTarget;
     if (!hit || !hit.g) return;
     const g = hit.g;
@@ -6822,15 +6846,18 @@ export class ChartView {
     );
   }
 
-  _drawHoverPoint(g, index, xm, ym) {
+  // `encoded` draws one dot from explicit encoded coordinates (and metas)
+  // through a scratch buffer instead of `g`'s vertex buffers at `index`;
+  // its optional `color` (unit RGBA) replaces the hover-state paint.
+  _drawHoverPoint(g, index, xm, ym, encoded: any = null) {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
-    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    this._setAxisUniforms(prog, "u_x", encoded ? encoded.xMeta : g.xMeta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y", encoded ? encoded.yMeta : g.yMeta, g.yAxis);
     this._setPolarUniforms(prog);
     // Size-channel points hover at their encoded size, not the scalar default
     // (sample traces keep no CPU copy of the size column; they fall back).
@@ -6842,7 +6869,10 @@ export class ChartView {
     const defaultSize = Math.max(adjustedSize * 1.75, adjustedSize + 5);
     const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
     const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
-    const color = parseColor(
+    const seriesColor = encoded && Array.isArray(encoded.color) && encoded.color.length >= 3
+      ? encoded.color
+      : null;
+    const color = seriesColor || parseColor(
       this.root,
       this._markStatePaint("hover", "color", "rgba(15,23,42,.92)"),
       [0.06, 0.09, 0.16, 0.92]
@@ -6858,16 +6888,60 @@ export class ChartView {
     gl.uniform4f(u("u_color"), color[0], color[1], color[2], 1);
     gl.uniform1i(u("u_selActive"), 0);
     gl.uniform1f(u("u_dblend"), 0);
+    // The full point program reads per-item style/paint through constant
+    // vertex attributes and stroke uniforms that the regular scatter draw sets
+    // for every trace. Constant attributes are global GL state, not program
+    // state, and the dominant scatter path now renders through the simpler
+    // point program that never touches `a_style` — so without setting them
+    // here the hover dot inherited `a_style = (0, 0, 0, 1)`, and its
+    // `.x` per-item opacity factor of 0 made the highlight invisible.
+    gl.uniform1i(u("u_symbol"), 0);
+    gl.uniform1f(u("u_ptStrokeWidth"), 0);
+    gl.uniform1i(u("u_ptStrokeFace"), 0);
+    gl.uniform1i(u("u_strokeMode"), 0);
+    gl.uniform1f(u("u_strokeOpacity"), 1);
+    gl.uniform1i(u("u_transitionActive"), 0);
+    gl.uniform1f(u("u_transitionProgress"), 1);
+    gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, color[0], color[1], color[2], 1);
+    gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, color[0], color[1], color[2], 1);
 
-    this._bindVao(g, "hover", [g.xBuf._fcId, g.yBuf._fcId], () => {
-      this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
-      this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
-    });
+    if (encoded) {
+      // A dedicated VAO: on the default one, attribute arrays other traces
+      // enabled (size, selection) would still be on and override the
+      // per-vertex constants below — the point then draws at size zero.
+      if (!this._bandDotVao) {
+        this._bandDotBufX = gl.createBuffer();
+        this._bandDotBufY = gl.createBuffer();
+        this._bandDotVao = gl.createVertexArray();
+        gl.bindVertexArray(this._bandDotVao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._bandDotBufX);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(1), gl.DYNAMIC_DRAW);
+        this._vaoAttr(ATTR_SLOTS.ax, this._bandDotBufX, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._bandDotBufY);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(1), gl.DYNAMIC_DRAW);
+        this._vaoAttr(ATTR_SLOTS.ay, this._bandDotBufY, 0, 0);
+      } else {
+        gl.bindVertexArray(this._bandDotVao);
+      }
+      // bufferSubData keeps the VAO's pointers valid; only the bytes change.
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._bandDotBufX);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array([encoded.x]));
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._bandDotBufY);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array([encoded.y]));
+      index = 0;
+    } else {
+      this._bindVao(g, "hover", [g.xBuf._fcId, g.yBuf._fcId], () => {
+        this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+        this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+      });
+    }
     gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
     gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
     gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1);
     gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
     gl.drawArrays(gl.POINTS, index, 1);
+    if (encoded) gl.bindVertexArray(null);
   }
 
   _drawDensity(g, density, opacityScale = 1) {
@@ -8723,28 +8797,139 @@ export class ChartView {
   }
 
   _nearestCpuIndex(g, dataX) {
+    return this._nearestCpuIndexAlong(g, "x", dataX);
+  }
+
+  // Nearest retained row along ONE axis, in that axis's own coordinate space
+  // (so a log axis measures decades, not values). The x form is the point
+  // tooltip's fallback when the GPU pick misses; the y form serves
+  // `xy.tooltip(mode="y")` bands (interaction spec §7.3).
+  _nearestCpuIndexAlong(g, dim, target) {
     const cpu = g && g._cpu;
-    if (!cpu || !cpu.x || !cpu.x.length) return -1;
-    const xMeta = cpu.xMeta || g.xMeta;
-    const axis = this._axis(g.xAxis);
-    const target = this._axisCoord(axis, dataX);
+    const column = cpu && (dim === "x" ? cpu.x : cpu.y);
+    if (!column || !column.length) return -1;
+    const meta = dim === "x" ? cpu.xMeta || g.xMeta : cpu.yMeta || g.yMeta;
+    const axis = this._axis(dim === "x" ? g.xAxis : g.yAxis);
+    const starts = dim === "x" ? g._transitionPrevXValues : g._transitionPrevYValues;
+    const progress = g._transitionPositionProgress;
+    const coord = this._axisCoord(axis, target);
     let best = -1;
     let bestDist = Infinity;
-    const limit = Math.min(cpu.x.length, g.n || cpu.x.length);
+    const limit = Math.min(column.length, g.n || column.length);
     for (let i = 0; i < limit; i++) {
-      const starts = g._transitionPrevXValues;
-      const progress = g._transitionPositionProgress;
-      const xEncoded = starts && Number.isFinite(progress)
-        ? starts[i] + (cpu.x[i] - starts[i]) * progress
-        : cpu.x[i];
-      const x = xEncoded / (xMeta.scale || 1) + xMeta.offset;
-      const d = Math.abs(this._axisCoord(axis, x) - target);
+      const encoded = starts && Number.isFinite(progress)
+        ? starts[i] + (column[i] - starts[i]) * progress
+        : column[i];
+      const value = encoded / (meta.scale || 1) + meta.offset;
+      const d = Math.abs(this._axisCoord(axis, value) - coord);
       if (d < bestDist) {
         bestDist = d;
         best = i;
       }
     }
     return best;
+  }
+
+  // The retained row's data-space (x, y), transition-interpolated like the
+  // draw is, so a band computed mid-animation lands where the dot draws.
+  _cpuPointValue(g, idx) {
+    const cpu = g._cpu;
+    const xMeta = cpu.xMeta || g.xMeta;
+    const yMeta = cpu.yMeta || g.yMeta;
+    const progress = g._transitionPositionProgress;
+    const xEncoded = g._transitionPrevXValues && Number.isFinite(progress)
+      ? g._transitionPrevXValues[idx] + (cpu.x[idx] - g._transitionPrevXValues[idx]) * progress
+      : cpu.x[idx];
+    const yEncoded = g._transitionPrevYValues && Number.isFinite(progress)
+      ? g._transitionPrevYValues[idx] + (cpu.y[idx] - g._transitionPrevYValues[idx]) * progress
+      : cpu.y[idx];
+    return [xEncoded / (xMeta.scale || 1) + xMeta.offset, yEncoded / (yMeta.scale || 1) + yMeta.offset];
+  }
+
+  // `xy.tooltip(mode="x"|"y")`, or null for the nearest-point default. Polar
+  // has no band axis to snap along and keeps nearest-point hover.
+  _tooltipBandMode() {
+    const mode = this.spec && this.spec.tooltip && this.spec.tooltip.mode;
+    if (mode !== "x" && mode !== "y") return null;
+    if (this._polarGeometry()) return null;
+    return mode;
+  }
+
+  // Shared-axis hover (interaction spec §7.3): the pointer's coordinate along
+  // the band axis alone picks the data. Every eligible series snaps to its
+  // point nearest along that axis; the one closest to the pointer sets the
+  // band, and every series whose snapped point projects to the same
+  // coordinate joins it — index-aligned series read as one band with
+  // boundaries halfway between adjacent points, while a series with no point
+  // at that coordinate is left out rather than guessed. The perpendicular
+  // coordinate is ignored entirely.
+  _bandHits(cssX, cssY, dim) {
+    const candidates = [];
+    for (const g of this.gpuTraces) {
+      if (g.tier === "density" || g._legendHidden) continue;
+      // Marks with their own hover geometry never join a band (§7.3).
+      if (g.heatmap || g.trace.bar || g._cpuRibbon || g._cpuFunnel || g._cpuRect || g._segmentCpu) continue;
+      if (!g._cpu || !g._cpu.x || !g._cpu.y) continue;
+      const [dataX, dataY] = this._dataFromCanvas(cssX, cssY, g.xAxis, g.yAxis);
+      const target = dim === "x" ? dataX : dataY;
+      if (!Number.isFinite(target)) continue;
+      const idx = this._nearestCpuIndexAlong(g, dim, target);
+      if (idx < 0) continue;
+      const [x, y] = this._cpuPointValue(g, idx);
+      const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y);
+      const px = dim === "x" ? chartX - this.plot.x : chartY - this.plot.y;
+      if (!Number.isFinite(px)) continue;
+      candidates.push({ trace: g.trace.id, index: idx, g, px, x, y, dist: 0, synthetic: true });
+    }
+    if (!candidates.length) return null;
+    const cursor = dim === "x" ? cssX : cssY;
+    let anchor = candidates[0];
+    for (const c of candidates) {
+      if (Math.abs(c.px - cursor) < Math.abs(anchor.px - cursor)) anchor = c;
+    }
+    // Same projected coordinate within half a CSS pixel: f32 decode noise,
+    // not a different value.
+    const hits = candidates.filter((c) => Math.abs(c.px - anchor.px) <= 0.5);
+    return { hits, anchor, dim };
+  }
+
+  _hoverBand(e, cssX, cssY, dim) {
+    const p = this.plot;
+    const inside = cssX >= 0 && cssX <= p.w && cssY >= 0 && cssY <= p.h;
+    const band = inside ? this._bandHits(cssX, cssY, dim) : null;
+    if (!band || !band.hits.length) {
+      const had = this._hoverId !== -1 || !!(this._hoverTargets && this._hoverTargets.length);
+      this._hoverId = -1;
+      this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      this._hideTooltip();
+      if (had) this._drawKeepPick();
+      return;
+    }
+    this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
+    const key = band.hits.map((h) => `${h.trace}:${h.index}`).join("|");
+    if (key === this._bandKey) {
+      // Same band: the content and the cursor stay; only the tooltip follows
+      // the pointer (Recharts' cursor model, §7.3).
+      const rect = this.root.getBoundingClientRect();
+      this._placeTooltip(e.clientX - rect.left, e.clientY - rect.top);
+      return;
+    }
+    this._bandKey = key;
+    this._hoverTargets = band.hits;
+    this._hoverTarget = band.hits[0];
+    this._hoverId = band.hits[0].trace * 1e9 + band.hits[0].index;
+    this._bandRows = band.hits.map((h) => this._localRow(h));
+    this._lastRow = this._bandRows[0];
+    this._tooltipAnchor = null;
+    const ag = band.anchor.g;
+    this._bandCursor = { dim, xAxis: ag.xAxis, yAxis: ag.yAxis, x: band.anchor.x, y: band.anchor.y };
+    this._renderBandTooltip(e.clientX, e.clientY);
+    this._positionTooltipCursor();
+    this._dispatchBandHover(e.clientX, e.clientY, false);
+    this._requestBandPicks();
+    this._drawKeepPick();
   }
 
   _nearestPolarCpuIndex(g, cssX, cssY) {
@@ -9035,6 +9220,11 @@ export class ChartView {
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;
     const cssY = e.clientY - rect.top;
+    const bandMode = this._tooltipBandMode();
+    if (bandMode) {
+      this._hoverBand(e, cssX, cssY, bandMode);
+      return;
+    }
     const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
     if (!hit) {
       const hadHover = this._hoverId !== -1;

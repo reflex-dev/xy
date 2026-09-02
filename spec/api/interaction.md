@@ -163,7 +163,7 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.ts`, `_eventView`).
 
 | Event | Detail |
 | --- | --- |
-| `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. |
+| `xy:hover` | `{row, trace, index, view}` plus the structured payload `{active: true, cursor: {px, data}, points}` (view-state.md §7.1) — genuinely additive; the kernel's exact-value reply re-dispatches with `exact: true` and a refreshed payload. `cursor.px` is chart-root-relative pixels; `cursor.data` is keyed by **exact axis ID** with one entry per declared axis; each `points[]` entry carries `trace` (series name), `index`, `row`, its `x_axis`/`y_axis` bindings, and the series `color`. Under `xy.tooltip(mode="x"\|"y")` (§7.3) `points[]` holds one entry per series in the band and `row`/`trace`/`index` describe the first. |
 | `xy:leave` | `{view, active: false}` with `source: "leave"`. Dispatched by canvas pointer exit and by a document-level missed-leave backstop: browsers skip boundary events when the element under a stationary cursor changes (page scroll, hit-test churn), so while a pointer-owned readout is live, a `pointerover` whose target left the chart root runs the same exit path (`53_interaction.ts` `_pointerHoverExit`). Keyboard readouts are exempt — they survive mouse movement elsewhere and are dismissed by `Escape`. |
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
@@ -397,6 +397,56 @@ The hover tooltip is anchored in data space, not at the cursor
 - Keyboard traversal can focus a point outside the current view; its readout
   keeps the edge-clamped placement (the anchor is dropped when its
   projection starts outside the plot rect).
+
+### 7.3 Shared-axis bands (`xy.tooltip(mode="x")`)
+
+`mode="nearest"` (the default) is the behaviour above: the pointer must land
+within 12 px of a mark. `mode="x"` (and `mode="y"`) trades that for Recharts'
+axis tooltip and Plotly's `hovermode="x unified"`: only the pointer's
+coordinate along the band axis picks the data, the perpendicular coordinate
+is ignored entirely, and the whole plot height (width) is the hit target.
+Wire: `tooltip.mode`, shipped only when not `"nearest"`.
+
+- Every eligible series snaps to its point nearest the pointer along the
+  band axis (`_nearestCpuIndexAlong`, `50_chartview.ts`); the closest of
+  those to the pointer sets the band, and every series whose snapped point
+  projects to the same coordinate (within 0.5 CSS px — f32 decode noise, not
+  a different x) joins it (`_bandHits`). Index-aligned series therefore read
+  as one band whose boundaries fall halfway between adjacent points; a
+  series with no point at that coordinate is omitted rather than guessed.
+- Eligible series are point and line marks with retained CPU columns.
+  Density tiers, bars, rectangles, ribbons, funnels, heatmaps and segments
+  keep their own hover geometry and never join a band; legend-hidden series
+  are out (§10). Polar charts have no band axis and fall back to nearest.
+- The tooltip shows the band coordinate as its title (or the authored
+  `title` template resolved against the anchor series' row), then one row per
+  series in band order: the series name painted in the series colour, then
+  its value along the other axis — or the authored `fields`, minus the band
+  field — through the same `format` grammar. It **follows the pointer**: the
+  one exception to the data-space anchoring above, because a band has several
+  points and the cursor already marks it. The `tooltip_cursor` DOM slot draws
+  that line across the plot at the snapped coordinate, reprojected on every
+  draw exactly as an anchor would be, hidden when the coordinate leaves the
+  plot.
+- Every series in the band gets an active dot, drawn from its CPU columns
+  rather than its vertex buffer (a smoothed or stepped line's vertex index is
+  not its data index) in the series colour. Adding it exposed that the
+  nearest-mode highlight dot had stopped rendering at all: the full point
+  program multiplies fill alpha by the per-item `a_style.x` factor, the
+  regular scatter draw moved to the simpler point program that never sets
+  that constant attribute, and `_drawHoverPoint` inherited its default of 0.
+  It now sets every constant attribute and stroke uniform the program reads
+  (`tests/test_tooltip_band.py::test_browser_nearest_hover_highlight_is_visible`).
+- `xy:hover` fires once per band change with `points[]` carrying one entry
+  per series in band order; `row`/`trace`/`index` describe the first. One
+  `pick` goes to the kernel per series; each exact reply replaces its own row
+  and re-renders, and the last one re-dispatches `xy:hover` with
+  `exact: true`.
+- Keyboard traversal is unchanged: it walks single points, and starting it
+  clears the band. Static exports are unaffected (tooltips are live-only).
+
+Live capture: `spec/assets/tooltip-x-band.png` — the pointer (red ring) far
+above Page B, the band tooltip, the cursor line, and both active dots.
 
 ## 8. Unconditional behavior
 

@@ -38,6 +38,7 @@ primitive or structural descendant is a separate DOM element.
 | `tooltip_row` | One tooltip field row |
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
+| `tooltip_cursor` | Line across the plot at the shared-tooltip band coordinate (`xy.tooltip(mode="x")`) |
 | `modebar` | Mode/tool bar container |
 | `modebar_drag_handle` | Draggable grip revealed beside the toolbar |
 | `modebar_control_group` | Selection, pan, and export control group |
@@ -358,8 +359,8 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
-| `styles={slot: {...}}` | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots |
-| `class_names={slot: "..."}` | yes, all 48 slots | dropped | dropped |
+| `styles={slot: {...}}` | yes, all 49 slots | text subset, 9 slots | text subset, 9 slots |
+| `class_names={slot: "..."}` | yes, all 49 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
 | `xy.colorbar(style=...)` | yes | dropped | dropped |

@@ -193,6 +193,42 @@ See [Events and callbacks](/docs/xy/api-reference/events-and-callbacks/) for
 hover payloads and [Marks and components reference](/docs/xy/api-reference/marks-and-components/)
 for the exact tooltip signature.
 
+## Shared Tooltip Along an Axis
+
+`xy.tooltip(mode="x")` turns the tooltip into an axis tooltip, the model
+Recharts uses by default and Plotly calls `hovermode="x unified"`. The pointer
+only has to be inside the plot: its horizontal position snaps to the nearest x
+value and every series' point at that x is listed at once, while the vertical
+position is ignored. The plot divides into full-height bands with boundaries
+halfway between adjacent points, a cursor line marks the selected x, each series
+shows an active dot, and the tooltip follows the pointer. `mode="y"` does the
+same along the y axis for horizontal layouts. The default, `mode="nearest"`,
+keeps the 12 px nearest-point behavior.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+pages = ["Page A", "Page B", "Page C", "Page D", "Page E", "Page F", "Page G"]
+shared_tooltip_chart = xy.line_chart(
+    xy.line(pages, [2400, 1398, 9800, 3908, 4800, 3800, 4300], name="pv", color="#8884d8", width=2),
+    xy.line(pages, [4000, 3000, 2000, 2780, 1890, 2390, 3490], name="uv", color="#82ca9d", width=2),
+    xy.tooltip(mode="x"),
+    xy.legend(loc="upper right"),
+    title="Hover anywhere above a page",
+)
+
+
+def shared_tooltip_demo():
+    return reflex_xy.chart(shared_tooltip_chart, height="320px")
+~~~
+
+`fields=`, `format=`, and `title=` keep their meaning: the title template
+resolves against the first series' row, and each series row shows the
+requested fields (minus the band axis, which is already the title). Style the
+cursor line through the `tooltip_cursor` slot or the `--chart-crosshair`
+token it shares with the crosshair.
+
 ## FAQ
 
 ### How do I show values on hover in a Python chart?

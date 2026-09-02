@@ -216,6 +216,7 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "tooltip_row",
         "tooltip_label",
         "tooltip_value",
+        "tooltip_cursor",
         "modebar",
         "modebar_drag_handle",
         "modebar_control_group",

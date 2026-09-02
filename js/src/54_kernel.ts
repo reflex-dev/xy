@@ -848,6 +848,12 @@ Object.assign(ChartView.prototype, {
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
     } else if (msg.type === "pick_result") {
+      // A shared-axis band sends one pick per series; each reply belongs to
+      // its own row (§7.3), not to the single-pick sequence below.
+      if (this._bandPicks && this._bandPicks.has(msg.seq)) {
+        this._applyBandPickResult(msg);
+        return;
+      }
       if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
       if (!msg.row) { this._hideTooltip(); return; }
       // The kernel returns exact values for the picked trace only. Rehydrate
