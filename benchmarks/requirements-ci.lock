@@ -272,7 +272,7 @@ stack-data==0.6.3
     # via ipython
 toolz==1.1.0
     # via datashader
-tornado==6.5.7
+tornado==6.5.8
     # via bokeh
 tqdm==4.69.0
     # via panel
