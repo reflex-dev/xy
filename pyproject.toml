@@ -18,8 +18,28 @@ dependencies = [
 # The adapter source ships in every xy wheel so the framework integration and
 # render client can never drift. The extra only selects the supported Reflex
 # floor; importing plain `xy` remains framework-free.
+#
+# TEMPORARY, and deliberately unmergeable: the data plane is a Reflex *channel*
+# (spec/design/reflex-integration.md §2), which no released Reflex ships yet —
+# it exists only on reflex-dev/reflex#6932. There is no socket.io fallback any
+# more, so a version specifier here would be a lie in either direction:
+# `>=0.9.6` admits versions where every chart stays blank, and a guessed
+# `>=0.10` names a release that does not exist. The git requirement is the
+# honest statement of what this integration needs, and it keeps `uv sync`
+# working for contributors.
+#
+# It names an immutable *commit*, not the branch: the lockfile only protects
+# `uv sync --locked`, so a branch ref here would let a bare
+# `pip install xy[reflex]` — or any `uv lock` regeneration — resolve framework
+# code nobody reviewed. uv resolves the rest of that repo's workspace
+# (reflex-base, the component packages) from the same commit, so the framework
+# is never half branch and half release, and `docs/app/pyproject.toml` pins the
+# same commit for the same reason. Bumping means editing all six requirement
+# strings plus both lockfiles — that friction is the point. Replace the lot
+# with the real floor the moment channels are released (see the design doc's
+# Status note).
 reflex = [
-    "reflex>=0.9.6",
+    "reflex @ git+https://github.com/benedikt-bartscher/reflex.git@609b2f515fc9d00e9a63a056d00a7782c77323b0",
 ]
 
 [project.urls]
@@ -45,10 +65,23 @@ dev = [
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
     # where CI exercises that test.
     "starlette>=0.36",
-    # tests/reflex_adapter exercises the real socket data plane when the
-    # `reflex` extra is installed in the main CI job.
+    # tests/reflex_adapter exercises the real websocket data plane when the
+    # `reflex` extra is installed in the main CI job: uvicorn serves the app,
+    # aiohttp is the client. Bare uvicorn has no websocket protocol of its own
+    # and answers an upgrade request with 404, so the implementation is an
+    # explicit dev dependency rather than something inherited from a transport
+    # package.
     "aiohttp>=3.14.3",
     "uvicorn>=0.23",
+    "websockets>=12",
+    # Drives a real browser at a real Reflex app in
+    # tests/reflex_adapter/test_channel_browser.py: the only place the
+    # single-shared-websocket claim is checked end to end. xy's other browser
+    # probes speak CDP directly and only borrow playwright's *Node* package for
+    # a Chromium path, which is why the Python one has to be named here — left
+    # out, the test silently skips and nothing verifies the transport.
+    # Pinned with docs/app so one `playwright install` serves both.
+    "playwright==1.61.0",
     # Parses .binder/environment.yml in tests/test_binder_config.py so the
     # Binder contract is asserted on structure, not string transcription.
     "pyyaml>=6",
@@ -70,6 +103,16 @@ codspeed = [
 # by design) from being read as library releases.
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
+
+# TEMPORARY, and paired with the git requirement in the `reflex` extra. Direct
+# references are refused by default because PyPI refuses them on upload — which
+# is the point here: while the channel transport is unreleased there is no
+# version specifier that honestly describes what `xy[reflex]` needs, and a
+# release built from this tree *should* fail rather than ship a floor that
+# installs a Reflex where every chart stays blank. Remove both when channels
+# are released.
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.uv-dynamic-versioning]
 vcs = "git"

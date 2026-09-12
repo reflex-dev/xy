@@ -25,6 +25,8 @@ functions of state — the same contract cached computed vars already impose.
 from __future__ import annotations
 
 import inspect
+import weakref
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from .data_vars import validate_columns
@@ -97,7 +99,7 @@ async def rebuild_data(app: Any, parsed: ParsedToken) -> Optional[dict[str, Any]
 async def rebuild_plan_figure(app: Any, composite: ParsedPlanToken) -> Optional["Figure"]:
     """Recover a data-bound figure: plan (local map) + columns (registry or
     state) + bind. Raises PlanMissError / PlanBindError for spec-aware `err`
-    frames; anything else fails closed in the namespace."""
+    frames; anything else fails closed in the data plane."""
     plan = require_plan(composite.digest)
     entry = registry.get_columns(composite.data_token)
     if entry is not None:
@@ -115,10 +117,39 @@ async def rebuild_plan_figure(app: Any, composite: ParsedPlanToken) -> Optional[
     return plan.bind(columns, source=source).figure()
 
 
+def app_ref(app: Any) -> Callable[[], Any]:
+    """A zero-argument accessor for ``app`` that does not keep it alive.
+
+    The data plane holds on to the app for as long as it is attached, and a
+    strong capture would make every hot reload's App — and the state manager
+    behind it — immortal. Objects that refuse weak references (test doubles,
+    mostly; a real ``rx.App`` supports them) fall back to a strong capture
+    rather than making ``setup`` fail on them.
+
+    Args:
+        app: The Reflex app to reference.
+
+    Returns:
+        A callable returning the app, or None once it has been collected.
+    """
+    try:
+        return weakref.ref(app)
+    except TypeError:
+        return lambda: app
+
+
 def make_rebuild_hook(app: Any) -> Any:
-    """The namespace's RebuildHook, bound to one app instance."""
+    """The data plane's RebuildHook, bound weakly to one app instance.
+
+    An App that has been collected can no longer rebuild anything from state,
+    so the hook fails closed exactly as it does for an unknown token.
+    """
+    resolve_app = app_ref(app)
 
     async def _rebuild(token_str: str) -> Optional["Figure"]:
+        app = resolve_app()
+        if app is None:
+            return None
         composite = parse_plan_token(token_str)
         if composite is not None:
             return await rebuild_plan_figure(app, composite)

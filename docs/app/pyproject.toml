@@ -3,13 +3,19 @@ name = "xy-docs-app"
 version = "0.1.0"
 description = "Documentation site for XY."
 requires-python = ">=3.11"
+# TEMPORARY: these four normally track reflex-dev/reflex@main, but `xy[reflex]`
+# requires the unreleased channel transport (reflex-dev/reflex#6932) and uv
+# refuses two URLs for one package. They therefore pin the same immutable
+# commit the root pyproject does — all from one repo, so the framework is never
+# half fork and half main, and no install can pick up unreviewed framework
+# code. Restore `@main` when channels land there.
 dependencies = [
     "numpy",
     "pillow",
-    "reflex @ git+https://github.com/reflex-dev/reflex@main",
-    "reflex-components-internal @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-components-internal",
-    "reflex-docgen @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-docgen",
-    "reflex-site-shared @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-site-shared",
+    "reflex @ git+https://github.com/benedikt-bartscher/reflex.git@609b2f515fc9d00e9a63a056d00a7782c77323b0",
+    "reflex-components-internal @ git+https://github.com/benedikt-bartscher/reflex.git@609b2f515fc9d00e9a63a056d00a7782c77323b0#subdirectory=packages/reflex-components-internal",
+    "reflex-docgen @ git+https://github.com/benedikt-bartscher/reflex.git@609b2f515fc9d00e9a63a056d00a7782c77323b0#subdirectory=packages/reflex-docgen",
+    "reflex-site-shared @ git+https://github.com/benedikt-bartscher/reflex.git@609b2f515fc9d00e9a63a056d00a7782c77323b0#subdirectory=packages/reflex-site-shared",
     "xy[reflex]",
 ]
 

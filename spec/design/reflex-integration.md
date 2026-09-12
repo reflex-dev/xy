@@ -1,20 +1,36 @@
 # Reflex integration — design
 
 Status: **implementation landed** (`python/reflex_xy`, tests under
-`tests/reflex_adapter/`). This document is the authoritative design; the
-prototype implements it end to end over Reflex 0.9.6. The deliverable is an
-integration bundled in the `xy` distribution and installed with
-`xy[reflex]`. It makes a xy figure a first-class Reflex component with the
+`tests/reflex_adapter/`). This document is the authoritative design. The
+deliverable is an integration bundled in the `xy` distribution and installed
+with `xy[reflex]`. It makes a xy figure a first-class Reflex component with the
 same performance contract as the notebook path: screen-bounded binary wire
 (§29), kernel-side canonical data (§27), stale-while-revalidate interaction
 (§17).
 
+> **Unreleased dependency (temporary).** The data plane is a Reflex *channel*
+> (§2), which no released Reflex ships yet — it exists on
+> reflex-dev/reflex#6932. Until that lands, the `xy[reflex]` extra carries a
+> git requirement naming one immutable commit on that branch, with
+> `[tool.hatch.metadata] allow-direct-references` to make the build accept it.
+> Two properties are deliberate. It is **unpublishable**: PyPI refuses a direct
+> reference, so a release cut from this tree fails at upload rather than
+> shipping a version specifier that would install a Reflex where every chart
+> stays blank. And it is a **commit, not the branch**: the lockfiles only bind
+> `uv sync --locked`, so a branch ref would let a bare `pip install xy[reflex]`
+> or any `uv lock` regeneration pull framework code nobody reviewed. The same
+> commit is pinned by `docs/app/pyproject.toml`'s four Reflex requirements — uv
+> refuses two URLs for one package — and
+> `tests/test_dependencies.py::test_docs_app_pins_the_same_reflex_commit` keeps
+> the six strings in step. Replace the lot with the real floor when channels
+> are released.
+
 Two decisions define this revision (superseding the HTTP-routes draft — see
 §8 for the audit trail):
 
-1. **The data plane rides the app's existing websocket.** No new endpoints;
-   a second socket.io namespace multiplexes onto the engine.io connection
-   Reflex already maintains.
+1. **The data plane rides the app's existing websocket.** No new endpoints and
+   no second connection: the `/_xy` plane is a Reflex *channel* multiplexed
+   onto the event websocket the app already maintains (§2).
 2. **There is no figure server and no chart data in Redis.** Figures are
    per-process *rebuildable caches*; Reflex state (already durable and
    already distributed) is the only source of truth. The figure token is the
@@ -33,8 +49,8 @@ state, wrong for data buffers. The integration splits every chart into:
   usual way. Rows and summaries are small by construction — never buffers.
 - **Data plane (xy-native, high-frequency, binary).** First paint,
   `view`/`density_view`/`pick`/`select` round-trips, streaming `append`
-  pushes, and full-payload refreshes — on a dedicated socket.io namespace
-  (`/_xy`) **carried by the same physical websocket** as the control plane.
+  pushes, and full-payload refreshes — on a dedicated plane named `/_xy`
+  **carried by the same physical websocket** as the control plane.
   Reflex state never sees a data byte; state diffing cost is independent of
   data size.
 
@@ -54,10 +70,10 @@ proxies must be taught each route; every `/msg` pays request setup + headers;
 SSE is a second long-lived connection per chart with its own reconnect
 logic; and none of it inherits app-plane auth. The XYBF binary frame format
 (`python/xy/_framing.py`; versioning in [wire-protocol.md](wire-protocol.md)
-§7) exists because HTTP bodies need framing — socket.io attachments
-already carry length-delimited binary, so on this transport the framing
+§7) exists because HTTP bodies need framing — a Reflex channel frame already
+carries length-delimited binary attachments, so on this transport the framing
 layer disappears too. XYBF remains in `python/xy/_framing.py` (re-exported
-from `xy.channel`) for HTTP/export hosts; the namespace does not use it.
+from `xy.channel`) for HTTP/export hosts; the data plane does not use it.
 
 ### The cost we accept (recorded, §28 spirit)
 
@@ -67,72 +83,67 @@ from `xy.channel`) for HTTP/export hosts; the namespace does not use it.
   is single-digit MB; if it ever matters, chunked payload emission (bounded
   frames interleaved with other traffic) fits behind the same events without
   protocol change.
-- **Version coupling.** The wrapper mirrors Reflex's socket options
-  (`transports`, ws subprotocol, `?token=` query) so the manager cache
-  merges the connections. Those names are pinned by
-  `tests/reflex_adapter/test_assets.py` — a Reflex upgrade that renames
-  them fails loudly in CI, not silently in prod.
-- **One engine.io connection per tab** stays the invariant. If a chart page
+- **Version coupling.** The wrapper depends on exactly one Reflex export,
+  `getChannel` from `$/utils/state`, and the backend on one method,
+  `app.register_channel`. Both are pinned by
+  `tests/reflex_adapter/test_assets.py` and the adapter suite — a Reflex
+  upgrade that renames either fails loudly in CI, not silently in prod. This
+  is a deliberate narrowing: the previous socket.io carrier had to mirror
+  Reflex's whole `io()` option set (engine.io mount path, `transports`, ws
+  subprotocol, `?token=` query) just to make socket.io-client's manager cache
+  merge the two connections, and every one of those was a way to silently end
+  up with a second socket or none at all.
+- **One websocket per tab** stays the invariant, now structurally rather than
+  by option-matching: the chart never constructs a connection. If a chart page
   somehow loads without state enabled there is no socket at all — but
   figure tokens come from state, so that page has no charts either.
 
-## 2. Transport: a second namespace on the app's socket
+## 2. Transport: the `/_xy` channel
 
-**Backend.** Reflex builds a python-socketio `AsyncServer` at app
-construction and registers its `/_event` namespace on it. The adapter
-registers one more namespace on the same server:
+**Backend.** Reflex serves its own events on a plain websocket and
+multiplexes additional *channels* onto it. The adapter registers one:
 
 ```python
-app.sio.register_namespace(XYNamespace(registry, rebuild=...))   # "/_xy"
+app.register_channel(XYChannel(registry, rebuild=...))   # name "/_xy"
 ```
 
-A namespace is a socket.io protocol concept, not a URL: no route, no mount,
-no proxy entry. Wiring is one line in `rxconfig.py` —
-`plugins=[reflex_xy.XYPlugin()]` — whose `post_compile` hook receives the
-live `App` at backend-worker startup (after the socket server exists, before
-any client connects), or an explicit `reflex_xy.setup(app)` for people who
-prefer it in `app.py`. A lifespan task captures the serving loop (for
-thread-safe fan-out from sync handlers) and runs the registry TTL sweep.
+A channel is a Reflex protocol concept, not a URL: no route, no mount, no
+proxy entry. `register_channel` raises if the app has no event websocket
+(state disabled) or is not on the plain-WebSocket transport, so a
+misconfiguration fails at startup rather than at first paint. The channel
+declares `accepts_binary = False`: every column travels server → client, and
+an inbound binary frame is refused by Reflex before it reaches a handler.
 
-**Frontend.** socket.io-client caches managers by
-`(protocol, host, port, engine.io path)`. The wrapper connects to namespace
-`/_xy` with the *same* URL and options Reflex's `connect()` uses
-(`getBackendURL(env.EVENT)`, `path: endpoint.pathname`,
-`transports: [env.TRANSPORT]`, `protocols: [version]`,
-`query: {token: getToken()}`) — so whichever side connects first creates the
-manager and the other multiplexes onto it. One websocket in the browser's
-network tab, two namespaces inside it. React effect ordering means the chart
-often connects first; mirroring the options exactly is what makes that safe
-(the backend sees an identical connection either way).
+**Frontend.** `getChannel("/_xy")` (from `$/utils/state`) returns the shared
+plane handle — `connected`, `emit`, `on`, `off` — riding the app's own
+websocket. No second connection exists to key, cache or race, and Reflex owns
+reconnection: when it reopens the socket the channel reopens with it and every
+mounted chart re-`sub`s on the `connect` event.
 
-Reflex owns reconnection: its `reconnect()` reopens the shared manager, our
-namespace socket re-CONNECTs automatically, and every mounted chart re-`sub`s
-on the `connect` event.
+**Wire shape.** Metadata is one small JSON object per message and the data
+columns are its binary attachments, carried *beside* the metadata in the
+frame rather than inside it. Reflex pads every attachment to an 8-byte
+boundary, so each column arrives as a `Uint8Array` view over the received
+frame at a 4-byte-aligned offset — zero-copy into `Float32Array`s, and the
+client's `toSpans`/LOD paths already honor `byteOffset`. No JSON numbers for
+data, no base64, no custom framing (§29 preserved).
 
-**Wire shape.** Metadata is one small JSON object per event; every data
-column is a `bytes` value inside it, which python-socketio hoists into
-binary attachments and the browser receives as `ArrayBuffer`s *in place* —
-aligned, zero-copy into `Float32Array`s. No JSON numbers for data, no
-base64, no custom framing (§29 preserved; the socket.io protocol already
-length-prefixes attachments).
-
-**Attachment cap (hard browser limit).** socket.io-parser's `Decoder` ships
-with `maxAttachments: 10`; one binary packet with more attachments makes the
-browser throw `"too many attachments"`, which `Manager.ondata` converts into
-closing the *entire shared websocket* as a parse error — the app plane then
-reconnects, every chart re-`sub`s, the oversized payload is re-sent, and the
-connection loops forever with no console error. The namespace therefore never
-emits more than 10 attachments per packet (`_MAX_WIRE_ATTACHMENTS`):
-payloads whose split layout would exceed the cap fall back to the joined
-single-blob `build_payload()` form (no `buffer_layout: "split"` in the spec;
-the wrapper's `toSpans` already dispatches on that flag), trading the join
-copy for staying inside the parser's budget. `msg` replies are bounded by
-channel construction; the namespace enforces the same cap as a contract
-check and answers `err` instead of emitting an unparseable packet — on both
-the reply path and the room-wide push path (`broadcast_message`, the
-`reflex_xy.append` fan-out, where one oversized packet would close every
-subscriber's connection at once). Regression:
-`tests/reflex_adapter/test_socket_data_plane.py::`
+**Attachment cap.** A channel frame declares its attachment count in the
+header, and Reflex refuses to encode or decode more than
+`MAX_MESSAGE_BUFFERS` (64) of them — an oversized payload would not be
+truncated, it would simply never arrive. `_MAX_WIRE_ATTACHMENTS` takes that
+number from `reflex.channels` rather than copying it, so the two cannot drift
+into emitting a frame the client will reject. Payloads whose split layout
+would exceed the cap fall back to the joined single-blob `build_payload()`
+form (no `buffer_layout: "split"` in the spec; the wrapper's `toSpans` already
+dispatches on that flag), trading the join copy for staying inside the frame's
+budget — a recorded tier decision, never silent (§28). `msg` replies are
+bounded by construction; the data plane enforces the same cap as a contract
+check and answers `err` instead of dropping the update, on both the reply path
+and the room-wide push path (`broadcast_message`, the `reflex_xy.append`
+fan-out, where one oversized frame would silently lose the update for every
+subscriber at once). Regression:
+`tests/reflex_adapter/test_data_plane.py::`
 `test_sub_over_attachment_limit_ships_single_blob`,
 `::test_msg_reply_over_attachment_limit_answers_err_not_msg`, and
 `::test_broadcast_over_attachment_limit_answers_err_not_msg`.
@@ -141,16 +152,28 @@ The envelope is below; the `m` payload it carries is specified field by field
 in `spec/design/wire-protocol.md`.
 
 ```
-client -> server (namespace /_xy)
+client -> server (channel /_xy)
   sub     {fig, px?, mid?}      subscribe; join figure room; reply `payload`
   unsub   {fig}                 leave the room
   msg     {fig, v?, mid?, m}    one xy.channel.handle_message dispatch
 
-server -> client
-  payload {fig, version, spec, buffers, mid?}   first paint / full refresh
-  msg     {fig, version?, mid?, message, buffers}   reply or push (no mid)
+server -> client (metadata; the columns are the frame's attachments)
+  payload {fig, version, spec, mid?}      first paint / full refresh
+  msg     {fig, version?, mid?, message}  reply or push (no mid)
   err     {fig, error, resync?}           failure; resync requests a new `sub`
 ```
+
+The attachments are not a field of the envelope: `XYChannel._send` passes them
+as the frame's attachment list, and on the client every handler takes
+`(data, buffers)`.
+
+The five event names are declared as constants on both sides —
+`EVENT_SUB`/`EVENT_UNSUB`/`EVENT_MSG`/`EVENT_PAYLOAD`/`EVENT_ERR` in
+`data_plane.py` and again in `XYChart.jsx` — and
+`tests/reflex_adapter/test_assets.py` reads the Python ones and asserts the
+JavaScript declarations match. This is the one seam where the two halves could
+drift without any other test noticing: a renamed event on one side alone
+produces a client that talks past the server, with no error anywhere.
 
 `mid` is a validated optional per-mount id: several charts on a page share the
 socket, so direct interaction replies and direct subscription payloads echo it
@@ -160,7 +183,7 @@ from each applying all M direct subscription responses after a resync. The
 kernel dispatch is byte-for-byte the notebook dispatch —
 `xy.channel.handle_message` (§3.1 of the old draft, now shipped), run off the
 event loop via a worker thread (the Rust kernels release the GIL) under a
-per-figure lock. Namespace payload builds and interaction dispatches take the
+per-figure lock. Data plane payload builds and interaction dispatches take the
 generation's async lock and then its synchronous figure lock, the same order as
 wired append. Caller-thread view-state writes take only the synchronous lock;
 there is no reverse acquisition. Thus payload emitter updates such as
@@ -202,7 +225,7 @@ totality contract). This section records only what is specific to this host.
 **`view_change` does not reach the kernel here.** The wrapper intercepts the
 outgoing message and invokes the Reflex `on_view_change` prop directly
 (`dispatchView` in `python/reflex_xy/assets/XYChart.jsx`), because
-the namespace registers no Python-side view callback (§5). Every other request
+the data plane registers no Python-side view callback (§5). Every other request
 type crosses the socket unchanged and is dispatched by the shared
 `handle_message`.
 
@@ -210,7 +233,7 @@ type crosses the socket unchanged and is dispatched by the shared
 `lod.screen_shape`, which rejects non-finite values and clamps the rest to
 `[16, MAX_SCREEN_DIM]` (`MAX_SCREEN_DIM = 4096`, `xy/config.py`) — a hostile
 client cannot make the kernel allocate an arbitrary density texture. The bound
-matters more here than in the notebook: the namespace is reachable by anyone
+matters more here than in the notebook: the data plane is reachable by anyone
 who can reach the app, so the clamp is an access-control boundary rather than
 a sanity check (§3.3).
 
@@ -336,8 +359,8 @@ replacement is never removed.
 
 ### 3.3 Access control
 
-The connection's `?token=` (the Reflex client token) is captured at
-namespace connect. A state token embeds the client token it was minted for,
+The connection's `?token=` (the Reflex client token) is resolved by Reflex
+and read off the channel session when it opens. A state token embeds the client token it was minted for,
 and `sub`/`msg` refuse a figure whose embedded client token differs from the
 connection's (`err: figure belongs to another session`). Tokens carry
 nothing their own client doesn't already know. When Reflex grows real
@@ -429,10 +452,10 @@ figure/data memory, not correctness. While at least one rebuildable subscriber
 remains, both the sweep and an explicit release retain only the removed token's
 scalar version so a republish on the same worker stays monotonic; the figure
 and its data buffers are released. If an interaction is the first touch after
-eviction, the namespace
+eviction, the data plane
 rebuilds, sends every subscribed mount a replacement payload room-wide, and
 drops the old-generation interaction for the triggering client to retry. If a
-new `sub` is first, the namespace broadcasts the rebuild to existing room
+new `sub` is first, the data plane broadcasts the rebuild to existing room
 members before joining the requester, then sends that mount one `mid`-addressed
 payload built for its own `px` hint. The direct path re-reads the current entry
 after joining the room: a normal replacement that landed before the join is
@@ -666,7 +689,7 @@ refused as a subscription outright.
 re-binds every mounted dependent through the `data token → {digests}`
 index — fresh figures, bumped versions, coalesced room broadcasts, exactly
 the figure-var republish machinery. The index is added to when a composite
-binds (namespace `sub`) and pruned on **every transition that can end the
+binds (a data-plane `sub`) and pruned on **every transition that can end the
 mount**: the last unsubscribe or disconnect for the composite token, its
 entry's release, failed-rebuild cleanup, the TTL sweep, and a republish
 that finds it unmounted (`_unbind_plan_if_unmounted_locked`). "Bounded by
@@ -827,7 +850,7 @@ impossible — the JS that renders a payload is always the build that shipped
 with the Python that produced it. One renderer for notebooks, static
 export, and Reflex.
 
-The wrapper: opens/reuses the shared namespace socket, `sub`s with the
+The wrapper: takes the shared `/_xy` channel, `sub`s with the
 element's measured width, builds a `ChartView` for the first `payload`, and
 passes later full payloads to `ChartView.updatePayload` (preserving keyed
 animation state; destroy + rebuild is only the compatibility fallback),
@@ -835,7 +858,7 @@ bridges `comm` to `msg` events, and forwards semantic
 events into Reflex's event system via the component's event-trigger props
 (`props.onPointHover(row)` → `addEvents(...)` → the user's handler).
 Client-side niceties: `view_change` resolves locally (no kernel round-trip;
-the namespace registers no Python callbacks), `click` issues a tagged `pick`
+the data plane registers no Python callbacks), `click` issues a tagged `pick`
 so `on_point_click` delivers the exact row, `selection` replies pair with
 the brush rect that produced them.
 
@@ -967,7 +990,7 @@ def remember_view(self, event: dict):
 reflex_xy.chart(figure=Dash.cloud, on_view_change=Dash.remember_view)
 ```
 
-Every kernel request echoes the last payload version as `v`; the namespace
+Every kernel request echoes the last payload version as `v`; the data plane
 silently rejects requests for another figure version and drops an explicitly
 malformed `v`. Omitted `v` remains accepted for compatibility. Replies echo
 the operation version; room-wide append pushes carry the newly bumped version,
@@ -979,9 +1002,10 @@ different worker may safely begin again at version 1. Once a room payload has
 mounted, a duplicate room broadcast at that same generation is ignored; this
 lets canonical rebuild recovery retry delivery without clearing a rows mask
 that was already replayed for the generation.
-While disconnected, the wrapper does not enqueue kernel messages: socket.io
-flushes its send buffer before its `connect` callback, which would otherwise
-send old-epoch requests ahead of the resetting `sub`.
+While disconnected, the wrapper does not enqueue kernel messages: the channel
+buffers sends made while it is down and flushes them before the `connect`
+callback runs, which would otherwise send old-epoch requests ahead of the
+resetting `sub`. The guard is `plane.connected`, read off the channel handle.
 
 ## 6. Latency budget
 
@@ -1065,10 +1089,12 @@ python/reflex_xy/
                              partition, schema checks, plan/data/static mount
   state_bridge.py            token -> state_manager -> builder/data/plan
                              rebuild hooks
-  namespace.py               XYNamespace: sub/unsub/msg, payload/msg/err,
-                             affinity (incl. composite), rebuild-on-miss,
-                             binary attachments
-  app.py                     setup(app), XYPlugin (post_compile), lifespan
+  data_plane.py              XYChannel(rx.channels.Channel): sub/unsub/msg,
+                             payload/msg/err, affinity (incl. composite),
+                             rebuild-on-miss, binary attachments — the whole
+                             protocol and its one carrier (§2)
+  app.py                     setup(app) -> app.register_channel(...),
+                             XYPlugin (post_compile), lifespan
   component.py               chart(figure=...) -> rx.Component (local-JSX
                              library); typed figure/data props; static tier
   payload_asset.py           static tier: Chart -> content-addressed XYBF
@@ -1100,24 +1126,29 @@ examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
 tests/reflex_adapter/        token/registry/var/data-var/plan/factory/bridge/
                              payload-asset units, component compile, framework
                              contract pins (R1/R7/R8), and a real-websocket
-                             integration suite (uvicorn + socketio client)
-                             covering payload/pick/select/affinity/rebuild/
-                             publish-broadcast/append/unsub + the composite
-                             plan tier (fan-out, plan-miss resync, bind errs)
+                             integration suite in test_data_plane.py (a real
+                             rx.App under uvicorn, aiohttp speaking the channel
+                             frame protocol) covering payload/pick/select/
+                             affinity/rebuild/publish-broadcast/append/unsub +
+                             the composite plan tier (fan-out, plan-miss
+                             resync, bind errs); test_channel_browser.py
+                             asserts in a real browser that it shares the app's
+                             one websocket
 ```
 
 `inline()` (content-addressed pinned tokens, §3.4) lives in the package
 root beside `register()`/`release()`.
 
 The core `python/xy` package itself stays Reflex-free (CLAUDE.md rule).
-`xy[reflex]` adds full `reflex>=0.9.6` for now — the `reflex-base` split covers
-components/vars but not yet App/state-manager access; revisit when a smaller
-supported surface exists.
+`xy[reflex]` adds full `reflex` for now — the `reflex-base` split covers
+components/vars but not yet App/state-manager access (nor channels); revisit
+when a smaller supported surface exists. The extra currently names the
+unreleased channel branch rather than a version floor; see § Status.
 
 **Versioning & releases.** The integration ships in every `xy` wheel and sdist,
 so it shares the core's version and bare `vX.Y.Z` release tags. The published
-extra is dependency metadata only: it adds the supported Reflex floor without
-creating another distribution or release pipeline.
+extra is dependency metadata only: it adds the supported Reflex requirement
+without creating another distribution or release pipeline.
 
 ## 8. Superseded: the HTTP-routes draft
 

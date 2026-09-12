@@ -489,15 +489,119 @@ def _step_sequence_blocks(job_text: str) -> list[str]:
     return ["\n".join(block) for block in blocks]
 
 
-def _named_step_blocks(job_text: str) -> dict[str, str]:
-    """Return named blocks from the job's actual ``steps:`` sequence."""
-    blocks: dict[str, str] = {}
+def _decode_step_name(raw: str) -> tuple[Optional[str], bool]:
+    """Return a step's name as YAML reads it, and whether the spelling is safe.
+
+    Two steps named ``Upload it`` and ``"Upload it"`` are the same step name to
+    Actions but different strings to a lexer, so comparing raw text would let a
+    quoted namesake slip past both the duplicate check and the by-name lookup.
+    Quoted spellings are therefore normalized exactly as mapping keys are.
+    Anything a line-local lexer cannot resolve — a block scalar, node
+    properties, an empty name — fails closed instead of being guessed at.
+
+    Args:
+        raw: The text following ``name:`` on the step's first line.
+
+    Returns:
+        The decoded name, or None with a True flag when it is unsupported.
+    """
+    if not raw or raw[0] in {"|", ">", "&", "!", "*"}:
+        return None, True
+    return _decode_yaml_key(raw)
+
+
+def _step_names(job_text: str) -> list[tuple[Optional[str], bool]]:
+    """Return ``(name, unsafe)`` for every named step, in sequence order."""
+    names: list[tuple[Optional[str], bool]] = []
     for block in _step_sequence_blocks(job_text):
         first = _strip_yaml_comment(block.splitlines()[0])
         match = re.match(r"^      - name:\s*(.+?)\s*$", first)
         if match is not None:
-            blocks[match.group(1)] = block
+            names.append(_decode_step_name(match.group(1)))
+    return names
+
+
+def _named_step_blocks(job_text: str) -> dict[str, str]:
+    """Return *unambiguously* named blocks from the job's ``steps:`` sequence.
+
+    Actions permits two steps to share a name, and a dict keyed by name would
+    silently keep the last one — so a step that lost a required `if` or `run`
+    could be vouched for by a later namesake that still has it. A duplicated
+    name is therefore dropped entirely: every `_require_step_*` lookup then
+    reports the step as missing instead of validating the wrong block.
+    `_require_unique_step_names` turns that into a message naming the clash.
+
+    Names are compared after decoding, so quoting one of a pair cannot hide the
+    collision, and a name whose spelling cannot be decoded is dropped too.
+    """
+    decoded = _step_names(job_text)
+    unusable = {
+        name
+        for name, unsafe in decoded
+        if unsafe or [candidate for candidate, _ in decoded].count(name) > 1
+    }
+    blocks: dict[str, str] = {}
+    for block in _step_sequence_blocks(job_text):
+        first = _strip_yaml_comment(block.splitlines()[0])
+        match = re.match(r"^      - name:\s*(.+?)\s*$", first)
+        if match is None:
+            continue
+        name, unsafe = _decode_step_name(match.group(1))
+        if unsafe or name is None or name in unusable:
+            continue
+        blocks[name] = block
     return blocks
+
+
+def _require_unique_step_names(
+    errors: list[str], jobs: dict[str, str], workflow_label: str
+) -> None:
+    """Every step name in a job must identify exactly one step.
+
+    Structural gates address steps by name, so a repeated name is an ambiguity
+    the gates cannot resolve: the duplicate may carry the condition or command
+    the original was required to have, leaving the real step unchecked.
+    """
+    for job, block in jobs.items():
+        decoded = _step_names(block)
+        if any(unsafe for _name, unsafe in decoded):
+            errors.append(
+                f"{workflow_label} {job} job has a step name this checker cannot resolve "
+                "(block scalar, node property, or unsupported escape) — the structural "
+                "gates address steps by name and cannot verify one they cannot read"
+            )
+        names = [name for name, unsafe in decoded if not unsafe and name is not None]
+        duplicated = sorted({name for name in names if names.count(name) > 1})
+        if duplicated:
+            errors.append(
+                f"{workflow_label} {job} job repeats step names {duplicated} — the "
+                "structural gates address steps by name, so a namesake can satisfy a "
+                "check the step it shadows no longer passes"
+            )
+
+
+def _require_step_condition(
+    errors: list[str], jobs: dict[str, str], job: str, step: str, condition: str, description: str
+) -> None:
+    """Require one named step to carry ``if: <condition>`` as a real YAML key.
+
+    Substring matching cannot do this job once a second step in the same job
+    uses the same condition: the needle is satisfied by the neighbour while the
+    step it was written for quietly loses its own. Reading the step's direct
+    ``if`` key answers the actual question, and ignores the condition appearing
+    in a comment (``_yaml_code_lines`` strips those).
+    """
+    block = _named_step_blocks(jobs.get(job, "")).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    values, unsafe = _step_direct_key_values(block, "if")
+    if unsafe or values != [condition]:
+        found = ", ".join(values) if values else "no direct `if` key"
+        errors.append(
+            f"CI {job} job step {step!r} missing {description}: expected a direct "
+            f"`if: {condition}` key, found {found}"
+        )
 
 
 def _require_step_contains(
@@ -735,6 +839,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         errors.append("CI workflow must not set shell-init environment variables")
     _require_docs_spec_pr_paths_ignored(errors, text, "CI")
     _require_unshallow_checkouts(errors, text, "CI")
+    _require_unique_step_names(errors, jobs, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -816,13 +921,22 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/check_regressions.py --scatter scatter.json --kernel kernel.json",
         "--transport transport.json --emit-md spec/benchmarks/metrics.md",
         "Upload regression benchmark report",
-        "if: always()",
         "actions/upload-artifact@",
         "regression-benchmark-report",
         "if-no-files-found: warn",
         "spec/benchmarks/metrics.md",
         "transport.json",
     )
+    # Both uploads in this job have to survive a failed gate — the regression
+    # report is the evidence for *why* it failed, the browser screenshot the
+    # evidence for what the chart looked like. Checked structurally, one step
+    # at a time, because they share a condition that a substring needle would
+    # let either of them borrow from the other.
+    for step, description in (
+        ("Upload regression benchmark report", "artifact upload after a failed gate"),
+        ("Upload browser evidence", "screenshot upload after a failed gate"),
+    ):
+        _require_step_condition(errors, jobs, "test", step, "always()", description)
     test_job = jobs.get("test", "")
     _require_step_runs_exactly(
         errors,
@@ -1081,7 +1195,10 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Rust-backed sdist install contract",
         "XY_REQUIRE_CARGO",
         "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
+        # No Reflex requirement: the adapter needs the unreleased channel
+        # transport, so there is no floor to name, and this smoke only
+        # `import reflex_xy` — which pulls no Reflex at all. Restore the
+        # `xy[reflex]` install (and assert on it here) once channels ship.
         "import reflex_xy",
         "import xy.kernels as kernels",
         'kernels.BACKEND == "native"',
@@ -1138,6 +1255,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     errors: list[str] = []
     _require_unique_workflow_structure(errors, text, "CodSpeed", REQUIRED_CODSPEED_JOBS)
     _require_docs_spec_pr_paths_ignored(errors, text, "CodSpeed")
+    _require_unique_step_names(errors, jobs, "CodSpeed")
     _require_trigger_with_direct_option(
         errors,
         text,

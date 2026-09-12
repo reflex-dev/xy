@@ -2,7 +2,7 @@
 
 The integration in one paragraph (full design:
 spec/design/reflex-integration.md in the xy repo): chart data rides
-the app's *existing* websocket as a second socket.io namespace — binary
+the app's *existing* websocket as a dedicated Reflex channel — binary
 columns, no JSON numbers, no extra endpoints to proxy. Figures and columns
 live in a per-process registry keyed by tokens; Reflex state holds only
 small typed handles. State methods are both the definition and the
@@ -106,8 +106,8 @@ _EXPORTS = {
     "SelectEndEvent": ".events",
     "SelectionPayload": ".events",
     "ViewChangeEvent": ".events",
-    "XY_NAMESPACE": ".namespace",
-    "XYNamespace": ".namespace",
+    "XY_PLANE": ".data_plane",
+    "XYChannel": ".data_plane",
     "FigureRegistry": ".registry",
     "registry": ".registry",
     "resolve_selection": ".selections",
@@ -179,7 +179,7 @@ _XY_REEXPORTS = frozenset(
 )
 
 __all__ = [
-    "XY_NAMESPACE",
+    "XY_PLANE",
     "AsyncDataVar",
     "AsyncFigureVar",
     "CanonicalRowIdGroup",
@@ -197,7 +197,7 @@ __all__ = [
     "SelectEndEvent",
     "SelectionPayload",
     "ViewChangeEvent",
-    "XYNamespace",
+    "XYChannel",
     "XYPlugin",
     "animation",
     "append",
@@ -455,6 +455,7 @@ if TYPE_CHECKING:
     )
 
     from .app import XYPlugin, append, clear_selection, reset_view, select, set_view, setup
+    from .data_plane import XY_PLANE, XYChannel
     from .data_vars import AsyncDataVar, DataVar, data
     from .events import (
         CanonicalRowIdGroup,
@@ -492,7 +493,6 @@ if TYPE_CHECKING:
         violin_chart,
     )
     from .handles import DataHandle, FigureHandle
-    from .namespace import XY_NAMESPACE, XYNamespace
     from .registry import FigureRegistry, registry
     from .selections import resolve_selection
     from .vars import AsyncFigureVar, FigureVar, figure

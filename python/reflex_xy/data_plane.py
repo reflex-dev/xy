@@ -1,28 +1,29 @@
-"""The xy data plane as a second socket.io namespace on Reflex's server.
+"""The xy data plane as a Reflex channel on the app's websocket.
 
 Transport decision (spec/design/reflex-integration.md): instead of new HTTP
-endpoints, the data plane multiplexes onto the app's existing engine.io
-websocket as its own namespace (`/_xy`). socket.io multiplexing means the
-browser keeps ONE physical connection for app state and chart data; this
-namespace inherits the connection's lifecycle, origin checks, and query
-token — anything the app plane gains (auth on connect, proxy config, TLS)
-the data plane gets for free, because it *is* the same connection.
+endpoints or a second connection, the data plane multiplexes onto the app's
+existing event websocket as its own *channel* (`/_xy`). The browser keeps ONE
+physical connection for app state and chart data; this channel inherits the
+connection's lifecycle, origin checks, and resolved client token — anything the
+app plane gains (auth on connect, proxy config, TLS) the data plane gets for
+free, because it *is* the same connection.
 
-Wire shape: metadata is one small JSON object per event; every data column
-rides as a native socket.io binary attachment (`bytes` values below), which
-the browser receives as `ArrayBuffer`s in-place. No JSON numbers for data,
-no base64 (§29) — and no custom length-prefix framing needed, because the
-socket.io protocol already delimits attachments.
+Wire shape: metadata is one small JSON object per message, and every data
+column rides *beside* it as a binary frame attachment. Reflex pads every
+attachment to an 8-byte boundary, so the browser reads each column as an
+aligned typed-array view over the received frame. No JSON numbers for data, no
+base64 (§29) — and no custom length-prefix framing needed, because a channel
+frame already delimits its attachments.
 
 Events, client -> server:
     sub     {fig, px?, mid?} subscribe; joins the figure room, replies `payload`
     unsub   {fig}         leave the figure room
     msg     {fig, v?, mid?, m}  one channel.handle_message dispatch, reply `msg`
 
-Events, server -> client:
-    payload {fig, version, spec, buffers, mid?} first paint / full refresh
-    msg     {fig, version?, mid?, message, buffers}  reply or room-wide push
-    err     {fig, error, resync?}            failure; resync requests a new `sub`
+Events, server -> client (metadata; the columns are the frame's attachments):
+    payload {fig, version, spec, mid?}  first paint / full refresh
+    msg     {fig, version?, mid?, message}  reply or room-wide push
+    err     {fig, error, resync?}       failure; resync requests a new `sub`
 
 Each successful `sub` begins an authoritative client comparison epoch. Replies
 and room-wide pushes carry the FigureEntry version whose data produced them.
@@ -37,12 +38,12 @@ channel.py's contract, extended to the transport).
 from __future__ import annotations
 
 import asyncio
-import urllib.parse
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
-from socketio import AsyncNamespace
+import reflex as rx
+from reflex.channels import MAX_MESSAGE_BUFFERS
 
 from xy.channel import handle_message
 
@@ -53,25 +54,43 @@ from .tokens import parse_plan_token, parse_token
 if TYPE_CHECKING:
     from xy._figure import Figure
 
-__all__ = ["XY_NAMESPACE", "XYNamespace"]
+__all__ = [
+    "EVENT_ERR",
+    "EVENT_MSG",
+    "EVENT_PAYLOAD",
+    "EVENT_SUB",
+    "EVENT_UNSUB",
+    "XY_PLANE",
+    "XYChannel",
+]
 
-#: socket.io namespace for the chart data plane. A namespace name is part of
-#: the socket.io protocol, not a URL: it needs no route, no mount, and no
+#: Channel name for the chart data plane. A channel name is part of Reflex's
+#: websocket protocol, not a URL: it needs no route, no mount, and no
 #: reverse-proxy entry beyond what the app's websocket already has.
-XY_NAMESPACE = "/_xy"
+XY_PLANE = "/_xy"
+
+#: The wire vocabulary, named on both sides of it: `XYChart.jsx` declares the
+#: same five strings, and `tests/reflex_adapter/test_assets.py` asserts the two
+#: declarations match — so a rename here fails there rather than silently
+#: producing a client that talks past the server.
+EVENT_SUB = "sub"  # client -> server: subscribe, join the figure room
+EVENT_UNSUB = "unsub"  # client -> server: leave the room
+EVENT_MSG = "msg"  # both ways: one kernel dispatch, its reply, or a push
+EVENT_PAYLOAD = "payload"  # server -> client: first paint / full refresh
+EVENT_ERR = "err"  # server -> client: failure, optionally asking for a resync
 
 # One payload/message is screen-bounded by construction (§29); these caps are
 # the transport's fail-closed backstop, not a tuning knob.
 _MAX_PX_HINT = 8192
 _MIN_PX_HINT = 16
 
-# socket.io-parser's Decoder ships with `maxAttachments: 10`; a binary packet
-# with more attachments makes the BROWSER close the whole shared websocket as
-# a parse error — which the app plane then re-opens, re-subscribing every
-# chart into an infinite reconnect loop. Figures stay under the limit or fall
-# back to the joined single-blob payload (`buffer_layout` != "split", which
-# the client's `toSpans` already handles).
-_MAX_WIRE_ATTACHMENTS = 10
+# A channel frame declares its attachment count in the header, and Reflex
+# refuses to encode or decode more than `MAX_MESSAGE_BUFFERS` of them on either
+# side. Taking the framework's constant rather than a local copy means the two
+# cannot drift into emitting a frame the client will reject. Figures stay under
+# the limit or fall back to the joined single-blob payload
+# (`buffer_layout` != "split", which the client's `toSpans` already handles).
+_MAX_WIRE_ATTACHMENTS = MAX_MESSAGE_BUFFERS
 
 
 def _build_wire_payload(
@@ -83,7 +102,7 @@ def _build_wire_payload(
         return spec, raw
     # Rebuild joined rather than concatenating `raw`: the split spec addresses
     # columns by `buf` index and carries `buffer_layout: "split"`, which the
-    # client rejects for a one-buffer packet. Running the emitters twice is
+    # client rejects for a one-buffer frame. Running the emitters twice is
     # safe — they only assign shipped_sel/drill state, and the caller holds
     # the figure lock across both builds.
     spec, blob = figure.build_payload(px)
@@ -163,29 +182,36 @@ def _plain(value: Any) -> Any:
 
 def _buffer_bytes(
     buffers: Optional[Sequence[bytes | bytearray | memoryview]],
-) -> list[bytes | bytearray]:
-    """socket.io attaches `bytes`/`bytearray` only; memoryviews must convert.
+) -> list[bytes]:
+    """Frame attachments are `bytes`; anything else converts.
 
     This is the single wire copy of each column (the join copy the split
     payload layout avoids does not come back — each column converts alone).
+    The emitters hand over `memoryview`s, so in practice this is exactly one
+    copy per column and never two.
     """
-    return [b if isinstance(b, (bytes, bytearray)) else bytes(b) for b in (buffers or [])]
+    return [b if isinstance(b, bytes) else bytes(b) for b in (buffers or [])]
 
 
-class XYNamespace(AsyncNamespace):
-    """Serve registry figures to browser clients over the shared socket."""
+class XYChannel(rx.channels.Channel):
+    """Serve registry figures to browser clients over the app's websocket."""
+
+    name = XY_PLANE
+
+    # Clients send JSON only; every column travels server -> client.
+    accepts_binary = False
 
     def __init__(
         self,
         registry: FigureRegistry,
         *,
-        namespace: str = XY_NAMESPACE,
         rebuild: Optional[RebuildHook] = None,
     ) -> None:
-        super().__init__(namespace)
+        super().__init__()
         self.registry = registry
         self._rebuild = rebuild
-        # Socket.IO may dispatch events for one SID concurrently. Serialize
+        self._sessions_by_sid: dict[str, rx.channels.ChannelSession] = {}
+        # Reflex may dispatch messages for one session concurrently. Serialize
         # subscribe/unsubscribe for one mount token so a slow rebuild cannot
         # re-add membership after a later unsubscribe. Locks are reference-
         # counted so hostile/abandoned token strings do not create a second
@@ -202,27 +228,43 @@ class XYNamespace(AsyncNamespace):
 
     # -- connection lifecycle ------------------------------------------------
 
-    async def on_connect(self, sid: str, environ: dict) -> None:
-        """Record the Reflex client token presented by this connection.
+    async def on_open(self, session: rx.channels.ChannelSession) -> None:
+        """Record the session and the Reflex client token it carries.
 
-        The engine.io connection is shared with Reflex's `/_event` namespace,
-        so the same `?token=` query string reaches us. Reflex treats this as a
-        bearer session identifier (its TokenManager links rather than
-        authenticates it); engine-level origin/auth policy is inherited from
-        the shared connection.
+        The websocket is shared with Reflex's own event plane, so Reflex has
+        already resolved the connection's `?token=`. It treats that as a bearer
+        session identifier (its TokenManager links rather than authenticates
+        it); connection-level origin/auth policy is inherited from the shared
+        connection.
         """
-        query = urllib.parse.parse_qs(environ.get("QUERY_STRING", ""))
-        token_list = query.get("token", [])
-        await self.save_session(sid, {"client_token": token_list[0] if token_list else None})
+        self._sessions_by_sid[session.sid] = session
+        session.data["client_token"] = session.client_token
 
-    async def on_disconnect(self, sid: str) -> None:
-        """Rooms are cleaned up by socket.io; figures outlive the socket.
+    async def on_close(self, session: rx.channels.ChannelSession) -> None:
+        """Release the session; figures outlive the socket.
 
         Deliberate: a dropped connection (reload, laptop lid, transient
         network) must not destroy server-side figures — the client
         resubscribes with the same tokens on reconnect.
         """
-        self.registry.disconnect(sid)
+        self._sessions_by_sid.pop(session.sid, None)
+        self.registry.disconnect(session.sid)
+
+    async def on_message(
+        self,
+        session: rx.channels.ChannelSession,
+        event: str,
+        data: Any,
+        buffers: list[bytes],
+    ) -> None:
+        """Dispatch one inbound message to the data plane handlers."""
+        handler = {
+            EVENT_SUB: self.on_sub,
+            EVENT_UNSUB: self.on_unsub,
+            EVENT_MSG: self.on_msg,
+        }.get(event)
+        if handler is not None:
+            await handler(session.sid, data)
 
     # -- subscription ----------------------------------------------------------
 
@@ -239,7 +281,7 @@ class XYNamespace(AsyncNamespace):
                 )
                 if token is None or entry is None or not self._is_connected(sid):
                     return
-                await self.enter_room(sid, self._room(token))
+                self._enter_room(sid, self._room(token))
                 if not self._is_connected(sid):
                     return
                 # Mirror membership only after the await-heavy join/rebuild
@@ -293,15 +335,10 @@ class XYNamespace(AsyncNamespace):
             "fig": token,
             "version": entry.version,
             "spec": spec,
-            "buffers": _buffer_bytes(raw),
         }
         if mid is not None:
             envelope["mid"] = mid
-        await self.emit(
-            "payload",
-            envelope,
-            to=sid,
-        )
+        await self._send(EVENT_PAYLOAD, envelope, _buffer_bytes(raw), to=sid)
 
     async def on_unsub(self, sid: str, data: Any) -> None:
         token = self._token_of(data)
@@ -311,7 +348,7 @@ class XYNamespace(AsyncNamespace):
             try:
                 async with lock:
                     try:
-                        await self.leave_room(sid, self._room(token))
+                        self._leave_room(sid, self._room(token))
                     finally:
                         self.registry.unsubscribe(token, sid)
             finally:
@@ -354,25 +391,28 @@ class XYNamespace(AsyncNamespace):
         message, buffers = reply
         wire_buffers = _buffer_bytes(buffers)
         if len(wire_buffers) > _MAX_WIRE_ATTACHMENTS:
-            # Never exceed the browser parser's attachment limit: one oversized
-            # packet closes the shared websocket for the whole app. Channel
-            # replies are bounded by construction, so this is a contract check.
-            await self.emit(
-                "err", {"fig": token, "error": "reply exceeds wire attachment limit"}, to=sid
+            # Never exceed the frame's attachment limit: Reflex refuses to
+            # encode it, so the reply would be lost rather than answered.
+            # Channel replies are bounded by construction, so this is a
+            # contract check.
+            await self._send(
+                EVENT_ERR,
+                {"fig": token, "error": "reply exceeds wire attachment limit"},
+                [],
+                to=sid,
             )
             return
         envelope: dict[str, Any] = {
             "fig": token,
             "version": operation_version,
             "message": _plain(message),
-            "buffers": wire_buffers,
         }
         # Replies are mount-addressed: several charts on one page share one
         # socket, so the client tags requests with a mount id and we echo it.
         mid = self._mid_of(data)
         if mid is not None:
             envelope["mid"] = mid
-        await self.emit("msg", envelope, to=sid)
+        await self._send(EVENT_MSG, envelope, wire_buffers, to=sid)
 
     # -- server-side pushes (append/refresh fan-out) ---------------------------
 
@@ -386,29 +426,29 @@ class XYNamespace(AsyncNamespace):
         """Push one channel message to every subscriber of a figure."""
         wire_buffers = _buffer_bytes(buffers)
         if len(wire_buffers) > _MAX_WIRE_ATTACHMENTS:
-            # This packet goes to a room: one oversized push would close every
-            # subscriber's shared websocket at once (see _MAX_WIRE_ATTACHMENTS).
-            # Fail loud instead of emitting it. Append pushes also ask clients
-            # to resubscribe because the figure advanced; view-state pushes
-            # carry a generation stamp but do not mutate the figure payload.
-            await self.emit(
-                "err",
+            # This frame goes to a room: an unencodable push would silently
+            # drop the update for every subscriber at once. Fail loud instead.
+            # Append pushes also ask clients to resubscribe because the figure
+            # advanced; view-state pushes carry a generation stamp but do not
+            # mutate the figure payload.
+            await self._send(
+                EVENT_ERR,
                 {
                     "fig": token,
                     "error": "push exceeds wire attachment limit",
                     "resync": message.get("type") == "append" and version is not None,
                 },
+                [],
                 room=self._room(token),
             )
             return
-        envelope = {
+        envelope: dict[str, Any] = {
             "fig": token,
             "message": _plain(message),
-            "buffers": wire_buffers,
         }
         if version is not None:
             envelope["version"] = version
-        await self.emit("msg", envelope, room=self._room(token))
+        await self._send(EVENT_MSG, envelope, wire_buffers, room=self._room(token))
 
     async def broadcast_payload(self, token: str, entry: FigureEntry) -> None:
         """Push a full refreshed payload (figure rebuilt) to subscribers."""
@@ -416,16 +456,58 @@ class XYNamespace(AsyncNamespace):
             spec, raw = await asyncio.to_thread(_build_entry_payload, entry)
         if not self.registry.is_current(token, entry):
             return
-        await self.emit(
-            "payload",
+        await self._send(
+            EVENT_PAYLOAD,
             {
                 "fig": token,
                 "version": entry.version,
                 "spec": spec,
-                "buffers": _buffer_bytes(raw),
             },
+            _buffer_bytes(raw),
             room=self._room(token),
         )
+
+    # -- transport seams -------------------------------------------------------
+
+    async def _send(
+        self,
+        event: str,
+        data: dict[str, Any],
+        buffers: list[bytes],
+        *,
+        to: Optional[str] = None,
+        room: Optional[str] = None,
+    ) -> None:
+        """Send one envelope, with its columns as the frame's attachments."""
+        if to is not None:
+            session = self._sessions_by_sid.get(to)
+            if session is not None:
+                await session.send(event, data, buffers)
+        elif room is not None:
+            await self.send_to_room(room, event, data, buffers)
+
+    def _enter_room(self, sid: str, room: str) -> None:
+        """Join a fan-out room (never suspends — see ``on_sub``'s liveness
+        checks, which bracket this call)."""
+        session = self._sessions_by_sid.get(sid)
+        if session is not None:
+            session.join(room)
+
+    def _leave_room(self, sid: str, room: str) -> None:
+        """Leave a fan-out room."""
+        session = self._sessions_by_sid.get(sid)
+        if session is not None:
+            session.leave(room)
+
+    def _session_data(self, sid: str) -> dict[str, Any]:
+        """Read the per-connection store."""
+        held = self._sessions_by_sid.get(sid)
+        return held.data if held is not None else {}
+
+    def _is_connected(self, sid: str) -> bool:
+        """Whether the channel session is still open."""
+        session = self._sessions_by_sid.get(sid)
+        return session is not None and session.open
 
     # -- internals ---------------------------------------------------------------
 
@@ -459,12 +541,6 @@ class XYNamespace(AsyncNamespace):
         if not isinstance(mid, str) or len(mid) > 64:
             return None
         return mid
-
-    def _is_connected(self, sid: str) -> bool:
-        """Whether Socket.IO still owns ``sid`` in this namespace."""
-        server = getattr(self, "server", None)
-        manager = getattr(server, "manager", None)
-        return manager is not None and manager.is_connected(sid, self.namespace)
 
     def _retain_subscription_lock(self, key: tuple[str, str]) -> asyncio.Lock:
         lock = self._subscription_locks.setdefault(key, asyncio.Lock())
@@ -544,7 +620,7 @@ class XYNamespace(AsyncNamespace):
 
             try:
                 await self.broadcast_payload(token, entry)
-            except Exception:  # noqa: BLE001 - payload build/emit is a protocol boundary
+            except Exception:  # noqa: BLE001 - payload build/send is a protocol boundary
                 # A failed generation must not poison later cache hits. Remove
                 # only the generation this attempt inserted; if a normal
                 # replacement won meanwhile, preserve and return that entry.
@@ -581,11 +657,12 @@ class XYNamespace(AsyncNamespace):
         if token is None:
             return None, None, False
         identity = _token_identity(token)
-        if identity.affinity_client is not None:
-            session = await self.get_session(sid)
-            if session.get("client_token") != identity.affinity_client:
-                await self._err(sid, token, "figure belongs to another session")
-                return token, None, False
+        if (
+            identity.affinity_client is not None
+            and self._session_data(sid).get("client_token") != identity.affinity_client
+        ):
+            await self._err(sid, token, "figure belongs to another session")
+            return token, None, False
         entry, rebuild_guarded = self.registry.get_with_rebuild_guard(token)
         attempt = self._rebuild_attempts.get(token)
         # A normal publish invalidates the old attempt's guard atomically with
@@ -626,7 +703,7 @@ class XYNamespace(AsyncNamespace):
         envelope: dict[str, Any] = {"fig": token, "error": error}
         if resync:
             envelope["resync"] = True
-        await self.emit("err", envelope, to=sid)
+        await self._send(EVENT_ERR, envelope, [], to=sid)
 
     async def broadcast_error(self, token: str, error: str, resync: bool = False) -> None:
         """Room-wide err frame for server-side failures with no request to
@@ -634,4 +711,4 @@ class XYNamespace(AsyncNamespace):
         envelope: dict[str, Any] = {"fig": token, "error": error}
         if resync:
             envelope["resync"] = True
-        await self.emit("err", envelope, room=self._room(token))
+        await self._send(EVENT_ERR, envelope, [], room=self._room(token))

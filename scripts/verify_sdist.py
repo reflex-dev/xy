@@ -63,7 +63,7 @@ REQUIRED_FILES = {
     "python/reflex_xy/assets/__init__.py",
     "python/reflex_xy/component.py",
     "python/reflex_xy/events.py",
-    "python/reflex_xy/namespace.py",
+    "python/reflex_xy/data_plane.py",
     "python/reflex_xy/payload_asset.py",
     "python/reflex_xy/py.typed",
     "python/reflex_xy/registry.py",

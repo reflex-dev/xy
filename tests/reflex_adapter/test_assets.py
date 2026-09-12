@@ -8,6 +8,7 @@ from scripts.js_exports import missing_esm_exports
 
 import reflex_xy
 import xy
+from reflex_xy import data_plane
 from reflex_xy.assets import _client_source, _link_client
 
 ADAPTER_ASSETS = pathlib.Path(reflex_xy.__file__).parent / "assets"
@@ -53,18 +54,31 @@ def test_link_client_creates_and_repairs(tmp_path):
     assert dst.resolve() == _client_source()
 
 
-def test_wrapper_speaks_the_namespace_protocol():
-    """The JSX wrapper and namespace.py must agree on event names and shapes."""
+def test_wrapper_speaks_the_data_plane_protocol():
+    """The JSX wrapper and data_plane.py must agree on event names and shapes."""
     jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
-    # transport identity: same engine.io path as the app socket, /_xy namespace
-    assert 'nsUrl.pathname = "/_xy"' in jsx
-    assert "path: endpoint.pathname" in jsx
+    # transport identity: one channel name on the app's own websocket — no
+    # second connection to open or configure. The name itself comes from
+    # data_plane.py rather than a literal, so a rename there fails here.
+    assert f'const XY_PLANE = "{data_plane.XY_PLANE}"' in jsx
+    assert "getChannel(XY_PLANE)" in jsx
+    # socket.io is gone: no client, no namespace URL, no engine.io mount path
+    for gone in ("socket.io-client", "nsUrl", "endpoint.pathname", "env.TRANSPORT", "io("):
+        assert gone not in jsx, f"wrapper still carries socket.io machinery: {gone}"
+    # Both sides name the same five events, and take their names from the same
+    # place: this is the one point where the Python and JavaScript halves of
+    # the protocol can drift apart without any other test noticing.
+    for constant in ("EVENT_SUB", "EVENT_UNSUB", "EVENT_MSG", "EVENT_PAYLOAD", "EVENT_ERR"):
+        event = getattr(data_plane, constant)
+        assert f'const {constant} = "{event}"' in jsx, (
+            f"XYChart.jsx does not declare {constant} = {event!r} the way data_plane.py does"
+        )
     # client -> server events
-    for needle in ('"sub"', '"unsub"', '"msg"'):
-        assert f"socket.emit({needle}" in jsx or f"emit({needle}" in jsx
+    for constant in ("EVENT_SUB", "EVENT_UNSUB", "EVENT_MSG"):
+        assert f"plane.emit({constant}" in jsx
     # server -> client events
-    for needle in ('"payload"', '"msg"', '"err"'):
-        assert f"socket.on({needle}" in jsx
+    for constant in ("EVENT_PAYLOAD", "EVENT_MSG", "EVENT_ERR"):
+        assert f"plane.on({constant}" in jsx
     # binary columns go straight into typed arrays — never through JSON numbers
     assert "new Uint8Array(b)" in jsx
     assert "data.version < payloadVersion" in jsx
@@ -93,11 +107,11 @@ def test_wrapper_speaks_the_namespace_protocol():
     subscribe = jsx.split("const subscribe = () => {", 1)[1].split("};", 1)[0]
     assert "resetEpoch()" in subscribe
     assert jsx.count("resetEpoch();") == 3  # subscribe, disconnect, cleanup
-    assert "awaitingPayload || !socket.connected" in jsx
+    assert "awaitingPayload || !plane.connected" in jsx
     assert "awaitingPayload = false" in jsx
-    assert 'socket.on("disconnect", onDisconnect)' in jsx
-    assert "wireVersion > expected && socket.connected" in jsx
-    assert "data.resync === true && socket.connected" in jsx
+    assert "plane.on(EVENT_DISCONNECT, onDisconnect)" in jsx
+    assert "wireVersion > expected && plane.connected" in jsx
+    assert "data.resync === true && plane.connected" in jsx
     # Rejected replies and accepted generation advances both reclaim pending
     # synthetic click/selection bookkeeping.
     assert "discardPendingReply(message)" in jsx
@@ -119,8 +133,8 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "data.mid == null" in jsx
     assert "Number.isInteger(data.version)" in jsx
     assert "DEFERRED_STATE_PUSH_TYPES.has(message.type)" in jsx
-    assert "pendingStatePushes.push({ generation, message, buffers: data.buffers || [] })" in jsx
-    assert "if (!deferStatePush(data, message)) discardPendingReply(message)" in jsx
+    assert "pendingStatePushes.push({ generation, message, buffers })" in jsx
+    assert "if (!deferStatePush(data, message, buffers)) discardPendingReply(message)" in jsx
     assert "const queued = pendingStatePushes.splice(0)" in jsx
     assert "for (const { generation, message, buffers } of queued)" in jsx
     assert "if (generation === payloadGeneration) dispatchToView(message, buffers)" in jsx
@@ -135,8 +149,8 @@ def test_wrapper_speaks_the_namespace_protocol():
         < replay_pushes.index("pendingStatePushes.push({ generation, message, buffers })")
     )
     assert jsx.count("replayPendingStatePushes(nextPayloadVersion);") == 2
-    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
-        "const onMsg = (data) => {", 1
+    on_payload = jsx.split("const onPayload = (data, buffers) => {", 1)[1].split(
+        "const onMsg = (data, buffers) => {", 1
     )[0]
     # Rebuild recovery may deliver both a room payload and a same-generation
     # addressed reply. Generic duplicates are ignored; addressed px-specific
@@ -182,12 +196,14 @@ def test_wrapper_speaks_the_namespace_protocol():
     # every older in-flight selection request (user gestures and payload
     # restores). Any eventual addressed reply is consumed before either the
     # Reflex callback or ChartView sees it.
-    on_msg = jsx.split("const onMsg = (data) => {", 1)[1].split("const onErr = (data) => {", 1)[0]
+    on_msg = jsx.split("const onMsg = (data, buffers) => {", 1)[1].split(
+        "const onErr = (data) => {", 1
+    )[0]
     # A state write may overtake the append/full payload that establishes its
     # generation. Queue that write before the ordinary version mismatch path.
     assert (
         on_msg.index("deferredPushGeneration > payloadVersion")
-        < on_msg.index("deferStatePush(data, message);")
+        < on_msg.index("deferStatePush(data, message, buffers);")
         < on_msg.index("if (wireVersion !== null && payloadVersion !== null)")
     )
     assert (
@@ -203,7 +219,7 @@ def test_wrapper_speaks_the_namespace_protocol():
         < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
         < on_msg.index("const isRestore = restoreSelectionSeqs.delete(message.seq);")
         < on_msg.index("cbRef.current.onSelectEnd({")
-        < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
+        < on_msg.index("dispatchToView(clientMessage, buffers);")
     )
     invalidate_replies = jsx.split("const invalidateSelectionReplies = () => {", 1)[1].split(
         "};", 1
@@ -220,7 +236,7 @@ def test_wrapper_speaks_the_namespace_protocol():
     )[1]
     assert (
         append_advance.index("payloadVersion = wireVersion;")
-        < append_advance.index("dispatchToView(clientMessage, data.buffers || []);")
+        < append_advance.index("dispatchToView(clientMessage, buffers);")
         < append_advance.index("replayPendingStatePushes(wireVersion);")
         < append_advance.index("return;")
     )
@@ -228,7 +244,7 @@ def test_wrapper_speaks_the_namespace_protocol():
     # it must not arm new semantic view callbacks in that reset epoch.
     dispatch_view = jsx.split("const dispatchView = (m) => {", 1)[1].split("};", 1)[0]
     assert "awaitingPayload" in dispatch_view
-    assert "!socket.connected" in dispatch_view
+    assert "!plane.connected" in dispatch_view
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
     # static tier: fetch the payload asset, decode the XYBF frame, render
@@ -246,10 +262,12 @@ def test_wrapper_speaks_the_namespace_protocol():
 def test_same_generation_addressed_payload_invalidates_in_flight_replies():
     """A px-specific payload can change shipped indices without a version bump."""
     jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
-    on_payload = jsx.split("const onPayload = (data) => {", 1)[1].split(
-        "const onMsg = (data) => {", 1
+    on_payload = jsx.split("const onPayload = (data, buffers) => {", 1)[1].split(
+        "const onMsg = (data, buffers) => {", 1
     )[0]
-    on_msg = jsx.split("const onMsg = (data) => {", 1)[1].split("const onErr = (data) => {", 1)[0]
+    on_msg = jsx.split("const onMsg = (data, buffers) => {", 1)[1].split(
+        "const onErr = (data) => {", 1
+    )[0]
     invalidate = jsx.split("const invalidatePayloadReplies = () => {", 1)[1].split("};", 1)[0]
 
     for needle in (
@@ -294,7 +312,7 @@ def test_same_generation_addressed_payload_invalidates_in_flight_replies():
         < on_msg.index("const selectionWasPending = pendingSelectionSeqs.delete(message.seq);")
         < on_msg.index("if (selectionWasInvalidated || !selectionWasPending) return;")
         < on_msg.index("cbRef.current.onSelectEnd({")
-        < on_msg.index("dispatchToView(clientMessage, data.buffers || []);")
+        < on_msg.index("dispatchToView(clientMessage, buffers);")
     )
 
 
@@ -333,17 +351,15 @@ def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():
     assert "...divProps" in jsx
 
 
-def test_wrapper_mirrors_reflex_connection_options():
-    """The shared-manager trick only works if our io() options match reflex's
-    connect() (utils/state.js). These names are the coupling surface — if
-    reflex renames them, this test is the early warning."""
+def test_wrapper_rides_the_app_socket_through_one_reflex_export():
+    """`getChannel` is the whole coupling surface to Reflex's transport now.
+
+    The chart opens no connection of its own: it asks Reflex for the `/_xy`
+    channel on the app's own websocket. That one import is what a Reflex
+    upgrade could rename, so this test is the early warning."""
     jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
-    for needle in (
-        "getBackendURL(env.EVENT)",
-        "transports: [env.TRANSPORT]",
-        "protocols: [reflexEnvironment.version]",
-        "query: { token: getToken() }",
-        "autoUnref: false",
-        "reconnection: false",
-    ):
-        assert needle in jsx, f"wrapper lost reflex connection option: {needle}"
+    assert 'import { getChannel } from "$/utils/state";' in jsx
+    assert "sharedPlane = getChannel(XY_PLANE)" in jsx
+    # every handler takes the frame's attachments as its second argument
+    for handler in ("onPayload", "onMsg"):
+        assert f"const {handler} = (data, buffers) =>" in jsx

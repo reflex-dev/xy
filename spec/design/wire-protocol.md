@@ -4,7 +4,7 @@ Status: **shipped**. This document specifies the message catalog dispatched by
 `xy.channel.handle_message` (`python/xy/channel.py`) and consumed by
 `js/src/54_kernel.ts`, plus the first-paint buffer layouts and the version
 handshake. The transport envelopes that carry these messages are separate:
-the anywidget comm (`python/xy/widget.py`), the `/_xy` socket.io namespace
+the anywidget comm (`python/xy/widget.py`), the `/_xy` Reflex channel
 ([reflex-integration.md](reflex-integration.md) §2), and the `XYBF` binary
 frame (`python/xy/_framing.py`, versioned in §7 below).
 
@@ -106,7 +106,7 @@ gate. This is the one request
 type a host may withhold: on the Reflex host it never reaches the kernel,
 because `XYChart.jsx` intercepts the outgoing message and invokes the
 `on_view_change` prop directly
-(`python/reflex_xy/assets/XYChart.jsx`) — that namespace
+(`python/reflex_xy/assets/XYChart.jsx`) — that channel
 registers no Python-side view callback.
 
 **`select`** — box select. Edges are ordered by `lod.normalize_window` with
@@ -305,7 +305,7 @@ non-atomically, the client listens to *both* change events, defers a torn
 pair — a column that no longer fits its buffer — without consuming the seq,
 and keys applied state on (seq, buffers identity), so the write that
 completes the pair re-fires the apply and repairs even a same-shape tear.
-The `/_xy` namespace has no synced traits, so it wraps the
+The `/_xy` channel has no synced traits, so it wraps the
 same spec and buffers in a room-wide `msg` push. In both cases the client
 reads the buffer layout from `spec.buffer_layout`, never from the shape of
 what arrived (§5).
@@ -320,7 +320,7 @@ out of the client's history stack. A document the client cannot validate
 logged — never partially applied. Built by `Figure.state_patch_message`;
 senders are `FigureWidget.set_view`/`select`/`clear_selection` (anywidget
 comm) and `reflex_xy.set_view`/`select`/`clear_selection` (room-wide on the
-`/_xy` namespace).
+`/_xy` channel).
 
 **`view_nav`** — `{type, op: "reset", axes?}`, no buffers. Navigation to the
 home ranges, well-defined for every receiver because home ranges are
@@ -342,7 +342,7 @@ omitted from the message clear; never pushed to history, reported by
 (view-state.md §5.1).
 
 All three ride the existing `msg` envelope in both transports (anywidget
-comm and the `/_xy` socket.io namespace) behind the version handshake.
+comm and the `/_xy` Reflex channel) behind the version handshake.
 
 ## 5. First-paint buffer layout: packed vs split
 
@@ -361,8 +361,8 @@ spec's `columns` table is the addressing scheme, and it comes in two layouts:
   a `u8` column is folded into that column's own buffer, and `len` still
   counts only real values, so split is a byte-identical repack of packed. This
   is what both live hosts ship at first paint — `FigureWidget`
-  (`python/xy/widget.py`) and the `/_xy` namespace
-  (`python/reflex_xy/namespace.py`) — and on streaming append (§4),
+  (`python/xy/widget.py`) and the `/_xy` channel
+  (`python/reflex_xy/data_plane.py`) — and on streaming append (§4),
   with no join copy anywhere on a live path.
 
 The browser accepts genuine `ArrayBuffer` objects across JavaScript realm
@@ -449,8 +449,8 @@ that progress and starts no animation clock.
 
 ## 6. Chunked base64 (standalone export only)
 
-The comm and socket.io transports carry binary attachments natively and never
-base64. Standalone HTML export has no binary channel, so `xy.export` embeds
+The comm and Reflex channel transports carry binary attachments natively and
+never base64. Standalone HTML export has no binary channel, so `xy.export` embeds
 the packed blob as chunked base64:
 
 - The blob is sliced into `_B64_CHUNK_BYTES` = 48 MiB pieces. That size is

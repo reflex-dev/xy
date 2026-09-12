@@ -69,7 +69,7 @@ class FigureEntry:
     # parallelize (the kernels release the GIL on the Rust side).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The unwired/headless path cannot use the asyncio lock. This lock also
-    # makes synchronous message construction atomic with namespace payload/
+    # makes synchronous message construction atomic with data-plane payload/
     # interaction kernels and append mutation/version bump. Code needing both
     # locks always takes ``lock`` then ``sync_lock``; sync callers take only
     # this lock. It remains entry-local, so unrelated figures proceed.
@@ -125,7 +125,7 @@ class FigureRegistry:
         # and the data-token -> {plan digest} index that lets a column
         # republish rebuild + broadcast every mounted dependent figure. The
         # index is bounded by mounted plans: entries are added when a
-        # composite figure binds (namespace sub) and dropped by
+        # composite figure binds (data-plane sub) and dropped by
         # _unbind_plan_if_unmounted_locked on every transition that can end
         # the mount — unsubscribe, disconnect, release, failed-rebuild
         # cleanup, TTL sweep, and a republish that finds it unmounted.
@@ -138,7 +138,7 @@ class FigureRegistry:
         # tokens with no subscribers leave no unbounded tombstones behind.
         self._evicted_versions: dict[str, int] = {}
         # Only rebuildable subscriptions need registry lifecycle state;
-        # socket.io owns rooms for both token families. The inverse indexes
+        # the channel owns rooms for both token families. The inverse indexes
         # make subscribe/unsubscribe/disconnect idempotent and bounded by live
         # connections.
         self._rebuildable_subscribers: dict[str, set[str]] = {}
@@ -160,7 +160,7 @@ class FigureRegistry:
         # Captured by setup(); lets sync-handler threads schedule async
         # broadcasts safely. None until the data plane is attached.
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        # async callback(token, entry) -> None wired by the namespace so
+        # async callback(token, entry) -> None wired by the data plane so
         # publishes reach subscribed clients without a module cycle.
         self._on_publish: Optional[Callable[[str, FigureEntry], Awaitable[None]]] = None
         # async callback(token, message, buffers, version) -> None for append
@@ -293,7 +293,7 @@ class FigureRegistry:
     def get_with_rebuild_guard(self, token: str) -> tuple[Optional[FigureEntry], bool]:
         """Return the current entry and whether a rebuild guard remains valid.
 
-        The snapshot is atomic so namespace requests can distinguish an entry
+        The snapshot is atomic so data-plane requests can distinguish an entry
         provisionally inserted by the active rebuild from one authorized by a
         concurrent normal publish, which invalidates every older guard.
         """
@@ -695,7 +695,7 @@ class FigureRegistry:
         """Fan a publish out to subscribers from any thread.
 
         Safe no-op before setup() (no loop yet: nobody can be subscribed
-        either, because the namespace is what wires the loop).
+        either, because the data plane is what wires the loop).
         """
         callback = self._on_publish
         loop = self._loop

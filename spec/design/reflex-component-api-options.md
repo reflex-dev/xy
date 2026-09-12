@@ -142,7 +142,7 @@ planes:
   props, and small semantic events (`on_point_click`, `on_select_end`, …) —
   ordinary Reflex state and event handlers. Never data buffers.
 - **Data plane** (xy-native): binary payloads, drilldown round-trips, and
-  streaming appends on a second socket.io namespace (`/_xy`) **multiplexed
+  streaming appends on a dedicated Reflex channel (`/_xy`) **multiplexed
   onto the app's existing websocket**. Reflex state never sees a data byte.
 
 The pieces, end to end:

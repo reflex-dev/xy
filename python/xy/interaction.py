@@ -1447,7 +1447,7 @@ def append_data(
     # join copy. The spec itself names the append — `append.seq` is the apply
     # signal for the widget host, where the refresh rides the spec+buffers
     # trait update as one comm message that doubles as notebook-reopen state.
-    # The socket.io host wraps the same spec in an `append` message push.
+    # The Reflex host wraps the same spec in an `append` message push.
     fig._append_seq += 1
     seq = fig._append_seq
     spec, buffers = fig.build_payload_split()

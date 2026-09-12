@@ -6,18 +6,18 @@
 // `plan` digest + `data` ({token} DataHandle), composed client-side as
 // `xyp1|<plan>|<data.token>` once the data handle hydrates.
 //
-// Live — this component does NOT open its own connection.
-// socket.io multiplexing reuses the app's engine.io websocket when the
-// manager options match, so `xySocket()` below constructs its `/_xy`
-// namespace socket with exactly the options Reflex's own `connect()` uses
-// (`$/utils/state`). Whichever side runs first creates the shared manager;
-// the other rides it. One TCP connection carries app state and chart data —
-// same lifecycle, same auth surface, same proxy config.
+// Live — this component does NOT open its own connection. `getChannel("/_xy")`
+// multiplexes the data plane onto the app's own event websocket as a Reflex
+// channel (data_plane.py), so one TCP connection carries app state and chart
+// data: same lifecycle, same auth surface, same proxy config. Columns arrive
+// beside the metadata as frame attachments — aligned typed-array views over the
+// received frame, never copies and never JSON numbers.
 //
-// Live data protocol (namespace.py):
+// Live data protocol (data_plane.py); `buffers` is the handler's second
+// argument, not a field of the envelope:
 //   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, v?, mid, m}
-//   in:   payload {fig, version, spec, buffers, mid?} — direct replies carry mid
-//         msg {fig, version?, mid?, message, buffers} — replies carry our mid
+//   in:   payload {fig, version, spec, mid?} — direct replies carry mid
+//         msg {fig, version?, mid?, message} — replies carry our mid
 //         err {fig, error, resync?}
 // A subscribe/reconnect starts a version epoch: no msg is applied until its
 // authoritative payload arrives. Replies and room-wide pushes carry the
@@ -40,10 +40,7 @@ import {
 // emotion's jsx() (a guaranteed app dependency) honors it without relying
 // on any jsxImportSource configuration in the app's build.
 import { jsx } from "@emotion/react";
-import io from "socket.io-client";
-import env from "$/env.json";
-import reflexEnvironment from "$/reflex.json";
-import { getBackendURL, getToken } from "$/utils/state";
+import { getChannel } from "$/utils/state";
 import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
@@ -59,31 +56,35 @@ const dbg = (...args) =>
   );
 dbg("XYChart module loaded");
 
-let sharedSocket = null;
+let sharedPlane = null;
 // fig token -> number of mounted charts using it (unsub only at zero, since
 // room membership is per-connection, not per-mount).
 const subCounts = new Map();
 
-function xySocket() {
-  if (sharedSocket) return sharedSocket;
-  const endpoint = getBackendURL(env.EVENT);
-  const nsUrl = new URL(endpoint.href);
-  // The URI pathname selects the socket.io *namespace*; the engine.io mount
-  // path stays the app's (`endpoint.pathname`), which is what keys the
-  // manager cache — same key as Reflex's socket, hence one physical ws.
-  nsUrl.pathname = "/_xy";
-  nsUrl.search = "";
-  sharedSocket = io(nsUrl.href, {
-    path: endpoint.pathname,
-    transports: [env.TRANSPORT],
-    protocols: [reflexEnvironment.version],
-    autoUnref: false,
-    query: { token: getToken() },
-    reconnection: false, // the app plane owns manager reconnects
-  });
-  sharedSocket.on("connect", () => dbg("xy namespace connected"));
-  sharedSocket.on("connect_error", (e) => dbg("xy connect_error", String(e)));
-  return sharedSocket;
+// The wire vocabulary. Every one of these mirrors a constant of the same name
+// in data_plane.py, and tests/reflex_adapter/test_assets.py asserts the two
+// declarations agree — so a rename on either side fails there rather than
+// silently producing a client that talks past the server.
+const XY_PLANE = "/_xy";
+const EVENT_SUB = "sub";
+const EVENT_UNSUB = "unsub";
+const EVENT_MSG = "msg";
+const EVENT_PAYLOAD = "payload";
+const EVENT_ERR = "err";
+// Connection lifecycle, owned by Reflex's channel handle rather than by the
+// data plane protocol, so these have no server-side counterpart.
+const EVENT_CONNECT = "connect";
+const EVENT_DISCONNECT = "disconnect";
+
+/**
+ * The shared xy data plane: one Reflex channel on the app's own websocket.
+ * @returns The data plane handle: connected, emit(), on(), off().
+ */
+function xyDataPlane() {
+  if (sharedPlane) return sharedPlane;
+  sharedPlane = getChannel(XY_PLANE);
+  sharedPlane.on("error", (error) => dbg("xy channel error", error));
+  return sharedPlane;
 }
 
 let nextMountId = 1;
@@ -429,12 +430,12 @@ export function XYChart(props) {
     };
   }, [src]);
 
-  // Live mode: subscribe on the shared websocket.
+  // Live mode: subscribe on the shared data plane.
   useEffect(() => {
     const el = elRef.current;
     dbg("effect run", { token: liveToken && liveToken.slice(0, 24), hasEl: !!el });
     if (!liveToken || src || !el) return undefined;
-    const socket = xySocket();
+    const plane = xyDataPlane();
     const mid = `m${nextMountId++}`;
     let view = null;
     let destroyed = false;
@@ -484,16 +485,16 @@ export function XYChart(props) {
       // A reconnect can land on a fresh worker whose rebuilt figure starts at
       // version 1. Versions are monotonic only within this subscription epoch.
       resetEpoch();
-      socket.emit("sub", { fig: liveToken, px: el.clientWidth || null, mid });
+      plane.emit(EVENT_SUB, { fig: liveToken, px: el.clientWidth || null, mid });
     };
 
     const emitMessage = (m) => {
-      // socket.io flushes its sendBuffer before firing `connect`; never queue
-      // an old-epoch request while the namespace is disconnected.
-      if (awaitingPayload || !socket.connected) return;
+      // Both transports buffer sends made while disconnected; never queue an
+      // old-epoch request that would arrive after a reconnect.
+      if (awaitingPayload || !plane.connected) return;
       const envelope = { fig: liveToken, mid, m };
       if (payloadVersion !== null) envelope.v = payloadVersion;
-      socket.emit("msg", envelope);
+      plane.emit(EVENT_MSG, envelope);
     };
 
     const withSelectionSeq = (m) => ({
@@ -577,7 +578,7 @@ export function XYChart(props) {
       // preceding epoch arm a new trailing timer after resetEpoch cleared it.
       if (
         awaitingPayload
-        || !socket.connected
+        || !plane.connected
         || !cbRef.current.onViewChange
         || m.source === "linked"
         || m.source === "republish"
@@ -599,7 +600,7 @@ export function XYChart(props) {
           dispatchView(m);
           return;
         }
-        if (awaitingPayload || !socket.connected) return;
+        if (awaitingPayload || !plane.connected) return;
         if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
           m = withSelectionSeq(m);
           pendingSelectionSeqs.add(m.seq);
@@ -637,7 +638,9 @@ export function XYChart(props) {
     };
 
     const toSpans = (spec, buffers) => {
-      const spans = (buffers || []).map((b) => new Uint8Array(b));
+      const spans = (buffers || []).map(
+        (b) => (b instanceof Uint8Array ? b : new Uint8Array(b)),
+      );
       return spec.buffer_layout === "split" ? spans : spans[0];
     };
 
@@ -684,13 +687,13 @@ export function XYChart(props) {
       invalidateSelectionReplies();
     };
 
-    const deferStatePush = (data, message) => {
+    const deferStatePush = (data, message, buffers) => {
       // Programmatic view/selection pushes are not part of the authoritative
       // figure payload. Preserve only generation-stamped room events; replies
       // and appends remain unsafe to defer across payload mounts.
       const generation = statePushGeneration(data, message);
       if (generation !== null) {
-        pendingStatePushes.push({ generation, message, buffers: data.buffers || [] });
+        pendingStatePushes.push({ generation, message, buffers });
         return true;
       }
       return false;
@@ -711,7 +714,7 @@ export function XYChart(props) {
         generation === payloadGeneration && selectionPushReplacesSelection(message)
       );
 
-    const onPayload = (data) => {
+    const onPayload = (data, buffers) => {
       if (destroyed || !data || data.fig !== liveToken) return;
       // Direct subscription replies are mount-addressed; room-wide rebuild
       // broadcasts intentionally omit mid and remain visible to every mount.
@@ -776,7 +779,7 @@ export function XYChart(props) {
         : selectionRequest(selectionToRestore);
       payloadVersion = nextPayloadVersion;
       const spec = withHoverFlag(eventSpec(data.spec, cbRef.current));
-      const nextBuffers = toSpans(data.spec, data.buffers);
+      const nextBuffers = toSpans(data.spec, buffers);
       const chromeChanged = Boolean(view && !sameMountedChromeSpec(view.spec, spec));
       if (!chromeChanged && view?.updatePayload?.(spec, nextBuffers)) {
         // updatePayload re-homes the viewport and rebuilds trace state, so pin
@@ -820,14 +823,14 @@ export function XYChart(props) {
       replayPendingStatePushes(nextPayloadVersion);
     };
 
-    const onMsg = (data) => {
+    const onMsg = (data, buffers) => {
       if (destroyed || !data || data.fig !== liveToken) return;
       // Replies are mount-addressed; pushes (append) carry no mid.
       if (data.mid !== undefined && data.mid !== null && data.mid !== mid) return;
       const message = data.message;
       if (!message) return;
       if (awaitingPayload) {
-        if (!deferStatePush(data, message)) discardPendingReply(message);
+        if (!deferStatePush(data, message, buffers)) discardPendingReply(message);
         return;
       }
       const wireVersion = Number.isInteger(data.version) ? data.version : null;
@@ -841,7 +844,7 @@ export function XYChart(props) {
         // or a replacement payload. Keep it until that generation mounts;
         // unlike a reply, it remains authoritative room state.
         if (selectionPushReplacesSelection(message)) invalidateSelectionReplies();
-        deferStatePush(data, message);
+        deferStatePush(data, message, buffers);
         return;
       }
       if (wireVersion !== null && payloadVersion !== null) {
@@ -854,7 +857,7 @@ export function XYChart(props) {
           // A forward gap means at least one append was not applied (for
           // example, an oversized binary push). Re-prime from a full payload
           // instead of rejecting every subsequent append forever.
-          if (isAppendPush && wireVersion > expected && socket.connected) subscribe();
+          if (isAppendPush && wireVersion > expected && plane.connected) subscribe();
           return;
         }
       }
@@ -922,17 +925,17 @@ export function XYChart(props) {
         // The append establishes the generation whose state writes may have
         // reached this mount first. Apply the data delta before replaying
         // those writes so row-backed selections see the new trace lengths.
-        dispatchToView(clientMessage, data.buffers || []);
+        dispatchToView(clientMessage, buffers);
         replayPendingStatePushes(wireVersion);
         return;
       }
-      dispatchToView(clientMessage, data.buffers || []);
+      dispatchToView(clientMessage, buffers);
     };
 
     const onErr = (data) => {
       if (destroyed || !data || data.fig !== liveToken) return;
       console.warn(`xy: ${data.error} (fig ${data.fig})`);
-      if (data.resync === true && socket.connected && errResyncs < 5) {
+      if (data.resync === true && plane.connected && errResyncs < 5) {
         errResyncs += 1;
         subscribe();
       }
@@ -942,10 +945,10 @@ export function XYChart(props) {
       resetEpoch();
     };
 
-    socket.on("payload", onPayload);
-    socket.on("msg", onMsg);
-    socket.on("err", onErr);
-    socket.on("disconnect", onDisconnect);
+    plane.on(EVENT_PAYLOAD, onPayload);
+    plane.on(EVENT_MSG, onMsg);
+    plane.on(EVENT_ERR, onErr);
+    plane.on(EVENT_DISCONNECT, onDisconnect);
     // Resubscribe on every (re)connect: after the app plane reconnects the
     // shared manager, rooms are gone and — on another backend node — the
     // figure itself may need a state-driven rebuild. `sub` triggers both.
@@ -956,9 +959,9 @@ export function XYChart(props) {
       errResyncs = 0;
       subscribe();
     };
-    socket.on("connect", onConnect);
+    plane.on(EVENT_CONNECT, onConnect);
     subCounts.set(liveToken, (subCounts.get(liveToken) || 0) + 1);
-    if (socket.connected) subscribe();
+    if (plane.connected) subscribe();
 
     const rememberClick = (event) => {
       if (!cbRef.current.onPointClick) return;
@@ -983,15 +986,15 @@ export function XYChart(props) {
       destroyed = true;
       if (tracksClickInput) el.removeEventListener("click", rememberClick, true);
       resetEpoch();
-      socket.off("payload", onPayload);
-      socket.off("msg", onMsg);
-      socket.off("err", onErr);
-      socket.off("disconnect", onDisconnect);
-      socket.off("connect", onConnect);
+      plane.off(EVENT_PAYLOAD, onPayload);
+      plane.off(EVENT_MSG, onMsg);
+      plane.off(EVENT_ERR, onErr);
+      plane.off(EVENT_DISCONNECT, onDisconnect);
+      plane.off(EVENT_CONNECT, onConnect);
       const remaining = (subCounts.get(liveToken) || 1) - 1;
       if (remaining <= 0) {
         subCounts.delete(liveToken);
-        if (socket.connected) socket.emit("unsub", { fig: liveToken, mid });
+        if (plane.connected) plane.emit(EVENT_UNSUB, { fig: liveToken, mid });
       } else {
         subCounts.set(liveToken, remaining);
       }
