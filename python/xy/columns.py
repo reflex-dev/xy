@@ -510,6 +510,32 @@ class ColumnStore:
         }
 
 
+def _is_pyarrow(data: Any) -> bool:
+    """Detected by module name so xy itself never imports pyarrow."""
+    return (type(data).__module__ or "").split(".", 1)[0] == "pyarrow"
+
+
+def label_ndarray(values: Any) -> np.ndarray:
+    """Materialize a column-like as an ndarray for *label* work — categorical
+    axes and facet keys — where the values are strings, not f64 geometry.
+
+    `to_numpy()` is the pandas/pyarrow common denominator, but pyarrow's
+    default is `zero_copy_only=True`, which only a null-free primitive numeric
+    array satisfies: a string, dictionary, chunked, or nullable Arrow array
+    raises `ArrowInvalid` instead of copying — the error that leaked out of
+    `xy.scatter(x=pa.array(["a", "b"]))` while the equivalent pandas
+    `string[pyarrow]` Series became a categorical axis. Labels need Python
+    objects regardless, so the copy is the price of the path, not a regression
+    (§29 counts copies on canonical f64 columns, which never come through
+    here). Nulls arrive as `None` and take the usual `(missing)` label.
+    """
+    if _is_pyarrow(values) and hasattr(values, "to_numpy"):
+        return np.asarray(values.to_numpy(zero_copy_only=False))
+    if hasattr(values, "to_numpy"):
+        values = values.to_numpy()
+    return np.asarray(values)
+
+
 def _arrow_to_numpy(data: Any) -> tuple[npt.NDArray[Any], int] | None:
     """Ingest a pyarrow Array/ChunkedArray, zero-copy when possible.
 
@@ -529,7 +555,7 @@ def _arrow_to_numpy(data: Any) -> tuple[npt.NDArray[Any], int] | None:
 
     Returns None when `data` is not a pyarrow value.
     """
-    if (type(data).__module__ or "").split(".", 1)[0] != "pyarrow":
+    if not _is_pyarrow(data):
         return None
     copies = 0
     if hasattr(data, "combine_chunks"):  # ChunkedArray

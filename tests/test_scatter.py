@@ -360,8 +360,12 @@ def test_numeric_object_color_payload_is_continuous():
     tr = spec["traces"][0]
     assert tr["color"]["mode"] == "continuous"
     assert tr["color"]["domain"] == [1.0, 3.0]
+    # None/NaN colour rows are not drawn (§19): they leave the shipped
+    # geometry and the channel buffer together, never painted as the floor.
+    assert tr["n_marks"] == 2
+    np.testing.assert_array_equal(fig.traces[0].shipped_sel, [0, 2])
     cbuf = _col(spec, blob, tr["color"]["buf"])
-    np.testing.assert_allclose(cbuf, [0.0, 0.0, 1.0, 0.0])
+    np.testing.assert_allclose(cbuf, [0.0, 1.0])
 
 
 def test_numeric_object_size_payload_is_continuous():
@@ -372,8 +376,10 @@ def test_numeric_object_size_payload_is_continuous():
     assert tr["size"]["mode"] == "continuous"
     assert tr["size"]["range_px"] == [2.0, 20.0]
     assert tr["size"]["domain"] == [1.0, 3.0]
+    assert tr["n_marks"] == 2
+    np.testing.assert_array_equal(fig.traces[0].shipped_sel, [0, 2])
     sbuf = _col(spec, blob, tr["size"]["buf"])
-    np.testing.assert_allclose(sbuf, [0.0, 0.0, 1.0, 0.0])
+    np.testing.assert_allclose(sbuf, [0.0, 1.0])
 
 
 def test_variable_size_shipped():

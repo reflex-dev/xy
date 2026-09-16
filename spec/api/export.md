@@ -86,9 +86,24 @@ them, and the client *does* draw it (T9).
 
 `_pdf.py` accepts only the SVG that `_svg.py` emits and raises
 `ValueError("unsupported SVG feature: ...")` on anything else, so generator
-drift fails loudly rather than rendering wrong. Text stays text (base-14
-Helvetica, WinAnsiEncoding, `?` for out-of-range characters); density and
-heatmap layers embed as bounded rasters.
+drift fails loudly rather than rendering wrong. Text stays text: the base-14
+fonts in WinAnsiEncoding (`?` for out-of-range characters), with the face
+chosen from the SVG text attributes as §9 describes — the writer embeds no
+fonts, so `font-family` is a substitution onto Helvetica, Times or Courier,
+never the browser's face. Density and heatmap layers embed as bounded rasters.
+
+Text content is sanitized once, in the SVG writer. `_svg.escape` (and
+`_escape_attr` for attribute values) drops the code points XML 1.0 §2.2 cannot
+carry — the C0 controls other than tab, newline and carriage return, the
+surrogates, and U+FFFE/U+FFFF — so a legend name or tick label such as
+`"a\x01b"` exports as `ab` in SVG and PDF instead of producing a document no
+XML parser accepts (no character reference can represent them either). They
+are dropped rather than replaced with U+FFFD because a browser paints a control
+character as nothing, so the vector text stays visually in step with the HTML
+and PNG paths, which are not XML and carry the byte through unchanged. Every
+raw text sink in the writer routes through those two helpers, and
+`tests/test_export_text_safety.py` pins the rule at the helper, at the original
+repros, and across the whole C0 table.
 
 `quality` (1–100, default 90) applies to JPEG and to **Chromium** WebP.
 Requesting `quality` for native WebP is an error, not a silent no-op — the
@@ -284,6 +299,43 @@ a single baked face, so it honors size and paint and leaves the typeface
 properties to the vector writers — the one documented divergence, and
 `tests/test_export_style_survival.py` pins it. A declaration outside the subset
 stays browser-only.
+
+### What PDF makes of the typeface properties
+
+Before/after at `spec/assets/pdf-text-properties-before-after.png` (v0.0.7 raised; the rasterized PDF now shows an italic Times title with letter spacing, italic faded tick labels, and Courier axis titles).
+
+`_pdf.svg_to_pdf` reads the SVG writer's `<text>` attributes and honors all
+seven, but it embeds no fonts (stdlib + numpy only), so the typeface properties
+are *mapped onto the base-14 set* rather than reproduced:
+
+| SVG attribute | PDF |
+| --- | --- |
+| `font-family` | one of the three families in the table below; weight and style then pick one of its four faces |
+| `font-weight` | ≥ 600 selects the bold face |
+| `font-style` | `italic` and `oblique` (with or without an angle) select the italic/oblique face, `normal` the upright one; any other value is `unsupported SVG feature` |
+| `letter-spacing` | the `Tc` character-spacing operator, in px like `Tf`. `normal`, a unitless px number, `px`, `em` (× the element's resolved font size) and `pt` (÷ 0.75) are read; the `text-anchor="middle"/"end"` offset counts the spacing after every character, the last included, as browsers do |
+| `opacity` | multiplied into the text's ExtGState (`/ca`) together with `fill-opacity` and the paint's own alpha, exactly as for shapes |
+| `font-size`, `fill` | as before |
+
+The family is the first name in the CSS stack, walked in author order, that the
+table recognises (`_pdf._FAMILY_MAP` is the code copy; keep the two in step). A
+stack naming nothing in it resolves to Helvetica rather than raising: an
+author's font preference is not generator drift, and refusing the export would
+hide the whole chart behind an unavailable typeface.
+
+| CSS name (case-insensitive, quotes ignored) | base-14 family | faces (regular, bold, italic, bold italic) |
+| --- | --- | --- |
+| `serif`, `ui-serif`, `Times`, `Times New Roman` | Times | Times-Roman, Times-Bold, Times-Italic, Times-BoldItalic |
+| `monospace`, `ui-monospace`, `Courier`, `Courier New` | Courier | Courier, Courier-Bold, Courier-Oblique, Courier-BoldOblique |
+| `sans-serif`, `ui-sans-serif`, `system-ui`, `Helvetica`, `Arial` — and anything unrecognised | Helvetica | Helvetica, Helvetica-Bold, Helvetica-Oblique, Helvetica-BoldOblique |
+
+So `styles={"title": {"font-family": "Georgia"}}` yields Helvetica in the PDF
+(Georgia is not in the table) while `"Georgia, serif"` yields Times — the
+generic fallback is the author's own statement of what the face is. Anchoring
+uses the selected face's AFM widths, so a right-aligned Courier tick column
+lines up on Courier's metrics, not Helvetica's. The root `<svg font-family>`
+(the system-ui stack) resolves through the same table, to Helvetica, so
+unstyled output is unchanged. `tests/test_pdf_export.py` pins each row.
 
 Where two surfaces name the same chrome, the narrower selector wins: an axis's
 own `label_color` beats `styles={"axis_title": ...}`, which beats the

@@ -1234,9 +1234,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     @staticmethod
     def _category_axis_labels(values: Any, axis: str) -> list[str]:
-        if hasattr(values, "to_numpy"):
-            values = values.to_numpy()
-        arr = np.asarray(values)
+        # Bare pyarrow string/dictionary/chunked arrays need the copying
+        # conversion here; the plain `to_numpy()` raised ArrowInvalid.
+        arr = columns.label_ndarray(values)
         if arr.ndim != 1:
             raise ValueError(f"{axis} categories must be 1-D, got shape {arr.shape}")
         if arr.dtype.kind == "U":
@@ -1664,6 +1664,57 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 return "time"
         return "linear"
 
+    # Trace kinds whose emitters route rows through `_log_visible_mask`
+    # (`_payload.py`) and therefore drop non-positive coordinates on a log
+    # axis. The rectangle/segment families ship every row and let the client
+    # apply the axis's `nonpositive` policy per endpoint, so nothing is lost
+    # there and nothing to report.
+    _LOG_DROPPING_KINDS = frozenset({"scatter", "line", "area", "error_band"})
+
+    def _warn_log_nonpositive_drop(self, axis_id: str) -> None:
+        """Log is undefined at zero and below, so those rows are not drawn.
+
+        Dropping them is allowed but must never be silent (§28): report the
+        axis, how many rows went, and the two ways out. An explicit
+        `nonpositive=` on the axis is the user stating the policy and
+        silences this (the caller checks it). Zone maps keep the all-positive
+        case O(chunks); the O(n) count runs only on a column that provably
+        holds a value <= 0 (`min` ignores NaN and ±inf, which the finiteness
+        pass drops on every axis regardless).
+        """
+        dropped = 0
+        total = 0
+        for t in self.traces:
+            if t.kind not in self._LOG_DROPPING_KINDS:
+                continue
+            cols = self._range_columns(t, axis_id)
+            if not cols:
+                continue
+            total += t.n_points
+            if not any(col.min <= 0 for col in cols):
+                continue
+            # One mask per trace: area rows fail on `y` and `base` together
+            # and must count once.
+            rejected = np.zeros(t.n_points, dtype=bool)
+            for col in cols:
+                values = col.values
+                if len(values) == len(rejected):
+                    rejected |= values <= 0
+            dropped += int(np.count_nonzero(rejected))
+        if not dropped:
+            return
+        which = self._axis_dim(axis_id)
+        warnings.warn(
+            f"{axis_id} axis is log-scaled and {dropped} of {total} points have "
+            "non-positive coordinates on it (log is undefined there), so they "
+            f"are not drawn. Pass xy.{which}_axis(type_='log', "
+            "nonpositive='clip') or nonpositive='mask' to state that policy "
+            "explicitly and silence this warning, or type_='symlog' to show "
+            "zero and negative values.",
+            RuntimeWarning,
+            stacklevel=4,
+        )
+
     def _axis_spec(self, axis_id: str, range_: tuple[float, float]) -> dict[str, Any]:
         axis = self._axis_dim(axis_id)
         opts = self.axis_options.get(axis_id, {})
@@ -1741,8 +1792,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["scale"] = scale
         if scale == "symlog":
             spec["constant"] = opts.get("constant") or 1.0
-        if scale == "log" and opts.get("nonpositive") is not None:
-            spec["nonpositive"] = opts["nonpositive"]
+        if scale == "log":
+            if opts.get("nonpositive") is not None:
+                spec["nonpositive"] = opts["nonpositive"]
+            else:
+                self._warn_log_nonpositive_drop(axis_id)
         if opts.get("reverse"):
             spec["reverse"] = True
         if opts.get("domain") is not None:
@@ -1959,17 +2013,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
             for column, values in zip(geometry, (x0v, x1v, y0v, y1v), strict=True)
             if column is not None and column.zone.null_count
         ]
-        if t.color_ch and t.color_ch.mode == "continuous":
-            values = t.color_ch.values
-            if values is None:
-                raise ValueError(f"{t.kind} continuous color channel missing values")
-            candidates.append(values)
-        elif t.color_ch and t.color_ch.mode == "categorical":
-            codes = t.color_ch.codes
-            if codes is None:
-                raise ValueError(f"{t.kind} categorical color channel missing codes")
-            # Resolved categorical codes are u8/u32 and therefore always
-            # finite; no source-sized pass is needed for them.
+        # A rectangle whose continuous color or size is non-finite is not
+        # drawn either (§19) — the same rule, probe, and helper as the point
+        # tier's `_finite_sel`: the cached `isfinite().all()` verdict keeps
+        # the all-finite common case off the native scan, and a channel is a
+        # candidate only when it really holds a non-finite value. Resolved
+        # categorical codes are u8/u32 and therefore always finite; no
+        # source-sized pass is needed for them.
+        candidates.extend(channels.nonfinite_channel_arrays(t, len(x0v)))
         if not candidates:
             return None
         return kernels.valid_indices_f64(tuple(candidates))
