@@ -294,6 +294,7 @@ class Tooltip(Component):
     # New fields append after ``render``: Tooltip is public and positional
     # construction over the released field order must keep binding.
     labels: dict[str, str] = field(default_factory=dict)
+    mode: str = "nearest"
 
 
 @dataclass
@@ -3181,6 +3182,7 @@ def tooltip(
     title: Optional[str] = None,
     format: Optional[dict[str, str]] = None,
     labels: Optional[dict[str, str]] = None,
+    mode: str = "nearest",
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
@@ -3196,6 +3198,13 @@ def tooltip(
         labels: Display labels keyed by source field. Without ``fields``, they
             rename the matching default x/y/color/size rows. Formatting and
             title placeholders continue to use the source field names.
+        mode: How the pointer selects data (live client only). ``"nearest"``
+            shows the mark within 12 px of the pointer. ``"x"`` is a shared
+            axis tooltip: only the pointer's horizontal position matters, it
+            snaps to the nearest x value, and every series' point at that x
+            is listed together with a cursor line — the vertical position is
+            ignored, so the whole plot height is the hit target. ``"y"`` does
+            the same along the y axis.
         class_name: DOM class name applied to the tooltip.
         style: Tooltip style overrides.
     """
@@ -3206,6 +3215,7 @@ def tooltip(
         title=_optional_string(title, "tooltip title"),
         format=_string_dict(format, "tooltip format"),
         labels=_string_dict(labels, "tooltip labels"),
+        mode=_tooltip_mode(mode),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
         render=render,
@@ -4071,6 +4081,7 @@ class Chart(Component):
                 title=node.title,
                 format=node.format,
                 labels=node.labels,
+                mode=node.mode,
                 class_name=node.class_name,
                 style=node.style,
             )
@@ -5222,12 +5233,25 @@ def _apply_chrome_node(
         fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **style}
 
 
+_TOOLTIP_MODES = ("nearest", "x", "y")
+
+
+def _tooltip_mode(value: Any) -> str:
+    if not isinstance(value, str) or value not in _TOOLTIP_MODES:
+        raise ValueError(f"tooltip mode must be one of {list(_TOOLTIP_MODES)}, got {value!r}")
+    return value
+
+
 def _tooltip_spec(
     node: Tooltip,
     aliases: dict[str, str],
     sources: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     spec: dict[str, Any] = {}
+    if node.mode != "nearest":
+        # Default-on/opt-in only on the wire, so existing specs stay
+        # byte-identical.
+        spec["mode"] = node.mode
     if node.fields:
         spec["fields"] = list(node.fields)
     if node.title is not None:

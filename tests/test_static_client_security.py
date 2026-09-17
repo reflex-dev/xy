@@ -329,6 +329,7 @@ def test_client_applies_every_public_dom_slot() -> None:
         "tooltip_row": '_applySlot(row, "tooltip_row")',
         "tooltip_label": '_applySlot(label, "tooltip_label")',
         "tooltip_value": '_applySlot(value, "tooltip_value")',
+        "tooltip_cursor": '_applySlot(el, "tooltip_cursor")',
         "modebar": '_applySlot(bar, "modebar")',
         "modebar_drag_handle": '_applySlot(dragPeek, "modebar_drag_handle")',
         "modebar_control_group": '_applySlot(toolGroup, "modebar_control_group")',
