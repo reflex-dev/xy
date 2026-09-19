@@ -4088,7 +4088,9 @@ class Axes(PlotTypeMixin):
         self._invalidate()
         return self
 
-    def set_xlim(self, left: float | LimitsLike | None = None, right: float | None = None) -> None:
+    def set_xlim(
+        self, left: float | LimitsLike | None = None, right: float | None = None
+    ) -> tuple[float, float]:
         """Set the x view limits.
 
         Call as ``set_xlim(left, right)`` or ``set_xlim((left, right))``;
@@ -4098,6 +4100,8 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(left, (tuple, list)):
             left, right = left
+        if left is None and right is None:
+            return self.get_xlim()
         host = (self._y2_of or self)._shared_ticker_source("x")
         spec = host._scale_specs["x"]
         current_start, current_end = self.get_xlim()
@@ -4134,6 +4138,7 @@ class Axes(PlotTypeMixin):
         host._explicit_domains.add("x")
         host._tick_expanded_domains.discard("x")
         host._invalidate_shared_ticker_axis("x")
+        return self.get_xlim()
 
     def get_xlim(self) -> tuple[float, float]:
         """The current x view limits, in data space and display order."""
@@ -4151,7 +4156,9 @@ class Axes(PlotTypeMixin):
         )
         return (hi, lo) if host._axis["x"].get("reverse") else (lo, hi)
 
-    def set_ylim(self, bottom: float | LimitsLike | None = None, top: float | None = None) -> None:
+    def set_ylim(
+        self, bottom: float | LimitsLike | None = None, top: float | None = None
+    ) -> tuple[float, float]:
         """Set the y view limits (forms as in `set_xlim`).
 
         A descending ``(bottom, top)`` pair inverts the axis; on a twin axes
@@ -4159,6 +4166,8 @@ class Axes(PlotTypeMixin):
         """
         if isinstance(bottom, (tuple, list)):
             bottom, top = bottom
+        if bottom is None and top is None:
+            return self.get_ylim()
         base = self._y2_of or self
         key = "y2" if self._y2_of is not None else "y"
         host = base._shared_ticker_source(key)
@@ -4197,6 +4206,7 @@ class Axes(PlotTypeMixin):
         host._explicit_domains.add(key)
         host._tick_expanded_domains.discard(key)
         host._invalidate_shared_ticker_axis(key)
+        return self.get_ylim()
 
     def get_ylim(self) -> tuple[float, float]:
         """The current y view limits, in data space and display order."""
@@ -6533,7 +6543,7 @@ class Axes(PlotTypeMixin):
         *,
         rotation: float | None = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> list[_TickLabel]:
         """Place the x ticks at the given positions, optionally relabeled.
 
         ``labels`` must match ``ticks`` in length and displaces any user
@@ -6542,7 +6552,7 @@ class Axes(PlotTypeMixin):
         Positions are in data space, so nonlinear scales transform them.
         """
         if kwargs.pop("minor", False):
-            return
+            return []
         host = (self._y2_of or self)._shared_ticker_source("x")
         props = host._axis["x"]
         if ticks is not None:
@@ -6570,6 +6580,7 @@ class Axes(PlotTypeMixin):
         if rotation is not None:
             self._axis_props("x")["tick_label_angle"] = float(rotation)
         host._invalidate_shared_ticker_axis("x")
+        return self.get_xticklabels()
 
     def set_yticks(
         self,
@@ -6578,10 +6589,10 @@ class Axes(PlotTypeMixin):
         *,
         rotation: float | None = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> list[_TickLabel]:
         """Place the y ticks at the given positions (see `set_xticks`)."""
         if kwargs.pop("minor", False):
-            return
+            return []
         base = self._y2_of or self
         key = "y2" if self._y2_of is not None else "y"
         host = base._shared_ticker_source(key)
@@ -6609,6 +6620,7 @@ class Axes(PlotTypeMixin):
         if rotation is not None:
             self._axis_props("y")["tick_label_angle"] = float(rotation)
         host._invalidate_shared_ticker_axis(key)
+        return self.get_yticklabels()
 
     def _expand_domain_to_ticks(self, axis: str) -> None:
         """Apply Matplotlib's mandatory view expansion for explicit ticks."""

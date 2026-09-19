@@ -47,6 +47,74 @@ def test_reference_line_data_cycle_limits_ticks_and_shared_axes() -> None:
     assert xyaxes[0].get_xlabel() == mplaxes[0].get_xlabel()
 
 
+def test_pyplot_limits_support_getters_keywords_and_return_values() -> None:
+    _fig, ax = xyplt.subplots()
+    ax.plot([10.0, 20.0], [30.0, 40.0])
+    before_domains = {axis: dict(ax._axis[axis]) for axis in ("x", "y")}
+    before_explicit = set(ax._explicit_domains)
+
+    assert xyplt.xlim() == ax.get_xlim()
+    assert xyplt.ylim() == ax.get_ylim()
+    assert {axis: dict(ax._axis[axis]) for axis in ("x", "y")} == before_domains
+    assert ax._explicit_domains == before_explicit
+
+    assert xyplt.xlim(left=0.0, right=25.0) == (0.0, 25.0)
+    assert xyplt.ylim((0.0, 50.0)) == (0.0, 50.0)
+    assert ax.set_xlim() == (0.0, 25.0)
+    assert ax.set_ylim() == (0.0, 50.0)
+
+
+def test_pyplot_ticks_getters_are_non_mutating_and_setters_return_handles() -> None:
+    _fig, ax = xyplt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    before = {axis: dict(ax._axis[axis]) for axis in ("x", "y")}
+
+    xlocations, xlabels = xyplt.xticks()
+    ylocations, ylabels = xyplt.yticks()
+    np.testing.assert_array_equal(xlocations, ax.get_xticks())
+    np.testing.assert_array_equal(ylocations, ax.get_yticks())
+    assert [label.get_text() for label in xlabels] == [
+        label.get_text() for label in ax.get_xticklabels()
+    ]
+    assert [label.get_text() for label in ylabels] == [
+        label.get_text() for label in ax.get_yticklabels()
+    ]
+    assert {axis: dict(ax._axis[axis]) for axis in ("x", "y")} == before
+
+    locations, labels = xyplt.xticks([0.0, 1.0], ["zero", "one"])
+    np.testing.assert_array_equal(locations, [0.0, 1.0])
+    assert [label.get_text() for label in labels] == ["zero", "one"]
+
+
+def test_pyplot_minor_tick_getters_return_minor_locations() -> None:
+    _fig, ax = xyplt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.set_xlim(0.0, 10.0)
+    ax.set_ylim(0.0, 10.0)
+    ax.minorticks_on()
+    ax._build_chart(640, 480)
+
+    xlocations, xlabels = xyplt.xticks(minor=True)
+    ylocations, ylabels = xyplt.yticks(minor=True)
+
+    np.testing.assert_array_equal(xlocations, ax.get_xticks(minor=True))
+    np.testing.assert_array_equal(ylocations, ax.get_yticks(minor=True))
+    assert xlocations.size > 0
+    assert ylocations.size > 0
+    assert xlabels == ax.xaxis.get_minorticklabels()
+    assert ylabels == ax.yaxis.get_minorticklabels()
+
+
+def test_pyplot_legend_returns_live_legend_handle() -> None:
+    _fig, ax = xyplt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0], label="line")
+
+    legend = xyplt.legend()
+
+    assert isinstance(legend, xyplt.Legend)
+    assert ax.get_legend() is legend
+
+
 def test_reference_bar_geometry_stacking_and_container_shape() -> None:
     xyfig, xyax = xyplt.subplots()
     mplfig, mplax = mplplt.subplots()
