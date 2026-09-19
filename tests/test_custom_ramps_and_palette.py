@@ -375,6 +375,98 @@ def test_the_literal_color_probe_does_not_materialize_category_columns():
     assert channels._literal_color_rgba(column) is None
 
 
+def test_homogeneous_object_categories_use_native_factorization(monkeypatch):
+    """Object strings use the native path without an N-entry label list."""
+    values = np.array(["group-a", "group-b", "group-a", "group-c"] * 250, dtype=object)
+    seen: list[object] = []
+    original = channels.category_label
+
+    def record(value: object) -> str:
+        seen.append(value)
+        return original(value)
+
+    monkeypatch.setattr(channels, "category_label", record)
+    categories, codes, counts = channels._factorize_categories(values)
+
+    assert categories == ["group-a", "group-b", "group-c"]
+    np.testing.assert_array_equal(codes[:4], [0, 1, 0, 2])
+    np.testing.assert_array_equal(counts, [500, 250, 250])
+    assert len(seen) == len(categories)
+
+
+def test_object_factorization_matches_fixed_width_string_semantics():
+    """The object fast path preserves category order, codes, and counts."""
+    values = np.array(["beta", "alpha", "beta", "gamma", "alpha"], dtype=object)
+    object_result = channels._factorize_categories(values)
+    unicode_result = channels._factorize_categories(values.astype("U5"))
+
+    assert object_result[0] == unicode_result[0]
+    np.testing.assert_array_equal(object_result[1], unicode_result[1])
+    np.testing.assert_array_equal(object_result[2], unicode_result[2])
+
+
+def test_object_factorization_preserves_nul_distinct_categories():
+    """NUL-containing strings retain Python equality semantics."""
+    categories, codes, counts = channels._factorize_categories(
+        np.array(["a", "a\x00", "a", "a\x00"], dtype=object)
+    )
+
+    assert categories == ["a", "a\x00"]
+    np.testing.assert_array_equal(codes, [0, 1, 0, 1])
+    assert counts is None
+
+
+def test_near_unique_object_strings_do_not_run_full_width_scan(monkeypatch):
+    """Near-unique object columns are rejected before full normalization."""
+    values = np.array([f"id-{i}" for i in range(5000)], dtype=object)
+    original = channels._object_string_width
+    calls: list[bool] = []
+
+    def record(arr, *, sample=False):
+        calls.append(sample)
+        return original(arr, sample=sample)
+
+    monkeypatch.setattr(channels, "_object_string_width", record)
+    channels._factorize_categories(values)
+
+    assert calls == [True]
+
+
+def test_object_factorization_reuses_the_bounded_probe(monkeypatch):
+    """Object-string eligibility gates share one bounded distinct-count probe."""
+    values = np.array(["group-a", "group-b", "group-a", "group-c"] * 1500, dtype=object)
+    original = channels.np.unique
+    object_probe_calls: list[np.ndarray] = []
+
+    def record(arr, *args, **kwargs):
+        if arr.dtype.kind == "O":
+            object_probe_calls.append(arr)
+        return original(arr, *args, **kwargs)
+
+    monkeypatch.setattr(channels.np, "unique", record)
+    channels._factorize_categories(values)
+
+    assert len(object_probe_calls) == 1
+    assert len(object_probe_calls[0]) == channels._FACTORIZE_PROBE_ROWS
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.array(["a", None, "a"], dtype=object),
+        np.array(["a", 1, "a"], dtype=object),
+        np.array([b"a", b"b", b"a"], dtype=object),
+    ],
+)
+def test_mixed_object_categories_keep_the_fallback(values):
+    """Values without exact string semantics remain on the safe fallback."""
+    categories, codes, counts = channels._factorize_categories(values)
+
+    assert len(categories) == len(set(categories))
+    assert len(codes) == len(values)
+    assert counts is None
+
+
 def test_the_probe_still_reads_a_column_that_actually_looks_like_paint():
     column = np.array(["#ff0000", "#00ff00", "#0000ff"])
     rgba = channels._literal_color_rgba(column)
