@@ -55,8 +55,12 @@ relative mass, not as a budget (see §3 on why a line count failed as a metric).
   dense opaque mark (heatmap) would otherwise bury them. Crisp text,
   selectable tooltips, zero GL cost for chrome — correct division (§7).
 - **Uniform-only pan/zoom**: geometry is static offset-encoded f32; view
-  changes touch two vec2 uniforms per mark (`_map`). This is why interaction
-  is cheap; nothing below may regress it.
+  changes touch one `vec4` map uniform per *encoded column* (`_map`, written
+  beside that column's meta by `_setAxisUniforms`). The map is
+  `(mul, add, shift, dataMul)`: the linear fold's slope and intercept in the
+  column's own encoding, the f32-snapped re-centring term, and the same slope
+  per data unit for widths (dossier §16). This is why interaction is cheap;
+  nothing below may regress it.
 - **Coordinate-system seam, including non-vertex grids:** point/line/area/bar
   programs call the shared joint polar projection after ordinary axis decode
   and scale. Heatmap remains a fullscreen quad and performs the inverse joint
@@ -141,7 +145,10 @@ Ordered by how much each compounds as kinds multiply.
   lints every shader at build time: `#version 300 es` first line, every FS
   declares `precision highp float;`, every VS references a `u_*map` uniform
   (quad shaders exempted by name), uniforms `u_`-prefixed, attributes
-  `a`-prefixed. Violations fail the build (negative-tested).
+  `a`-prefixed, every `u_*map` declared `vec4`, and every `xyMap` call pairing
+  one column's map with that same column's meta (dossier §16 — a mismatched
+  pair moves or deletes the mark). Violations fail the build
+  (negative-tested).
 - **R6 — Instancing is per-mark bespoke.** Line uses 4-corner strip +
   divisor-1 endpoints; rects likewise; points use POINTS. `MARK_KINDS` now
   registers 18 kind names over 9 mark objects (`RECT_MARK`, `BAR_MARK`,
