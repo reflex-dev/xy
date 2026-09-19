@@ -7245,7 +7245,13 @@ class Axes(PlotTypeMixin):
                 pad = (hi - lo) * 1e-9
                 ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
             auto_log = is_log
-        props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
+        majors_are_auto = (
+            locator is None
+            and formatter is None
+            and authored_labels is None
+            and not is_log
+            and "tick_values" not in props
+        )
         if formatter is not None:
             props["tick_labels"] = _formatter_tick_labels(
                 formatter,
@@ -7263,6 +7269,9 @@ class Axes(PlotTypeMixin):
             props["tick_labels"] = [f"{value:g}" for value in ticks]
         else:
             props.pop("tick_labels", None)
+        # Authoring positions freezes an automatic axis; labels need them anyway.
+        if not majors_are_auto or "tick_labels" in props:
+            props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if len(ticks):
             props["tick_count"] = len(ticks)
         else:
