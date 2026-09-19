@@ -31,6 +31,7 @@ metadata is rejected.
   `make check-security`.
 - `Figure.to_png` launches local Chromium with the browser sandbox enabled by
   default; `sandbox=False` is an explicit caller opt-out for trusted HTML.
+  A sandboxed launch failure fails closed and is never retried unsandboxed.
 - The native core is a local in-process C-ABI library; it processes only data
   already in the caller's process and performs no I/O or network access.
 - The audit trail lives in `spec/process/security-audit-2026-07-06.md`.
