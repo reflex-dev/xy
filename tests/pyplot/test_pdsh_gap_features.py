@@ -236,7 +236,10 @@ def test_rdgy_and_jet_resolve_and_render():
 def test_matplotlib_gallery_colormaps_resolve_and_render(name, canonical):
     assert plt.get_cmap(name).name == canonical
     assert plt.colormaps[name].name == canonical
-    assert getattr(plt.cm, name) == name
+    # plt.cm.<name> is a callable colormap object (as in Matplotlib), not a
+    # bare name carrier; it still resolves to the same engine table.
+    assert getattr(plt.cm, name).name == canonical
+    assert callable(getattr(plt.cm, name))
     fig, ax = plt.subplots()
     ax.imshow(np.arange(16.0).reshape(4, 4), cmap=name)
     _png(fig)
@@ -352,10 +355,14 @@ def test_colorbar_ticks_and_extend_reach_both_exports():
 
 
 def test_colorbar_rejects_unknown_kwargs_and_accepts_explicit_cax():
+    # ``fraction`` is an accepted compat-noop (the colorbar strip has a fixed
+    # width); a keyword Matplotlib's colorbar does not take stays loud.
+    plt.colorbar(plt.imshow(np.eye(3)), fraction=0.05)
+    plt.close("all")
     fig, ax = plt.subplots()
     image = plt.imshow(np.eye(3))
     with pytest.raises(TypeError):
-        plt.colorbar(image, fraction=0.05)
+        plt.colorbar(image, glow=0.05)
     cax = fig.add_axes((0.85, 0.1, 0.075, 0.8))
     colorbar = plt.colorbar(image, cax=cax)
     assert colorbar.ax is cax
