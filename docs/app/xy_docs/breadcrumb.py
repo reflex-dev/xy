@@ -118,8 +118,10 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
     return rx.box(
         docs_sidebar_drawer(
             sidebar,
-            trigger=rx.box(
-                class_name="absolute inset-0 z-[1] flex bg-transparent lg:hidden",
+            trigger=rx.el.button(
+                type="button",
+                aria_label="Open documentation navigation",
+                class_name="absolute inset-0 z-[1] flex bg-transparent focus-visible:outline-2 focus-visible:outline-ring lg:hidden",
             ),
         ),
         rx.box(
