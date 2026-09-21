@@ -3140,16 +3140,32 @@ def test_footer_navigation_has_section_headings() -> None:
         page for page in discover_docs(DOCS_CONFIG) if page.route == "/overview/installation/"
     )
     nodes = list(_accessibility_nodes(xy_docs_footer(page)))
-    assert any(node.tag == "h2" for node in nodes)
-    assert not any(node.tag in {"h3", "h4"} for node in nodes)
+    headings = [node for node in nodes if node.tag in {"h1", "h2", "h3", "h4", "h5", "h6"}]
+    assert len(headings) == 3
+    assert all(node.tag == "h2" for node in headings)
 
 
-def test_installation_lists_have_only_list_items() -> None:
-    """Code examples must not become direct children of an HTML list."""
+def test_installation_options_render_as_subsections_with_commands() -> None:
+    """Optional integrations retain headings and code without malformed lists."""
     source = DOCS_ROOT / "overview" / "installation.md"
     component = render_markdown(
-        source.read_text(), virtual_filepath="overview/installation.md", filename=source.as_posix()
+        source.read_text(encoding="utf-8"),
+        virtual_filepath="overview/installation.md",
+        filename=source.as_posix(),
     )
-    for node in _accessibility_nodes(component):
-        if node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}:
-            assert all(child.tag in {"li", "RadixThemesListItem"} for child in node.children)
+    nodes = list(_accessibility_nodes(component))
+    blocks = parse_document(source.read_text(encoding="utf-8")).blocks
+    headings = [block for block in blocks if isinstance(block, HeadingBlock) and block.level == 3]
+    assert [heading.children[0].text for heading in headings] == [
+        "Arrow input",
+        "Reflex integration",
+        "Optional browser export",
+    ]
+    assert not any(isinstance(block, ListBlock) for block in blocks)
+    assert not any(
+        node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}
+        for node in nodes
+    )
+    rendered = str(component)
+    for command in ("uv add pyarrow", 'uv add "xy[reflex]"', 'python -m pip install "xy[reflex]"'):
+        assert f"code:{json.dumps(command)}" in rendered
