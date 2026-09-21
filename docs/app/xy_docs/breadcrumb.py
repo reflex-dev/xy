@@ -124,6 +124,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
         ),
         rx.box(
             *breadcrumbs,
+            custom_attrs={"data-testid": "xy-breadcrumbs"},
             class_name="flex flex-row items-center gap-[5px] overflow-hidden lg:gap-4",
         ),
         rx.box(

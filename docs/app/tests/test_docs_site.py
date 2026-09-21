@@ -2556,13 +2556,30 @@ def test_overview_breadcrumb_does_not_link_to_missing_parent(slug: str) -> None:
     assert parts[-1][1] == route
 
     breadcrumb = xy_docs_breadcrumb(page, xy_docs_sidebar(page.route))
-    row = breadcrumb.children[1]
-    parent, leaf = row.children[0], row.children[-1]
-    assert parent.tag == "span"
-    assert "Overview" in str(parent)
+
+    def descendants(component):
+        """Visit components regardless of nesting or sibling order."""
+        yield component
+        for child in component.children:
+            yield from descendants(child)
+
+    rows = [
+        node
+        for node in descendants(breadcrumb)
+        if node.custom_attrs.get("data-testid") == "xy-breadcrumbs"
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    links = [
+        node
+        for node in descendants(row)
+        if getattr(node, "href", None) is not None or getattr(node, "to", None) is not None
+    ]
+    assert '"Overview"' in str(row)
+    assert all('"Overview"' not in str(link) for link in links)
     assert 'to:"/overview/"' not in str(row)
     assert 'href:"/overview/"' not in str(row)
-    assert f'to:"{route}"' in str(leaf)
+    assert any(f'to:"{route}"' in str(link) for link in links)
 
 
 def test_every_breadcrumb_destination_is_a_discovered_page() -> None:
