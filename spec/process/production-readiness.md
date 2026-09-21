@@ -57,6 +57,9 @@ production-DOM check rejects both unnamed controls and shared-theme generated
 text that would replace the copy/check icon feedback.
 
 The docs app disables the built-with-Reflex badge in its configuration.
+Breadcrumb destinations must match discovered documentation pages, including
+explicit gallery aliases. Category segments without a page render as text;
+leaf links and the mobile sidebar drawer remain available.
 The docs recolor consumes the reusable `reflex-site-shared` theme and components
 directly. XY keeps only its branding, navigation, and project-specific footer
 content; it must not vendor shared CSS, search/buttons, or the navbar frame and

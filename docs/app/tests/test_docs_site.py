@@ -2546,6 +2546,25 @@ def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
     assert "ArrowDown01Icon" in rendered
 
 
+@pytest.mark.parametrize("slug", ("installation", "first-chart", "gallery", "benchmarks"))
+def test_overview_breadcrumb_does_not_link_to_missing_parent(slug: str) -> None:
+    """Keep the overview label and leaf link without inventing a category route."""
+    route = f"/overview/{slug}/"
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == route)
+    parts = _breadcrumb_parts(page)
+    assert parts[0] == ("Overview", None)
+    assert parts[-1][1] == route
+
+
+def test_every_breadcrumb_destination_is_a_discovered_page() -> None:
+    """Synthesized parents and explicit aliases must resolve to real docs pages."""
+    pages = discover_docs(DOCS_CONFIG)
+    routes = {page.route for page in pages}
+    for page in pages:
+        for _label, href in _breadcrumb_parts(page):
+            assert href is None or href in routes, (page.route, href)
+
+
 def test_xy_breadcrumb_shortens_the_modebar_page_label() -> None:
     """Keep the longest component route from overflowing the mobile header."""
     page = next(
