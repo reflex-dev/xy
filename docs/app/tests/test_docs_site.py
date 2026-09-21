@@ -32,6 +32,7 @@ from reflex_docgen.markdown import (
     TextBlock,
     parse_document,
 )
+from reflex_site_shared.components.blocks.typography import list_comp
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
 from reflex_site_shared.docs.markdown import _file_modules
@@ -3161,11 +3162,10 @@ def test_installation_options_render_as_subsections_with_commands() -> None:
         "Reflex integration",
         "Optional browser export",
     ]
-    assert not any(isinstance(block, ListBlock) for block in blocks)
-    assert not any(
-        node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}
-        for node in nodes
-    )
+    item_tags = {"li", "RadixThemesListItem", list_comp(text="Example item").tag}
+    for node in nodes:
+        if node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}:
+            assert all(child.tag in item_tags for child in node.children)
     rendered = str(component)
     for command in ("uv add pyarrow", 'uv add "xy[reflex]"', 'python -m pip install "xy[reflex]"'):
         assert f"code:{json.dumps(command)}" in rendered
