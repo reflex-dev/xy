@@ -2555,6 +2555,15 @@ def test_overview_breadcrumb_does_not_link_to_missing_parent(slug: str) -> None:
     assert parts[0] == ("Overview", None)
     assert parts[-1][1] == route
 
+    breadcrumb = xy_docs_breadcrumb(page, xy_docs_sidebar(page.route))
+    row = breadcrumb.children[1]
+    parent, leaf = row.children[0], row.children[-1]
+    assert parent.tag == "span"
+    assert "Overview" in str(parent)
+    assert 'to:"/overview/"' not in str(row)
+    assert 'href:"/overview/"' not in str(row)
+    assert f'to:"{route}"' in str(leaf)
+
 
 def test_every_breadcrumb_destination_is_a_discovered_page() -> None:
     """Synthesized parents and explicit aliases must resolve to real docs pages."""
