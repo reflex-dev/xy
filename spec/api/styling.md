@@ -326,7 +326,11 @@ axis title is reserved separately and answers to `label_color` alone, so an
 opaque title over switched-off ticks keeps the band it is drawn in — unless it
 is not drawn at all, which is the case for `tick_label_strategy="none"` (which
 suppresses the title too, where `"off"` keeps it) and for an `inside_*`
-`label_position` (drawn over the plot, so it needs no band).
+`label_position` (drawn over the plot, so it needs no band). A title that *is*
+drawn reserves the band it is drawn in, measured: the automatic gutters are a
+floor for ordinary text, not a ceiling the title is clipped against. Outward
+tick marks answer to no text paint at all, so an axis whose labels are switched
+off while its `tick_length` still draws marks keeps its band for them.
 
 ### Plot rectangle and chrome reservations
 
