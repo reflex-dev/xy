@@ -2600,6 +2600,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
             or "right" in _axis_tick_label_sides(axis, is_x=False)
         )
         and _axis_tick_label_strategy(axis) != "none"
+        # An axis whose text is switched off draws none of what this gutter
+        # exists to hold, so it claims none of it — the same question the left
+        # gutter already asks (`_axis_text_paint_visible`). Only the *presence*
+        # of the reservation answers to the paint; its flat 42/54 width, and
+        # the plot-relative right title that depends on it, are unchanged.
+        and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
         for axis_id, axis in axes.items()
     ):
         # Match ChartView._layout(): one shared right-side gutter contains the

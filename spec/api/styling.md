@@ -432,7 +432,11 @@ Two asymmetries are deliberate, not oversights:
   plot-relative (`plot-right + 40`) rather than to a canvas inset, so widening
   only the static exporters' right gutter would move their title away from the
   browser's. Unusually wide right-side tick labels can therefore still meet
-  their axis title, in every renderer alike.
+  their axis title, in every renderer alike. The flat *width* is what this
+  fixes; whether the gutter is reserved at all still answers to the paint, as
+  the left gutter does — an axis whose text is switched off holds none of what
+  the gutter exists for and claims none of it, in the browser and the exporters
+  alike.
 - **Only a spec-authored `padding` reaches the browser.** `layout()` is a Python
   function; a chart rendered live with `padding=None` gets ChartView's own
   `46/62` default, not the measured floor. The pyplot shim closes that gap on the

@@ -789,7 +789,7 @@ export class ChartView {
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      this._axisTickLabelsVisible(axis));
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
@@ -798,7 +798,7 @@ export class ChartView {
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      this._axisTickLabelsVisible(axis));
     const hasTopAxis = topAxes.length > 0;
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
@@ -843,7 +843,7 @@ export class ChartView {
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      this._axisTickLabelsVisible(axis));
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -1074,10 +1074,13 @@ export class ChartView {
     let room = 0;
     for (const axis of Object.values<any>(this.axes || {})) {
       if (!axis || !String(axis.id || "").startsWith("y")) continue;
-      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left");
-      const titleOnLeft = axis.side !== "right";
+      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left")
+        && this._axisTickLabelsVisible(axis);
+      // The title is reserved separately from the tick labels, so it answers to
+      // its own paint: `show=False, grid=True` keeps the grid and neither text.
+      const titleOnLeft = axis.side !== "right"
+        && this._axisTextPaintVisible(axis, "label_color", "tick_color");
       if (!labelsOnLeft && !titleOnLeft) continue;
-      if (this._axisTickLabelStrategy(axis) === "none") continue;
       const size = Math.max(
         8,
         this._axisStyleNumber(
@@ -7522,6 +7525,29 @@ export class ChartView {
   _axisStyleValue(axis, key) {
     const style = axis && typeof axis.style === "object" ? axis.style : null;
     return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  // Whether an axis text paint can contribute visible ink. The visibility
+  // shorthands compile to TRANSPARENT CSS colors rather than to a flag
+  // (`_axis_visibility_style`, python/xy/components.py), so layout has to ask
+  // the paint whether anything will be seen — otherwise `show=False` reserves
+  // a gutter for text nobody can read and cannot produce the documented
+  // edge-to-edge sparkline. An unknown or browser-only paint stays
+  // conservative and keeps its room.
+  // Mirrors `_axis_text_paint_visible` in python/xy/_svg.py, which is why the
+  // SVG and PNG exporters already collapse this gutter and the browser did not.
+  _axisTextPaintVisible(axis, key, fallbackKey?) {
+    let paint = this._axisStyleValue(axis, key);
+    if (paint === undefined && fallbackKey) paint = this._axisStyleValue(axis, fallbackKey);
+    if (paint === undefined || paint === null) return true;
+    return parseColor(this.root, paint, [0, 0, 0, 1])[3] !== 0;
+  }
+
+  // Whether this axis's tick labels claim gutter room at all: a strategy that
+  // draws none, or a paint that shows none, claims nothing.
+  _axisTickLabelsVisible(axis) {
+    return this._axisTickLabelStrategy(axis) !== "none"
+      && this._axisTextPaintVisible(axis, "tick_label_color", "tick_color");
   }
 
   _axisGridDash(axis) {

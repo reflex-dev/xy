@@ -212,7 +212,10 @@ xy.x_axis(line=False, ticks=False)          # tick labels, no baseline or ticks
 
 The switches compile to ordinary axis `style` properties, so they work in HTML,
 SVG, and native PNG alike, and an explicit `style=` property still wins over a
-switch. `text` controls whether axis text is *drawn*; `tick_labels=` supplies
+switch. An axis with nothing left to draw also reserves nothing: its tick-label
+gutter collapses, on either side, so `show=False` on both axes gives a plot that
+reaches the container edge — the sparkline case. A grid survives that, since it
+is drawn inside the plot and never needed a gutter. `text` controls whether axis text is *drawn*; `tick_labels=` supplies
 the label strings.
 
 ## Style Axes
