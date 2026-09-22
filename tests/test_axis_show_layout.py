@@ -766,3 +766,39 @@ def test_a_named_axis_has_no_minor_tier_to_reserve_for() -> None:
     assert right_gutter("y2", **minor) == (0, 0.0)
     # Its MAJOR marks are drawn by the extra-axis loop, and still reserved.
     assert right_gutter("y2", style=long_ticks)[1] == 54.0
+
+
+def test_marks_with_no_label_reserve_the_marks_and_not_a_label() -> None:
+    """An axis kept in the band by its tick MARKS reserves only those.
+
+    `_xAxisRoom` skips an axis that draws nothing on a side, but outward tick
+    marks are a third reason to stay, so an axis reaches the room expression
+    with its labels switched off. Its tick-label term does not collapse to
+    zero when it does: `items` is empty, but the term is `4 + offset`, and
+    `offset` is measured from the outward END of the mark (matplotlib's rule,
+    shared with the exporter). So the browser reserved a whole label's
+    clearance past marks that have no label, growing with `tick_length`,
+    while `_x_tick_label_room` took `4 + tick_room` and stopped.
+
+    Every outward-tick test beside this one measures a y axis's right gutter,
+    which is why the x band drifted unnoticed. The lengths here span short
+    marks, where the phantom label dominated, to long ones, where it merely
+    added to them -- the gap was the same at all three.
+    """
+    for length in (5, 10, 40):
+        marks = {"tick_length": length, "tick_width": 2}
+        chart = _parity_chart(
+            x={"tick_label_strategy": "off", "style": marks},
+            y={"show": False},
+        )
+        browser = _browser_plot_rect(chart, f"x marks, no labels, {length}px")
+        export = _svg_plot_rect(chart)
+        _assert_parity(f"x marks, no labels, {length}px", browser, export)
+        # Parity is exact here, not merely inside the tolerance: both
+        # renderers reserve the edge pad plus the marks' reach and nothing
+        # else, so the band is 4 + length on both sides of the comparison.
+        assert browser[3] == export[3] == float(HEIGHT) - (4 + length), (
+            length,
+            browser,
+            export,
+        )

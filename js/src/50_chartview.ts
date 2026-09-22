@@ -1280,11 +1280,21 @@ export class ChartView {
       }
       // The title's band and the tick labels' band both start at the plot
       // edge, so the axis needs the larger, not their sum.
+      //
+      // The tick-label term is gated on the labels actually being drawn on
+      // this side. An axis reaches here with `labelsOnSide` false whenever
+      // `tickRoomOnSide` alone kept it in the loop, and then `items` is empty:
+      // the term collapses to `4 + offset`, which is not zero, because
+      // `offset` is measured from the OUTWARD END of the tick mark. That
+      // reserved a whole label's clearance past marks with no label to hold
+      // -- the exporter's `_x_tick_label_room` takes `4 + tick_room` and
+      // stops -- so the two renderers drifted by the tick padding plus the
+      // font's descent at every tick length.
       room = Math.max(
         room,
         titleRoom,
         tickRoomOnSide ? 4 + tickRoomOnSide : 0,
-        4 + offset + rows * (size + 4) + extent,
+        labelsOnSide ? 4 + offset + rows * (size + 4) + extent : 0,
       );
     }
     return room;
@@ -7748,7 +7758,12 @@ export class ChartView {
     if (!Array.isArray(axis && axis.tick_sides)) {
       const authored = axis && axis.side;
       if (authored) return [authored];
-      return [inferred ? this._axisDefaultSide(axis) : allowed[0]];
+      // An axis that authors no side falls back to the one its id implies,
+      // whether or not the caller supplied the dimension -- the draw loop
+      // asks without a hint, so answering `allowed[0]` here would have had
+      // layout reserve the left gutter for a `y2` whose marks are drawn on
+      // the right. `allowed[0]` remains for an axis with no id to imply one.
+      return [axis && axis.id !== undefined ? this._axisDefaultSide(axis) : allowed[0]];
     }
     return allowed.filter((side) => axis.tick_sides.includes(side));
   }
