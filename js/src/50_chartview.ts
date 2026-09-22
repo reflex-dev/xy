@@ -1219,8 +1219,14 @@ export class ChartView {
       // pulls the title toward the plot and needs less room, not more.
       const titleOffset = Number.isFinite(Number(axis.label_offset))
         ? Number(axis.label_offset) : 0;
+      // Rounded UP to a whole pixel: the GL canvas is sized `plot.h * dpr`
+      // into an integer attribute, so a fractional band leaves the canvas up
+      // to a pixel short of the rect it is meant to cover
+      // (`render_smoke_nonumpy.py` asserts the two agree). Only THIS term is
+      // rounded — the tick-label band below has always been fractional, and
+      // rounding it too moved charts this change has no business moving.
       const titleRoom = labelBlock
-        ? 4 + titleOffset + (side === "top" ? 34 : 24 + labelBlock.h)
+        ? Math.ceil(4 + titleOffset + (side === "top" ? 34 : 24 + labelBlock.h))
         : 0;
       // Preserve the long-standing flat band for ordinary horizontal text.
       // An axis drawing no tick label at all qualifies as much as `auto` does:
@@ -1264,17 +1270,8 @@ export class ChartView {
           + (side === "top" ? size * 0.2 : size * 0.8);
       }
       // The title's band and the tick labels' band both start at the plot
-      // edge, so the axis needs the larger, not their sum. Rounded UP to a
-      // whole pixel: the GL canvas is sized `plot.h * dpr` into an integer
-      // attribute, so a fractional band leaves the canvas up to a pixel short
-      // of the rect it is meant to cover (`render_smoke_nonumpy.py` asserts
-      // the two agree). Measuring a title made this band fractional for any
-      // ordinary titled axis; ceil keeps it whole without ever reserving less
-      // than the text needs.
-      room = Math.max(
-        room,
-        Math.ceil(Math.max(titleRoom, 4 + offset + rows * (size + 4) + extent)),
-      );
+      // edge, so the axis needs the larger, not their sum.
+      room = Math.max(room, titleRoom, 4 + offset + rows * (size + 4) + extent);
     }
     return room;
   }
