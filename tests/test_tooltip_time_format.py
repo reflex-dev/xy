@@ -162,10 +162,10 @@ _SPAN_CASES = """
       view.view.ranges.x = [centre - ms / 2, centre + ms / 2];
       return withSpec({ format: {} });
     };
-    out.spanMonths = span(120 * 864e5);
-    out.spanMinutes = span(90 * 6e4);
-    out.spanSeconds = span(20 * 1e3);
-    out.spanSubSecond = span(400);
+    out.spanMonths = span(120 * 864e5);  // 120 days in milliseconds.
+    out.spanMinutes = span(90 * 6e4);    // 90 minutes in milliseconds.
+    out.spanSeconds = span(20 * 1e3);    // 20 seconds in milliseconds.
+    out.spanSubSecond = span(400);       // 400 milliseconds.
 """
 
 
