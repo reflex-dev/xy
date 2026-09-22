@@ -15,6 +15,7 @@ like the repo's others.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -183,6 +184,11 @@ def _run_format_probe(chart, attribute: str, probe: str, label: str) -> dict:
     wrote to `attribute`, skipping only when no browser can be spawned."""
     chromium = find_chromium()
     if not chromium:
+        # `run_browser_probe` turns an unlaunchable browser into a failure under
+        # XY_REQUIRE_BROWSER so CI cannot pass by absence. Skipping before that
+        # call would slip past the guard, so it is honored here too.
+        if os.environ.get("XY_REQUIRE_BROWSER"):
+            pytest.fail(f"{label}: XY_REQUIRE_BROWSER is set but no chromium was found")
         pytest.skip(f"no chromium available for the {label} probe")
     document = probe_document(chart, probe)
     with tempfile.TemporaryDirectory() as td:
