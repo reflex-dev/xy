@@ -701,7 +701,10 @@ def test_the_gutter_asked_about_names_its_own_dimension() -> None:
     became bottom/top, and a y axis drawing 8 px of marks answered 0 px for
     both of its own gutters. The queried side settles it with no `id` at all.
     """
-    from xy._svg import _axis_outward_tick_room
+    from xy._svg import _axis_outward_tick_room as _room
+
+    def _axis_outward_tick_room(axis, side, minor_tier=False):
+        return _room(axis, side, minor_tier=minor_tier)
 
     marks = {"tick_length": 8, "tick_width": 1, "tick_direction": "out"}
     legacy_y = {"side": "left", "tick_sides": ["left", "right"], "style": marks}
@@ -722,3 +725,41 @@ def test_the_gutter_asked_about_names_its_own_dimension() -> None:
     bare_y = {"side": "right", "style": marks}
     assert _axis_outward_tick_room(bare_y, "right") == 8
     assert _axis_outward_tick_room(bare_y, "left") == 0
+
+
+def test_a_named_axis_has_no_minor_tier_to_reserve_for() -> None:
+    """Only the primary x/y axes draw minor ticks, so only they reserve for them.
+
+    Both renderers take their minor positions from the primary axes alone --
+    `minorTicks(xAxis, "x")` / `minorTicks(yAxis, "y")` in the client, `xmt`
+    and `ymt` in the exporter -- while the named-axis loops draw the major
+    tier and stop. Measuring the minor tier for every axis therefore gave a
+    named axis a band for marks that no renderer emits, which is the phantom
+    gutter this module exists to remove. The major tier is different: named
+    axes really do draw it, so their room for it stays.
+    """
+    long_ticks = {"tick_length": 50, "tick_width": 2}
+
+    def right_gutter(axis_id: str, **axis) -> float:
+        chart = xy.line_chart(
+            xy.line([0.0, 1.0], [0.0, 1.0]),
+            xy.x_axis(show=False),
+            xy.y_axis(id=axis_id, side="right", tick_label_strategy="off", **axis),
+            width=WIDTH,
+            height=HEIGHT,
+            padding=(0, 0, 0, 0),
+        )
+        svg = chart.to_svg()
+        drawn = svg.count('data-xy-tick="minor"')
+        rect = _svg_plot_rect(chart)
+        browser = _browser_plot_rect(chart, f"{axis_id} minor tier")
+        _assert_parity(f"{axis_id} minor tier", browser, rect)
+        return drawn, WIDTH - rect[0] - rect[2]
+
+    minor = {"minor_tick_values": [0.25, 0.5, 0.75], "minor_style": long_ticks}
+    # The primary y axis draws its minor marks, so it keeps the band.
+    assert right_gutter("y", **minor) == (3, 54.0)
+    # A named axis draws none of them, so it claims nothing for them.
+    assert right_gutter("y2", **minor) == (0, 0.0)
+    # Its MAJOR marks are drawn by the extra-axis loop, and still reserved.
+    assert right_gutter("y2", style=long_ticks)[1] == 54.0

@@ -2099,11 +2099,13 @@ def _colorbar_right_axis_room(
     `_axis_gutter_visible` rather than a second spelling of it. A gutter that
     layout collapses but the colorbar still steps over leaves the bar floating
     54 px out from a plot that reaches the edge."""
-    axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
+    # Only the primary y axis carries a minor tick tier; the named ones draw
+    # their major marks and stop, so they must not reserve for a minor one.
+    axes = [(y_axis, True), *((axis, False) for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
         (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
-        and _axis_gutter_visible(axis, "right")
-        for axis in axes
+        and _axis_gutter_visible(axis, "right", minor_tier=minor_tier)
+        for axis, minor_tier in axes
     ):
         return 42.0 if compact else 54.0
     return 0.0
@@ -2207,7 +2209,12 @@ def _axis_tick_labels_visible(axis: dict[str, Any]) -> bool:
     } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
 
 
-def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) -> float:
+def _axis_outward_tick_room(
+    axis: dict[str, Any],
+    side: Optional[str] = None,
+    *,
+    minor_tier: bool,
+) -> float:
     """How far this axis's tick marks reach outside the plot, in px.
 
     Tick marks are chrome of their own: they are drawn from ``tick_length``
@@ -2238,6 +2245,17 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
     minor tier was first counted -- reserves phantom gutters and clips real
     marks in the same function.
 
+    A *named* axis has no minor tier at all. Both renderers draw minor marks
+    for the primary x and y axes only (``xmt``/``ymt`` here, ``xmt``/``ymt``
+    from ``minorTicks(xAxis, "x")`` in the client); the extra-axis loops draw
+    the major tier and stop. So ``minor_tier`` says whether this axis is one
+    of the two that has one, and the caller supplies it because the caller
+    holds the ``_axes_by_id`` key that settles it. The client's mirror reads
+    ``axis.id`` instead, which it may do because ``_normalizeAxes`` stamps
+    every axis's id from its map key; nothing normalizes a spec on this side,
+    so an older payload's axis dict can reach here with no ``id`` -- the same
+    trap the ``side`` argument above exists to avoid.
+
     The requested ``side`` names its own dimension -- a left/right query is
     about a y axis whichever way the spec is shaped -- so it, and not the
     axis's ``id``, is what picks the allowed sides. Everywhere else here the
@@ -2261,8 +2279,10 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
         room = _tick_tier_outward_room(axis.get("style") or {})
 
     # `minor_axis_ticks` returns nothing without `minor_tick_values`, so a
-    # styled-but-valueless minor tier draws no marks and needs no gutter.
-    if axis.get("minor_tick_values"):
+    # styled-but-valueless minor tier draws no marks and needs no gutter --
+    # and only the primary x/y axes have a minor tier at all, which is what
+    # `minor_tier` carries (see the docstring).
+    if minor_tier and axis.get("minor_tick_values"):
         minor = {**axis, "style": axis.get("minor_style") or {}}
         minor_side = axis.get("side", "bottom" if is_x else "left")
         if _axis_text_paint_visible(minor, "tick_color") and (side is None or side == minor_side):
@@ -2284,7 +2304,12 @@ def _tick_tier_outward_room(style: dict[str, Any]) -> float:
     return length / 2.0 if direction == "inout" else length
 
 
-def _axis_gutter_visible(axis: dict[str, Any], side: Optional[str] = None) -> bool:
+def _axis_gutter_visible(
+    axis: dict[str, Any],
+    side: Optional[str] = None,
+    *,
+    minor_tier: bool,
+) -> bool:
     """Whether this axis claims a gutter at all.
 
     Tick labels and the title are separate paints, so either one showing keeps
@@ -2297,7 +2322,7 @@ def _axis_gutter_visible(axis: dict[str, Any], side: Optional[str] = None) -> bo
     return (
         _axis_tick_labels_visible(axis)
         or _axis_title_visible(axis)
-        or _axis_outward_tick_room(axis, side) > 0.0
+        or _axis_outward_tick_room(axis, side, minor_tier=minor_tier) > 0.0
     )
 
 
@@ -2391,7 +2416,7 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         # this room is MEASURED rather than a flat band, so eligibility alone
         # does not reserve it. Mirrors `_yAxisLeftRoom` in
         # js/src/50_chartview.ts.
-        left_tick_room = _axis_outward_tick_room(axis, "left")
+        left_tick_room = _axis_outward_tick_room(axis, "left", minor_tier=axis_id == "y")
         if not left_labels and not left_title and left_tick_room <= 0.0:
             continue
         if left_tick_room > 0.0:
@@ -2448,7 +2473,7 @@ def _x_axis_title_room(axis: dict[str, Any]) -> float:
     )
 
 
-def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
+def _x_tick_label_room(axis: dict[str, Any], plot_w: float, *, minor_tier: bool) -> float:
     """Outward room needed by the x axis's final tick-label set and title.
 
     The old 32/42 px bands only fit horizontal labels. Measure the strings and
@@ -2463,7 +2488,7 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     # Marks drawn into this band need it as much as the text does, and the
     # flat 32/42 px bands are smaller than a long authored ``tick_length``.
     # Mirrors the ``tickRoomOnSide`` term in `_xAxisRoom`.
-    tick_room = _axis_outward_tick_room(axis, axis.get("side", "bottom"))
+    tick_room = _axis_outward_tick_room(axis, axis.get("side", "bottom"), minor_tier=minor_tier)
     title_room = max(
         _x_axis_title_room(axis),
         _AXIS_TEXT_EDGE_PAD + tick_room if tick_room > 0.0 else 0.0,
@@ -2607,7 +2632,7 @@ def _x_axis_rooms(
         room_sides.update(
             side
             for side in _axis_tick_sides(axis, is_x=True)
-            if _axis_outward_tick_room(axis, side) > 0.0
+            if _axis_outward_tick_room(axis, side, minor_tier=axis_id == "x") > 0.0
         )
         if _axis_tick_label_strategy(axis) == "off" or axis.get("label"):
             room_sides.add(title_side)
@@ -2615,7 +2640,7 @@ def _x_axis_rooms(
             side_axis = {**axis, "side": side}
             if side != title_side:
                 side_axis.pop("label", None)
-            measured = _x_tick_label_room(side_axis, plot_w)
+            measured = _x_tick_label_room(side_axis, plot_w, minor_tier=axis_id == "x")
             if side == "top":
                 top = max(top, 26.0 if compact else 32.0, measured)
             else:
@@ -2753,7 +2778,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # gutter already asks (`_axis_text_paint_visible`). Only the *presence*
         # of the reservation answers to the paint; its flat 42/54 width, and
         # the plot-relative right title that depends on it, are unchanged.
-        and _axis_gutter_visible(axis, "right")
+        and _axis_gutter_visible(axis, "right", minor_tier=axis_id == "y")
         for axis_id, axis in axes.items()
     ):
         # Match ChartView._layout(): one shared right-side gutter contains the

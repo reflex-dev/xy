@@ -338,7 +338,10 @@ the major tier is drawn for the computed ticks, on every `tick_sides`, in
 `tick_color`. So a `minor_style` with no `minor_tick_values` paints nothing
 and claims nothing; a minor tier with values claims its reach whatever the
 major tier's paint says; and an axis whose `tick_sides` send its major marks
-to the opposite edge still keeps the band its minor marks are drawn in.
+to the opposite edge still keeps the band its minor marks are drawn in. Only
+the primary `x` and `y` axes have a minor tier: a named axis draws its major
+marks and stops, so it reserves for those and never for a minor tier it will
+not paint.
 
 ### Plot rectangle and chrome reservations
 

@@ -7651,8 +7651,9 @@ export class ChartView {
     // The two tiers are drawn by two different loops, and almost nothing
     // about them is shared, so they are measured apart. The major tier is
     // drawn for the computed ticks, on every `tick_sides`, in
-    // `style.tick_color`; the minor tier only for `minor_tick_values`, on
-    // `side` alone, in `minor_style.tick_color`. Taking the larger length
+    // `style.tick_color`; the minor tier only for the primary axes' own
+    // `minor_tick_values`, on `side` alone, in `minor_style.tick_color`.
+    // Taking the larger length
     // under the major tier's paint and sides reserves phantom gutters and
     // clips real marks in the same expression.
     let room = 0;
@@ -7661,7 +7662,14 @@ export class ChartView {
       room = this._tickTierOutwardRoom(axis);
     }
 
-    if (Array.isArray(axis && axis.minor_tick_values) && axis.minor_tick_values.length) {
+    // Only the primary x/y axes have a minor tier: both renderers draw minor
+    // marks from `minorTicks(xAxis, "x")` / `minorTicks(yAxis, "y")` alone,
+    // and the named-axis loops draw the major tier and stop. `_normalizeAxes`
+    // stamps every axis's id from its map key, so the id settles it here; the
+    // exporter has no such step and takes the answer from its caller instead.
+    const hasMinorTier = axis && (axis.id === "x" || axis.id === "y");
+    if (hasMinorTier
+        && Array.isArray(axis.minor_tick_values) && axis.minor_tick_values.length) {
       const minor = { ...axis, style: axis.minor_style || {} };
       const minorSide = axis.side || (isX === false ? "left" : "bottom");
       if (this._axisTextPaintVisible(minor, "tick_color")
