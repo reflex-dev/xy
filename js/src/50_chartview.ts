@@ -1194,15 +1194,21 @@ export class ChartView {
       const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
       const labelBlock = titleOnSide
         ? this._estimateTickLabel(axis.label, labelSize) : null;
-      const labelExtra = labelBlock
-        ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+
       // The band the title itself needs, measured from where it is drawn:
       // `p.y + p.h + 24` on the bottom, `p.y - 34` on the top (the two
       // branches in `_drawAxisChrome`), plus the same 4 px canvas-edge pad the
       // exporter's `_x_axis_title_room` uses. Measuring only the overflow past
-      // one line (`labelExtra`) reserved nothing for an ordinary one-line
-      // title, so at a small authored padding the title was drawn past the
-      // canvas edge while the exporter fitted it.
+      // one line reserved nothing for an ordinary one-line title, so at a small
+      // authored padding the title was drawn past the canvas edge while the
+      // exporter fitted it.
+      //
+      // Only the BOTTOM takes the block height. Both renderers place an x
+      // title from its line-box top, so a second line grows toward the plot on
+      // the top side and away from it on the bottom — which is why
+      // `_x_axis_title_room` adds `(line_count - 1) * line_step` on one branch
+      // and not the other. Adding it on both (the old overflow term did) put a
+      // three-line top title 41 px further out than the exporter.
       const titleOffset = Number.isFinite(Number(axis.label_offset))
         ? Math.max(0, Number(axis.label_offset)) : 0;
       const titleRoom = labelBlock
@@ -1218,7 +1224,6 @@ export class ChartView {
       if (
         !hasAdaptiveLayout
         && !hasMultilineTicks
-        && !labelExtra
         && !titleRoom
         && flatTickBand
         && this._axisTickLabelAngle(axis) === null
@@ -1251,8 +1256,17 @@ export class ChartView {
           + (side === "top" ? size * 0.2 : size * 0.8);
       }
       // The title's band and the tick labels' band both start at the plot
-      // edge, so the axis needs the larger, not their sum.
-      room = Math.max(room, titleRoom, 4 + offset + rows * (size + 4) + extent + labelExtra);
+      // edge, so the axis needs the larger, not their sum. Rounded UP to a
+      // whole pixel: the GL canvas is sized `plot.h * dpr` into an integer
+      // attribute, so a fractional band leaves the canvas up to a pixel short
+      // of the rect it is meant to cover (`render_smoke_nonumpy.py` asserts
+      // the two agree). Measuring a title made this band fractional for any
+      // ordinary titled axis; ceil keeps it whole without ever reserving less
+      // than the text needs.
+      room = Math.max(
+        room,
+        Math.ceil(Math.max(titleRoom, 4 + offset + rows * (size + 4) + extent)),
+      );
     }
     return room;
   }

@@ -359,7 +359,7 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
     (`_x_tick_label_room` returns `title_room` for exactly that case), so the
     two renderers disagreed by the whole band.
     """
-    wrapped = "Trade settlement window\nsecond line of the title"
+    wrapped = _WRAPPED_TITLE
     for label, x_axis in (
         ("wrapped", {"tick_label_strategy": "off", "label": wrapped}),
         ("one line", {"tick_label_strategy": "off", "label": "Time"}),
@@ -384,6 +384,9 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
     assert _svg_plot_rect(rotated)[3] == float(HEIGHT)
 
 
+_WRAPPED_TITLE = "Trade settlement window\nsecond line\nthird line"
+
+
 def test_a_title_reserves_the_band_it_is_drawn_in() -> None:
     """The browser measured only a title's overflow past one line, so an
     ordinary one-line title reserved nothing and was drawn at
@@ -394,9 +397,30 @@ def test_a_title_reserves_the_band_it_is_drawn_in() -> None:
     for label, x_axis in (
         ("bottom", {"label": "Time"}),
         ("top", {"label": "Time", "side": "top"}),
-        ("wrapped", {"label": "Trade settlement window\nsecond line"}),
+        ("wrapped", {"label": _WRAPPED_TITLE}),
         ("offset", {"label": "Time", "label_offset": 12}),
         ("large", {"label": "Time", "style": {"label_size": 22}}),
+        # Both renderers place an x title from its line-box top, so extra lines
+        # grow toward the plot on the top side and away from it on the bottom.
+        # Measuring the block height on both put a three-line top title 41 px
+        # further out than the exporter.
+        ("top wrapped", {"label": _WRAPPED_TITLE, "side": "top"}),
+        (
+            "top wrapped, large",
+            {
+                "label": _WRAPPED_TITLE,
+                "side": "top",
+                "style": {"label_size": 24},
+            },
+        ),
+        ("top large", {"label": "Time", "side": "top", "style": {"label_size": 28}}),
+        (
+            "bottom wrapped, large",
+            {
+                "label": _WRAPPED_TITLE,
+                "style": {"label_size": 24},
+            },
+        ),
     ):
         chart = _parity_chart(x=x_axis, y={"show": False})
         browser = _browser_plot_rect(chart, f"x title: {label}")
