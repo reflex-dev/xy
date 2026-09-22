@@ -619,7 +619,10 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
         return WIDTH - browser[2]
 
     long_minor = {"tick_length": 50, "tick_width": 2}
-    assert minor_gutter(minor_tick_values=[0.25, 0.5, 0.75], minor_style=long_minor) > 50
+    assert (
+        minor_gutter(minor_tick_values=[0.25, 0.5, 0.75], minor_style=long_minor)
+        > long_minor["tick_length"]
+    )
     assert minor_gutter(minor_style=long_minor) == 0
     assert minor_gutter(minor_tick_values=[], minor_style=long_minor) == 0
     # Each tier answers its OWN paint: the minor marks are stroked from
@@ -631,7 +634,7 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
             minor_style=long_minor,
             style={"tick_color": "#00000000"},
         )
-        > 50
+        > long_minor["tick_length"]
     )
     assert (
         minor_gutter(
@@ -654,7 +657,7 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     )
     minor_left_rect = _browser_plot_rect(minor_left, "minor left, major right")
     _assert_parity("minor left, major right", minor_left_rect, _svg_plot_rect(minor_left))
-    assert minor_left_rect[0] > 50, minor_left_rect
+    assert minor_left_rect[0] > long_minor["tick_length"], minor_left_rect
     # `tick_sides` decides which gutter the marks go in. A right-side axis
     # drawing its ticks on the LEFT claims the left band and leaves the right
     # edge flush — `right_gutter` above sums both sides, so this one reads the
