@@ -39,6 +39,8 @@ HOVER_INDEX = 1
 
 
 def _market_chart(**tooltip):
+    """A two-series time-axis chart in the shape the report came from: a
+    datetime column bound to x on both traces, two probability columns on y."""
     return xy.line_chart(
         xy.step("time", "yes", data=DATA, where="post", name="Yes", color="#8884d8"),
         xy.step("time", "no", data=DATA, where="post", name="No", color="#82ca9d"),
@@ -177,6 +179,8 @@ def _market_probe(cases: str, attribute: str) -> str:
 
 
 def _run_format_probe(chart, attribute: str, probe: str, label: str) -> dict:
+    """Render `chart` with `probe` spliced in and return the JSON the probe
+    wrote to `attribute`, skipping only when no browser can be spawned."""
     chromium = find_chromium()
     if not chromium:
         pytest.skip(f"no chromium available for the {label} probe")
@@ -188,6 +192,10 @@ def _run_format_probe(chart, attribute: str, probe: str, label: str) -> dict:
 
 
 def test_browser_time_values_take_the_strftime_path() -> None:
+    """Every way a format can be authored reaches a time value, and every way
+    it cannot leaves the value alone: the column name, the channel key, a
+    listed field, `format=` by itself, the axis's own pattern — and a numeric
+    spec on a time value still means "as a number"."""
     probe = _market_probe(_FORMAT_CASES, "data-xy-tipfmt")
     payload = _run_format_probe(_market_chart(), "data-xy-tipfmt", probe, "tooltip format")
 
@@ -209,6 +217,8 @@ def test_browser_time_values_take_the_strftime_path() -> None:
 
 
 def test_browser_time_tooltip_default_follows_the_visible_span() -> None:
+    """With nothing authored, a time value reads at the granularity the window
+    in view calls for, sharpening as the span narrows."""
     probe = _market_probe(_SPAN_CASES, "data-xy-tipspan")
     payload = _run_format_probe(_market_chart(), "data-xy-tipspan", probe, "tooltip span")
 
@@ -271,6 +281,9 @@ _BAND_FORMAT_PROBE = """
 
 
 def test_browser_band_title_formats_its_time_coordinate() -> None:
+    """A band title is a value like any other: it takes the span default, an
+    authored format keyed by the time column — which it only ever sees as the
+    channel "x" — and leaves each series' own numeric format intact."""
     probe = _BAND_FORMAT_PROBE.replace("INDEX", str(HOVER_INDEX))
     payload = _run_format_probe(
         _market_chart(mode="x"), "data-xy-bandfmt", probe, "band tooltip format"
