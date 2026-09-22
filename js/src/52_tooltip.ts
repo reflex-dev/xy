@@ -555,6 +555,11 @@ Object.assign(ChartView.prototype, {
   // -- shared-axis bands (interaction spec §7.3) ------------------------------
 
   _clearBandHover() {
+    // Outstanding band picks are being abandoned. Their seqs were drawn from
+    // `_pickSeq`, and the last one still equals it, so a reply arriving after
+    // this would pass the single-pick guard and render as an ordinary point
+    // readout. Advance past them.
+    if (this._bandPicks && this._bandPicks.size) this._pickSeq = (this._pickSeq || 0) + 1;
     this._bandKey = null;
     this._hoverTargets = null;
     this._bandRows = null;
@@ -662,8 +667,20 @@ Object.assign(ChartView.prototype, {
   _renderBandTooltip(clientX, clientY, options: any = {}) {
     const rows = this._bandRows;
     const hits = this._hoverTargets;
-    if (!rows || !rows.length || !hits || this.spec.show_tooltip === false) {
+    if (!rows || !rows.length || !hits) {
       this._hideTooltip();
+      return;
+    }
+    // `show=False` drops the tooltip ELEMENT, not the band (§7.3): the hover
+    // event, the kernel picks and the active dots all still run, which is how
+    // `_hoverBand` already treats it. Clearing the band from here instead —
+    // this method is also called when an exact reply lands — dropped the
+    // remaining `_bandPicks` while their replies were in flight. Those replies
+    // then missed the band map, and the last of them still matched `_pickSeq`,
+    // so it fell into the single-pick handler and dispatched an `exact: true`
+    // hover carrying one series where the band promises all of them.
+    if (this.spec.show_tooltip === false) {
+      this.tooltip.style.display = "none";
       return;
     }
     const items = this._bandTooltipItems(rows, hits);

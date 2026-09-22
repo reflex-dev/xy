@@ -560,6 +560,11 @@ Object.assign(ChartView.prototype, {
       this._markBestLegendsDirty?.();
       return true;
     }
+    // The band holds GPU trace objects and rows resolved from them. Every one
+    // is about to be replaced, so a draw before the next pointer move would
+    // paint active dots and tooltip rows from the old data against the new
+    // axes. The band is rebuilt by the next hover; it cannot survive this.
+    this._clearBandHover?.();
     this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
     // The legend DOM is unchanged on updatePayload, but every rendered mark
     // underneath it was replaced. Keep this pending through `_dataAnim`; the

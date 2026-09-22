@@ -482,6 +482,10 @@ Object.assign(ChartView.prototype, {
         ? prevSpec.traces.find((t) => t.id === id)
         : null;
       if (this._appendTraceInPlace(this.gpuTraces[i], prevTs, prevSpec, ts, payload)) continue;
+      // Not an in-place append: this trace object is replaced, and the band may
+      // be holding it (and rows resolved from it). An in-place append keeps the
+      // object and only grows its columns, so it needs no reset.
+      this._clearBandHover?.();
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(payload, ts);
     }

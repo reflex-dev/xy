@@ -8944,6 +8944,15 @@ export class ChartView {
         hi = Math.max(a, b);
       }
     }
+    // A row whose coordinate has left the plot after a pan or zoom cannot be
+    // picked by a pointer that is inside it. The cursor already refuses to draw
+    // off-plot (`_positionTooltipCursor`), so accepting one produced a tooltip
+    // and hover state for an invisible point with nothing marking where it is.
+    // A bar counts as visible while any part of its footprint overlaps, and the
+    // half-pixel slack matches the band's own (f32 decode noise, not a
+    // different value).
+    const extent = dim === "x" ? this.plot.w : this.plot.h;
+    if (hi < -0.5 || lo > extent + 0.5) return null;
     return { trace: g.trace.id, index: idx, g, px, lo, hi, bar, x, y, dist: 0, synthetic: true };
   }
 

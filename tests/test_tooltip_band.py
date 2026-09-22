@@ -10,6 +10,8 @@ fail) without Chromium, like the repo's others.
 
 from __future__ import annotations
 
+import base64
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -772,3 +774,153 @@ def test_browser_band_pick_reply_is_exact_or_nothing() -> None:
     # The miss took the whole band down, cursor included.
     assert payload["afterMiss"]["shown"] is False, payload["afterMiss"]
     assert payload["afterMiss"]["cursorShown"] is False, payload["afterMiss"]
+
+
+def test_browser_band_skips_rows_panned_off_the_plot() -> None:
+    """A row whose coordinate has left the plot cannot be selected by a pointer
+    inside it. The cursor already refuses to draw off-plot, so accepting one
+    showed a tooltip for an invisible point with nothing marking where it is."""
+    payload = _run_edge(
+        _recharts_chart(mode="x"),
+        """
+  // Pan clear of the data: every category now sits left of the plot, so the
+  // nearest row to any in-plot pointer is one that cannot be seen.
+  view.view.ranges.x = [20, 24];
+  view._drawNow();
+  hover(4, 8); const leftEdge = state();
+  hover(view.plot.w / 2, 8); const middle = state();
+  hover(view.plot.w - 4, 8); const rightEdge = state();
+  // Panning back brings the band straight back.
+  view.view.ranges.x = [0, 6];
+  view._drawNow();
+  const [bx] = proj(1, 0);
+  hover(bx, 8); const backInView = state();
+  done({ leftEdge, middle, rightEdge, backInView });
+""",
+        "off-plot band rows",
+    )
+    for key in ("leftEdge", "middle", "rightEdge"):
+        s = payload[key]
+        # Nothing is selectable, so nothing is shown and no cursor is drawn.
+        assert s["shown"] is False, (key, s)
+        assert s["targets"] == 0, (key, s)
+        assert s["cursorShown"] is False, (key, s)
+    # The guard is about visibility, not a permanent refusal.
+    back = payload["backInView"]
+    assert back["shown"] is True and back["title"] == "Page B", back
+    assert back["rows"] == ["pv1398", "uv3000"], back
+
+
+def test_browser_live_update_drops_the_previous_band(tmp_path) -> None:
+    """The band holds GPU trace objects and rows resolved from them, and
+    `updatePayload` replaces every one. Left in place, the next draw painted
+    active dots and tooltip rows from the retired traces against the new axes."""
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("headless chromium not found")
+    next_spec, next_buffer = _recharts_chart(mode="x").figure().build_payload()
+    # Same shape, different values: the update replaces the trace objects the
+    # live band is holding.
+    for trace in next_spec.get("traces", []):
+        trace["name"] = f"{trace.get('name', '')}2"
+    head = (
+        f"<script>const NEXT_SPEC = {json.dumps(next_spec)};"
+        f'const NEXT_B64 = "{base64.b64encode(next_buffer).decode("ascii")}";</script>'
+    )
+    document = probe_document(
+        _recharts_chart(mode="x"),
+        _edge_probe(
+            """
+  const decode = (b64) => {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  };
+  const [bx] = proj(1, 0);
+  hover(bx, 8);
+  const before = { ...state(), traces: view._hoverTargets.map((h) => h.g.trace.name) };
+  const applied = view.updatePayload(NEXT_SPEC, decode(NEXT_B64));
+  const afterUpdate = {
+    targets: (view._hoverTargets || []).length,
+    rows: view._bandRows,
+    key: view._bandKey,
+    cursorShown: !!cursor() && cursor().style.display === "block",
+  };
+  // The draw that used to reach into the retired trace objects.
+  if (view._raf) cancelAnimationFrame(view._raf);
+  view._raf = null;
+  view._drawNow();
+  const names = view.gpuTraces.map((g) => g.trace.name);
+  done({ before, applied, afterUpdate, names });
+"""
+        ),
+        head=head,
+    )
+    payload = run_browser_probe(
+        chromium,
+        document,
+        tmp_path / "band_update.html",
+        "data-xy-bandedge",
+        label="band cleared on updatePayload",
+    )
+
+    assert payload["before"]["targets"] == 2, payload["before"]
+    assert payload["applied"] is True, payload
+    # The traces really were replaced.
+    assert payload["names"] == ["pv2", "uv2"], payload
+    # And nothing of the old band survived the swap to be drawn against them.
+    assert payload["afterUpdate"]["targets"] == 0, payload["afterUpdate"]
+    assert payload["afterUpdate"]["rows"] is None, payload["afterUpdate"]
+    assert payload["afterUpdate"]["key"] is None, payload["afterUpdate"]
+    assert payload["afterUpdate"]["cursorShown"] is False, payload["afterUpdate"]
+
+
+def test_browser_hidden_tooltip_keeps_its_band_bookkeeping() -> None:
+    """`show=False` drops the tooltip element, not the band: the hover event,
+    the picks and the active dots still run. Hiding used to dissolve the band
+    mid-flight, so a later reply fell into the single-pick handler and
+    dispatched an `exact: true` hover carrying one series, not the band."""
+    chart = xy.line_chart(
+        xy.line(PAGES, PV, name="pv", color="#8884d8", width=2),
+        xy.line(PAGES, UV, name="uv", color="#82ca9d", width=2),
+        xy.tooltip(mode="x", show=False),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8);
+  const picks = sent.filter((m) => m.type === "pick");
+  const bandPicks = view._bandPicks ? view._bandPicks.size : 0;
+  // Replies land one at a time; the first must not dissolve the band.
+  view._onKernelMsg({
+    type: "pick_result", seq: picks[0].seq,
+    row: { trace: picks[0].trace, index: picks[0].index, x: 1, y: 1398 },
+  });
+  const afterFirst = { targets: (view._hoverTargets || []).length, picks: view._bandPicks.size };
+  view._onKernelMsg({
+    type: "pick_result", seq: picks[1].seq,
+    row: { trace: picks[1].trace, index: picks[1].index, x: 1, y: 3000 },
+  });
+  const exact = hovers.filter((h) => h.exact);
+  done({
+    picks: picks.length, bandPicks, afterFirst,
+    tooltipShown: tip.style.display === "block",
+    exactPointCounts: exact.map((h) => (h.points || []).length),
+  });
+""",
+        "hidden band bookkeeping",
+    )
+    assert payload["picks"] == 2 and payload["bandPicks"] == 2, payload
+    # The band survives the first reply instead of being cleared by the hide.
+    assert payload["afterFirst"]["targets"] == 2, payload["afterFirst"]
+    assert payload["afterFirst"]["picks"] == 1, payload["afterFirst"]
+    # The tooltip element stays hidden throughout.
+    assert payload["tooltipShown"] is False, payload
+    # Every exact hover describes the whole band, never a lone series.
+    assert payload["exactPointCounts"], payload
+    assert all(n == 2 for n in payload["exactPointCounts"]), payload
