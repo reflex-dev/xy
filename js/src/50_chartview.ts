@@ -1155,8 +1155,12 @@ export class ChartView {
         && this._axisTickLabelsVisible(axis);
       const titleOnSide = titleSide === side && this._axisTitleVisible(axis);
       if (!labelsOnSide && !titleOnSide) continue;
+      // The tick-label strategy decides tick-label room and nothing else. It
+      // is already folded into `labelsOnSide` through `_axisTickLabelsVisible`,
+      // so re-testing it here only dropped the TITLE's room: `"off"` keeps its
+      // title (unlike `"none"`, which suppresses it), and the exporter's
+      // `_x_tick_label_room` returns `title_room` for exactly that case.
       const strategy = this._axisTickLabelStrategy(axis);
-      if (["none", "off"].includes(strategy)) continue;
       const sideAxis = { ...axis, side };
       const size = Math.max(
         8,
@@ -1189,11 +1193,16 @@ export class ChartView {
         ? this._estimateTickLabel(axis.label, labelSize) : null;
       const labelExtra = labelBlock
         ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+      // Preserve the long-standing flat band for ordinary horizontal text.
+      // An axis drawing no tick label at all qualifies as much as `auto` does:
+      // there is no label to force a taller band, so it keeps the flat one
+      // rather than measuring a tick offset for rows that do not exist.
+      const flatTickBand = !labelsOnSide || strategy === "auto";
       if (
         !hasAdaptiveLayout
         && !hasMultilineTicks
         && !labelExtra
-        && strategy === "auto"
+        && flatTickBand
         && this._axisTickLabelAngle(axis) === null
       ) {
         continue;

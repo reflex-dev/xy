@@ -333,3 +333,41 @@ def test_an_inside_title_claims_no_gutter() -> None:
     )
     assert _browser_plot_rect(outside, "outside title")[2] < WIDTH
     assert _svg_plot_rect(outside)[2] < WIDTH
+
+
+def test_off_does_not_zero_the_title_it_still_draws() -> None:
+    """The tick-label strategy decides tick-label room, not the title's.
+
+    `"off"` keeps the axis title — that is what separates it from `"none"` —
+    but `_xAxisRoom` re-tested the strategy after the eligibility check and
+    returned no room at all, so a wrapped title on an `"off"` axis was measured
+    as nothing while the same title on an `auto` axis was measured. The
+    exporter has always returned `title_room` for `"off"` (`_x_tick_label_room`).
+
+    What the browser reserves for a title is still less than the exporter's
+    band; see `test_browser_and_export_agree_on_every_side` for that gap, which
+    is the same for `auto` and unchanged here.
+    """
+    wrapped = "Trade settlement window\nsecond line of the title"
+    off = _parity_chart(x={"tick_label_strategy": "off", "label": wrapped}, y={"show": False})
+    off_height = _browser_plot_rect(off, "off + wrapped title")[3]
+    assert off_height < HEIGHT, off_height
+
+    # `none` suppresses the title, so it keeps the full canvas.
+    none = _parity_chart(x={"tick_label_strategy": "none", "label": wrapped}, y={"show": False})
+    assert _browser_plot_rect(none, "none + wrapped title")[3] == float(HEIGHT)
+
+    # An `auto` axis reserves strictly more: the same title plus its tick
+    # labels. Ordering the two is what shows `"off"` is measured rather than
+    # merely non-zero.
+    auto = _parity_chart(x={"label": wrapped}, y={"show": False})
+    auto_height = _browser_plot_rect(auto, "auto + wrapped title")[3]
+    assert auto_height < off_height, (auto_height, off_height)
+
+    # Tick-label geometry stays off: a rotation angle on an axis that draws no
+    # label claims nothing, in either renderer.
+    rotated = _parity_chart(
+        x={"tick_label_strategy": "off", "tick_label_angle": 45}, y={"show": False}
+    )
+    assert _browser_plot_rect(rotated, "off + rotated")[3] == float(HEIGHT)
+    assert _svg_plot_rect(rotated)[3] == float(HEIGHT)
