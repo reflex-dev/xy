@@ -788,8 +788,9 @@ export class ChartView {
     const baseBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
-      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top"
+        || this._axisOutwardTickRoom(axis, "bottom") > 0) &&
+      this._axisGutterVisible(axis, "bottom"));
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
@@ -797,8 +798,9 @@ export class ChartView {
     // become part of the public API (the same rule used by secondary y axes).
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
-      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top"
+        || this._axisOutwardTickRoom(axis, "top") > 0) &&
+      this._axisGutterVisible(axis, "top"));
     const hasTopAxis = topAxes.length > 0;
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
@@ -842,8 +844,9 @@ export class ChartView {
     const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
-      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
-      this._axisTickLabelStrategy(axis) !== "none");
+      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right"
+        || this._axisOutwardTickRoom(axis, "right") > 0) &&
+      this._axisGutterVisible(axis, "right"));
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -946,7 +949,9 @@ export class ChartView {
     // `_layout` clears `_legendRect` just before this call, legend sizing and
     // positioning then fell back to `this.plot` and drew the legend on top of
     // the marks. Track it and skip only the inset.
-    const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";
+    // The same question every cartesian gutter asks: `"off"` draws no angular
+    // label any more than `"none"` does, and neither does a transparent paint.
+    const labelsHidden = !this._axisTickLabelsVisible(xAxisSpec);
     // A legend gutter comes off the canvas edge FIRST, before the disc is fitted
     // to what remains, so the disc never occupies the gutter and the legend
     // never occupies the disc. Mirrors the same block in `_recut_polar_plot`.
@@ -995,7 +1000,7 @@ export class ChartView {
     // natural home — and it is placed outward past the tick-label room, so a
     // titled radial axis keeps its gutter whole rather than part-reclaimed.
     const yAxis = this._axis("y") || {};
-    const titled = !!yAxis.label;
+    const titled = this._axisTitleVisible(yAxis);
     // `canvasX0` is a left legend gutter; the label room still applies inside
     // it. With no gutter it is 0 and `side >= room`, so this is the old value.
     const left = Math.max(titled ? Math.max(side, p.x) : side, canvasX0 + room);
@@ -1006,7 +1011,8 @@ export class ChartView {
     const xAxis = this._axis("x") || {};
     // A horizontal colorbar hangs off the plot's bottom edge; extending the
     // rect downward would walk it off the canvas.
-    const keepsBottom = !!xAxis.label || this.spec?.colorbar?.orientation === "horizontal";
+    const keepsBottom = this._axisTitleVisible(xAxis)
+      || this.spec?.colorbar?.orientation === "horizontal";
     const bottomReserve = keepsBottom ? reservedBottom : Math.min(reservedBottom, reservedTop);
     const bottom = canvasH - Math.max(room, bottomReserve);
     const top = reservedTop + room;
@@ -1074,10 +1080,17 @@ export class ChartView {
     let room = 0;
     for (const axis of Object.values<any>(this.axes || {})) {
       if (!axis || !String(axis.id || "").startsWith("y")) continue;
-      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left");
-      const titleOnLeft = axis.side !== "right";
-      if (!labelsOnLeft && !titleOnLeft) continue;
-      if (this._axisTickLabelStrategy(axis) === "none") continue;
+      const labelsOnLeft = this._axisTickLabelSides(axis).includes("left")
+        && this._axisTickLabelsVisible(axis);
+      // The title is reserved separately from the tick labels, so it answers to
+      // its own paint: `show=False, grid=True` keeps the grid and neither text.
+      const titleOnLeft = axis.side !== "right" && this._axisTitleVisible(axis);
+      // Marks drawn into the left gutter need it as much as text does, and
+      // this room is MEASURED rather than a flat band, so `_axisGutterVisible`
+      // ruling the axis in is not enough — without their length here the ticks
+      // are painted left of `plot.x` and clipped at zero padding.
+      const leftTickRoom = this._axisOutwardTickRoom(axis, "left");
+      if (!labelsOnLeft && !titleOnLeft && leftTickRoom <= 0) continue;
       const size = Math.max(
         8,
         this._axisStyleNumber(
@@ -1109,9 +1122,7 @@ export class ChartView {
         ? outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4))
         : 0;
       let needed = labelsOnLeft ? 4 + tickOffset + tickRoom : 0;
-      const rawPosition = axis.label_position;
-      const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
-      if (titleOnLeft && axis.label && !position.startsWith("inside_")) {
+      if (titleOnLeft) {
         const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
@@ -1129,7 +1140,7 @@ export class ChartView {
           + gap
           + labelExtent;
       }
-      room = Math.max(room, needed);
+      room = Math.max(room, needed, leftTickRoom ? 4 + leftTickRoom : 0);
     }
     return room;
   }
@@ -1146,10 +1157,26 @@ export class ChartView {
     for (const axis of Object.values<any>(this.axes || {})) {
       if (!axis || !String(axis.id || "").startsWith("x")) continue;
       const titleSide = axis.side === "top" ? "top" : "bottom";
-      const labelsOnSide = this._axisTickLabelSides(axis).includes(side);
-      if (!labelsOnSide && titleSide !== side) continue;
+      // Tick labels and the title each answer to their own paint. Measuring
+      // text that is switched off reintroduces the gutter `_axisGutterVisible`
+      // just collapsed: `marginBottom` below takes the MEASURED room, not the
+      // gated `bottomAxisRoom`, so a rotated, wrapped, or collision-stacked
+      // label kept its band after `show=False`.
+      const labelsOnSide = this._axisTickLabelSides(axis).includes(side)
+        && this._axisTickLabelsVisible(axis);
+      const titleOnSide = titleSide === side && this._axisTitleVisible(axis);
+      // Marks drawn into this band need it as much as the text does, and
+      // `tick_sides` can put them on a side the labels and the axis itself do
+      // not use. The flat top/bottom bands are 26-62 px, so a longer authored
+      // `tick_length` overran them.
+      const tickRoomOnSide = this._axisOutwardTickRoom(axis, side);
+      if (!labelsOnSide && !titleOnSide && tickRoomOnSide <= 0) continue;
+      // The tick-label strategy decides tick-label room and nothing else. It
+      // is already folded into `labelsOnSide` through `_axisTickLabelsVisible`,
+      // so re-testing it here only dropped the TITLE's room: `"off"` keeps its
+      // title (unlike `"none"`, which suppresses it), and the exporter's
+      // `_x_tick_label_room` returns `title_room` for exactly that case.
       const strategy = this._axisTickLabelStrategy(axis);
-      if (["none", "off"].includes(strategy)) continue;
       const sideAxis = { ...axis, side };
       const size = Math.max(
         8,
@@ -1177,18 +1204,51 @@ export class ChartView {
       const hasMultilineTicks = items.some(
         (item) => this._estimateTickLabel(item.text, size).lines.length > 1,
       );
-      const position = typeof axis.label_position === "string"
-        ? axis.label_position.replace(/-/g, "_") : "center";
       const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
-      const labelBlock = titleSide === side && axis.label && !position.startsWith("inside_")
+      const labelBlock = titleOnSide
         ? this._estimateTickLabel(axis.label, labelSize) : null;
-      const labelExtra = labelBlock
-        ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+
+      // The band the title itself needs, measured from where it is drawn:
+      // `p.y + p.h + 24` on the bottom, `p.y - 34` on the top (the two
+      // branches in `_drawAxisChrome`), plus the same 4 px canvas-edge pad the
+      // exporter's `_x_axis_title_room` uses. Measuring only the overflow past
+      // one line reserved nothing for an ordinary one-line title, so at a small
+      // authored padding the title was drawn past the canvas edge while the
+      // exporter fitted it.
+      //
+      // Only the BOTTOM takes the block height. Both renderers place an x
+      // title from its line-box top, so a second line grows toward the plot on
+      // the top side and away from it on the bottom — which is why
+      // `_x_axis_title_room` adds `(line_count - 1) * line_step` on one branch
+      // and not the other. Adding it on both (the old overflow term did) put a
+      // three-line top title 41 px further out than the exporter.
+      // Signed, not clamped: `_axisLabelCss` applies the authored value as
+      // given and `_x_axis_title_room` adds it as given, so a negative offset
+      // pulls the title toward the plot and needs less room, not more.
+      const titleOffset = Number.isFinite(Number(axis.label_offset))
+        ? Number(axis.label_offset) : 0;
+      // Rounded UP to a whole pixel: the GL canvas is sized `plot.h * dpr`
+      // into an integer attribute, so a fractional band leaves the canvas up
+      // to a pixel short of the rect it is meant to cover
+      // (`render_smoke_nonumpy.py` asserts the two agree). Only THIS term is
+      // rounded — the tick-label band below has always been fractional, and
+      // rounding it too moved charts this change has no business moving.
+      const titleRoom = labelBlock
+        ? Math.ceil(4 + titleOffset + (side === "top" ? 34 : 24 + labelBlock.h))
+        : 0;
+      // Preserve the long-standing flat band for ordinary horizontal text.
+      // An axis drawing no tick label at all qualifies as much as `auto` does:
+      // there is no label to force a taller band, so it keeps the flat one
+      // rather than measuring a tick offset for rows that do not exist. A
+      // title is measured either way — it is not tick-label geometry, and the
+      // flat band is not always big enough to hold it.
+      const flatTickBand = !labelsOnSide || strategy === "auto";
       if (
         !hasAdaptiveLayout
         && !hasMultilineTicks
-        && !labelExtra
-        && strategy === "auto"
+        && !titleRoom
+        && !tickRoomOnSide
+        && flatTickBand
         && this._axisTickLabelAngle(axis) === null
       ) {
         continue;
@@ -1218,7 +1278,24 @@ export class ChartView {
         offset = outward + this._axisStyleNumber(axis, "tick_padding", 4)
           + (side === "top" ? size * 0.2 : size * 0.8);
       }
-      room = Math.max(room, 4 + offset + rows * (size + 4) + extent + labelExtra);
+      // The title's band and the tick labels' band both start at the plot
+      // edge, so the axis needs the larger, not their sum.
+      //
+      // The tick-label term is gated on the labels actually being drawn on
+      // this side. An axis reaches here with `labelsOnSide` false whenever
+      // `tickRoomOnSide` alone kept it in the loop, and then `items` is empty:
+      // the term collapses to `4 + offset`, which is not zero, because
+      // `offset` is measured from the OUTWARD END of the tick mark. That
+      // reserved a whole label's clearance past marks with no label to hold
+      // -- the exporter's `_x_tick_label_room` takes `4 + tick_room` and
+      // stops -- so the two renderers drifted by the tick padding plus the
+      // font's descent at every tick length.
+      room = Math.max(
+        room,
+        titleRoom,
+        tickRoomOnSide ? 4 + tickRoomOnSide : 0,
+        labelsOnSide ? 4 + offset + rows * (size + 4) + extent : 0,
+      );
     }
     return room;
   }
@@ -7524,6 +7601,133 @@ export class ChartView {
     return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
   }
 
+  // Whether an axis text paint can contribute visible ink. The visibility
+  // shorthands compile to TRANSPARENT CSS colors rather than to a flag
+  // (`_axis_visibility_style`, python/xy/components.py), so layout has to ask
+  // the paint whether anything will be seen — otherwise `show=False` reserves
+  // a gutter for text nobody can read and cannot produce the documented
+  // edge-to-edge sparkline. An unknown or browser-only paint stays
+  // conservative and keeps its room.
+  // Mirrors `_axis_text_paint_visible` in python/xy/_svg.py, which is why the
+  // SVG and PNG exporters already collapse this gutter and the browser did not.
+  _axisTextPaintVisible(axis, key, fallbackKey?) {
+    let paint = this._axisStyleValue(axis, key);
+    if (paint === undefined && fallbackKey) paint = this._axisStyleValue(axis, fallbackKey);
+    if (paint === undefined || paint === null) return true;
+    return parseColor(this.root, paint, [0, 0, 0, 1])[3] !== 0;
+  }
+
+  // Whether this axis's tick labels claim gutter room at all: a strategy that
+  // draws none, or a paint that shows none, claims nothing. `none` and `off`
+  // are the two strategies that draw no label, and `_xAxisRoom` and
+  // `_axis_tick_label_room` (python/xy/_svg.py) already skip both.
+  _axisTickLabelsVisible(axis) {
+    return !["none", "off"].includes(this._axisTickLabelStrategy(axis))
+      && this._axisTextPaintVisible(axis, "tick_label_color", "tick_color");
+  }
+
+  // Whether this axis claims a gutter at all. Tick labels and the axis title
+  // are separate paints, so either one being visible reserves the band: with
+  // transparent ticks and an opaque title, gating on the ticks alone drew the
+  // title into a gutter that no longer existed — off the canvas for a top or
+  // bottom axis, over the plot for a right-side one. The left gutter already
+  // measured the two separately (`_yAxisLeftRoom`); this is the same rule for
+  // the sides that reserve a flat or measured band instead.
+  _axisGutterVisible(axis, side = null) {
+    return this._axisTickLabelsVisible(axis)
+      || this._axisTitleVisible(axis)
+      || this._axisOutwardTickRoom(axis, side) > 0;
+  }
+
+  // How far this axis's tick marks reach outside the plot, in px. Tick marks
+  // are chrome of their own: they answer to no *text* paint, so an axis with
+  // its labels switched off can still need the gutter for them, and the
+  // colorbar beside it still has to clear them. They do answer to
+  // `tick_color`, and to `tick_label_strategy: "none"`, which silences the
+  // whole axis chrome and takes both tick loops with it — geometry alone does
+  // not mean ink. The
+  // core default `tick_length` is 0, so an unstyled axis reaches nothing, and
+  // the `ticks=False`/`show=False` shorthand's `tick_length: 0, tick_width: 0`
+  // sentinel reaches nothing either.
+  //
+  // Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
+  _axisOutwardTickRoom(axis, side = null) {
+    if (this._axisTickLabelStrategy(axis) === "none") return 0;
+    // The requested side names its own dimension: a left/right query is about
+    // a y axis however the spec is shaped, and `_axisTickSides` would
+    // otherwise read it off the `id`.
+    const isX = side === null ? null : ["bottom", "top"].includes(side);
+
+    // The two tiers are drawn by two different loops, and almost nothing
+    // about them is shared, so they are measured apart. The major tier is
+    // drawn for the computed ticks, on every `tick_sides`, in
+    // `style.tick_color`; the minor tier only for the primary axes' own
+    // `minor_tick_values`, on `side` alone, in `minor_style.tick_color`.
+    // Taking the larger length
+    // under the major tier's paint and sides reserves phantom gutters and
+    // clips real marks in the same expression.
+    let room = 0;
+    if (this._axisTextPaintVisible(axis, "tick_color")
+        && (side === null || this._axisTickSides(axis, isX).includes(side))) {
+      room = this._tickTierOutwardRoom(axis);
+    }
+
+    // Only the primary x/y axes have a minor tier: both renderers draw minor
+    // marks from `minorTicks(xAxis, "x")` / `minorTicks(yAxis, "y")` alone,
+    // and the named-axis loops draw the major tier and stop. `_normalizeAxes`
+    // stamps every axis's id from its map key, so the id settles it here; the
+    // exporter has no such step and takes the answer from its caller instead.
+    const hasMinorTier = axis && (axis.id === "x" || axis.id === "y");
+    if (hasMinorTier
+        && Array.isArray(axis.minor_tick_values) && axis.minor_tick_values.length) {
+      const minor = { ...axis, style: axis.minor_style || {} };
+      const minorSide = axis.side || (isX === false ? "left" : "bottom");
+      if (this._axisTextPaintVisible(minor, "tick_color")
+          && (side === null || side === minorSide)) {
+        room = Math.max(room, this._tickTierOutwardRoom(minor));
+      }
+    }
+    return room;
+  }
+
+  // One tier's outward reach, from its own `style`.
+  _tickTierOutwardRoom(axis) {
+    const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+    // Zero width draws nothing anywhere (see `tickParts`), and the
+    // `ticks=False`/`show=False` sentinel is `tick_length: 0, tick_width: 0`,
+    // so either half of it reaches nothing on its own.
+    if (length <= 0 || this._axisStyleNumber(axis, "tick_width", 1) <= 0) return 0;
+    const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+    if (direction === "in") return 0;
+    return direction === "inout" ? length / 2 : length;
+  }
+
+  // Whether this axis draws a title into the gutter, which is what makes the
+  // title worth reserving room for. Three separate conditions, each matched to
+  // what the renderers actually do:
+  //
+  //  - `tick_label_strategy: "none"` suppresses the title as well as the
+  //    labels, in both renderers (the two title branches in `_drawAxisChrome`
+  //    below, and `_axis_label_geometry` in python/xy/_svg.py). Crediting a
+  //    title there reserves a band nothing is drawn into. `"off"` is the
+  //    narrower switch and keeps the title.
+  //  - The title answers to `label_color` and nothing else: both renderers
+  //    paint it from that key alone (`kind === "label"` below, and
+  //    `_css(axis_style.get("label_color"), ...)`), with no `tick_color`
+  //    fallback. Reading a transparent `tick_color` as a hidden title drops
+  //    the gutter out from under a title that is still drawn.
+  //  - An `inside_*` title is drawn over the plot and needs no gutter at all.
+  //
+  // Mirrors `_axis_title_visible` in python/xy/_svg.py.
+  _axisTitleVisible(axis) {
+    if (!axis || !axis.label) return false;
+    if (this._axisTickLabelStrategy(axis) === "none") return false;
+    const raw = axis.label_position;
+    const position = typeof raw === "string" ? raw.replace(/-/g, "_") : "center";
+    if (position.startsWith("inside_")) return false;
+    return this._axisTextPaintVisible(axis, "label_color");
+  }
+
   _axisGridDash(axis) {
     const value = String(this._axisStyleValue(axis, "grid_dash") || "solid");
     if (value === "dashed") return [6, 4];
@@ -7544,11 +7748,22 @@ export class ChartView {
     return id === "y" ? "left" : "right";
   }
 
-  _axisTickSides(axis) {
-    const isX = String(axis && axis.id || "x").startsWith("x");
+  // `isX` defaults to reading the axis `id`; a caller that already knows the
+  // dimension (because it named the gutter it is asking about) passes it, so
+  // an axis dict carrying no `id` is still asked the right question.
+  _axisTickSides(axis, isX = null) {
+    const inferred = isX === null;
+    if (inferred) isX = String(axis && axis.id || "x").startsWith("x");
     const allowed = isX ? ["bottom", "top"] : ["left", "right"];
     if (!Array.isArray(axis && axis.tick_sides)) {
-      return [axis && axis.side || this._axisDefaultSide(axis)];
+      const authored = axis && axis.side;
+      if (authored) return [authored];
+      // An axis that authors no side falls back to the one its id implies,
+      // whether or not the caller supplied the dimension -- the draw loop
+      // asks without a hint, so answering `allowed[0]` here would have had
+      // layout reserve the left gutter for a `y2` whose marks are drawn on
+      // the right. `allowed[0]` remains for an axis with no id to imply one.
+      return [axis && axis.id !== undefined ? this._axisDefaultSide(axis) : allowed[0]];
     }
     return allowed.filter((side) => axis.tick_sides.includes(side));
   }
@@ -7934,8 +8149,16 @@ export class ChartView {
     // between throttled zoom frames since the plot rect doesn't move on zoom.
     const tickParts = (axis) => {
       const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-      const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+      // An authored zero width draws nothing, in every renderer: the SVG
+      // exporter emits `stroke-width="0"` and the raster one skips a
+      // non-positive width. The 0.5 floor is for sub-pixel widths at low dpr,
+      // not a way to resurrect a mark the author switched off — clamping
+      // through zero painted a hairline the static renderers had no gutter
+      // for. `_axisOutwardTickRoom` asks the same question.
+      const authoredWidth = this._axisStyleNumber(axis, "tick_width", 1);
+      const width = authoredWidth > 0 ? Math.max(0.5, authoredWidth) : 0;
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      if (width <= 0) return { inward: 0, outward: 0, width: 0 };
       if (direction === "in") return { inward: length, outward: 0, width };
       if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
       return { inward: 0, outward: length, width };

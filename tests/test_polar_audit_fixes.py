@@ -657,8 +657,11 @@ def test_hiding_angular_labels_keeps_the_legend_gutter() -> None:
     _cw, _ch, _cc, cart_plot = _svg.layout(cart_spec)
     assert plot["x"] < cart_plot["x"]
 
-    # The client tracks the same flag rather than returning early.
-    assert 'const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";' in CHARTVIEW
+    # The client tracks the same flag rather than returning early, and reads it
+    # from the same visibility helper every cartesian gutter uses, so `"off"`
+    # and a transparent tick paint reclaim the inset too
+    # (`test_polar_asks_the_same_question_about_its_text`).
+    assert "const labelsHidden = !this._axisTickLabelsVisible(xAxisSpec);" in CHARTVIEW
     assert "labelsHidden ? 0 : this._polarLabelRoom(xAxisSpec)" in CHARTVIEW
 
 
