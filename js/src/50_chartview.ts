@@ -789,7 +789,7 @@ export class ChartView {
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
-      this._axisTickLabelsVisible(axis));
+      this._axisGutterVisible(axis));
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
@@ -798,7 +798,7 @@ export class ChartView {
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
-      this._axisTickLabelsVisible(axis));
+      this._axisGutterVisible(axis));
     const hasTopAxis = topAxes.length > 0;
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
@@ -843,7 +843,7 @@ export class ChartView {
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
-      this._axisTickLabelsVisible(axis));
+      this._axisGutterVisible(axis));
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -7548,6 +7548,19 @@ export class ChartView {
   _axisTickLabelsVisible(axis) {
     return this._axisTickLabelStrategy(axis) !== "none"
       && this._axisTextPaintVisible(axis, "tick_label_color", "tick_color");
+  }
+
+  // Whether this axis claims a gutter at all. Tick labels and the axis title
+  // are separate paints, so either one being visible reserves the band: with
+  // transparent ticks and an opaque title, gating on the ticks alone drew the
+  // title into a gutter that no longer existed — off the canvas for a top or
+  // bottom axis, over the plot for a right-side one. The left gutter already
+  // measured the two separately (`_yAxisLeftRoom`); this is the same rule for
+  // the sides that reserve a flat or measured band instead.
+  _axisGutterVisible(axis) {
+    if (this._axisTickLabelsVisible(axis)) return true;
+    return !!(axis && axis.label)
+      && this._axisTextPaintVisible(axis, "label_color", "tick_color");
   }
 
   _axisGridDash(axis) {

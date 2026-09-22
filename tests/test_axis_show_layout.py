@@ -47,27 +47,58 @@ def _chart(**axes):
     )
 
 
-def _svg_plot_rect(chart) -> tuple[float, float]:
-    """The exporter's plot rect, read from the clip path it draws marks into."""
+def _svg_plot_rect(chart) -> tuple[float, float, float, float]:
+    """The exporter's plot rect (x, y, width, height), read from the clip path
+    it draws marks into. All four, not just the horizontal pair: collapsing a
+    gutter on one axis while the other renderer keeps it is exactly the class
+    of divergence this fixes, and it can happen vertically too."""
     svg = chart.to_svg()
     match = re.search(r"<clipPath[^>]*>\s*<rect ([^/]*)/>", svg)
     assert match is not None, "SVG clip path shape changed; update this helper"
     attrs = dict(re.findall(r'(\w+)="([^"]*)"', match.group(1)))
-    return float(attrs["x"]), float(attrs["width"])
+    return tuple(round(float(attrs[k]), 1) for k in ("x", "y", "width", "height"))
 
 
 def test_export_collapses_the_slot_for_show_false() -> None:
     """The contract the exporters already keep: nothing drawn, nothing
     reserved, on either side."""
-    assert _svg_plot_rect(_chart(x={"show": False}, y={"show": False})) == (0.0, WIDTH)
-    flush_right = _chart(x={"show": False}, y={"show": False, "side": "right"})
-    assert _svg_plot_rect(flush_right) == (0.0, WIDTH)
+    off = {"show": False}
+    assert _svg_plot_rect(_chart(x=off, y=off))[:3] == (0.0, PADDING[0], WIDTH)
+    flush_right = _chart(x=off, y={"show": False, "side": "right"})
+    assert flush_right and _svg_plot_rect(flush_right)[2] == WIDTH
     # A grid needs no gutter, so `show=False, grid=True` is flush as well.
-    grid_only = _chart(x={"show": False}, y={"show": False, "grid": True})
-    assert _svg_plot_rect(grid_only) == (0.0, WIDTH)
+    grid_only = _chart(x=off, y={"show": False, "grid": True})
+    assert _svg_plot_rect(grid_only)[2] == WIDTH
     # An axis that draws its labels still reserves its room.
-    x0, w = _svg_plot_rect(_chart())
+    x0, _y, w, _h = _svg_plot_rect(_chart())
     assert x0 > 0 and w < WIDTH, (x0, w)
+
+
+def test_an_axis_title_keeps_its_gutter_without_tick_labels() -> None:
+    """Tick labels and the axis title are separate paints, so either one
+    showing keeps the band. Gating the whole gutter on the tick labels drew an
+    opaque title into a gutter that no longer existed — over the plot, for a
+    right-side axis."""
+    titled_right = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(show=False),
+        xy.y_axis(show=False, side="right", label="Value", style={"label_color": "#000000"}),
+        width=WIDTH,
+        height=HEIGHT,
+        padding=(0, 0, 0, 0),
+    )
+    # The title is drawn, so the flat right-side reservation stands.
+    assert _svg_plot_rect(titled_right)[2] < WIDTH
+    # With no title to draw, it does not.
+    untitled_right = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(show=False),
+        xy.y_axis(show=False, side="right"),
+        width=WIDTH,
+        height=HEIGHT,
+        padding=(0, 0, 0, 0),
+    )
+    assert _svg_plot_rect(untitled_right)[2] == WIDTH
 
 
 _PLOT_RECT_PROBE = """
@@ -133,4 +164,37 @@ def test_browser_visible_axes_keep_their_room() -> None:
     # The two measure text with different engines, so they are close rather
     # than identical; a whole gutter's worth of difference is the regression.
     assert abs(browser[0] - export[0]) <= 8, (browser, export)
-    assert abs(browser[1] - export[1]) <= 8, (browser, export)
+    assert abs(browser[1] - export[2]) <= 8, (browser, export)
+
+
+def test_browser_and_export_agree_on_every_side() -> None:
+    """Parity in all four coordinates, not just the horizontal pair: collapsing
+    a gutter in one renderer and not the other is the bug this fixes, and it
+    can happen vertically.
+
+    Known gap, unchanged by this PR and present on `main`: with tick labels
+    switched off and an opaque *title*, the exporter reserves a bottom band for
+    the title while the browser measures its bottom room from the tick labels
+    alone and reserves none. That is a title-measurement difference on the x
+    axis, not gutter eligibility, so it is left for its own change rather than
+    pinned to the wrong value here."""
+    off = {"show": False}
+    for label, axes in (
+        ("both off", {"x": off, "y": off}),
+        ("x off, y on", {"x": off, "y": {}}),
+        ("x on, y off", {"x": {}, "y": off}),
+        ("right axis off", {"x": off, "y": {"show": False, "side": "right"}}),
+        ("grid only", {"x": off, "y": {"show": False, "grid": True}}),
+    ):
+        chart = xy.line_chart(
+            xy.line([0.0, 1.0], [0.0, 1.0]),
+            xy.x_axis(**axes["x"]),
+            xy.y_axis(**axes["y"]),
+            width=WIDTH,
+            height=HEIGHT,
+            padding=(0, 0, 0, 0),
+        )
+        bx, bw = _browser_plot_rect(chart, f"parity: {label}")
+        ex, _ey, ew, _eh = _svg_plot_rect(chart)
+        assert abs(bx - ex) <= 8, (label, (bx, bw), (ex, ew))
+        assert abs(bw - ew) <= 8, (label, (bx, bw), (ex, ew))
