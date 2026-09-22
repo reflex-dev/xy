@@ -417,3 +417,70 @@ def test_a_collapsed_right_gutter_does_not_push_the_colorbar_out() -> None:
         label="Secondary", label_position="inside_center", show=False
     )
     assert inside_x < inside_plot_right + 40, (inside_x, inside_plot_right)
+
+
+_POLAR_ANGLES = [0, 60, 120, 180, 240, 300]
+_POLAR_RADII = [3.0, 4.5, 2.0, 5.0, 3.5, 4.0]
+_POLAR_SIZE = 420
+
+
+def _polar_chart(**axes):
+    return xy.polar_chart(
+        xy.line(_POLAR_ANGLES, _POLAR_RADII),
+        xy.theta_axis(**axes.get("theta", {})),
+        xy.r_axis(**axes.get("r", {})),
+        width=_POLAR_SIZE,
+        height=_POLAR_SIZE,
+    )
+
+
+def test_polar_asks_the_same_question_about_its_text() -> None:
+    """The polar recut reads the same visibility rules as the cartesian gutters.
+
+    It derived its inset from the raw strategy string and its title gutters
+    from `axis.label` alone, so `show=False` on a polar chart kept the disc
+    inset for angular labels nobody could see, and a hidden or `inside_*`
+    radial title kept a left gutter in the browser that the exporter had
+    already dropped — the renderers disagreeing about the same chart, which is
+    the divergence this change exists to close.
+    """
+    visible = _polar_chart()
+    inset = _browser_plot_rect(visible, "polar: labels on")
+    assert inset == _svg_plot_rect(visible), (inset, _svg_plot_rect(visible))
+    assert inset[0] > 8, inset
+
+    # Every way of switching the angular labels off reclaims the same inset,
+    # and `"off"` is no longer the odd one out beside `"none"`.
+    for label, theta in (
+        ("show=False", {"show": False}),
+        ('strategy "off"', {"tick_label_strategy": "off"}),
+        ('strategy "none"', {"tick_label_strategy": "none"}),
+    ):
+        chart = _polar_chart(theta=theta)
+        browser = _browser_plot_rect(chart, f"polar: {label}")
+        assert browser[0] < inset[0], (label, browser, inset)
+        assert browser == _svg_plot_rect(chart), (label, browser, _svg_plot_rect(chart))
+
+    # A drawn radial title keeps the left gutter it is placed in; one that is
+    # hidden, or drawn inside the disc, does not.
+    off = {"show": False}
+    titled = _polar_chart(theta=off, r={"label": "Value"})
+    titled_rect = _browser_plot_rect(titled, "polar: radial title")
+    assert titled_rect == _svg_plot_rect(titled), (titled_rect, _svg_plot_rect(titled))
+
+    for label, r_axis in (
+        ("hidden title", {"label": "Value", "show": False}),
+        ("inside title", {"label": "Value", "label_position": "inside_center"}),
+    ):
+        chart = _polar_chart(theta=off, r=r_axis)
+        browser = _browser_plot_rect(chart, f"polar: {label}")
+        assert browser[0] < titled_rect[0], (label, browser, titled_rect)
+        assert browser == _svg_plot_rect(chart), (label, browser, _svg_plot_rect(chart))
+
+    # The theta title holds the bottom band the same way, and only while drawn.
+    hidden_theta_title = _polar_chart(theta={**off, "label": "Angle"})
+    browser = _browser_plot_rect(hidden_theta_title, "polar: hidden theta title")
+    assert browser == _svg_plot_rect(hidden_theta_title), (
+        browser,
+        _svg_plot_rect(hidden_theta_title),
+    )

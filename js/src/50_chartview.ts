@@ -946,7 +946,9 @@ export class ChartView {
     // `_layout` clears `_legendRect` just before this call, legend sizing and
     // positioning then fell back to `this.plot` and drew the legend on top of
     // the marks. Track it and skip only the inset.
-    const labelsHidden = this._axisTickLabelStrategy(xAxisSpec) === "none";
+    // The same question every cartesian gutter asks: `"off"` draws no angular
+    // label any more than `"none"` does, and neither does a transparent paint.
+    const labelsHidden = !this._axisTickLabelsVisible(xAxisSpec);
     // A legend gutter comes off the canvas edge FIRST, before the disc is fitted
     // to what remains, so the disc never occupies the gutter and the legend
     // never occupies the disc. Mirrors the same block in `_recut_polar_plot`.
@@ -995,7 +997,7 @@ export class ChartView {
     // natural home — and it is placed outward past the tick-label room, so a
     // titled radial axis keeps its gutter whole rather than part-reclaimed.
     const yAxis = this._axis("y") || {};
-    const titled = !!yAxis.label;
+    const titled = this._axisTitleVisible(yAxis);
     // `canvasX0` is a left legend gutter; the label room still applies inside
     // it. With no gutter it is 0 and `side >= room`, so this is the old value.
     const left = Math.max(titled ? Math.max(side, p.x) : side, canvasX0 + room);
@@ -1006,7 +1008,8 @@ export class ChartView {
     const xAxis = this._axis("x") || {};
     // A horizontal colorbar hangs off the plot's bottom edge; extending the
     // rect downward would walk it off the canvas.
-    const keepsBottom = !!xAxis.label || this.spec?.colorbar?.orientation === "horizontal";
+    const keepsBottom = this._axisTitleVisible(xAxis)
+      || this.spec?.colorbar?.orientation === "horizontal";
     const bottomReserve = keepsBottom ? reservedBottom : Math.min(reservedBottom, reservedTop);
     const bottom = canvasH - Math.max(room, bottomReserve);
     const top = reservedTop + room;

@@ -2194,6 +2194,19 @@ def _axis_title_visible(axis: dict[str, Any]) -> bool:
     )
 
 
+def _axis_tick_labels_visible(axis: dict[str, Any]) -> bool:
+    """Whether this axis draws any tick label.
+
+    ``"none"`` and ``"off"`` are the two strategies that draw none, and a
+    transparent paint shows none. Mirrors ``_axisTickLabelsVisible`` in
+    js/src/50_chartview.ts.
+    """
+    return _axis_tick_label_strategy(axis) not in {
+        "none",
+        "off",
+    } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
+
+
 def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
     """Whether this axis claims a gutter at all.
 
@@ -2202,11 +2215,7 @@ def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
     into a gutter that no longer exists. Mirrors ``_axisGutterVisible`` in
     js/src/50_chartview.ts.
     """
-    tick_labels = _axis_tick_label_strategy(axis) not in {
-        "none",
-        "off",
-    } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
-    return tick_labels or _axis_title_visible(axis)
+    return _axis_tick_labels_visible(axis) or _axis_title_visible(axis)
 
 
 def _y_title_baseline(
@@ -2853,7 +2862,9 @@ def _recut_polar_plot(
     # legend fell back to the plain plot rect and drew on top of the marks —
     # and the disc kept the cartesian gutters it should have given back. Track
     # it and skip only the inset.
-    labels_hidden = theta_axis.get("tick_label_strategy") == "none"
+    # The same question every cartesian gutter asks: `"off"` draws no angular
+    # label any more than `"none"` does, and neither does a transparent paint.
+    labels_hidden = not _axis_tick_labels_visible(theta_axis)
     # The legend gutter is taken off the canvas edge FIRST, before the disc is
     # fitted to what is left, so the disc never occupies the gutter and the
     # legend never occupies the disc. Recorded as four floats rather than a
@@ -2908,7 +2919,7 @@ def _recut_polar_plot(
     # at x = -10, off the canvas. Charts with no radial title (the common case)
     # still get the full reclaim.
     y_axis = spec.get("y_axis") or {}
-    titled = bool(y_axis.get("label")) and _axis_text_paint_visible(y_axis, "label_color")
+    titled = _axis_title_visible(y_axis)
     # `canvas_x0` is a left legend gutter; the label room still applies inside it.
     # With no gutter it is 0 and `side >= room`, so this is the previous value.
     left = max(max(side, plot["x"]) if titled else side, canvas_x0 + room)
@@ -2918,7 +2929,7 @@ def _recut_polar_plot(
     # because that title is drawn in the bottom gutter and reclaiming the band
     # pushed it below the canvas edge.
     x_axis = spec.get("x_axis") or {}
-    x_titled = bool(x_axis.get("label")) and _axis_text_paint_visible(x_axis, "label_color")
+    x_titled = _axis_title_visible(x_axis)
     # A horizontal colorbar is placed relative to the plot's BOTTOM edge, so
     # extending the rect downward walks it off the canvas. Its gutter is real
     # chrome, not a tick-label gutter: keep it whole, like a theta title.

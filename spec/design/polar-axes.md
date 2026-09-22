@@ -143,9 +143,14 @@ Eight properties this pins down, each of which has matching coverage:
   `anchor` (an explicit plot-relative placement they own, still resolved against
   the plot) or a four-tuple `padding` (which already states the box the plot
   should occupy, and remains the way to hand-reserve a caption band), and nothing
-  is reserved for a figure whose angular axis is `tick_label_strategy="none"` —
-  that early return skips the whole recut, and it is the donut/gauge case whose
-  chrome the author has already taken over. Both static exporters bound their
+  is reserved for a figure whose angular axis draws no tick label — a
+  `tick_label_strategy` of `"none"` or `"off"`, or a tick-label paint the
+  visibility shorthands have made transparent. That is the same question every
+  cartesian gutter asks (`_axis_tick_labels_visible` / `_axisTickLabelsVisible`),
+  and it is the donut/gauge case whose chrome the author has already taken over.
+  The radial and angular titles answer separately, to `_axis_title_visible` —
+  a drawn title keeps the gutter it is placed in, while a hidden or `inside_*`
+  one keeps none. Both static exporters bound their
   legend so an oversized one ellipsizes instead of escaping the file, and that
   bound is `legend_clip_rect` — the plot rect **unioned** with the gutter, shared
   so the SVG `clipPath` and the raster clip command cannot drift. Clipping to the
