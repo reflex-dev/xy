@@ -514,15 +514,15 @@ def _preset_button(label: str, palette: Sequence[str]) -> rx.Component:
         class_name=rx.cond(
             ChartPlaygroundState.preset == label,
             (
-                "inline-flex h-9 items-center gap-2 rounded-full border border-primary-7 "
-                "bg-primary-3 px-3 font-small text-primary-11 transition focus:outline-none "
-                "focus-visible:ring-2 focus-visible:ring-primary-7"
+                "inline-flex h-9 items-center gap-2 rounded-full border border-ring "
+                "bg-accent px-3 font-small text-foreground transition focus:outline-none "
+                "focus-visible:ring-2 focus-visible:ring-ring"
             ),
             (
-                "inline-flex h-9 items-center gap-2 rounded-full border border-secondary-6 "
-                "bg-secondary-1 px-3 font-small text-secondary-11 transition "
-                "hover:border-primary-7 hover:bg-primary-3 hover:text-primary-11 "
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-7"
+                "inline-flex h-9 items-center gap-2 rounded-full border border-border "
+                "bg-background px-3 font-small text-muted-foreground transition "
+                "hover:border-ring hover:bg-accent hover:text-foreground "
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             ),
         ),
     )
@@ -538,7 +538,7 @@ def _color_control(
     return rx.el.label(
         rx.el.span(
             label,
-            class_name="font-small font-medium text-secondary-11",
+            class_name="font-small font-medium text-muted-foreground",
         ),
         rx.el.span(
             rx.el.input(
@@ -549,21 +549,21 @@ def _color_control(
                 aria_label=f"{label} chart color",
                 title=f"Choose {label.lower()} chart color",
                 class_name=(
-                    "h-8 w-10 cursor-pointer rounded-md border border-secondary-6 "
-                    "bg-secondary-1 p-0.5 focus:outline-none "
-                    "focus-visible:ring-2 focus-visible:ring-primary-7"
+                    "h-8 w-10 cursor-pointer rounded-md border border-border "
+                    "bg-background p-0.5 focus:outline-none "
+                    "focus-visible:ring-2 focus-visible:ring-ring"
                 ),
             ),
             rx.el.code(
                 color,
-                class_name="font-mono text-xs uppercase text-secondary-11",
+                class_name="font-mono text-xs uppercase text-muted-foreground",
             ),
             class_name="flex items-center gap-2",
         ),
         html_for=input_id,
         class_name=(
             "flex min-w-0 items-center justify-between gap-3 rounded-lg border "
-            "border-secondary-5 bg-secondary-1 px-3 py-2"
+            "border-border bg-background px-3 py-2"
         ),
     )
 
@@ -575,13 +575,13 @@ def _palette_controls() -> rx.Component:
             rx.el.div(
                 rx.el.span(
                     "Palette",
-                    class_name="font-small font-medium text-secondary-12",
+                    class_name="font-small font-medium text-foreground",
                 ),
                 rx.el.span(
                     "Current: ",
                     rx.el.strong(ChartPlaygroundState.preset),
                     aria_live="polite",
-                    class_name="font-small text-secondary-10",
+                    class_name="font-small text-muted-foreground",
                 ),
                 class_name="flex flex-wrap items-center gap-x-3 gap-y-1",
             ),
@@ -591,11 +591,11 @@ def _palette_controls() -> rx.Component:
                 on_click=ChartPlaygroundState.reset_palette,
                 aria_label="Reset palette to Berry",
                 class_name=(
-                    "inline-flex h-8 items-center rounded-md border border-secondary-6 "
-                    "bg-secondary-1 px-3 font-small font-medium text-secondary-11 "
-                    "transition hover:border-primary-7 hover:bg-primary-3 "
-                    "hover:text-primary-11 focus:outline-none "
-                    "focus-visible:ring-2 focus-visible:ring-primary-7"
+                    "inline-flex h-8 items-center rounded-md border border-border "
+                    "bg-background px-3 font-small font-medium text-muted-foreground "
+                    "transition hover:border-ring hover:bg-accent "
+                    "hover:text-foreground focus:outline-none "
+                    "focus-visible:ring-2 focus-visible:ring-ring"
                 ),
             ),
             class_name="flex flex-wrap items-center justify-between gap-3",
@@ -622,9 +622,7 @@ def _palette_controls() -> rx.Component:
             ),
             class_name="grid grid-cols-1 gap-2 sm:grid-cols-3",
         ),
-        class_name=(
-            "mb-5 flex flex-col gap-3 rounded-xl border border-secondary-5 bg-secondary-2 p-3"
-        ),
+        class_name=("mb-5 flex flex-col gap-3 rounded-xl border border-border bg-muted p-3"),
     )
 
 
@@ -636,7 +634,7 @@ def _chart_card(
     """Render one playground chart card."""
     return rx.el.section(
         rx.el.div(
-            rx.el.h3(title, class_name="font-base font-medium text-secondary-12"),
+            rx.el.h3(title, class_name="font-base font-medium text-foreground"),
             rx.el.button(
                 rx.cond(
                     ChartPlaygroundState.copied_chart == title,
@@ -656,9 +654,9 @@ def _chart_card(
                 ],
                 class_name=(
                     "inline-flex size-8 items-center justify-center rounded-md border "
-                    "border-secondary-6 bg-secondary-1 text-secondary-9 transition "
-                    "hover:border-primary-7 hover:bg-primary-3 hover:text-primary-11 "
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-7"
+                    "border-border bg-background text-subtle-foreground transition "
+                    "hover:border-ring hover:bg-accent hover:text-foreground "
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 ),
             ),
             class_name="flex items-center justify-between gap-4 px-4 py-3.5",
@@ -666,11 +664,10 @@ def _chart_card(
         rx.el.div(
             chart,
             class_name=(
-                "h-[300px] w-full overflow-hidden border-t border-secondary-5 "
-                "bg-white p-2 dark:bg-black"
+                "h-[300px] w-full overflow-hidden border-t border-border bg-white p-2 dark:bg-black"
             ),
         ),
-        class_name="min-w-0 overflow-hidden rounded-xl border border-secondary-5 bg-secondary-1",
+        class_name="min-w-0 overflow-hidden rounded-xl border border-border bg-background",
     )
 
 

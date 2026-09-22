@@ -111,7 +111,7 @@ def validate_inline_svg_gallery(page_route: str, module_path: Path) -> None:
             f"expected {INLINE_SVG_PREVIEW_COUNT}: {page_route}"
         )
         raise RuntimeError(msg)
-    for marker in ("gallery-preview-surface", "aspect-[320/232]", "shadow-large"):
+    for marker in ("gallery-preview-surface", "aspect-[320/232]", "shadow-small"):
         if marker not in source:
             msg = f"Inline SVG gallery omits {marker!r}: {page_route}"
             raise RuntimeError(msg)

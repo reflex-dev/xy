@@ -21,7 +21,7 @@ main:has(#xy-chart-examples) > div:has(article #xy-chart-examples) {
 # only the strip's outer corners round — the middle trigger stays square. The
 # list overlaps the card border by 1px (`-mb-px`) so the active trigger, wearing
 # white, covers the seam and opens into the surface below while inactive
-# triggers keep their bottom border. Card and triggers share `border-secondary-4`.
+# triggers keep their bottom border. Card and triggers share `border-border-subtle`.
 _EXAMPLE_TAB_LIST_CLASS = (
     "xy-example-tab-list relative z-10 -mb-px ml-auto flex items-end justify-end "
     "!gap-0 !border-b-0 !bg-transparent !p-0 !shadow-none "
@@ -43,7 +43,7 @@ def _example_demo_header(*triggers: rx.Component) -> rx.Component:
 _EXAMPLE_TAB_CLASS = (
     "xy-example-tab cursor-pointer appearance-none !rounded-none "
     "first:!rounded-tl-[0.625rem] last:!rounded-tr-[0.625rem] "
-    "!border !border-secondary-4 -ml-px first:!ml-0 "
+    "!border !border-border-subtle -ml-px first:!ml-0 "
     "!bg-[#f5f5f5] !px-3.5 !py-2 !text-[0.8125rem] !font-medium !leading-5 "
     "!text-[#525252] !shadow-none transition-[color,background-color] "
     "duration-[120ms] before:!hidden after:!hidden "
@@ -60,7 +60,7 @@ _EXAMPLE_TAB_CLASS = (
 # stays square so the connected tab strip meets it flush.
 _EXAMPLE_CARD_CLASS = (
     "relative w-full overflow-hidden rounded-xl rounded-tr-none border "
-    "border-secondary-4 bg-white dark:bg-black"
+    "border-border-subtle bg-white dark:bg-black"
 )
 
 _EXAMPLE_LEGENDS = {
@@ -167,7 +167,7 @@ def _chart_legend(component_id: str | None) -> rx.Component:
                 rx.el.span(label),
                 class_name=(
                     "inline-flex items-center gap-2 whitespace-nowrap text-sm "
-                    "font-medium text-secondary-11"
+                    "font-medium text-muted-foreground"
                 ),
             )
             for label, color, line_style in items
@@ -196,7 +196,7 @@ def _example_tab_trigger(value: str, icon: str, label: str) -> rx.Component:
 def _example_code_panel(source: str, value: str) -> rx.Component:
     """A code/data tab panel that sits on the card's own surface.
 
-    ``doccode`` wraps long snippets in a ``bg-secondary-2`` expand container with
+    ``doccode`` wraps long snippets in a ``bg-muted`` expand container with
     its own code-block fill and a matching fade gradient behind the Expand
     toggle. Strip every one of those backgrounds to transparent and recolor the
     fade to the card so the code reads on the same surface as the Preview tab.

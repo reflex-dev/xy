@@ -23,7 +23,7 @@ def _footer_link(text: str, href: str) -> rx.Component:
         text,
         href=router_href,
         class_name=(
-            "font-small text-secondary-9 no-underline transition-colors hover:!text-secondary-11"
+            "text-sm font-book leading-6 text-foreground no-underline transition-colors hover:!text-muted-foreground"
         ),
     )
 
@@ -31,9 +31,9 @@ def _footer_link(text: str, href: str) -> rx.Component:
 def _footer_column(heading: str, *links: rx.Component) -> rx.Component:
     """Render one compact footer navigation column."""
     return rx.box(
-        rx.el.h4(
+        rx.el.h2(
             heading,
-            class_name=("text-sm font-semibold tracking-[-0.01313rem] text-secondary-12"),
+            class_name=("text-xs font-book leading-5 text-muted-foreground"),
         ),
         *links,
         class_name="flex min-w-[9rem] flex-col gap-4",
@@ -48,9 +48,9 @@ def _page_action(text: str, href: str) -> rx.Component:
         target="_blank",
         rel="noreferrer",
         class_name=(
-            "rounded-full border border-secondary-5 bg-secondary-1 px-3 py-0.5 "
-            "font-small text-secondary-9 no-underline shadow-large "
-            "transition-colors hover:bg-secondary-3 hover:!text-secondary-11"
+            "rounded-full border border-border bg-background px-3 py-0.5 "
+            "font-small text-subtle-foreground no-underline shadow-small "
+            "transition-colors hover:bg-accent hover:!text-muted-foreground"
         ),
     )
 
@@ -72,11 +72,13 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
     feedback = rx.box(
         rx.text(
             "Did this page help?",
-            class_name=("whitespace-nowrap font-small text-secondary-11 lg:text-secondary-9"),
+            class_name=(
+                "whitespace-nowrap font-small text-muted-foreground lg:text-subtle-foreground"
+            ),
         ),
         docs_feedback_button(),
         class_name=(
-            "flex w-full flex-col items-center gap-3 rounded-lg bg-secondary-3 "
+            "flex w-full flex-col items-center gap-3 rounded-lg bg-accent "
             "p-4 lg:w-auto lg:flex-row lg:gap-4 lg:bg-transparent lg:p-0"
         ),
     )
@@ -118,11 +120,11 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
     copyright_status = rx.el.div(
         rx.text(
             f"XY {PUBLIC_XY_VERSION} · {channel_label}",
-            class_name="font-small text-secondary-9",
+            class_name="font-small text-subtle-foreground",
         ),
         rx.text(
             f"Copyright © {datetime.now().year} Pynecone, Inc. · Apache-2.0",
-            class_name="font-small text-secondary-9",
+            class_name="font-small text-subtle-foreground",
         ),
         class_name=("flex w-full flex-col justify-between gap-2 sm:flex-row sm:items-center"),
     )

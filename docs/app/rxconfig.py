@@ -19,6 +19,7 @@ config = rx.Config(
         "@fontsource-variable/jetbrains-mono@5.2.8",
     ],
     telemetry_enabled=False,
+    show_built_with_reflex=False,
     plugins=[
         rx.plugins.TailwindV4Plugin(config={"darkMode": "selector"}),
         SharedSiteStylesPlugin(),

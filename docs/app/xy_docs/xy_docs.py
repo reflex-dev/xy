@@ -20,13 +20,13 @@ from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
 _CHART_STYLE = {
-    "--chart-text": "var(--secondary-11)",
-    "--chart-grid": "var(--secondary-a5)",
-    "--chart-axis": "var(--secondary-a8)",
-    "--chart-legend-bg": "var(--secondary-2)",
-    "--chart-tooltip-bg": "var(--secondary-3)",
-    "--chart-tooltip-text": "var(--secondary-12)",
-    "--chart-focus": "var(--primary-9)",
+    "--chart-text": "var(--muted-foreground)",
+    "--chart-grid": "var(--border-subtle)",
+    "--chart-axis": "var(--border)",
+    "--chart-legend-bg": "var(--muted)",
+    "--chart-tooltip-bg": "var(--accent)",
+    "--chart-tooltip-text": "var(--foreground)",
+    "--chart-focus": "var(--ring)",
 }
 
 
@@ -51,13 +51,13 @@ app = rx.App(
     theme=rx.theme(
         has_background=True,
         radius="large",
-        accent_color="violet",
+        accent_color="gray",
     ),
     head_components=[
         *get_pixel_website_trackers(),
         rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),
-        rx.el.meta(name="theme-color", content="#6E56CF"),
+        rx.el.meta(name="theme-color", content="#181818"),
     ],
 )
 

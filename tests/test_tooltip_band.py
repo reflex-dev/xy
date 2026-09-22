@@ -664,3 +664,111 @@ def test_browser_three_grouped_series_snap_to_the_chain_not_the_pointer() -> Non
     assert abs(payload["gapIntoC"]["cursorLeft"] - (payload["cx"] + payload["plotX"])) < 1.0, (
         payload
     )
+
+
+def test_browser_bars_join_a_band_a_line_anchors() -> None:
+    """A line point can be the candidate nearest the pointer in a category that
+    also holds grouped bars. The chain expansion ran only when the ANCHOR was a
+    bar, so that band listed the line and dropped every bar beside it."""
+    # Four grouped slots: the two inner ones touch at the category centre, so
+    # the line's point there beats them on distance and anchors the band, while
+    # the OUTER two do not reach the centre at all — without the expansion they
+    # fall outside the line's one-pixel footprint and vanish from the tooltip.
+    chart = xy.bar_chart(
+        xy.bar(
+            _CATS,
+            [_PV5, _UV5, [1.0, 2.0, 3.0, 4.0, 5.0], [6.0, 1.0, 4.0, 3.0, 2.0]],
+            series=["pv", "uv", "amt", "qty"],
+        ),
+        xy.line(_CATS, [3.5, 4.5, 3.0, 5.0, 2.5], name="trend"),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  // The line's point sits on the category centre, so it is the candidate
+  // nearest the pointer there and becomes the anchor.
+  const line = view.gpuTraces.find((g) => g.trace.name === "trend");
+  const [bx] = proj(1, 0, line);
+  hover(bx, 8); const centre = state();
+  done({ centre, anchorIsLine: true });
+""",
+        "line anchor with bars",
+    )
+    s = payload["centre"]
+    assert s["shown"] is True and s["title"] == "B", s
+    # Every series of the category, not the line alone.
+    assert s["rows"] == ["pv3", "uv5", "amt2", "qty1", "trend4.5"], s
+    assert s["targets"] == 5, s
+
+
+def test_browser_band_scan_skips_legend_hidden_rows() -> None:
+    """A category-filtered trace draws a subset: `_visMap` maps drawn instance
+    to shipped row while `g.n` counts the drawn ones, so scanning `g.n` rows of
+    the CPU column both reads rows the legend hid and misses visible rows past
+    that prefix."""
+    chart = xy.bar_chart(
+        xy.bar(_CATS, [_PV5, _UV5], series=["pv", "uv"]),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  // Stand in for a category filter: draw only the LAST two rows, which a
+  // prefix scan of `g.n` can never reach.
+  const g = view.gpuTraces[0];
+  const n = g._cpu.x.length;
+  g._visMap = Int32Array.from([n - 2, n - 1]);
+  g.n = 2;
+  const target = view._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, n - 1);
+  const picked = view._nearestCpuIndexAlong(g, "x", target);
+  // ...and a target nearest a hidden row still resolves to a drawn one.
+  const hiddenTarget = view._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, 0);
+  const pickedForHidden = view._nearestCpuIndexAlong(g, "x", hiddenTarget);
+  done({ n, picked, pickedForHidden });
+""",
+        "band scan visMap",
+    )
+    n = payload["n"]
+    assert payload["picked"] == n - 1, payload
+    # Never a hidden row, even when the target sits on one.
+    assert payload["pickedForHidden"] in (n - 2, n - 1), payload
+
+
+def test_browser_band_pick_reply_is_exact_or_nothing() -> None:
+    """A band sends one pick per series. A reply the kernel could not resolve
+    left the band's rows and cursor on screen; a reply for a row the slot no
+    longer holds could overwrite the wrong series."""
+    payload = _run_edge(
+        _recharts_chart(mode="x"),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8);
+  const shown = state();
+  const picks = sent.filter((m) => m.type === "pick");
+  // A reply for a row this slot never asked for is ignored, not applied.
+  view._onKernelMsg({
+    type: "pick_result", seq: picks[0].seq,
+    row: { trace: picks[0].trace, index: picks[0].index + 3, x: 0, y: 12345 },
+  });
+  const afterMismatch = state();
+  // A miss hides the band rather than leaving a stale readout up.
+  view._onKernelMsg({ type: "pick_result", seq: picks[1].seq, row: null });
+  const afterMiss = state();
+  done({ shown, afterMismatch, afterMiss, picks: picks.length });
+""",
+        "band pick reply",
+    )
+    assert payload["picks"] == 2, payload
+    assert payload["shown"]["rows"] == ["pv1398", "uv3000"], payload["shown"]
+    # The mismatched reply changed nothing.
+    assert payload["afterMismatch"]["rows"] == payload["shown"]["rows"], payload
+    # The miss took the whole band down, cursor included.
+    assert payload["afterMiss"]["shown"] is False, payload["afterMiss"]
+    assert payload["afterMiss"]["cursorShown"] is False, payload["afterMiss"]

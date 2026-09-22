@@ -6823,12 +6823,30 @@ export class ChartView {
         const yMeta = cpu.yMeta || g.yMeta;
         const [x0, x1] = this._axisRange(g.xAxis);
         const [y0, y1] = this._axisRange(g.yAxis);
+        // Interpolated like the draw is, and in ENCODED space — the same
+        // arithmetic `_cpuPointValue` does before decoding, so the dot lands
+        // where the band's cursor and title say it is instead of jumping to
+        // the final position for the length of a data transition. Staying
+        // encoded avoids a decode/re-encode round trip through f64.
+        const progress = g._transitionPositionProgress;
+        const lerp = (column, prev, i) => (prev && Number.isFinite(progress)
+          ? prev[i] + (column[i] - prev[i]) * progress
+          : column[i]);
         this._drawHoverPoint(
           g,
           0,
           this._map(xMeta, x0, x1, g.xAxis),
           this._map(yMeta, y0, y1, g.yAxis),
-          { x: cpu.x[hit.index], y: cpu.y[hit.index], xMeta, yMeta, color: g.color },
+          {
+            x: lerp(cpu.x, g._transitionPrevXValues, hit.index),
+            y: lerp(cpu.y, g._transitionPrevYValues, hit.index),
+            xMeta,
+            yMeta,
+            color: g.color,
+            // The scratch buffer holds ONE vertex, so `index` is 0; the size
+            // channel still has to be read at the hovered row.
+            index: hit.index,
+          },
         );
       }
       return;
@@ -6885,7 +6903,8 @@ export class ChartView {
     this._setPolarUniforms(prog);
     // Size-channel points hover at their encoded size, not the scalar default
     // (sample traces keep no CPU copy of the size column; they fall back).
-    const sVal = g.sizeMode === 1 && g._cpu?.size ? g._cpu.size[index] : null;
+    const sizeIndex = encoded && Number.isInteger(encoded.index) ? encoded.index : index;
+    const sVal = g.sizeMode === 1 && g._cpu?.size ? g._cpu.size[sizeIndex] : null;
     const baseSize = sVal != null && Number.isFinite(sVal)
       ? g.sizeRange[0] + (g.sizeRange[1] - g.sizeRange[0]) * sVal
       : (g.size || 4);
@@ -8839,8 +8858,17 @@ export class ChartView {
     const coord = this._axisCoord(axis, target);
     let best = -1;
     let bestDist = Infinity;
-    const limit = Math.min(column.length, g.n || column.length);
-    for (let i = 0; i < limit; i++) {
+    // A category-filtered trace DRAWS A SUBSET (§10): `_visMap` maps each drawn
+    // instance to its shipped row and `g.n` counts the drawn ones, so treating
+    // `g.n` as a prefix of the CPU column both scans rows the legend hid and
+    // drops visible rows past the prefix. Walk the map's own source indices
+    // when it is present; `best` stays a shipped row either way, which is what
+    // readouts and kernel picks address.
+    const visible = g._visMap;
+    const limit = visible ? visible.length : Math.min(column.length, g.n || column.length);
+    for (let k = 0; k < limit; k++) {
+      const i = visible ? visible[k] : k;
+      if (i < 0 || i >= column.length) continue;
       const encoded = starts && Number.isFinite(progress)
         ? starts[i] + (column[i] - starts[i]) * progress
         : column[i];
@@ -8950,7 +8978,11 @@ export class ChartView {
     // Half a CSS pixel of slack: f32 decode noise, not a different value.
     let lo = anchor.lo - 0.5;
     let hi = anchor.hi + 0.5;
-    if (anchor.bar) {
+    // Whenever ANY candidate is a bar, not only when the anchor is one: a line
+    // or area point anchoring a category that also holds grouped bars skipped
+    // the expansion entirely, so the band listed the line and dropped every
+    // bar beside it. The passes below already ignore non-bar candidates.
+    if (candidates.some((c) => c.bar)) {
       // Grouped slots of one category touch: chain bars whose footprints
       // touch the band. A bar series snaps to the *chain*, not the pointer —
       // from the gap past a category, the pointer is nearer the previous

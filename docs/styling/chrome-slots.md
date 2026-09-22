@@ -38,7 +38,7 @@ primitive or structural descendant is a separate DOM element.
 | `tooltip_row` | One tooltip field row |
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
-| `tooltip_cursor` | Line across the plot at the shared-tooltip band coordinate (`xy.tooltip(mode="x")`) |
+| `tooltip_cursor` | Line across the plot at the shared-tooltip band coordinate — vertical for `xy.tooltip(mode="x")`, horizontal for `mode="y"` |
 | `modebar` | Mode/tool bar container |
 | `modebar_drag_handle` | Draggable grip revealed beside the toolbar |
 | `modebar_control_group` | Selection, pan, and export control group |
