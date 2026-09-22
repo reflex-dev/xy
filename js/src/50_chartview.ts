@@ -1078,8 +1078,7 @@ export class ChartView {
         && this._axisTickLabelsVisible(axis);
       // The title is reserved separately from the tick labels, so it answers to
       // its own paint: `show=False, grid=True` keeps the grid and neither text.
-      const titleOnLeft = axis.side !== "right"
-        && this._axisTextPaintVisible(axis, "label_color", "tick_color");
+      const titleOnLeft = axis.side !== "right" && this._axisTitleVisible(axis);
       if (!labelsOnLeft && !titleOnLeft) continue;
       const size = Math.max(
         8,
@@ -1112,9 +1111,7 @@ export class ChartView {
         ? outward + Math.max(0, this._axisStyleNumber(axis, "tick_padding", 4))
         : 0;
       let needed = labelsOnLeft ? 4 + tickOffset + tickRoom : 0;
-      const rawPosition = axis.label_position;
-      const position = typeof rawPosition === "string" ? rawPosition.replace(/-/g, "_") : "";
-      if (titleOnLeft && axis.label && !position.startsWith("inside_")) {
+      if (titleOnLeft) {
         const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
         const gap = Number.isFinite(Number(axis.label_offset))
           ? Number(axis.label_offset)
@@ -1149,8 +1146,15 @@ export class ChartView {
     for (const axis of Object.values<any>(this.axes || {})) {
       if (!axis || !String(axis.id || "").startsWith("x")) continue;
       const titleSide = axis.side === "top" ? "top" : "bottom";
-      const labelsOnSide = this._axisTickLabelSides(axis).includes(side);
-      if (!labelsOnSide && titleSide !== side) continue;
+      // Tick labels and the title each answer to their own paint. Measuring
+      // text that is switched off reintroduces the gutter `_axisGutterVisible`
+      // just collapsed: `marginBottom` below takes the MEASURED room, not the
+      // gated `bottomAxisRoom`, so a rotated, wrapped, or collision-stacked
+      // label kept its band after `show=False`.
+      const labelsOnSide = this._axisTickLabelSides(axis).includes(side)
+        && this._axisTickLabelsVisible(axis);
+      const titleOnSide = titleSide === side && this._axisTitleVisible(axis);
+      if (!labelsOnSide && !titleOnSide) continue;
       const strategy = this._axisTickLabelStrategy(axis);
       if (["none", "off"].includes(strategy)) continue;
       const sideAxis = { ...axis, side };
@@ -1180,10 +1184,8 @@ export class ChartView {
       const hasMultilineTicks = items.some(
         (item) => this._estimateTickLabel(item.text, size).lines.length > 1,
       );
-      const position = typeof axis.label_position === "string"
-        ? axis.label_position.replace(/-/g, "_") : "center";
       const labelSize = Math.max(8, this._axisStyleNumber(axis, "label_size", 12));
-      const labelBlock = titleSide === side && axis.label && !position.startsWith("inside_")
+      const labelBlock = titleOnSide
         ? this._estimateTickLabel(axis.label, labelSize) : null;
       const labelExtra = labelBlock
         ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
@@ -7544,9 +7546,11 @@ export class ChartView {
   }
 
   // Whether this axis's tick labels claim gutter room at all: a strategy that
-  // draws none, or a paint that shows none, claims nothing.
+  // draws none, or a paint that shows none, claims nothing. `none` and `off`
+  // are the two strategies that draw no label, and `_xAxisRoom` and
+  // `_axis_tick_label_room` (python/xy/_svg.py) already skip both.
   _axisTickLabelsVisible(axis) {
-    return this._axisTickLabelStrategy(axis) !== "none"
+    return !["none", "off"].includes(this._axisTickLabelStrategy(axis))
       && this._axisTextPaintVisible(axis, "tick_label_color", "tick_color");
   }
 
@@ -7558,9 +7562,33 @@ export class ChartView {
   // measured the two separately (`_yAxisLeftRoom`); this is the same rule for
   // the sides that reserve a flat or measured band instead.
   _axisGutterVisible(axis) {
-    if (this._axisTickLabelsVisible(axis)) return true;
-    return !!(axis && axis.label)
-      && this._axisTextPaintVisible(axis, "label_color", "tick_color");
+    return this._axisTickLabelsVisible(axis) || this._axisTitleVisible(axis);
+  }
+
+  // Whether this axis draws a title into the gutter, which is what makes the
+  // title worth reserving room for. Three separate conditions, each matched to
+  // what the renderers actually do:
+  //
+  //  - `tick_label_strategy: "none"` suppresses the title as well as the
+  //    labels, in both renderers (the two title branches in `_drawAxisChrome`
+  //    below, and `_axis_label_geometry` in python/xy/_svg.py). Crediting a
+  //    title there reserves a band nothing is drawn into. `"off"` is the
+  //    narrower switch and keeps the title.
+  //  - The title answers to `label_color` and nothing else: both renderers
+  //    paint it from that key alone (`kind === "label"` below, and
+  //    `_css(axis_style.get("label_color"), ...)`), with no `tick_color`
+  //    fallback. Reading a transparent `tick_color` as a hidden title drops
+  //    the gutter out from under a title that is still drawn.
+  //  - An `inside_*` title is drawn over the plot and needs no gutter at all.
+  //
+  // Mirrors `_axis_title_visible` in python/xy/_svg.py.
+  _axisTitleVisible(axis) {
+    if (!axis || !axis.label) return false;
+    if (this._axisTickLabelStrategy(axis) === "none") return false;
+    const raw = axis.label_position;
+    const position = typeof raw === "string" ? raw.replace(/-/g, "_") : "center";
+    if (position.startsWith("inside_")) return false;
+    return this._axisTextPaintVisible(axis, "label_color");
   }
 
   _axisGridDash(axis) {

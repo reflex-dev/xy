@@ -314,9 +314,19 @@ xy.y_axis(show=False, grid=True)            # horizontal guides only
 xy.x_axis(line=False, ticks=False, style={"grid_color": "#1e293b"})
 ```
 
-The switches control what is *painted*, not the layout: the plot rect is
-unchanged, because the gutters are reserved by `padding`. An edge-to-edge
-sparkline is `show=False` **plus** `padding=0`.
+The switches control what is *painted*, and layout follows the paint: an axis
+with nothing left to draw reserves nothing, so its automatic gutter collapses
+on every side. Authored `padding` is untouched — it is a floor the switches
+never lower — so an edge-to-edge sparkline is still `show=False` **plus**
+`padding=0`, and with no `padding` the label-aware defaults below continue to
+apply. Every renderer decides this the same way, from the compiled paint
+rather than from a flag: a transparent tick-label paint, or a
+`tick_label_strategy` of `"none"` or `"off"`, claims no tick-label room. The
+axis title is reserved separately and answers to `label_color` alone, so an
+opaque title over switched-off ticks keeps the band it is drawn in — unless it
+is not drawn at all, which is the case for `tick_label_strategy="none"` (which
+suppresses the title too, where `"off"` keeps it) and for an `inside_*`
+`label_position` (drawn over the plot, so it needs no band).
 
 ### Plot rectangle and chrome reservations
 

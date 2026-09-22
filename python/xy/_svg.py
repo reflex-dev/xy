@@ -2135,8 +2135,12 @@ def _text_block_content(text: object, x: float, line_step: float) -> str:
     return "".join(lines)
 
 
-def _has_outside_y_title(axis: dict[str, Any]) -> bool:
-    """Whether a y-axis title needs space outside the plot rectangle."""
+def _has_outside_axis_title(axis: dict[str, Any]) -> bool:
+    """Whether an axis title needs space outside the plot rectangle.
+
+    The same question on either orientation: an ``inside_*`` ``label_position``
+    draws the title over the plot and claims no gutter.
+    """
     if not axis.get("label"):
         return False
     raw_position = axis.get("label_position")
@@ -2165,6 +2169,40 @@ def _axis_text_paint_visible(
     return _paint_rgba8(_css(paint, _TEXT))[3] != 0
 
 
+def _axis_title_visible(axis: dict[str, Any]) -> bool:
+    """Whether this axis draws a title into its gutter.
+
+    ``tick_label_strategy="none"`` suppresses the title along with the labels
+    (`_axis_label_geometry` below, and the two title branches in
+    `_drawAxisChrome`, js/src/50_chartview.ts); ``"off"`` is the narrower
+    switch and keeps it. The title is painted from ``label_color`` alone in
+    every renderer, with no ``tick_color`` fallback. An ``inside_*`` title is
+    drawn over the plot and needs no gutter.
+
+    Mirrors ``_axisTitleVisible`` in js/src/50_chartview.ts.
+    """
+    return (
+        _has_outside_axis_title(axis)
+        and _axis_tick_label_strategy(axis) != "none"
+        and _axis_text_paint_visible(axis, "label_color")
+    )
+
+
+def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
+    """Whether this axis claims a gutter at all.
+
+    Tick labels and the title are separate paints, so either one showing keeps
+    the band: an opaque title over transparent ticks would otherwise be drawn
+    into a gutter that no longer exists. Mirrors ``_axisGutterVisible`` in
+    js/src/50_chartview.ts.
+    """
+    tick_labels = _axis_tick_label_strategy(axis) not in {
+        "none",
+        "off",
+    } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
+    return tick_labels or _axis_title_visible(axis)
+
+
 def _y_title_baseline(
     axis: dict[str, Any],
     plot: dict[str, float],
@@ -2176,7 +2214,7 @@ def _y_title_baseline(
     browser positions a centered line box; the returned coordinate includes
     that box-to-baseline correction.
     """
-    if not _has_outside_y_title(axis):
+    if not _has_outside_axis_title(axis):
         return None  # absent or drawn over the plot; it needs no gutter
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
@@ -2254,11 +2292,7 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
         if not left_labels and not left_title:
             continue
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
-        title_visible = (
-            left_title
-            and _has_outside_y_title(axis)
-            and _axis_text_paint_visible(axis, "label_color")
-        )
+        title_visible = left_title and _axis_title_visible(axis)
         if not title_visible:
             if tick_offset == 0.0 and tick_room == 0.0:
                 continue
@@ -2288,11 +2322,7 @@ def _x_axis_title_room(axis: dict[str, Any]) -> float:
     outer glyph edge here so tight/constrained layout does not stop at the
     historical 36/42 px band while the title itself extends past the canvas.
     """
-    if not axis.get("label") or not _axis_text_paint_visible(axis, "label_color"):
-        return 0.0
-    raw_position = axis.get("label_position")
-    position = raw_position if isinstance(raw_position, str) else "center"
-    if position.replace("-", "_").startswith("inside_"):
+    if not _axis_title_visible(axis):
         return 0.0
     style = axis.get("style") or {}
     font_size = float(style.get("label_size", 12))
@@ -2599,19 +2629,12 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
             axis.get("side", "right") == "right"
             or "right" in _axis_tick_label_sides(axis, is_x=False)
         )
-        and _axis_tick_label_strategy(axis) != "none"
         # An axis whose text is switched off draws none of what this gutter
         # exists to hold, so it claims none of it — the same question the left
-        # gutter already asks (`_axis_text_paint_visible`). Tick labels and the
-        # title are separate paints, so either one showing keeps the band: an
-        # opaque title over transparent ticks would otherwise be drawn into a
-        # gutter that no longer exists. Only the *presence* of the reservation
-        # answers to the paint; its flat 42/54 width, and the plot-relative
-        # right title that depends on it, are unchanged.
-        and (
-            _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
-            or (axis.get("label") and _axis_text_paint_visible(axis, "label_color", "tick_color"))
-        )
+        # gutter already asks (`_axis_text_paint_visible`). Only the *presence*
+        # of the reservation answers to the paint; its flat 42/54 width, and
+        # the plot-relative right title that depends on it, are unchanged.
+        and _axis_gutter_visible(axis)
         for axis_id, axis in axes.items()
     ):
         # Match ChartView._layout(): one shared right-side gutter contains the

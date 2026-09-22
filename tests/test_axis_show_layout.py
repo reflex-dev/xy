@@ -111,7 +111,7 @@ _PLOT_RECT_PROBE = """
     for (let i = 0; i < 200 && !view.gpuTraces[0]._cpu; i++) await sleep(25);
     view._drawNow();
     document.body.setAttribute("data-xy-plotrect", JSON.stringify({
-      x: view.plot.x, w: view.plot.w,
+      x: view.plot.x, y: view.plot.y, w: view.plot.w, h: view.plot.h,
     }));
   } catch (err) {
     document.body.setAttribute("data-xy-plotrect-error", String((err && err.stack) || err));
@@ -121,7 +121,9 @@ _PLOT_RECT_PROBE = """
 """
 
 
-def _browser_plot_rect(chart, label: str) -> tuple[float, float]:
+def _browser_plot_rect(chart, label: str) -> tuple[float, float, float, float]:
+    """The client's plot rect (x, y, width, height), in the same order as
+    `_svg_plot_rect`."""
     chromium = find_chromium()
     if not chromium:
         # `run_browser_probe` turns an unlaunchable browser into a failure under
@@ -134,7 +136,7 @@ def _browser_plot_rect(chart, label: str) -> tuple[float, float]:
         payload = run_browser_probe(
             chromium, document, Path(td) / "axis.html", "data-xy-plotrect", label=label
         )
-    return round(float(payload["x"]), 1), round(float(payload["w"]), 1)
+    return tuple(round(float(payload[k]), 1) for k in ("x", "y", "w", "h"))
 
 
 def test_browser_show_false_reaches_the_edge_like_the_export() -> None:
@@ -142,16 +144,20 @@ def test_browser_show_false_reaches_the_edge_like_the_export() -> None:
     shorthands had already made invisible, so a chart that exported flush
     rendered inset. Both sides now answer the same question about the paint."""
     off = {"show": False}
-    assert _browser_plot_rect(_chart(x=off, y=off), "axes off") == (0.0, float(WIDTH))
+    assert _browser_plot_rect(_chart(x=off, y=off), "axes off")[:3] == (
+        0.0,
+        float(PADDING[0]),
+        float(WIDTH),
+    )
 
     # The right side was the worse case: a flat 54 px reservation that no style
     # zeroing could reach.
     right = _chart(x=off, y={"show": False, "side": "right"})
-    assert _browser_plot_rect(right, "right axis off") == (0.0, float(WIDTH))
+    assert _browser_plot_rect(right, "right axis off")[2] == float(WIDTH)
 
     # `show=False, grid=True` keeps the grid and still claims no gutter.
     grid = _chart(x=off, y={"show": False, "grid": True})
-    assert _browser_plot_rect(grid, "grid only") == (0.0, float(WIDTH))
+    assert _browser_plot_rect(grid, "grid only")[2] == float(WIDTH)
 
 
 def test_browser_visible_axes_keep_their_room() -> None:
@@ -159,12 +165,12 @@ def test_browser_visible_axes_keep_their_room() -> None:
     room it needs, and the browser agrees with the exporter about how much."""
     chart = _chart()
     browser = _browser_plot_rect(chart, "axes on")
-    assert browser[0] > 0 and browser[1] < WIDTH, browser
+    assert browser[0] > 0 and browser[2] < WIDTH, browser
     export = _svg_plot_rect(chart)
     # The two measure text with different engines, so they are close rather
     # than identical; a whole gutter's worth of difference is the regression.
     assert abs(browser[0] - export[0]) <= 8, (browser, export)
-    assert abs(browser[1] - export[2]) <= 8, (browser, export)
+    assert abs(browser[2] - export[2]) <= 8, (browser, export)
 
 
 def test_browser_and_export_agree_on_every_side() -> None:
@@ -194,7 +200,136 @@ def test_browser_and_export_agree_on_every_side() -> None:
             height=HEIGHT,
             padding=(0, 0, 0, 0),
         )
-        bx, bw = _browser_plot_rect(chart, f"parity: {label}")
-        ex, _ey, ew, _eh = _svg_plot_rect(chart)
-        assert abs(bx - ex) <= 8, (label, (bx, bw), (ex, ew))
-        assert abs(bw - ew) <= 8, (label, (bx, bw), (ex, ew))
+        browser = _browser_plot_rect(chart, f"parity: {label}")
+        export = _svg_plot_rect(chart)
+        for axis_name, index in (("x", 0), ("y", 1), ("width", 2), ("height", 3)):
+            assert abs(browser[index] - export[index]) <= 8, (
+                label,
+                axis_name,
+                browser,
+                export,
+            )
+
+
+def _parity_chart(**axes):
+    return xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(**axes.get("x", {})),
+        xy.y_axis(**axes.get("y", {})),
+        width=WIDTH,
+        height=HEIGHT,
+        padding=(0, 0, 0, 0),
+    )
+
+
+def test_browser_measures_no_band_for_labels_it_will_not_draw() -> None:
+    """The gutter eligibility check is not the only place the room is decided.
+
+    The bottom margin takes the *measured* x-axis room directly, so an axis
+    that was ruled ineligible could still claim a band through the measuring
+    path — `show=False` plus an angle sent every label through rotation layout
+    and reserved the extent of text nobody can see. A 45 degree hidden axis
+    lost 41.7 px of plot height that the exporter kept."""
+    hidden = _parity_chart(x={"show": False, "tick_label_angle": 45}, y={"show": False})
+    assert _browser_plot_rect(hidden, "rotated hidden x")[3] == float(HEIGHT)
+    assert _svg_plot_rect(hidden)[3] == float(HEIGHT)
+    # The same axis with its paint left alone still reserves its rotated band,
+    # in both renderers, to within their text-measurement difference.
+    shown = _parity_chart(x={"tick_label_angle": 45}, y={"show": False})
+    browser = _browser_plot_rect(shown, "rotated visible x")
+    export = _svg_plot_rect(shown)
+    assert browser[3] < HEIGHT and export[3] < HEIGHT, (browser, export)
+    assert abs(browser[3] - export[3]) <= 8, (browser, export)
+
+
+def test_tick_label_strategy_off_claims_no_gutter() -> None:
+    """`off` and `none` both draw no tick label, so both claim no room.
+
+    Only `none` was excluded, so an axis switched off through the strategy kept
+    a 25.5 px left inset in the browser that the exporter had already dropped —
+    the same divergence as the transparent paint, reached by the other door."""
+    off = {"tick_label_strategy": "off"}
+    chart = _parity_chart(x=off, y=off)
+    assert _browser_plot_rect(chart, "strategy off")[:3] == (0.0, 0.0, float(WIDTH))
+    assert _svg_plot_rect(chart)[:3] == (0.0, 0.0, float(WIDTH))
+    # A right-side axis reaches the same answer through the flat 42/54 band.
+    right = _parity_chart(x={"show": False}, y={**off, "side": "right"})
+    assert _browser_plot_rect(right, "right strategy off")[2] == float(WIDTH)
+    assert _svg_plot_rect(right)[2] == float(WIDTH)
+
+
+def test_a_title_answers_to_label_color_alone() -> None:
+    """Both renderers paint an axis title from `label_color` and nothing else.
+
+    Reading the title's visibility through a `tick_color` fallback dropped the
+    gutter out from under a title that is still drawn: blanking only the tick
+    paints left the right-side title with nowhere to sit."""
+    titled = _parity_chart(
+        x={"show": False},
+        y={
+            "side": "right",
+            "label": "Value",
+            "style": {"tick_label_color": "#00000000", "tick_color": "#00000000"},
+        },
+    )
+    assert _browser_plot_rect(titled, "tick paint off, title on")[2] < WIDTH
+    assert _svg_plot_rect(titled)[2] < WIDTH
+    # `show=False` blanks `label_color` too, so that chart is still flush.
+    hidden = _parity_chart(x={"show": False}, y={"show": False, "side": "right", "label": "Value"})
+    assert _browser_plot_rect(hidden, "title off")[2] == float(WIDTH)
+    assert _svg_plot_rect(hidden)[2] == float(WIDTH)
+
+
+def test_tick_label_strategy_none_suppresses_the_title_and_its_gutter() -> None:
+    """`none` switches the title off too, so it cannot keep the gutter open.
+
+    Crediting a title for gutter eligibility has to ask whether the title is
+    actually drawn. Both renderers suppress it under `tick_label_strategy`
+    `"none"` (`axis.label && strategy !== "none"` in the two browser title
+    branches; `_axis_label_geometry` in the exporter), so counting it there
+    reserved 54 px in the browser that nothing was ever drawn into. `"off"` is
+    the narrower switch and keeps the title, and its band with it."""
+    for side in ("left", "right"):
+        hidden = _parity_chart(
+            x={"show": False},
+            y={"side": side, "label": "Value", "tick_label_strategy": "none"},
+        )
+        assert _browser_plot_rect(hidden, f"{side}: none + title")[2] == float(WIDTH)
+        assert _svg_plot_rect(hidden)[2] == float(WIDTH)
+
+        kept = _parity_chart(
+            x={"show": False},
+            y={"side": side, "label": "Value", "tick_label_strategy": "off"},
+        )
+        browser = _browser_plot_rect(kept, f"{side}: off + title")
+        export = _svg_plot_rect(kept)
+        assert browser[2] < WIDTH and export[2] < WIDTH, (side, browser, export)
+        assert abs(browser[2] - export[2]) <= 8, (side, browser, export)
+
+
+def test_an_inside_title_claims_no_gutter() -> None:
+    """A title placed inside the plot is drawn over it and needs no band.
+
+    It is the third condition the gutter asks about, alongside the strategy and
+    the paint; `_x_axis_title_room` and `_y_axis_left_room` already skipped it,
+    so the browser agreeing is what keeps the two renderers together."""
+    blanked_ticks = {"tick_label_color": "#00000000", "tick_color": "#00000000"}
+    inside = _parity_chart(
+        x={"show": False},
+        y={
+            "side": "right",
+            "label": "Value",
+            "label_position": "inside_center",
+            "style": blanked_ticks,
+        },
+    )
+    assert _browser_plot_rect(inside, "inside title")[2] == float(WIDTH)
+    assert _svg_plot_rect(inside)[2] == float(WIDTH)
+    # The same title placed outside does claim the band, so the assertion above
+    # is about the position and not about the blanked tick paints.
+    outside = _parity_chart(
+        x={"show": False},
+        y={"side": "right", "label": "Value", "style": blanked_ticks},
+    )
+    assert _browser_plot_rect(outside, "outside title")[2] < WIDTH
+    assert _svg_plot_rect(outside)[2] < WIDTH
