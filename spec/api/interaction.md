@@ -468,6 +468,57 @@ Wire: `tooltip.mode`, shipped only when not `"nearest"`.
 Live capture: `spec/assets/tooltip-x-band.png` — the pointer (red ring) far
 above Page B, the band tooltip, the cursor line, and both active dots.
 
+### 7.4 Value formatting (`xy.tooltip(format=...)`)
+
+One grammar resolves the tooltip values `format=` can address — the default
+x/y/colour/size rows, the fields listed in `fields=`, the placeholders in
+`title=`, and a band's title and series rows — in both modes
+(`js/src/52_tooltip.ts`, `_formatTooltipValue`). Composition-specific readouts
+keep their own text and are not `format=`-driven: sankey flow and node totals,
+funnel stage rows, and a categorical colour label, which is a category name
+rather than a value.
+
+- An authored `format=` always wins. A **strftime pattern** (a `%` followed by
+  one of `YmdHMSbB`, the tokens `fmtTimeSpec` replaces) formats a time-kinded
+  value; anything else is the numeric spec. The test is the token, not the `%`,
+  so `format={"yes": ".0%"}` still means percent and `format={"time": ",.0f"}`
+  still means "epoch milliseconds, as a number".
+- `format=` and `labels=` are keyed by the author's **column names**, but rows
+  are keyed by **channel** — a table-backed datetime reaches the row as `x`.
+  Both keys resolve: the channel key first, then the column bound to that
+  channel **on the hovered trace**, read from the `sources` map the payload
+  already carries. Two series binding different columns to `y` therefore keep
+  their own formats. Before this, a format keyed by the column name was
+  accepted, shipped, and then silently ignored by every path that looks a value
+  up by channel — the band title among them.
+- A time value with nothing authored on it resolves a pattern rather than
+  falling through to the ISO stamp: the **axis's own strftime `format=`**
+  first, so a tooltip and the tick labels under it read alike, then the
+  **visible span**. Only a strftime axis format is inherited — a numeric one on
+  a time axis is not a pattern this value can be read through — and only a
+  position channel has an axis to inherit from, so a time value carried by
+  colour or size takes the span default and then the ISO stamp:
+
+  | span in view | pattern |
+  | --- | --- |
+  | ≥ 28 d | `%b %d, %Y` |
+  | ≥ 1 min | `%b %d, %H:%M` |
+  | ≥ 1 s | `%H:%M:%S` |
+  | < 1 s | none — the ISO stamp stays, as it is the only form carrying ms |
+
+  Each tier is one granularity finer than the axis labels the same span
+  produces: a tooltip names one point, an axis label a whole interval. The
+  span is the hovered trace's own x/y axis range, so a secondary axis formats
+  by its own view (`defaultTimeFormat`, `js/src/30_ticks.ts`).
+- `format=` alone is enough. It used to reach values only alongside `fields=`
+  or `title=`, because an otherwise-empty tooltip short-circuited to the
+  default rows before formats were read.
+- Formatting is live-only, like the tooltips themselves; static exports are
+  unaffected, and the token set is `fmtTimeSpec`'s, shared with axis labels and
+  mirrored in `python/xy/_svg.py`.
+
+Covered by `tests/test_tooltip_time_format.py`.
+
 ## 8. Unconditional behavior
 
 Not configurable through any switch: tooltip rendering and the kernel `pick`

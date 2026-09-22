@@ -234,7 +234,29 @@ export function fmtNumberSpec(v, format) {
   return `${prefix}${text}${percent ? "%" : ""}${suffix}`;
 }
 
-function fmtTimeSpec(ms, format) {
+// Whether a `format=` string is a strftime pattern rather than a numeric spec.
+// `%` alone is the number grammar's percent suffix (`".0%"`), so the test is a
+// `%` followed by one of the tokens `fmtTimeSpec` actually replaces — that way
+// `format=".0%"` on a time-kinded value still means "as a number".
+export function isTimeFormat(format) {
+  return typeof format === "string" && /%[YmdHMSbB]/.test(format);
+}
+
+// The strftime pattern a time value reads best in when nothing was authored,
+// chosen from the span currently in view. A tooltip names ONE point, so each
+// tier is a granularity finer than the axis labels the same span produces
+// (§7.4): a week-wide window ticks in days and hovers to the minute. Below a
+// second there is no strftime token for milliseconds, so the caller keeps the
+// ISO fallback, which carries them.
+export function defaultTimeFormat(span) {
+  if (!Number.isFinite(span) || span <= 0) return null;
+  if (span >= 28 * MS.d) return "%b %d, %Y";
+  if (span >= MS.m) return "%b %d, %H:%M";
+  if (span >= MS.s) return "%H:%M:%S";
+  return null;
+}
+
+export function fmtTimeSpec(ms, format) {
   if (typeof format !== "string") return null;
   const d = new Date(ms);
   if (!Number.isFinite(d.getTime())) return null;
