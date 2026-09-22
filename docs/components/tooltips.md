@@ -129,11 +129,11 @@ def tooltip_time_demo():
 With no `format=` for a time field, the tooltip does not fall back to a raw
 timestamp. For a field on the x or y axis it uses that axis's own `format=`
 when the axis has a strftime one, so the tooltip and the tick labels beneath it
-read alike; otherwise it picks the pattern the visible span reads best in — `Sep 17, 2026`
-for a span of 28 days or more, `Sep 17, 10:05` from a minute up to that, and
-`10:05:00` from a second up to a minute. Zoom in and the tooltip sharpens with
-the axis. Below a second the ISO timestamp stays, because it is the only form
-that carries milliseconds.
+read alike; otherwise it picks the pattern the visible span reads best in —
+`Sep 17, 2026` for a span of 28 days or more, `Sep 17, 10:05` from a minute up
+to that, and `10:05:00` from a second up to a minute. Zoom in and the tooltip
+sharpens with the axis. Below a second the ISO timestamp stays, because it is
+the only form that carries milliseconds.
 
 Because the format is chosen per field, one chart can carry a precise
 timestamp in the tooltip and short labels on the axis:
@@ -149,8 +149,8 @@ xy.line_chart(
 `format=` works on its own — without `fields=` or `title=` — in which case it
 formats the default x/y/color/size rows in place. It addresses values: a
 categorical colour row is a category name rather than a value, and the readouts
-compositions define for themselves (sankey flows and node totals, funnel stages)
-carry their own text, so neither takes a format.
+that compositions define for themselves (sankey flows and node totals, funnel
+stages) carry their own text, so neither takes a format.
 
 ### Title Templates Across Multiple Series
 

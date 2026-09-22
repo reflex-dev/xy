@@ -75,9 +75,14 @@ def test_tooltip_format_ships_for_table_backed_fields() -> None:
 # Shared probe boilerplate: capture the view, wait for its CPU columns, and
 # expose `withSpec(patch)` — hover one data point under a tooltip spec and
 # report the rendered text. `sources`/`aliases` are preserved from the built
-# spec, because the column-name lookup resolves through them. Each probe below
-# splices its own cases in at CASES and runs only those, so a test never pays
-# for a browser launch it does not assert on.
+# spec, because the column-name lookup resolves through them. `_FORMAT_CASES`
+# and `_SPAN_CASES` splice in at CASES and run only those, so a test never pays
+# for a browser launch it does not assert on. The two probes below this file's
+# market chart — `_PER_TRACE_PROBE` and `_POLAR_PROBE` — stand alone instead:
+# one hovers a point on each of two traces, the other mutates the tooltip spec
+# between hovers of one, and folding either into the prelude would mean
+# parameterizing the wait, the trace and the hover for the benefit of one
+# caller each.
 _PROBE_PRELUDE = """
 <script>
 (async () => {
