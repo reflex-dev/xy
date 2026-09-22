@@ -571,6 +571,17 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     )
     # No authored tick geometry, no marks, no band.
     assert right_gutter(tick_label_strategy="off") == 0
+    # Geometry is not ink. A transparent `tick_color` draws nothing, and
+    # `tick_label_strategy="none"` drops the tick values and so the marks with
+    # them — both renderers stop emitting the lines entirely.
+    assert (
+        right_gutter(
+            tick_label_strategy="off",
+            style={**long_ticks, "tick_color": "#00000000"},
+        )
+        == 0
+    )
+    assert right_gutter(tick_label_strategy="none", style=long_ticks) == 0
     # Inward marks draw over the plot and need none either.
     assert (
         right_gutter(

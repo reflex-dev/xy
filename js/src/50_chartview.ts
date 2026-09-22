@@ -7611,13 +7611,19 @@ export class ChartView {
   }
 
   // How far this axis's tick marks reach outside the plot, in px. Tick marks
-  // are chrome of their own: they answer to no text paint, so an axis with its
-  // labels switched off can still need the gutter for them, and the colorbar
-  // beside it still has to clear them. The core default `tick_length` is 0, so
-  // an unstyled axis reaches nothing, and the `ticks=False`/`show=False`
-  // shorthand's `tick_length: 0, tick_width: 0` sentinel reaches nothing
-  // either. Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
+  // are chrome of their own: they answer to no *text* paint, so an axis with
+  // its labels switched off can still need the gutter for them, and the
+  // colorbar beside it still has to clear them. They do answer to
+  // `tick_color`, and to `tick_label_strategy: "none"`, which drops the tick
+  // values and so the marks with them — geometry alone does not mean ink. The
+  // core default `tick_length` is 0, so an unstyled axis reaches nothing, and
+  // the `ticks=False`/`show=False` shorthand's `tick_length: 0, tick_width: 0`
+  // sentinel reaches nothing either.
+  //
+  // Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
   _axisOutwardTickRoom(axis) {
+    if (this._axisTickLabelStrategy(axis) === "none") return 0;
+    if (!this._axisTextPaintVisible(axis, "tick_color")) return 0;
     const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
     if (length <= 0 || this._axisStyleNumber(axis, "tick_width", 1) <= 0) return 0;
     const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");

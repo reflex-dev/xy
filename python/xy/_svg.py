@@ -2211,12 +2211,20 @@ def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
     """How far this axis's tick marks reach outside the plot, in px.
 
     Tick marks are chrome of their own: they are drawn from ``tick_length``
-    and answer to no text paint, so an axis with its labels switched off can
-    still need the gutter for them. Core's default ``tick_length`` is 0, so an
-    unstyled axis reaches nothing, and the ``ticks=False``/``show=False``
-    shorthand's ``tick_length=0, tick_width=0`` sentinel reaches nothing
-    either. Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
+    and answer to no *text* paint, so an axis with its labels switched off can
+    still need the gutter for them. They do answer to ``tick_color``, and to
+    ``tick_label_strategy="none"``, which drops the tick values and so the
+    marks with them — geometry alone does not mean ink. Core's default
+    ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
+    ``ticks=False``/``show=False`` shorthand's ``tick_length=0, tick_width=0``
+    sentinel reaches nothing either.
+
+    Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
     """
+    if _axis_tick_label_strategy(axis) == "none" or not _axis_text_paint_visible(
+        axis, "tick_color"
+    ):
+        return 0.0
     style = axis.get("style") or {}
     length = max(0.0, float(style.get("tick_length", 0) or 0.0))
     if length <= 0.0 or float(style.get("tick_width", 1) or 0.0) <= 0.0:
