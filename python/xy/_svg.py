@@ -2221,7 +2221,12 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
     nothing in any renderer, so it reaches nothing too.
 
     ``tick_sides`` decides which gutters the marks are drawn into, so a caller
-    naming a ``side`` gets 0 for a gutter this axis puts no mark in.
+    naming a ``side`` gets 0 for a gutter this axis puts no mark in. The side
+    names its own dimension -- a left/right query is about a y axis whichever
+    way the spec is shaped -- so it, and not the axis's ``id``, is what picks
+    the allowed sides. Everywhere else here the dimension comes from the
+    caller too (``is_x=`` at every ``_axis_tick_label_sides`` call site), and
+    an older payload's axis dict need not carry an ``id`` at all.
 
     Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
     """
@@ -2229,9 +2234,7 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
         axis, "tick_color"
     ):
         return 0.0
-    if side is not None and side not in _axis_tick_sides(
-        axis, is_x=str(axis.get("id", "x")).startswith("x")
-    ):
+    if side is not None and side not in _axis_tick_sides(axis, is_x=side in ("bottom", "top")):
         return 0.0
     # Minor ticks carry their own length, width and direction under
     # ``minor_style`` and are drawn by the same loop, so the gutter needs the

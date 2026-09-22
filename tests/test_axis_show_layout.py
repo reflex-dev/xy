@@ -651,3 +651,38 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     # The colorbar clears the marks rather than sitting on them.
     bar_x_px, plot_right = _colorbar_bar(tick_label_strategy="off", style=long_ticks)
     assert bar_x_px - plot_right > long_ticks["tick_length"], (bar_x_px, plot_right)
+
+
+def test_the_gutter_asked_about_names_its_own_dimension() -> None:
+    """A per-side query answers for that side's dimension, not the spec's `id`.
+
+    `tick_sides` is filtered against the sides the axis's dimension can use,
+    and every other helper here takes that dimension from its caller (`is_x=`
+    at each `_axis_tick_label_sides` call site) because the caller already
+    knows it from the loop key. Reading it from `axis["id"]` instead broke on
+    the payload shape `_axes_by_id` exists to accept: an older spec's
+    `y_axis` dict carries no `id`, so it defaulted to `x`, the allowed sides
+    became bottom/top, and a y axis drawing 8 px of marks answered 0 px for
+    both of its own gutters. The queried side settles it with no `id` at all.
+    """
+    from xy._svg import _axis_outward_tick_room
+
+    marks = {"tick_length": 8, "tick_width": 1, "tick_direction": "out"}
+    legacy_y = {"side": "left", "tick_sides": ["left", "right"], "style": marks}
+    assert _axis_outward_tick_room(legacy_y, "left") == 8
+    assert _axis_outward_tick_room(legacy_y, "right") == 8
+    # Still filtered: the marks are on the y gutters, so neither x band is
+    # asked to hold them.
+    assert _axis_outward_tick_room(legacy_y, "bottom") == 0
+    assert _axis_outward_tick_room(legacy_y, "top") == 0
+
+    legacy_x = {"side": "bottom", "tick_sides": ["bottom"], "style": marks}
+    assert _axis_outward_tick_room(legacy_x, "bottom") == 8
+    assert _axis_outward_tick_room(legacy_x, "top") == 0
+    assert _axis_outward_tick_room(legacy_x, "left") == 0
+
+    # An axis that authors no `tick_sides` draws into its own side only, and
+    # that answer also holds without an `id` to read it from.
+    bare_y = {"side": "right", "style": marks}
+    assert _axis_outward_tick_room(bare_y, "right") == 8
+    assert _axis_outward_tick_room(bare_y, "left") == 0

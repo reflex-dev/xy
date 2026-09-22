@@ -7646,8 +7646,13 @@ export class ChartView {
     // `tick_sides` decides where the marks are drawn, so a right axis given
     // `tick_sides: ["left"]` needs no right gutter. Callers name the gutter
     // they are reserving; the tick-label and title terms beside this one are
-    // already filtered by side at their own call sites.
-    if (side !== null && !this._axisTickSides(axis).includes(side)) return 0;
+    // already filtered by side at their own call sites. The named side is
+    // also what says which dimension to allow, rather than the axis `id`: a
+    // left/right query is about a y axis however the spec is shaped.
+    if (side !== null
+        && !this._axisTickSides(axis, ["bottom", "top"].includes(side)).includes(side)) {
+      return 0;
+    }
     // Minor ticks carry their own length, width and direction under
     // `minor_style`, and are drawn by the same loop, so the gutter needs the
     // larger of the two tiers rather than the major one alone.
@@ -7715,11 +7720,17 @@ export class ChartView {
     return id === "y" ? "left" : "right";
   }
 
-  _axisTickSides(axis) {
-    const isX = String(axis && axis.id || "x").startsWith("x");
+  // `isX` defaults to reading the axis `id`; a caller that already knows the
+  // dimension (because it named the gutter it is asking about) passes it, so
+  // an axis dict carrying no `id` is still asked the right question.
+  _axisTickSides(axis, isX = null) {
+    const inferred = isX === null;
+    if (inferred) isX = String(axis && axis.id || "x").startsWith("x");
     const allowed = isX ? ["bottom", "top"] : ["left", "right"];
     if (!Array.isArray(axis && axis.tick_sides)) {
-      return [axis && axis.side || this._axisDefaultSide(axis)];
+      const authored = axis && axis.side;
+      if (authored) return [authored];
+      return [inferred ? this._axisDefaultSide(axis) : allowed[0]];
     }
     return allowed.filter((side) => axis.tick_sides.includes(side));
   }
