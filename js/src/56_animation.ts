@@ -556,6 +556,11 @@ Object.assign(ChartView.prototype, {
     });
     const target = { ...this.view0 };
     if (this._glLost || !this.gl) {
+      // The retained spec and payload have already been replaced above, and
+      // the restore path rebuilds every GPU trace from them without touching
+      // hover state. The band would then hold retired trace objects across the
+      // recovery, exactly as it would on the live path below.
+      this._clearBandHover?.();
       this.view = { ...target };
       this._markBestLegendsDirty?.();
       return true;

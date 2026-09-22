@@ -587,19 +587,34 @@ Object.assign(ChartView.prototype, {
     const el = this._ensureTooltipCursor();
     const [lx, ly] = this._projectDataPoint(a.xAxis, a.yAxis, a.x, a.y);
     const p = this.plot;
-    const pos = a.dim === "x" ? lx : ly;
+    let pos = a.dim === "x" ? lx : ly;
     const lo = a.dim === "x" ? p.x : p.y;
     const hi = a.dim === "x" ? p.x + p.w : p.y + p.h;
-    if (!Number.isFinite(pos) || pos < lo || pos > hi) { el.style.display = "none"; return; }
+    if (!Number.isFinite(pos)) { el.style.display = "none"; return; }
+    // A bar joins the band while ANY part of its footprint overlaps the plot
+    // (`_bandCandidate`), so a bar clipped by the edge can be selected with its
+    // category centre outside. The band is real and the pointer is on it, so
+    // mark the part that IS visible rather than dropping the cursor and
+    // leaving the tooltip with nothing locating it. A point band's footprint
+    // is its own coordinate, so this never moves it.
+    const spanLo = lo + a.lo;
+    const spanHi = lo + a.hi;
+    if (
+      Number.isFinite(spanLo) && Number.isFinite(spanHi) && spanHi > spanLo
+      && spanHi >= lo && spanLo <= hi
+    ) {
+      pos = Math.min(Math.max(pos, Math.max(spanLo, lo)), Math.min(spanHi, hi));
+    }
+    if (pos < lo || pos > hi) { el.style.display = "none"; return; }
     el.style.display = "block";
     if (a.dim === "x") {
-      el.style.left = `${lx}px`;
+      el.style.left = `${pos}px`;
       el.style.top = `${p.y}px`;
       el.style.width = "1px";
       el.style.height = `${p.h}px`;
     } else {
       el.style.left = `${p.x}px`;
-      el.style.top = `${ly}px`;
+      el.style.top = `${pos}px`;
       el.style.width = `${p.w}px`;
       el.style.height = "1px";
     }
@@ -638,14 +653,23 @@ Object.assign(ChartView.prototype, {
       title = this._formatTooltipValue(first[along], first[`${along}_kind`], formats[along]);
     }
     if (title) items.push({ kind: "title", value: title });
-    const fields = Array.isArray(tooltip.fields)
-      ? tooltip.fields.filter((f) => typeof f === "string" && f !== along)
+    // `fields=["x"]` in `mode="x"` asks for the band coordinate and nothing
+    // else, which the title already carries — so the rows are names alone.
+    // Filtering first and then testing `.length` read that as "no fields
+    // configured" and fell back to the default `across` value, silently
+    // ignoring the selection. An authored EMPTY list still means unset, as it
+    // does in nearest mode.
+    const authored = Array.isArray(tooltip.fields)
+      ? tooltip.fields.filter((f) => typeof f === "string")
+      : null;
+    const fields = authored && authored.length
+      ? authored.filter((f) => f !== along)
       : null;
     rows.forEach((row, i) => {
       const g = hits[i] && hits[i].g;
       const name = this._tooltipSeriesName(row) || `series ${i + 1}`;
       let value;
-      if (fields && fields.length) {
+      if (fields) {
         value = fields
           .map((f) => {
             const [v, k] = this._tooltipLookup(row, f);

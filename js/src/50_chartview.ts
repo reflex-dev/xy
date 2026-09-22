@@ -9077,7 +9077,22 @@ export class ChartView {
       this._bandCursor = null;
       this._hideTooltipCursor();
     } else {
-      this._bandCursor = { dim, xAxis: ag.xAxis, yAxis: ag.yAxis, x: at.x, y: at.y };
+      // Carry the band's footprint along the band axis (plot-relative px, the
+      // union over its slots) so the cursor can be drawn on the part of a
+      // clipped bar that is actually visible. A point band's footprint is its
+      // own coordinate, which changes nothing.
+      const spans = band.hits.filter(
+        (h) => Number.isFinite(h.lo) && Number.isFinite(h.hi),
+      );
+      this._bandCursor = {
+        dim,
+        xAxis: ag.xAxis,
+        yAxis: ag.yAxis,
+        x: at.x,
+        y: at.y,
+        lo: spans.length ? Math.min(...spans.map((h) => h.lo)) : undefined,
+        hi: spans.length ? Math.max(...spans.map((h) => h.hi)) : undefined,
+      };
       this._renderBandTooltip(e.clientX, e.clientY);
       this._positionTooltipCursor();
     }

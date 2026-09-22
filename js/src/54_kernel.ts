@@ -472,7 +472,12 @@ Object.assign(ChartView.prototype, {
     // context is lost. The restore path rebuilds every affected GPU object
     // from this latest payload; attempting partial uploads to a dead context
     // would only create handles that must immediately be discarded.
-    if (this._glLost || !this.gl) return;
+    if (this._glLost || !this.gl) {
+      // As in `updatePayload`: the payload is retained, the restore path
+      // rebuilds the GPU traces from it, and nothing else drops the band.
+      this._clearBandHover?.();
+      return;
+    }
     const texSeen = new Set();
     for (const id of msg.affected || []) {
       const i = this.gpuTraces.findIndex((g) => g.trace.id === id);

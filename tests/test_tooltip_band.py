@@ -924,3 +924,115 @@ def test_browser_hidden_tooltip_keeps_its_band_bookkeeping() -> None:
     # Every exact hover describes the whole band, never a lone series.
     assert payload["exactPointCounts"], payload
     assert all(n == 2 for n in payload["exactPointCounts"]), payload
+
+
+def test_browser_a_clipped_bar_keeps_its_cursor() -> None:
+    """A bar joins the band while any part of its footprint overlaps the plot,
+    so a bar more than half clipped by the edge is selectable with the centre
+    of its footprint — where the cursor goes — outside. The cursor hides on an
+    off-plot coordinate, so the two rules disagreed and the tooltip appeared
+    with nothing locating the band. It is now drawn on the visible part."""
+    chart = xy.bar_chart(
+        xy.bar(_CATS, _PV5),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  // Creep the left edge of the view across category B's bar until the bar's
+  // footprint centre has left the plot while part of the bar is still drawn
+  // inside it — the window where it stays selectable but its cursor
+  // coordinate does not.
+  const span = view.view.ranges.x[1] - view.view.ranges.x[0];
+  let atEdge = null, centre = null, steps = 0;
+  for (let k = 1; k <= 80; k++) {
+    const lo = 1 + (k / 80) * 0.5;
+    view.view.ranges.x = [lo, lo + span];
+    view._drawNow();
+    view._hoverId = -1; view._bandKey = null;
+    hover(3, 8);
+    const s = state();
+    if (!s.shown || s.title !== "B") continue;
+    const c = view._bandCursor;
+    const [px] = view._projectDataPoint(c.xAxis, c.yAxis, c.x, c.y);
+    if (px - view.plot.x >= 0) continue;
+    steps = k; atEdge = s; centre = px - view.plot.x;
+    break;
+  }
+  done({ centre, atEdge, steps, plotX: view.plot.x, plotW: view.plot.w });
+""",
+        "clipped bar cursor",
+    )
+    # The band's own cursor coordinate really is off-plot, which is what makes
+    # this reachable at all.
+    assert payload["centre"] is not None and payload["centre"] < 0, payload
+    edge = payload["atEdge"]
+    assert edge["shown"] is True and edge["title"] == "B", edge
+    assert edge["rows"] == ["series 13"], edge
+    # Drawn, and inside the plot rather than at the off-plot centre.
+    assert edge["cursorShown"] is True, edge
+    assert payload["plotX"] <= edge["cursorLeft"] <= payload["plotX"] + payload["plotW"], (
+        edge,
+        payload,
+    )
+
+
+def test_browser_band_fields_naming_only_the_band_field_leave_names_alone() -> None:
+    """`fields=["x"]` asks for the band coordinate and nothing else, which the
+    title already carries. Filtering the band field out and then testing the
+    remainder for emptiness read that as "no fields configured" and fell back
+    to the default y value, ignoring the selection."""
+    only_band = _run_edge(
+        _recharts_chart(mode="x", fields=["x"]),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); done(state());
+""",
+        "band fields x only",
+    )
+    assert only_band["shown"] is True and only_band["title"] == "Page B", only_band
+    # Names alone: no value follows either series name.
+    assert only_band["rows"] == ["pv", "uv"], only_band
+
+    # An authored field other than the band's is unaffected, and so is the
+    # default when no fields are configured at all.
+    other = _run_edge(
+        _recharts_chart(mode="x", fields=["y"]),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); done(state());
+""",
+        "band fields y",
+    )
+    assert other["rows"] == ["pv1398", "uv3000"], other
+
+
+def test_browser_a_lost_context_drops_the_band_too() -> None:
+    """`updatePayload` and `_applyAppend` return early when the GL context is
+    gone, having already replaced the retained spec and payload. Recovery
+    rebuilds every GPU trace from those and touches no hover state, so the band
+    outlived the traces it was resolved from across the whole restore."""
+    payload = _run_edge(
+        _recharts_chart(mode="x"),
+        """
+  const [bx] = proj(1, 0);
+  hover(bx, 8); const before = state();
+  // Lose the context, then push an update through the early-return path.
+  view._glLost = true;
+  const spec = JSON.parse(JSON.stringify(view.spec));
+  spec.traces.forEach((t, i) => { t.name = `renamed${i}`; });
+  view.updatePayload(spec, new ArrayBuffer(0));
+  const after = state();
+  done({ before, after, key: view._bandKey ?? null, rowsLeft: (view._bandRows || []).length,
+         picks: Object.keys(view._bandPicks || {}).length });
+""",
+        "lost context band",
+    )
+    assert payload["before"]["shown"] is True and payload["before"]["targets"] == 2, payload
+    assert payload["after"]["targets"] == 0, payload
+    assert payload["after"]["cursorShown"] is False, payload
+    assert payload["key"] is None and payload["rowsLeft"] == 0, payload
+    assert payload["picks"] == 0, payload
