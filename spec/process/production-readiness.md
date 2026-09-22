@@ -56,6 +56,33 @@ providing stable accessible names and polite copied/failed announcements. Its
 production-DOM check rejects both unnamed controls and shared-theme generated
 text that would replace the copy/check icon feedback.
 
+The docs app disables the built-with-Reflex badge in its configuration.
+Breadcrumb destinations must match discovered documentation pages, including
+explicit gallery aliases. Category segments without a page render as text;
+leaf links and the mobile sidebar drawer remain available. The mobile drawer
+trigger is a named native button with visible keyboard focus. Footer navigation
+uses level-two section headings. Installation examples use subsections so code
+blocks cannot become invalid direct children of a list.
+The docs recolor consumes the reusable `reflex-site-shared` theme and components
+directly. XY keeps only its branding, navigation, and project-specific footer
+content; it must not vendor shared CSS, search/buttons, or the navbar frame and
+announcement. Unpublished shared changes are previewed with the editable-package
+workflow in `docs/app/README.md`, followed by production compilation and the docs
+validators below. The Git lock remains portable; deployment of the neutral
+semantic styling requires updating that lock after the shared changes land.
+The desktop XY docs navigation switches to a docs-specific disclosure below
+1280px, preserving Overview and Reflex Integration destinations. Desktop links
+expose the selected section through `aria-current="page"` without an active underline.
+Internal navbar destinations use client-side routing so page changes preserve
+announcement dismissal without a full document reload. Code blocks share
+Reflex docs' light/dark syntax themes and neutral surface tokens while retaining
+XY's accessible clipboard feedback. XY footer links and headings use the shared
+book-weight typography, actions use small shadows, and custom sidebar links use
+weight 475. Gallery previews, playground controls, API references, Markdown,
+and demo UI text and borders use semantic theme tokens in both color modes.
+Chart canvases retain explicit white/black backgrounds to match their rendered
+plots; data-series colors remain chart-specific.
+
 Live chart demos reuse the Reflex Build action from `reflex-site-shared`, and
 the documentation navbar uses that package's keyword-only Algolia search. The
 production route gate selects either the current flat-HTML/`404.html` layout or
@@ -359,13 +386,17 @@ artifacts carry it. Three consequences worth knowing:
 | `publish.yml` | called by the above, or manual | Validates the request, calls the build workflow below, waits for `pypi` environment approval, uploads, then tags and creates the GitHub release. |
 | `build_release_artifacts.yml` | called by `publish.yml`, or manual for a dry run | **This repository's own**: the release matrix — eleven platform wheels, the runtime-verified PyEmscripten wheel, and the sdist. |
 | `deploy-docs-stg.yml` | dispatched by `publish.yml` per published tag, or manual | **This repository's own**: builds and deploys the docs site for the version just published. |
+| `deploy-docs-site.yml` | manual (`source_ref`, default `main`) | **This repository's own**: builds the docs site from a branch, tag, or commit and promotes the same images through staging and production approval, independently of a library release. |
 
 The first four come from `reflex-release` (pinned at `0.1.0a4` in
 `[tool.reflex-release] cli-command`), which owns their invariants and tests them
 where the tool lives. This repository deliberately does not re-assert their
-contents. The last two are its own, and they are the whole integration surface:
-one workflow builds the artifacts, one runs after the release. See *Upgrading the
-release tool* and *After a release* below.
+contents. The two library release integration workflows are
+`build_release_artifacts.yml` and `deploy-docs-stg.yml`: one builds the artifacts,
+one runs after the release. `deploy-docs-site.yml` is a separate, manually
+dispatched site deployment; it does not participate in the library release
+pipeline. See *Upgrading the release tool*, *After a release*, and *Docs-only
+deployment* below.
 
 What the approver sees and what the release records is one artifact: before the
 `pypi` gate, `collect` writes a `sha256sum` manifest over exactly the files
@@ -432,8 +463,9 @@ dispatch carrying inputs a workflow does not declare and that failure would land
 *after* the upload and the tag — the version out, the docs not deployed.
 
 A failure there is loud but harmless: the release is already published, and the
-dispatch can be repeated by hand. The step runs after `create-release`, so a docs
-deploy never precedes the release it documents.
+dispatch can be repeated by hand. This release-triggered deployment runs after
+`create-release` and builds the published tree. The independent site deployment
+described below can build a newer source snapshot without a library release.
 
 Two consequences of where the build sits:
 
@@ -452,6 +484,53 @@ and `scripts/verify_ci_workflow.py` covers only `ci.yml` and `codspeed.yml`. The
 action pins follow the same line — `tests/test_verify_ci_workflow.py` applies
 xy's one-SHA-per-action policy to the workflows xy authors, including
 `build_release_artifacts.yml`, and leaves the generated four to the tool.
+
+### Docs-only deployment
+
+Use **Deploy XY Docs Only** (`deploy-docs-site.yml`) in the Actions tab to deploy
+site changes without publishing a library version. The workflow must first land
+on the default branch before it can be manually dispatched. Select `main` as
+the workflow ref, and set `source_ref` to the branch, tag, or commit to build;
+the input defaults to `main`. The equivalent CLI command is:
+
+```bash
+gh workflow run deploy-docs-site.yml --ref main -f source_ref=main
+```
+
+The workflow resolves `source_ref` once to a full commit SHA, then builds both
+frontend and backend images from that commit with the common tag
+`docs-<first 12 SHA characters>-<run_id>-<run_attempt>`. Each new dispatch or
+full rerun gets a distinct tag, including when it selects the same commit.
+Retries of failed downstream jobs retain the completed preparation's tag.
+The image pair is built once, sent to staging, then promoted unchanged after the
+existing `production` environment
+approval. This path neither checks PyPI availability nor publishes a package,
+creates a release tag, or creates a GitHub release. The generated library
+release workflows and their two integration workflows keep their existing
+contracts.
+
+Deployment reuses `_build-docs-images.yml` and `_helm-docs-pr.yml`. The Helm
+workflow updates both XY image tags in `charts/internal/values-stg.yaml` and,
+after approval, `charts/internal/values-prod.yaml`, bumps the chart version, and
+merges the corresponding helm-charts pull requests. The existing helm-charts
+release and infra chart-pin automation then drives Flux reconciliation. Success
+of the staging values update does not verify staging cluster health; the
+production approval is the operator's opportunity to inspect the staged site
+before promoting it.
+
+The site workflow shares concurrency group `deploy-xy-docs-stg` with the
+library-triggered `deploy-docs-stg.yml`. Both set `cancel-in-progress: false` and
+`queue: max`: one deployment runs at a time and up to 100 pending deployments
+are retained. Without `queue: max`, a new dispatch replaces the single pending
+run even when cancellation of the active run is disabled. Once the 100-run
+pending queue is full, GitHub cancels additional runs; it is not an unbounded
+queue. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency#example-queueing-multiple-pending-runs).
+
+A run waiting for production approval holds that group, so newer
+library-triggered and docs-only deployments cannot advance past it. If that run
+is obsolete, explicitly cancel it in Actions before expecting a newer deployment
+to proceed; dispatching another run does not cancel the existing approval wait.
+The separate dev deployment continues to follow pushes to `main`.
 
 ### Landing changes
 

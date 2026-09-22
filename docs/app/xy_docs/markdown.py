@@ -147,7 +147,7 @@ def _heading_link(text: str, level: int) -> rx.Component:
             tag="link",
             size=18,
             class_name=(
-                "!text-primary-11 invisible "
+                "!text-foreground invisible "
                 "transition-[visibility_0.075s_ease-out] "
                 f"group-hover:visible mt-{margin_top}"
             ),
@@ -156,8 +156,8 @@ def _heading_link(text: str, level: int) -> rx.Component:
         href=fragment,
         on_click=rx.call_script(copy_href),
         class_name=(
-            "flex flex-row items-center gap-2 hover:!text-primary-11 "
-            "cursor-pointer mb-3 transition-colors group text-secondary-12"
+            "flex flex-row items-center gap-2 hover:!text-foreground "
+            "cursor-pointer mb-3 transition-colors group text-foreground"
         ),
     )
 
