@@ -1196,15 +1196,30 @@ export class ChartView {
         ? this._estimateTickLabel(axis.label, labelSize) : null;
       const labelExtra = labelBlock
         ? Math.max(0, labelBlock.h - labelSize * 1.2) : 0;
+      // The band the title itself needs, measured from where it is drawn:
+      // `p.y + p.h + 24` on the bottom, `p.y - 34` on the top (the two
+      // branches in `_drawAxisChrome`), plus the same 4 px canvas-edge pad the
+      // exporter's `_x_axis_title_room` uses. Measuring only the overflow past
+      // one line (`labelExtra`) reserved nothing for an ordinary one-line
+      // title, so at a small authored padding the title was drawn past the
+      // canvas edge while the exporter fitted it.
+      const titleOffset = Number.isFinite(Number(axis.label_offset))
+        ? Math.max(0, Number(axis.label_offset)) : 0;
+      const titleRoom = labelBlock
+        ? 4 + titleOffset + (side === "top" ? 34 : 24 + labelBlock.h)
+        : 0;
       // Preserve the long-standing flat band for ordinary horizontal text.
       // An axis drawing no tick label at all qualifies as much as `auto` does:
       // there is no label to force a taller band, so it keeps the flat one
-      // rather than measuring a tick offset for rows that do not exist.
+      // rather than measuring a tick offset for rows that do not exist. A
+      // title is measured either way — it is not tick-label geometry, and the
+      // flat band is not always big enough to hold it.
       const flatTickBand = !labelsOnSide || strategy === "auto";
       if (
         !hasAdaptiveLayout
         && !hasMultilineTicks
         && !labelExtra
+        && !titleRoom
         && flatTickBand
         && this._axisTickLabelAngle(axis) === null
       ) {
@@ -1235,7 +1250,9 @@ export class ChartView {
         offset = outward + this._axisStyleNumber(axis, "tick_padding", 4)
           + (side === "top" ? size * 0.2 : size * 0.8);
       }
-      room = Math.max(room, 4 + offset + rows * (size + 4) + extent + labelExtra);
+      // The title's band and the tick labels' band both start at the plot
+      // edge, so the axis needs the larger, not their sum.
+      room = Math.max(room, titleRoom, 4 + offset + rows * (size + 4) + extent + labelExtra);
     }
     return room;
   }
@@ -7574,7 +7591,24 @@ export class ChartView {
   // measured the two separately (`_yAxisLeftRoom`); this is the same rule for
   // the sides that reserve a flat or measured band instead.
   _axisGutterVisible(axis) {
-    return this._axisTickLabelsVisible(axis) || this._axisTitleVisible(axis);
+    return this._axisTickLabelsVisible(axis)
+      || this._axisTitleVisible(axis)
+      || this._axisOutwardTickRoom(axis) > 0;
+  }
+
+  // How far this axis's tick marks reach outside the plot, in px. Tick marks
+  // are chrome of their own: they answer to no text paint, so an axis with its
+  // labels switched off can still need the gutter for them, and the colorbar
+  // beside it still has to clear them. The core default `tick_length` is 0, so
+  // an unstyled axis reaches nothing, and the `ticks=False`/`show=False`
+  // shorthand's `tick_length: 0, tick_width: 0` sentinel reaches nothing
+  // either. Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
+  _axisOutwardTickRoom(axis) {
+    const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+    if (length <= 0 || this._axisStyleNumber(axis, "tick_width", 1) <= 0) return 0;
+    const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+    if (direction === "in") return 0;
+    return direction === "inout" ? length / 2 : length;
   }
 
   // Whether this axis draws a title into the gutter, which is what makes the

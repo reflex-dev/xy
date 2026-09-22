@@ -179,17 +179,17 @@ def test_browser_and_export_agree_on_every_side() -> None:
     a gutter in one renderer and not the other is the bug this fixes, and it
     can happen vertically.
 
-    Known gap, unchanged by this PR and present on `main`: with tick labels
-    switched off and an opaque *title*, the exporter reserves a bottom band for
-    the title while the browser measures its bottom room from the tick labels
-    alone and reserves none. That is a title-measurement difference on the x
-    axis, not gutter eligibility, so it is left for its own change rather than
-    pinned to the wrong value here."""
+    Titled axes join the sweep: the browser used to measure only a title's
+    overflow past one line, so a one-line title reserved nothing while the
+    exporter fitted it. `test_a_title_reserves_the_band_it_is_drawn_in` covers
+    that case directly."""
     off = {"show": False}
     for label, axes in (
         ("both off", {"x": off, "y": off}),
         ("x off, y on", {"x": off, "y": {}}),
         ("x on, y off", {"x": {}, "y": off}),
+        ("titled x", {"x": {"label": "Time"}, "y": off}),
+        ("titled both", {"x": {"label": "Time"}, "y": {"label": "Value"}}),
         ("right axis off", {"x": off, "y": {"show": False, "side": "right"}}),
         ("grid only", {"x": off, "y": {"show": False, "grid": True}}),
     ):
@@ -201,15 +201,29 @@ def test_browser_and_export_agree_on_every_side() -> None:
             height=HEIGHT,
             padding=(0, 0, 0, 0),
         )
-        browser = _browser_plot_rect(chart, f"parity: {label}")
-        export = _svg_plot_rect(chart)
-        for axis_name, index in (("x", 0), ("y", 1), ("width", 2), ("height", 3)):
-            assert abs(browser[index] - export[index]) <= 8, (
-                label,
-                axis_name,
-                browser,
-                export,
-            )
+        _assert_parity(
+            f"parity: {label}",
+            _browser_plot_rect(chart, f"parity: {label}"),
+            _svg_plot_rect(chart),
+        )
+
+
+# The two renderers measure text with different engines, so a coordinate pair
+# is "the same" within a few pixels; a whole gutter's worth apart is the
+# regression these tests exist for. Never `==`: exact equality holds only while
+# the rounding in the helpers above happens to mask a sub-0.05 px difference,
+# and it would flake on another font stack or platform.
+_PARITY_TOLERANCE_PX = 8.0
+
+
+def _assert_parity(label: str, browser, export) -> None:
+    for axis_name, index in (("x", 0), ("y", 1), ("width", 2), ("height", 3)):
+        assert abs(browser[index] - export[index]) <= _PARITY_TOLERANCE_PX, (
+            label,
+            axis_name,
+            browser,
+            export,
+        )
 
 
 def _parity_chart(**axes):
@@ -341,29 +355,25 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
 
     `"off"` keeps the axis title — that is what separates it from `"none"` —
     but `_xAxisRoom` re-tested the strategy after the eligibility check and
-    returned no room at all, so a wrapped title on an `"off"` axis was measured
-    as nothing while the same title on an `auto` axis was measured. The
-    exporter has always returned `title_room` for `"off"` (`_x_tick_label_room`).
-
-    What the browser reserves for a title is still less than the exporter's
-    band; see `test_browser_and_export_agree_on_every_side` for that gap, which
-    is the same for `auto` and unchanged here.
+    returned no room at all. The exporter has always measured it
+    (`_x_tick_label_room` returns `title_room` for exactly that case), so the
+    two renderers disagreed by the whole band.
     """
     wrapped = "Trade settlement window\nsecond line of the title"
-    off = _parity_chart(x={"tick_label_strategy": "off", "label": wrapped}, y={"show": False})
-    off_height = _browser_plot_rect(off, "off + wrapped title")[3]
-    assert off_height < HEIGHT, off_height
+    for label, x_axis in (
+        ("wrapped", {"tick_label_strategy": "off", "label": wrapped}),
+        ("one line", {"tick_label_strategy": "off", "label": "Time"}),
+        ("top side", {"tick_label_strategy": "off", "label": "Time", "side": "top"}),
+    ):
+        chart = _parity_chart(x=x_axis, y={"show": False})
+        browser = _browser_plot_rect(chart, f"off + title, {label}")
+        assert browser[3] < HEIGHT, (label, browser)
+        _assert_parity(f"off + title, {label}", browser, _svg_plot_rect(chart))
 
-    # `none` suppresses the title, so it keeps the full canvas.
+    # `none` suppresses the title, so it keeps the full canvas — in both.
     none = _parity_chart(x={"tick_label_strategy": "none", "label": wrapped}, y={"show": False})
     assert _browser_plot_rect(none, "none + wrapped title")[3] == float(HEIGHT)
-
-    # An `auto` axis reserves strictly more: the same title plus its tick
-    # labels. Ordering the two is what shows `"off"` is measured rather than
-    # merely non-zero.
-    auto = _parity_chart(x={"label": wrapped}, y={"show": False})
-    auto_height = _browser_plot_rect(auto, "auto + wrapped title")[3]
-    assert auto_height < off_height, (auto_height, off_height)
+    assert _svg_plot_rect(none)[3] == float(HEIGHT)
 
     # Tick-label geometry stays off: a rotation angle on an axis that draws no
     # label claims nothing, in either renderer.
@@ -372,6 +382,33 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
     )
     assert _browser_plot_rect(rotated, "off + rotated")[3] == float(HEIGHT)
     assert _svg_plot_rect(rotated)[3] == float(HEIGHT)
+
+
+def test_a_title_reserves_the_band_it_is_drawn_in() -> None:
+    """The browser measured only a title's overflow past one line, so an
+    ordinary one-line title reserved nothing and was drawn at
+    `p.y + p.h + 24` — past the canvas edge at a small authored padding, while
+    the exporter's `_x_axis_title_room` fitted it. This was not specific to any
+    visibility switch: a plain titled axis reproduced it, and it is the gap the
+    parity sweep's docstring used to record as known and unfixed."""
+    for label, x_axis in (
+        ("bottom", {"label": "Time"}),
+        ("top", {"label": "Time", "side": "top"}),
+        ("wrapped", {"label": "Trade settlement window\nsecond line"}),
+        ("offset", {"label": "Time", "label_offset": 12}),
+        ("large", {"label": "Time", "style": {"label_size": 22}}),
+    ):
+        chart = _parity_chart(x=x_axis, y={"show": False})
+        browser = _browser_plot_rect(chart, f"x title: {label}")
+        assert browser[3] < HEIGHT, (label, browser)
+        _assert_parity(f"x title: {label}", browser, _svg_plot_rect(chart))
+
+    # An `inside_*` title is drawn over the plot and still claims nothing.
+    inside = _parity_chart(
+        x={"label": "Time", "label_position": "inside_center"}, y={"show": False}
+    )
+    assert _browser_plot_rect(inside, "inside x title")[3] == float(HEIGHT)
+    assert _svg_plot_rect(inside)[3] == float(HEIGHT)
 
 
 def test_a_collapsed_right_gutter_does_not_push_the_colorbar_out() -> None:
@@ -446,7 +483,7 @@ def test_polar_asks_the_same_question_about_its_text() -> None:
     """
     visible = _polar_chart()
     inset = _browser_plot_rect(visible, "polar: labels on")
-    assert inset == _svg_plot_rect(visible), (inset, _svg_plot_rect(visible))
+    _assert_parity("polar: labels on", inset, _svg_plot_rect(visible))
     assert inset[0] > 8, inset
 
     # Every way of switching the angular labels off reclaims the same inset,
@@ -459,14 +496,14 @@ def test_polar_asks_the_same_question_about_its_text() -> None:
         chart = _polar_chart(theta=theta)
         browser = _browser_plot_rect(chart, f"polar: {label}")
         assert browser[0] < inset[0], (label, browser, inset)
-        assert browser == _svg_plot_rect(chart), (label, browser, _svg_plot_rect(chart))
+        _assert_parity(f"polar: {label}", browser, _svg_plot_rect(chart))
 
     # A drawn radial title keeps the left gutter it is placed in; one that is
     # hidden, or drawn inside the disc, does not.
     off = {"show": False}
     titled = _polar_chart(theta=off, r={"label": "Value"})
     titled_rect = _browser_plot_rect(titled, "polar: radial title")
-    assert titled_rect == _svg_plot_rect(titled), (titled_rect, _svg_plot_rect(titled))
+    _assert_parity("polar: radial title", titled_rect, _svg_plot_rect(titled))
 
     for label, r_axis in (
         ("hidden title", {"label": "Value", "show": False}),
@@ -475,12 +512,70 @@ def test_polar_asks_the_same_question_about_its_text() -> None:
         chart = _polar_chart(theta=off, r=r_axis)
         browser = _browser_plot_rect(chart, f"polar: {label}")
         assert browser[0] < titled_rect[0], (label, browser, titled_rect)
-        assert browser == _svg_plot_rect(chart), (label, browser, _svg_plot_rect(chart))
+        _assert_parity(f"polar: {label}", browser, _svg_plot_rect(chart))
 
     # The theta title holds the bottom band the same way, and only while drawn.
     hidden_theta_title = _polar_chart(theta={**off, "label": "Angle"})
     browser = _browser_plot_rect(hidden_theta_title, "polar: hidden theta title")
-    assert browser == _svg_plot_rect(hidden_theta_title), (
-        browser,
-        _svg_plot_rect(hidden_theta_title),
+    _assert_parity("polar: hidden theta title", browser, _svg_plot_rect(hidden_theta_title))
+
+
+def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
+    """Tick marks are chrome of their own, answering to no text paint.
+
+    Gating the gutter on the text alone collapsed it under an axis whose labels
+    are switched off but whose `tick_length` still draws marks into it — so the
+    marks ran past the canvas edge, and a vertical colorbar beside them kept
+    only its 24 px gap and was overlapped by any outward length beyond that.
+    """
+    from xy import _svg
+
+    long_ticks = {"tick_length": 40, "tick_width": 2, "tick_direction": "out"}
+
+    def right_gutter(**axis) -> float:
+        chart = _parity_chart(x={"show": False}, y={"side": "right", **axis})
+        browser = _browser_plot_rect(chart, "outward ticks")
+        export = _svg_plot_rect(chart)
+        _assert_parity("outward ticks", browser, export)
+        return WIDTH - browser[2]
+
+    # Labels off, marks on: the band stays, and matches the one the same axis
+    # keeps with its labels drawn.
+    assert right_gutter(tick_label_strategy="off", style=long_ticks) > 0
+    assert right_gutter(tick_label_strategy="off", style=long_ticks) == right_gutter(
+        style=long_ticks
     )
+    # No authored tick geometry, no marks, no band.
+    assert right_gutter(tick_label_strategy="off") == 0
+    # Inward marks draw over the plot and need none either.
+    assert (
+        right_gutter(
+            tick_label_strategy="off",
+            style={**long_ticks, "tick_direction": "in"},
+        )
+        == 0
+    )
+    # `show=False` zeroes the tick geometry, so the sparkline stays flush.
+    assert right_gutter(show=True, tick_label_strategy="off", style=long_ticks) > 0
+    assert WIDTH - _svg_plot_rect(_parity_chart(x={"show": False}, y={"show": False}))[2] == 0
+
+    # The colorbar clears the marks rather than sitting on them.
+    def bar_gap(**axis) -> float:
+        chart = xy.chart(
+            xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
+            xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
+            xy.y_axis(id="y2", side="right", domain=(100.0, 200.0), **axis),
+            xy.colorbar(title="Field"),
+            width=560,
+            height=300,
+        )
+        figure = chart.figure()
+        spec, _blob = figure.build_payload()
+        *_rest, plot = _svg.layout(spec)
+        root = ET.fromstring(figure.to_svg())
+        bar = next(
+            node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+        )
+        return float(bar.get("x", "nan")) - (plot["x"] + plot["w"])
+
+    assert bar_gap(tick_label_strategy="off", style=long_ticks) > long_ticks["tick_length"]

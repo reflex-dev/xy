@@ -2207,15 +2207,41 @@ def _axis_tick_labels_visible(axis: dict[str, Any]) -> bool:
     } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
 
 
+def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
+    """How far this axis's tick marks reach outside the plot, in px.
+
+    Tick marks are chrome of their own: they are drawn from ``tick_length``
+    and answer to no text paint, so an axis with its labels switched off can
+    still need the gutter for them. Core's default ``tick_length`` is 0, so an
+    unstyled axis reaches nothing, and the ``ticks=False``/``show=False``
+    shorthand's ``tick_length=0, tick_width=0`` sentinel reaches nothing
+    either. Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
+    """
+    style = axis.get("style") or {}
+    length = max(0.0, float(style.get("tick_length", 0) or 0.0))
+    if length <= 0.0 or float(style.get("tick_width", 1) or 0.0) <= 0.0:
+        return 0.0
+    direction = str(style.get("tick_direction", "out"))
+    if direction == "in":
+        return 0.0
+    return length / 2.0 if direction == "inout" else length
+
+
 def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
     """Whether this axis claims a gutter at all.
 
     Tick labels and the title are separate paints, so either one showing keeps
     the band: an opaque title over transparent ticks would otherwise be drawn
-    into a gutter that no longer exists. Mirrors ``_axisGutterVisible`` in
-    js/src/50_chartview.ts.
+    into a gutter that no longer exists. So do outward tick MARKS, which have
+    no text paint at all — an axis that draws only those still needs somewhere
+    to draw them, and the colorbar beside it still has to clear them.
+    Mirrors ``_axisGutterVisible`` in js/src/50_chartview.ts.
     """
-    return _axis_tick_labels_visible(axis) or _axis_title_visible(axis)
+    return (
+        _axis_tick_labels_visible(axis)
+        or _axis_title_visible(axis)
+        or _axis_outward_tick_room(axis) > 0.0
+    )
 
 
 def _y_title_baseline(
