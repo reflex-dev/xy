@@ -2213,36 +2213,61 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
     Tick marks are chrome of their own: they are drawn from ``tick_length``
     and answer to no *text* paint, so an axis with its labels switched off can
     still need the gutter for them. They do answer to ``tick_color``, and to
-    ``tick_label_strategy="none"``, which drops the tick values and so the
-    marks with them — geometry alone does not mean ink. Core's default
-    ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
+    ``tick_label_strategy="none"``, which silences the whole axis chrome and
+    takes both tick loops with it -- geometry alone does not mean ink. Core's
+    default ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
     ``ticks=False``/``show=False`` shorthand's ``tick_length=0, tick_width=0``
     sentinel reaches nothing either. An authored ``tick_width`` of 0 draws
     nothing in any renderer, so it reaches nothing too.
 
-    ``tick_sides`` decides which gutters the marks are drawn into, so a caller
-    naming a ``side`` gets 0 for a gutter this axis puts no mark in. The side
-    names its own dimension -- a left/right query is about a y axis whichever
-    way the spec is shaped -- so it, and not the axis's ``id``, is what picks
-    the allowed sides. Everywhere else here the dimension comes from the
-    caller too (``is_x=`` at every ``_axis_tick_label_sides`` call site), and
-    an older payload's axis dict need not carry an ``id`` at all.
+    The two tiers are drawn by two different loops and are measured
+    separately, because almost nothing about them is shared:
+
+    ==============  =====================  ============================
+    ..              major                  minor
+    ==============  =====================  ============================
+    drawn for       the computed ticks     ``minor_tick_values`` only
+    drawn on        every ``tick_sides``   ``side`` alone
+    painted from    ``style.tick_color``   ``minor_style.tick_color``
+    ==============  =====================  ============================
+
+    So a minor tier styled with no values draws nothing, one on an axis whose
+    ``tick_sides`` exclude its own ``side`` is still drawn there, and either
+    tier's paint says nothing about the other's. Taking the larger of two
+    lengths under the major tier's paint and sides -- as this did when the
+    minor tier was first counted -- reserves phantom gutters and clips real
+    marks in the same function.
+
+    The requested ``side`` names its own dimension -- a left/right query is
+    about a y axis whichever way the spec is shaped -- so it, and not the
+    axis's ``id``, is what picks the allowed sides. Everywhere else here the
+    dimension comes from the caller too (``is_x=`` at every
+    ``_axis_tick_label_sides`` call site), and an older payload's axis dict
+    need not carry an ``id`` at all.
 
     Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
     """
-    if _axis_tick_label_strategy(axis) == "none" or not _axis_text_paint_visible(
-        axis, "tick_color"
+    if _axis_tick_label_strategy(axis) == "none":
+        return 0.0
+    if side is not None:
+        is_x = side in ("bottom", "top")
+    else:
+        is_x = str(axis.get("id", "x")).startswith("x")
+
+    room = 0.0
+    if _axis_text_paint_visible(axis, "tick_color") and (
+        side is None or side in _axis_tick_sides(axis, is_x=is_x)
     ):
-        return 0.0
-    if side is not None and side not in _axis_tick_sides(axis, is_x=side in ("bottom", "top")):
-        return 0.0
-    # Minor ticks carry their own length, width and direction under
-    # ``minor_style`` and are drawn by the same loop, so the gutter needs the
-    # larger of the two tiers rather than the major one alone.
-    return max(
-        _tick_tier_outward_room(axis.get("style") or {}),
-        _tick_tier_outward_room(axis.get("minor_style") or {}),
-    )
+        room = _tick_tier_outward_room(axis.get("style") or {})
+
+    # `minor_axis_ticks` returns nothing without `minor_tick_values`, so a
+    # styled-but-valueless minor tier draws no marks and needs no gutter.
+    if axis.get("minor_tick_values"):
+        minor = {**axis, "style": axis.get("minor_style") or {}}
+        minor_side = axis.get("side", "bottom" if is_x else "left")
+        if _axis_text_paint_visible(minor, "tick_color") and (side is None or side == minor_side):
+            room = max(room, _tick_tier_outward_room(minor["style"]))
+    return room
 
 
 def _tick_tier_outward_room(style: dict[str, Any]) -> float:

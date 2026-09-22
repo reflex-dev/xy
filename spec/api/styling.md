@@ -330,7 +330,15 @@ suppresses the title too, where `"off"` keeps it) and for an `inside_*`
 drawn reserves the band it is drawn in, measured: the automatic gutters are a
 floor for ordinary text, not a ceiling the title is clipped against. Outward
 tick marks answer to no text paint at all, so an axis whose labels are switched
-off while its `tick_length` still draws marks keeps its band for them.
+off while its `tick_length` still draws marks keeps its band for them. The two
+tick tiers are reserved independently, because they are drawn independently:
+the major tier is drawn for the computed ticks, on every `tick_sides`, in
+`style`'s `tick_color`, while the minor tier is drawn only for the positions
+`minor_tick_values` supplies, on `side` alone, in `minor_style`'s own
+`tick_color`. So a `minor_style` with no `minor_tick_values` paints nothing
+and claims nothing; a minor tier with values claims its reach whatever the
+major tier's paint says; and an axis whose `tick_sides` send its major marks
+to the opposite edge still keeps the band its minor marks are drawn in.
 
 ### Plot rectangle and chrome reservations
 

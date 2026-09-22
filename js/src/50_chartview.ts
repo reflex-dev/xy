@@ -7633,8 +7633,9 @@ export class ChartView {
   // are chrome of their own: they answer to no *text* paint, so an axis with
   // its labels switched off can still need the gutter for them, and the
   // colorbar beside it still has to clear them. They do answer to
-  // `tick_color`, and to `tick_label_strategy: "none"`, which drops the tick
-  // values and so the marks with them — geometry alone does not mean ink. The
+  // `tick_color`, and to `tick_label_strategy: "none"`, which silences the
+  // whole axis chrome and takes both tick loops with it — geometry alone does
+  // not mean ink. The
   // core default `tick_length` is 0, so an unstyled axis reaches nothing, and
   // the `ticks=False`/`show=False` shorthand's `tick_length: 0, tick_width: 0`
   // sentinel reaches nothing either.
@@ -7642,24 +7643,33 @@ export class ChartView {
   // Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
   _axisOutwardTickRoom(axis, side = null) {
     if (this._axisTickLabelStrategy(axis) === "none") return 0;
-    if (!this._axisTextPaintVisible(axis, "tick_color")) return 0;
-    // `tick_sides` decides where the marks are drawn, so a right axis given
-    // `tick_sides: ["left"]` needs no right gutter. Callers name the gutter
-    // they are reserving; the tick-label and title terms beside this one are
-    // already filtered by side at their own call sites. The named side is
-    // also what says which dimension to allow, rather than the axis `id`: a
-    // left/right query is about a y axis however the spec is shaped.
-    if (side !== null
-        && !this._axisTickSides(axis, ["bottom", "top"].includes(side)).includes(side)) {
-      return 0;
+    // The requested side names its own dimension: a left/right query is about
+    // a y axis however the spec is shaped, and `_axisTickSides` would
+    // otherwise read it off the `id`.
+    const isX = side === null ? null : ["bottom", "top"].includes(side);
+
+    // The two tiers are drawn by two different loops, and almost nothing
+    // about them is shared, so they are measured apart. The major tier is
+    // drawn for the computed ticks, on every `tick_sides`, in
+    // `style.tick_color`; the minor tier only for `minor_tick_values`, on
+    // `side` alone, in `minor_style.tick_color`. Taking the larger length
+    // under the major tier's paint and sides reserves phantom gutters and
+    // clips real marks in the same expression.
+    let room = 0;
+    if (this._axisTextPaintVisible(axis, "tick_color")
+        && (side === null || this._axisTickSides(axis, isX).includes(side))) {
+      room = this._tickTierOutwardRoom(axis);
     }
-    // Minor ticks carry their own length, width and direction under
-    // `minor_style`, and are drawn by the same loop, so the gutter needs the
-    // larger of the two tiers rather than the major one alone.
-    return Math.max(
-      this._tickTierOutwardRoom(axis),
-      this._tickTierOutwardRoom({ ...axis, style: axis.minor_style || {} }),
-    );
+
+    if (Array.isArray(axis && axis.minor_tick_values) && axis.minor_tick_values.length) {
+      const minor = { ...axis, style: axis.minor_style || {} };
+      const minorSide = axis.side || (isX === false ? "left" : "bottom");
+      if (this._axisTextPaintVisible(minor, "tick_color")
+          && (side === null || side === minorSide)) {
+        room = Math.max(room, this._tickTierOutwardRoom(minor));
+      }
+    }
+    return room;
   }
 
   // One tier's outward reach, from its own `style`.

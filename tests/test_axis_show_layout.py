@@ -607,18 +607,54 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     # 0.5 floor is for sub-pixel widths rather than a way to resurrect a mark
     # the author switched off.
     assert right_gutter(tick_label_strategy="off", style={**long_ticks, "tick_width": 0}) == 0
-    # Minor ticks carry their own geometry and are drawn by the same loop, so
-    # a longer minor tier claims the band even with no major ticks at all.
-    minor_only = _parity_chart(
+
+    # Minor ticks carry their own geometry and their own draw loop, so a
+    # longer minor tier claims the band even with no major ticks at all --
+    # but only once there are minor VALUES to draw. `minor_style` alone emits
+    # nothing in either renderer, so it must claim nothing.
+    def minor_gutter(**axis) -> float:
+        chart = _parity_chart(x={"show": False}, y={"tick_label_strategy": "off", **axis})
+        browser = _browser_plot_rect(chart, "minor ticks")
+        _assert_parity("minor ticks", browser, _svg_plot_rect(chart))
+        return WIDTH - browser[2]
+
+    long_minor = {"tick_length": 50, "tick_width": 2}
+    assert minor_gutter(minor_tick_values=[0.25, 0.5, 0.75], minor_style=long_minor) > 50
+    assert minor_gutter(minor_style=long_minor) == 0
+    assert minor_gutter(minor_tick_values=[], minor_style=long_minor) == 0
+    # Each tier answers its OWN paint: the minor marks are stroked from
+    # `minor_style.tick_color`, so blanking the major one does not silence
+    # them, and blanking theirs does -- whatever the major tier says.
+    assert (
+        minor_gutter(
+            minor_tick_values=[0.5],
+            minor_style=long_minor,
+            style={"tick_color": "#00000000"},
+        )
+        > 50
+    )
+    assert (
+        minor_gutter(
+            minor_tick_values=[0.5],
+            minor_style={**long_minor, "tick_color": "#00000000"},
+        )
+        == 0
+    )
+    # And its own side. Minor marks are drawn on `side` alone, never on
+    # `tick_sides`, so a left axis told to put its MAJOR marks on the right
+    # still draws its minor ones at the left edge.
+    minor_left = _parity_chart(
         x={"show": False},
         y={
             "tick_label_strategy": "off",
-            "minor_style": {"tick_length": 50, "tick_width": 2},
+            "tick_sides": ["right"],
+            "minor_tick_values": [0.5],
+            "minor_style": long_minor,
         },
     )
-    minor_browser = _browser_plot_rect(minor_only, "minor ticks only")
-    _assert_parity("minor ticks only", minor_browser, _svg_plot_rect(minor_only))
-    assert WIDTH - minor_browser[2] > 50, minor_browser
+    minor_left_rect = _browser_plot_rect(minor_left, "minor left, major right")
+    _assert_parity("minor left, major right", minor_left_rect, _svg_plot_rect(minor_left))
+    assert minor_left_rect[0] > 50, minor_left_rect
     # `tick_sides` decides which gutter the marks go in. A right-side axis
     # drawing its ticks on the LEFT claims the left band and leaves the right
     # edge flush — `right_gutter` above sums both sides, so this one reads the
