@@ -470,8 +470,13 @@ above Page B, the band tooltip, the cursor line, and both active dots.
 
 ### 7.4 Value formatting (`xy.tooltip(format=...)`)
 
-One grammar resolves every tooltip value, in both modes and in the default
-tooltip (`js/src/52_tooltip.ts`, `_formatTooltipValue`):
+One grammar resolves the tooltip values `format=` can address — the default
+x/y/colour/size rows, the fields listed in `fields=`, the placeholders in
+`title=`, and a band's title and series rows — in both modes
+(`js/src/52_tooltip.ts`, `_formatTooltipValue`). Composition-specific readouts
+keep their own text and are not `format=`-driven: sankey flow and node totals,
+funnel stage rows, and a categorical colour label, which is a category name
+rather than a value.
 
 - An authored `format=` always wins. A **strftime pattern** (a `%` followed by
   one of `YmdHMSbB`, the tokens `fmtTimeSpec` replaces) formats a time-kinded
@@ -487,8 +492,12 @@ tooltip (`js/src/52_tooltip.ts`, `_formatTooltipValue`):
   accepted, shipped, and then silently ignored by every path that looks a value
   up by channel — the band title among them.
 - A time value with nothing authored on it resolves a pattern rather than
-  falling through to the ISO stamp: the **axis's own `format=`** first, so a
-  tooltip and the tick labels under it read alike, then the **visible span**:
+  falling through to the ISO stamp: the **axis's own strftime `format=`**
+  first, so a tooltip and the tick labels under it read alike, then the
+  **visible span**. Only a strftime axis format is inherited — a numeric one on
+  a time axis is not a pattern this value can be read through — and only a
+  position channel has an axis to inherit from, so a time value carried by
+  colour or size takes the span default and then the ISO stamp:
 
   | span in view | pattern |
   | --- | --- |

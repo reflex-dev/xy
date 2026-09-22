@@ -69,11 +69,13 @@ def test_tooltip_format_ships_for_table_backed_fields() -> None:
     assert tooltip["aliases"]["time"] == "x"
 
 
-# Hovers the same data point under a series of tooltip specs, reporting the
-# rendered text for each. Driving one chart through several specs keeps this to
-# one browser launch; `sources`/`aliases` are preserved from the built spec
-# because the column-name lookup resolves through them.
-_FORMAT_PROBE = """
+# Shared probe boilerplate: capture the view, wait for its CPU columns, and
+# expose `withSpec(patch)` — hover one data point under a tooltip spec and
+# report the rendered text. `sources`/`aliases` are preserved from the built
+# spec, because the column-name lookup resolves through them. Each probe below
+# splices its own cases in at CASES and runs only those, so a test never pays
+# for a browser launch it does not assert on.
+_PROBE_PRELUDE = """
 <script>
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,6 +115,16 @@ _FORMAT_PROBE = """
     };
 
     const out = {};
+CASES
+    document.body.setAttribute(ATTRIBUTE, JSON.stringify(out));
+  } catch (err) {
+    document.body.setAttribute(ATTRIBUTE + "-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+_FORMAT_CASES = """
     // No format at all: the span-aware default, not an ISO stamp.
     out.bare = withSpec({ format: {} });
     // The authored strftime pattern, keyed by the column name...
@@ -138,7 +150,9 @@ _FORMAT_PROBE = """
     view.axes.x.format = "%H:%M";
     out.axisFormat = withSpec({ format: {} });
     view.axes.x.format = axisFormat;
+"""
 
+_SPAN_CASES = """
     // The default follows the visible span: zoom the x range and re-hover.
     const span = (ms) => {
       const centre = at(INDEX);
@@ -149,14 +163,17 @@ _FORMAT_PROBE = """
     out.spanMinutes = span(90 * 6e4);
     out.spanSeconds = span(20 * 1e3);
     out.spanSubSecond = span(400);
-
-    document.body.setAttribute("data-xy-tipfmt", JSON.stringify(out));
-  } catch (err) {
-    document.body.setAttribute("data-xy-tipfmt-error", String((err && err.stack) || err));
-  }
-})();
-</script>
 """
+
+
+def _market_probe(cases: str, attribute: str) -> str:
+    """The shared prelude with `cases` spliced in, bound to `attribute`."""
+    return (
+        _PROBE_PRELUDE.replace("CASES", cases)
+        .replace("ATTRIBUTE", f'"{attribute}"')
+        .replace("INDEX", str(HOVER_INDEX))
+        .replace("YES1", repr(YES[HOVER_INDEX]))
+    )
 
 
 def _run_format_probe(chart, attribute: str, probe: str, label: str) -> dict:
@@ -171,7 +188,7 @@ def _run_format_probe(chart, attribute: str, probe: str, label: str) -> dict:
 
 
 def test_browser_time_values_take_the_strftime_path() -> None:
-    probe = _FORMAT_PROBE.replace("INDEX", str(HOVER_INDEX)).replace("YES1", repr(YES[HOVER_INDEX]))
+    probe = _market_probe(_FORMAT_CASES, "data-xy-tipfmt")
     payload = _run_format_probe(_market_chart(), "data-xy-tipfmt", probe, "tooltip format")
 
     # A 95-minute window ticks in minutes, so the tooltip reads to the minute.
@@ -192,8 +209,8 @@ def test_browser_time_values_take_the_strftime_path() -> None:
 
 
 def test_browser_time_tooltip_default_follows_the_visible_span() -> None:
-    probe = _FORMAT_PROBE.replace("INDEX", str(HOVER_INDEX)).replace("YES1", repr(YES[HOVER_INDEX]))
-    payload = _run_format_probe(_market_chart(), "data-xy-tipfmt", probe, "tooltip span")
+    probe = _market_probe(_SPAN_CASES, "data-xy-tipspan")
+    payload = _run_format_probe(_market_chart(), "data-xy-tipspan", probe, "tooltip span")
 
     # Each tier is one granularity finer than the axis labels the same span
     # produces: a months-wide window hovers to the day, a minutes-wide one to
@@ -334,3 +351,146 @@ def test_browser_format_keys_follow_the_labels_vocabulary() -> None:
     # Rows are x, y, colour, size; the colour and size rows take the format.
     assert payload["shortNames"][2:] == ["color47000.0", "size0.120"], payload["shortNames"]
     assert payload["columnNames"][2:] == ["color47,000", "size12.0%"], payload["columnNames"]
+
+
+_PER_TRACE_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    view.comm = { send: () => {} };
+    for (let i = 0; i < 200 && !(view.gpuTraces[0]._cpu && view.gpuTraces[1]._cpu); i++) {
+      await sleep(25);
+    }
+    const rect = view.canvas.getBoundingClientRect();
+    const tip = view.tooltip;
+    const hoverTrace = (k) => {
+      const g = view.gpuTraces[k];
+      const cpu = g._cpu;
+      const x = view._decodeValue(cpu.x, cpu.xMeta || g.xMeta, INDEX);
+      const y = view._decodeValue(cpu.y, cpu.yMeta || g.yMeta, INDEX);
+      view._hoverId = -1;
+      view._hideTooltip();
+      const [px, py] = view._projectDataPoint(g.xAxis, g.yAxis, x, y);
+      view._hover({ clientX: rect.left + px - view.plot.x, clientY: rect.top + py - view.plot.y });
+      return [...tip.querySelectorAll('[data-xy-slot="tooltip_row"]')].map((r) => r.textContent);
+    };
+    document.body.setAttribute("data-xy-pertrace", JSON.stringify({
+      across: hoverTrace(0),
+      down: hoverTrace(1),
+      // The figure-level alias keeps only the first binding; the fix reads the
+      // per-trace `sources` entry instead.
+      alias: view.spec.tooltip.aliases.t,
+      sources: view.spec.tooltip.sources.t,
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-pertrace-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_channel_resolves_per_trace_not_per_figure() -> None:
+    """One column bound to x on one trace and y on another formats by the
+    channel the HOVERED trace binds it to. `aliases` keeps only the first
+    binding, so resolving through it formatted the second trace as if it were
+    the first — the wrong format, and with it the wrong axis and span."""
+    data = {
+        "t": TIMES[:6],
+        "v": [float(i) for i in range(6)],
+        "w": [2.0 * i for i in range(6)],
+    }
+    chart = xy.line_chart(
+        xy.line(x="t", y="v", data=data, name="across"),
+        xy.line(x="w", y="t", data=data, name="down"),
+        xy.tooltip(fields=["t"], format={"x": "%H:%M", "y": "%b %d, %Y"}),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    probe = _PER_TRACE_PROBE.replace("INDEX", str(HOVER_INDEX))
+    payload = _run_format_probe(chart, "data-xy-pertrace", probe, "per-trace channel")
+
+    assert payload["alias"] == "x", payload
+    assert payload["sources"] == [
+        {"trace": 0, "channel": "x"},
+        {"trace": 1, "channel": "y"},
+    ], payload
+    # Same column, same tooltip, two traces: x on one, y on the other.
+    assert payload["across"] == ["t10:05"], payload["across"]
+    assert payload["down"] == ["tSep 17, 2026"], payload["down"]
+
+
+_POLAR_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    view.comm = { send: () => {} };
+    for (let i = 0; i < 200 && !view.gpuTraces[0]._cpu; i++) await sleep(25);
+    const rect = view.canvas.getBoundingClientRect();
+    const g = view.gpuTraces[0];
+    const cpu = g._cpu;
+    const base = JSON.parse(JSON.stringify(view.spec.tooltip || {}));
+    const tip = view.tooltip;
+    // Index 0 sits exactly on the authored 0-radian spoke.
+    const withSpec = (patch) => {
+      view.spec.tooltip = { ...base, ...patch };
+      view._hoverId = -1;
+      view._hideTooltip();
+      const x = view._decodeValue(cpu.x, cpu.xMeta || g.xMeta, 0);
+      const y = view._decodeValue(cpu.y, cpu.yMeta || g.yMeta, 0);
+      const [px, py] = view._projectDataPoint(g.xAxis, g.yAxis, x, y);
+      view._hover({ clientX: rect.left + px - view.plot.x, clientY: rect.top + py - view.plot.y });
+      return [...tip.querySelectorAll('[data-xy-slot="tooltip_row"]')].map((r) => r.textContent);
+    };
+    document.body.setAttribute("data-xy-polarfmt", JSON.stringify({
+      // The angle row is opt-in: naming it keeps the authored spoke label.
+      labelled: withSpec({ labels: { x: "Direction" }, format: {} }),
+      // An explicit format is an instruction about this channel and wins.
+      formatted: withSpec({ labels: { x: "Direction" }, format: { x: ".3f" } }),
+    }));
+  } catch (err) {
+    document.body.setAttribute("data-xy-polarfmt-error", String((err && err.stack) || err));
+  }
+})();
+</script>
+"""
+
+
+def test_browser_polar_angle_keeps_its_spoke_label_until_a_format_says_otherwise() -> None:
+    """An authored `format=` reaches the polar angle row, which used to drop it.
+    The spoke label stays the default, though: it is the reason the row is
+    readable, and a format was never what asked for radians."""
+    import math
+
+    import numpy as np
+
+    theta = np.linspace(0.0, 2.0 * math.pi, 24)
+    chart = xy.polar_chart(
+        xy.line(theta, 1.0 + 0.5 * np.sin(5.0 * theta), color="#2563eb", width=2.0),
+        xy.theta_axis(tick_values=[0.0, math.pi], tick_labels=["north", "south"]),
+        xy.tooltip(),
+        xy.interaction_config(hover=True),
+        width=520,
+        height=520,
+    )
+    probe = _POLAR_PROBE
+    payload = _run_format_probe(chart, "data-xy-polarfmt", probe, "polar angle format")
+
+    assert payload["labelled"][0] == "Directionnorth", payload["labelled"]
+    # Now a number rather than the label. The hovered angle arrives f32-decoded
+    # (§4/§16), so zero can come back as a tiny negative — the point is the
+    # grammar it is rendered in, not the last bit.
+    angle = payload["formatted"][0]
+    assert angle.startswith("Direction"), angle
+    assert abs(float(angle.removeprefix("Direction"))) < 1e-3, angle

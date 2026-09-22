@@ -223,6 +223,20 @@ Object.assign(ChartView.prototype, {
     return null;
   },
 
+  // The channel a field is bound to ON THIS TRACE. `aliases` is figure-level
+  // and `setdefault`-built, so it keeps only the FIRST binding: a column used
+  // as x by one trace and y by another resolved to the wrong axis on the
+  // second, and with it the wrong channel-keyed format, the wrong axis format
+  // and the wrong visible span. `sources` carries the per-trace truth;
+  // `aliases` stays the fallback for fields it does not list.
+  _tooltipChannelFor(traceId, field) {
+    const sources = (this.spec.tooltip && this.spec.tooltip.sources) || {};
+    const entries = sources[field];
+    if (!Array.isArray(entries)) return null;
+    const match = entries.find((e) => e && e.trace === traceId);
+    return (match && match.channel) || null;
+  },
+
   // `format=` for a listed field: the author's own key wins, then the channel
   // it is bound to, so `format={"x": ...}` and `format={"time": ...}` are both
   // honored however the field was named in `fields=`/`title=`.
@@ -435,15 +449,23 @@ Object.assign(ChartView.prototype, {
     if (row.x !== undefined) {
       const polar = this._polarTooltipField("x", row.x, row.x_kind);
       const { label, customized } = this._defaultTooltipLabel("x", "x", labels, aliases);
+      // A polar angle reads as its authored spoke label ("North"), not as the
+      // radians behind it, so the polar text stays the default. An explicit
+      // `format=` is an instruction about THIS channel, though, and overrides
+      // it — otherwise `format={"x": ...}` was accepted and silently dropped.
+      const polarFormat = polar
+        ? this._tooltipChannelFormat(formats, "x", row.trace)
+        : undefined;
       // A numeric polar angle only appears when the user asked for the row
       // by naming it (`labels={"x": ...}`); authored spoke labels always show.
       if (!polar || !polar.omit || customized) {
         items.push({
           kind: "field",
           label: polar && !customized ? polar.label : label,
-          value: polar ? polar.value : this._formatTooltipValue(
+          value: polar && polarFormat === undefined ? polar.value : this._formatTooltipValue(
             row.x, row.x_kind,
-            this._tooltipChannelFormat(formats, "x", row.trace), { channel: "x", row },
+            polar ? polarFormat : this._tooltipChannelFormat(formats, "x", row.trace),
+            { channel: "x", row },
           ),
         });
       }
@@ -516,7 +538,10 @@ Object.assign(ChartView.prototype, {
     // value: `_applySharedTooltipFields` copies a source column onto the row
     // under its own name, so the key is usually the column ("time"), while the
     // axis is reachable only through the channel it is bound to ("x").
-    const channel = aliases[field] || (TOOLTIP_CHANNELS.has(key) ? key : null);
+    const channel = (TOOLTIP_CHANNELS.has(key) ? key : null)
+      || this._tooltipChannelFor(row.trace, field)
+      || aliases[field]
+      || null;
     return [row[key], row[`${key}_kind`], channel];
   },
 

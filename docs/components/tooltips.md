@@ -127,9 +127,9 @@ def tooltip_time_demo():
 ~~~
 
 With no `format=` for a time field, the tooltip does not fall back to a raw
-timestamp. It uses the axis's own `format=` when the axis has one, so the
-tooltip and the tick labels beneath it read alike; otherwise it picks the
-pattern the visible span reads best in — `Sep 17, 2026` for a window of months,
+timestamp. For a field on the x or y axis it uses that axis's own `format=`
+when the axis has a strftime one, so the tooltip and the tick labels beneath it
+read alike; otherwise it picks the pattern the visible span reads best in — `Sep 17, 2026` for a window of months,
 `Sep 17, 10:05` for one of hours or days, `10:05:00` for one of seconds. Zoom
 in and the tooltip sharpens with the axis. Below a second the ISO timestamp
 stays, because it is the only form that carries milliseconds.
@@ -138,8 +138,11 @@ Because the format is chosen per field, one chart can carry a precise
 timestamp in the tooltip and short labels on the axis:
 
 ~~~python
-xy.x_axis(format="%b %d")                       # axis: Sep 17
-xy.tooltip(format={"time": "%b %d, %Y, %H:%M"})  # tooltip: Sep 17, 2026, 10:05
+xy.line_chart(
+    xy.line(x="time", y="yes", data=data),
+    xy.x_axis(format="%b %d"),                        # axis: Sep 17
+    xy.tooltip(format={"time": "%b %d, %Y, %H:%M"}),  # tooltip: Sep 17, 2026, 10:05
+)
 ~~~
 
 `format=` works on its own — without `fields=` or `title=` — in which case it
