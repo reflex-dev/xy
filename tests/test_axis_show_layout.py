@@ -350,6 +350,9 @@ def test_an_inside_title_claims_no_gutter() -> None:
     assert _svg_plot_rect(outside)[2] < WIDTH
 
 
+_WRAPPED_TITLE = "Trade settlement window\nsecond line\nthird line"
+
+
 def test_off_does_not_zero_the_title_it_still_draws() -> None:
     """The tick-label strategy decides tick-label room, not the title's.
 
@@ -382,9 +385,6 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
     )
     assert _browser_plot_rect(rotated, "off + rotated")[3] == float(HEIGHT)
     assert _svg_plot_rect(rotated)[3] == float(HEIGHT)
-
-
-_WRAPPED_TITLE = "Trade settlement window\nsecond line\nthird line"
 
 
 def test_a_title_reserves_the_band_it_is_drawn_in() -> None:
@@ -435,6 +435,33 @@ def test_a_title_reserves_the_band_it_is_drawn_in() -> None:
     assert _svg_plot_rect(inside)[3] == float(HEIGHT)
 
 
+def _colorbar_bar(**axis) -> tuple[float, float]:
+    """`(colorbar bar x, plot right edge)` for a heatmap beside a right y axis.
+
+    The colorbar's clearance is the only place the right-axis gutter shows up
+    without a browser, so both the gutter test and the tick-mark one read it
+    from here rather than each rebuilding the chart.
+    """
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
+        xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
+        xy.y_axis(id="y2", side="right", domain=(100.0, 200.0), **axis),
+        xy.colorbar(title="Field"),
+        width=560,
+        height=300,
+    )
+    figure = chart.figure()
+    spec, _blob = figure.build_payload()
+    *_rest, plot = _svg.layout(spec)
+    root = ET.fromstring(figure.to_svg())
+    bar = next(
+        node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    return float(bar.get("x", "nan")), plot["x"] + plot["w"]
+
+
 def test_a_collapsed_right_gutter_does_not_push_the_colorbar_out() -> None:
     """The colorbar's right-axis room asks the same question layout does.
 
@@ -444,37 +471,17 @@ def test_a_collapsed_right_gutter_does_not_push_the_colorbar_out() -> None:
     the canvas edge. The browser reuses the single `_rightAxisRoom` it computed
     in `_layout`, so only the exporter could drift.
     """
-    from xy import _svg
-
-    def bar_x(**axis) -> tuple[float, float]:
-        chart = xy.chart(
-            xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
-            xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
-            xy.y_axis(id="y2", side="right", domain=(100.0, 200.0), **axis),
-            xy.colorbar(title="Field"),
-            width=560,
-            height=300,
-        )
-        figure = chart.figure()
-        spec, _blob = figure.build_payload()
-        *_rest, plot = _svg.layout(spec)
-        root = ET.fromstring(figure.to_svg())
-        bar = next(
-            node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
-        )
-        return float(bar.get("x", "nan")), plot["x"] + plot["w"]
-
     # A drawn right axis keeps its gutter, and the bar clears the rotated title
     # at plot-right + 40.
-    x, plot_right = bar_x(label="Secondary")
+    x, plot_right = _colorbar_bar(label="Secondary")
     assert x > plot_right + 40, (x, plot_right)
 
     # Switched off, there is no gutter to clear, so the bar sits against the
     # plot rather than 54 px beyond where the axis used to be.
-    off_x, off_plot_right = bar_x(show=True, tick_label_strategy="off")
+    off_x, off_plot_right = _colorbar_bar(show=True, tick_label_strategy="off")
     assert off_x < off_plot_right + 40, (off_x, off_plot_right)
     # An inside-only title is drawn over the plot and reserves nothing either.
-    inside_x, inside_plot_right = bar_x(
+    inside_x, inside_plot_right = _colorbar_bar(
         label="Secondary", label_position="inside_center", show=False
     )
     assert inside_x < inside_plot_right + 40, (inside_x, inside_plot_right)
@@ -552,8 +559,6 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     marks ran past the canvas edge, and a vertical colorbar beside them kept
     only its 24 px gap and was overlapped by any outward length beyond that.
     """
-    from xy import _svg
-
     long_ticks = {"tick_length": 40, "tick_width": 2, "tick_direction": "out"}
 
     def right_gutter(**axis) -> float:
@@ -590,27 +595,34 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
         )
         == 0
     )
-    # `show=False` zeroes the tick geometry, so the sparkline stays flush.
-    assert right_gutter(show=True, tick_label_strategy="off", style=long_ticks) > 0
+    # `show=False` compiles to the `tick_length: 0, tick_width: 0` sentinel, so
+    # an axis switched off that way claims nothing. (An explicit `style=`
+    # outranks the shorthand, so this is the shorthand on its own rather than
+    # the two combined.)
+    assert right_gutter(show=False) == 0
     assert WIDTH - _svg_plot_rect(_parity_chart(x={"show": False}, y={"show": False}))[2] == 0
+    # Only the LENGTH gates the room: `tickParts` clamps a drawn mark's width
+    # to 0.5, so `tick_width: 0` still paints a hairline, and collapsing under
+    # it would clip a mark that is drawn.
+    assert right_gutter(tick_label_strategy="off", style={**long_ticks, "tick_width": 0}) > 0
+    # `tick_sides` decides which gutter the marks go in. A right-side axis
+    # drawing its ticks on the LEFT claims the left band and leaves the right
+    # edge flush — `right_gutter` above sums both sides, so this one reads the
+    # rect directly.
+    left_ticked = _parity_chart(
+        x={"show": False},
+        y={
+            "side": "right",
+            "tick_label_strategy": "off",
+            "tick_sides": ["left"],
+            "style": long_ticks,
+        },
+    )
+    browser = _browser_plot_rect(left_ticked, "right axis, left ticks")
+    _assert_parity("right axis, left ticks", browser, _svg_plot_rect(left_ticked))
+    assert browser[0] > 0, browser
+    assert browser[0] + browser[2] == float(WIDTH), browser
 
     # The colorbar clears the marks rather than sitting on them.
-    def bar_gap(**axis) -> float:
-        chart = xy.chart(
-            xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
-            xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
-            xy.y_axis(id="y2", side="right", domain=(100.0, 200.0), **axis),
-            xy.colorbar(title="Field"),
-            width=560,
-            height=300,
-        )
-        figure = chart.figure()
-        spec, _blob = figure.build_payload()
-        *_rest, plot = _svg.layout(spec)
-        root = ET.fromstring(figure.to_svg())
-        bar = next(
-            node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
-        )
-        return float(bar.get("x", "nan")) - (plot["x"] + plot["w"])
-
-    assert bar_gap(tick_label_strategy="off", style=long_ticks) > long_ticks["tick_length"]
+    bar_x_px, plot_right = _colorbar_bar(tick_label_strategy="off", style=long_ticks)
+    assert bar_x_px - plot_right > long_ticks["tick_length"], (bar_x_px, plot_right)

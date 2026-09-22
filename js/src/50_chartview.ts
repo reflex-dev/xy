@@ -789,7 +789,7 @@ export class ChartView {
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
-      this._axisGutterVisible(axis));
+      this._axisGutterVisible(axis, "bottom"));
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
     // on the bottom. Reserve one shared gutter for every top-side x axis;
@@ -798,7 +798,7 @@ export class ChartView {
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
       (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
-      this._axisGutterVisible(axis));
+      this._axisGutterVisible(axis, "top"));
     const hasTopAxis = topAxes.length > 0;
     const authoredLeft = pad
       ? (responsivePad ? Math.min(pad[3], 46) : pad[3])
@@ -843,7 +843,7 @@ export class ChartView {
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
       (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
-      this._axisGutterVisible(axis));
+      this._axisGutterVisible(axis, "right"));
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
     this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
@@ -1082,7 +1082,12 @@ export class ChartView {
       // The title is reserved separately from the tick labels, so it answers to
       // its own paint: `show=False, grid=True` keeps the grid and neither text.
       const titleOnLeft = axis.side !== "right" && this._axisTitleVisible(axis);
-      if (!labelsOnLeft && !titleOnLeft) continue;
+      // Marks drawn into the left gutter need it as much as text does, and
+      // this room is MEASURED rather than a flat band, so `_axisGutterVisible`
+      // ruling the axis in is not enough — without their length here the ticks
+      // are painted left of `plot.x` and clipped at zero padding.
+      const leftTickRoom = this._axisOutwardTickRoom(axis, "left");
+      if (!labelsOnLeft && !titleOnLeft && leftTickRoom <= 0) continue;
       const size = Math.max(
         8,
         this._axisStyleNumber(
@@ -1132,7 +1137,7 @@ export class ChartView {
           + gap
           + labelExtent;
       }
-      room = Math.max(room, needed);
+      room = Math.max(room, needed, leftTickRoom ? 4 + leftTickRoom : 0);
     }
     return room;
   }
@@ -1209,8 +1214,11 @@ export class ChartView {
       // `_x_axis_title_room` adds `(line_count - 1) * line_step` on one branch
       // and not the other. Adding it on both (the old overflow term did) put a
       // three-line top title 41 px further out than the exporter.
+      // Signed, not clamped: `_axisLabelCss` applies the authored value as
+      // given and `_x_axis_title_room` adds it as given, so a negative offset
+      // pulls the title toward the plot and needs less room, not more.
       const titleOffset = Number.isFinite(Number(axis.label_offset))
-        ? Math.max(0, Number(axis.label_offset)) : 0;
+        ? Number(axis.label_offset) : 0;
       const titleRoom = labelBlock
         ? 4 + titleOffset + (side === "top" ? 34 : 24 + labelBlock.h)
         : 0;
@@ -7604,10 +7612,10 @@ export class ChartView {
   // bottom axis, over the plot for a right-side one. The left gutter already
   // measured the two separately (`_yAxisLeftRoom`); this is the same rule for
   // the sides that reserve a flat or measured band instead.
-  _axisGutterVisible(axis) {
+  _axisGutterVisible(axis, side = null) {
     return this._axisTickLabelsVisible(axis)
       || this._axisTitleVisible(axis)
-      || this._axisOutwardTickRoom(axis) > 0;
+      || this._axisOutwardTickRoom(axis, side) > 0;
   }
 
   // How far this axis's tick marks reach outside the plot, in px. Tick marks
@@ -7621,11 +7629,21 @@ export class ChartView {
   // sentinel reaches nothing either.
   //
   // Mirrors `_axis_outward_tick_room` in python/xy/_svg.py.
-  _axisOutwardTickRoom(axis) {
+  _axisOutwardTickRoom(axis, side = null) {
     if (this._axisTickLabelStrategy(axis) === "none") return 0;
     if (!this._axisTextPaintVisible(axis, "tick_color")) return 0;
+    // `tick_sides` decides where the marks are drawn, so a right axis given
+    // `tick_sides: ["left"]` needs no right gutter. Callers name the gutter
+    // they are reserving; the tick-label and title terms beside this one are
+    // already filtered by side at their own call sites.
+    if (side !== null && !this._axisTickSides(axis).includes(side)) return 0;
     const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-    if (length <= 0 || this._axisStyleNumber(axis, "tick_width", 1) <= 0) return 0;
+    // Only the LENGTH gates the room. `tickParts` clamps the drawn width to
+    // 0.5, so `tick_width: 0` still paints a hairline — collapsing the gutter
+    // under it would clip a mark that is drawn. The `ticks=False`/`show=False`
+    // sentinel is `tick_length: 0, tick_width: 0`, so it still reaches nothing
+    // through the length alone.
+    if (length <= 0) return 0;
     const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
     if (direction === "in") return 0;
     return direction === "inout" ? length / 2 : length;

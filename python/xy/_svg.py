@@ -2102,7 +2102,7 @@ def _colorbar_right_axis_room(
     axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
         (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
-        and _axis_gutter_visible(axis)
+        and _axis_gutter_visible(axis, "right")
         for axis in axes
     ):
         return 42.0 if compact else 54.0
@@ -2207,7 +2207,7 @@ def _axis_tick_labels_visible(axis: dict[str, Any]) -> bool:
     } and _axis_text_paint_visible(axis, "tick_label_color", "tick_color")
 
 
-def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
+def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) -> float:
     """How far this axis's tick marks reach outside the plot, in px.
 
     Tick marks are chrome of their own: they are drawn from ``tick_length``
@@ -2217,7 +2217,12 @@ def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
     marks with them — geometry alone does not mean ink. Core's default
     ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
     ``ticks=False``/``show=False`` shorthand's ``tick_length=0, tick_width=0``
-    sentinel reaches nothing either.
+    sentinel reaches nothing either, through the length alone — only the length
+    gates the room, because the browser's `tickParts` clamps a drawn mark's
+    width to 0.5 and so still paints one at ``tick_width=0``.
+
+    ``tick_sides`` decides which gutters the marks are drawn into, so a caller
+    naming a ``side`` gets 0 for a gutter this axis puts no mark in.
 
     Mirrors ``_axisOutwardTickRoom`` in js/src/50_chartview.ts.
     """
@@ -2225,9 +2230,13 @@ def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
         axis, "tick_color"
     ):
         return 0.0
+    if side is not None and side not in _axis_tick_sides(
+        axis, is_x=str(axis.get("id", "x")).startswith("x")
+    ):
+        return 0.0
     style = axis.get("style") or {}
     length = max(0.0, float(style.get("tick_length", 0) or 0.0))
-    if length <= 0.0 or float(style.get("tick_width", 1) or 0.0) <= 0.0:
+    if length <= 0.0:
         return 0.0
     direction = str(style.get("tick_direction", "out"))
     if direction == "in":
@@ -2235,7 +2244,7 @@ def _axis_outward_tick_room(axis: dict[str, Any]) -> float:
     return length / 2.0 if direction == "inout" else length
 
 
-def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
+def _axis_gutter_visible(axis: dict[str, Any], side: Optional[str] = None) -> bool:
     """Whether this axis claims a gutter at all.
 
     Tick labels and the title are separate paints, so either one showing keeps
@@ -2248,7 +2257,7 @@ def _axis_gutter_visible(axis: dict[str, Any]) -> bool:
     return (
         _axis_tick_labels_visible(axis)
         or _axis_title_visible(axis)
-        or _axis_outward_tick_room(axis) > 0.0
+        or _axis_outward_tick_room(axis, side) > 0.0
     )
 
 
@@ -2338,8 +2347,15 @@ def _y_axis_left_room(spec: dict[str, Any], plot_h: float) -> float:
             continue
         left_labels = "left" in _axis_tick_label_sides(axis, is_x=False)
         left_title = axis.get("side", "left") != "right"
-        if not left_labels and not left_title:
+        # Marks drawn into the left gutter need it as much as text does, and
+        # this room is MEASURED rather than a flat band, so eligibility alone
+        # does not reserve it. Mirrors `_yAxisLeftRoom` in
+        # js/src/50_chartview.ts.
+        left_tick_room = _axis_outward_tick_room(axis, "left")
+        if not left_labels and not left_title and left_tick_room <= 0.0:
             continue
+        if left_tick_room > 0.0:
+            room = max(room, _AXIS_TEXT_EDGE_PAD + left_tick_room)
         tick_offset, tick_room = _y_tick_label_room(axis, plot_h) if left_labels else (0.0, 0.0)
         title_visible = left_title and _axis_title_visible(axis)
         if not title_visible:
@@ -2683,7 +2699,7 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         # gutter already asks (`_axis_text_paint_visible`). Only the *presence*
         # of the reservation answers to the paint; its flat 42/54 width, and
         # the plot-relative right title that depends on it, are unchanged.
-        and _axis_gutter_visible(axis)
+        and _axis_gutter_visible(axis, "right")
         for axis_id, axis in axes.items()
     ):
         # Match ChartView._layout(): one shared right-side gutter contains the
