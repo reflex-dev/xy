@@ -788,7 +788,8 @@ export class ChartView {
     const baseBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
     const bottomAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
-      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top") &&
+      (this._axisTickLabelSides(axis).includes("bottom") || axis.side !== "top"
+        || this._axisOutwardTickRoom(axis, "bottom") > 0) &&
       this._axisGutterVisible(axis, "bottom"));
     const hasBottomAxis = bottomAxes.length > 0;
     // A named x axis can own the top edge even when the primary x axis stays
@@ -797,7 +798,8 @@ export class ChartView {
     // become part of the public API (the same rule used by secondary y axes).
     const topAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("x") &&
-      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top") &&
+      (this._axisTickLabelSides(axis).includes("top") || axis.side === "top"
+        || this._axisOutwardTickRoom(axis, "top") > 0) &&
       this._axisGutterVisible(axis, "top"));
     const hasTopAxis = topAxes.length > 0;
     const authoredLeft = pad
@@ -842,7 +844,8 @@ export class ChartView {
     const measuredLeft = Math.max(authoredLeft, this._yAxisLeftRoom(plotHeight));
     const rightAxes = Object.values<any>(this.axes || {}).filter((axis: any) =>
       axis && String(axis.id || "").startsWith("y") &&
-      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right") &&
+      (this._axisTickLabelSides(axis).includes("right") || axis.side === "right"
+        || this._axisOutwardTickRoom(axis, "right") > 0) &&
       this._axisGutterVisible(axis, "right"));
     // The vertical colorbar shifts right by this room (see _positionColorbar);
     // the Python SVG/raster exporters apply the identical 42/54 rule.
@@ -1162,7 +1165,12 @@ export class ChartView {
       const labelsOnSide = this._axisTickLabelSides(axis).includes(side)
         && this._axisTickLabelsVisible(axis);
       const titleOnSide = titleSide === side && this._axisTitleVisible(axis);
-      if (!labelsOnSide && !titleOnSide) continue;
+      // Marks drawn into this band need it as much as the text does, and
+      // `tick_sides` can put them on a side the labels and the axis itself do
+      // not use. The flat top/bottom bands are 26-62 px, so a longer authored
+      // `tick_length` overran them.
+      const tickRoomOnSide = this._axisOutwardTickRoom(axis, side);
+      if (!labelsOnSide && !titleOnSide && tickRoomOnSide <= 0) continue;
       // The tick-label strategy decides tick-label room and nothing else. It
       // is already folded into `labelsOnSide` through `_axisTickLabelsVisible`,
       // so re-testing it here only dropped the TITLE's room: `"off"` keeps its
@@ -1239,6 +1247,7 @@ export class ChartView {
         !hasAdaptiveLayout
         && !hasMultilineTicks
         && !titleRoom
+        && !tickRoomOnSide
         && flatTickBand
         && this._axisTickLabelAngle(axis) === null
       ) {
@@ -1271,7 +1280,12 @@ export class ChartView {
       }
       // The title's band and the tick labels' band both start at the plot
       // edge, so the axis needs the larger, not their sum.
-      room = Math.max(room, titleRoom, 4 + offset + rows * (size + 4) + extent);
+      room = Math.max(
+        room,
+        titleRoom,
+        tickRoomOnSide ? 4 + tickRoomOnSide : 0,
+        4 + offset + rows * (size + 4) + extent,
+      );
     }
     return room;
   }
@@ -7634,13 +7648,22 @@ export class ChartView {
     // they are reserving; the tick-label and title terms beside this one are
     // already filtered by side at their own call sites.
     if (side !== null && !this._axisTickSides(axis).includes(side)) return 0;
+    // Minor ticks carry their own length, width and direction under
+    // `minor_style`, and are drawn by the same loop, so the gutter needs the
+    // larger of the two tiers rather than the major one alone.
+    return Math.max(
+      this._tickTierOutwardRoom(axis),
+      this._tickTierOutwardRoom({ ...axis, style: axis.minor_style || {} }),
+    );
+  }
+
+  // One tier's outward reach, from its own `style`.
+  _tickTierOutwardRoom(axis) {
     const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-    // Only the LENGTH gates the room. `tickParts` clamps the drawn width to
-    // 0.5, so `tick_width: 0` still paints a hairline — collapsing the gutter
-    // under it would clip a mark that is drawn. The `ticks=False`/`show=False`
-    // sentinel is `tick_length: 0, tick_width: 0`, so it still reaches nothing
-    // through the length alone.
-    if (length <= 0) return 0;
+    // Zero width draws nothing anywhere (see `tickParts`), and the
+    // `ticks=False`/`show=False` sentinel is `tick_length: 0, tick_width: 0`,
+    // so either half of it reaches nothing on its own.
+    if (length <= 0 || this._axisStyleNumber(axis, "tick_width", 1) <= 0) return 0;
     const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
     if (direction === "in") return 0;
     return direction === "inout" ? length / 2 : length;
@@ -8082,8 +8105,16 @@ export class ChartView {
     // between throttled zoom frames since the plot rect doesn't move on zoom.
     const tickParts = (axis) => {
       const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
-      const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+      // An authored zero width draws nothing, in every renderer: the SVG
+      // exporter emits `stroke-width="0"` and the raster one skips a
+      // non-positive width. The 0.5 floor is for sub-pixel widths at low dpr,
+      // not a way to resurrect a mark the author switched off — clamping
+      // through zero painted a hairline the static renderers had no gutter
+      // for. `_axisOutwardTickRoom` asks the same question.
+      const authoredWidth = this._axisStyleNumber(axis, "tick_width", 1);
+      const width = authoredWidth > 0 ? Math.max(0.5, authoredWidth) : 0;
       const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+      if (width <= 0) return { inward: 0, outward: 0, width: 0 };
       if (direction === "in") return { inward: length, outward: 0, width };
       if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
       return { inward: 0, outward: length, width };

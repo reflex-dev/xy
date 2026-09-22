@@ -2217,9 +2217,8 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
     marks with them — geometry alone does not mean ink. Core's default
     ``tick_length`` is 0, so an unstyled axis reaches nothing, and the
     ``ticks=False``/``show=False`` shorthand's ``tick_length=0, tick_width=0``
-    sentinel reaches nothing either, through the length alone — only the length
-    gates the room, because the browser's `tickParts` clamps a drawn mark's
-    width to 0.5 and so still paints one at ``tick_width=0``.
+    sentinel reaches nothing either. An authored ``tick_width`` of 0 draws
+    nothing in any renderer, so it reaches nothing too.
 
     ``tick_sides`` decides which gutters the marks are drawn into, so a caller
     naming a ``side`` gets 0 for a gutter this axis puts no mark in.
@@ -2234,9 +2233,22 @@ def _axis_outward_tick_room(axis: dict[str, Any], side: Optional[str] = None) ->
         axis, is_x=str(axis.get("id", "x")).startswith("x")
     ):
         return 0.0
-    style = axis.get("style") or {}
+    # Minor ticks carry their own length, width and direction under
+    # ``minor_style`` and are drawn by the same loop, so the gutter needs the
+    # larger of the two tiers rather than the major one alone.
+    return max(
+        _tick_tier_outward_room(axis.get("style") or {}),
+        _tick_tier_outward_room(axis.get("minor_style") or {}),
+    )
+
+
+def _tick_tier_outward_room(style: dict[str, Any]) -> float:
+    """One tick tier's outward reach, from its own style map."""
     length = max(0.0, float(style.get("tick_length", 0) or 0.0))
-    if length <= 0.0:
+    # Zero width draws nothing in any renderer, and the ``ticks=False``
+    # shorthand's sentinel is ``tick_length=0, tick_width=0``, so either half
+    # of it reaches nothing on its own.
+    if length <= 0.0 or float(style.get("tick_width", 1) or 0.0) <= 0.0:
         return 0.0
     direction = str(style.get("tick_direction", "out"))
     if direction == "in":
@@ -2420,7 +2432,14 @@ def _x_tick_label_room(axis: dict[str, Any], plot_w: float) -> float:
     strategy = _axis_tick_label_strategy(axis)
     if strategy == "none":
         return 0.0
-    title_room = _x_axis_title_room(axis)
+    # Marks drawn into this band need it as much as the text does, and the
+    # flat 32/42 px bands are smaller than a long authored ``tick_length``.
+    # Mirrors the ``tickRoomOnSide`` term in `_xAxisRoom`.
+    tick_room = _axis_outward_tick_room(axis, axis.get("side", "bottom"))
+    title_room = max(
+        _x_axis_title_room(axis),
+        _AXIS_TEXT_EDGE_PAD + tick_room if tick_room > 0.0 else 0.0,
+    )
     if strategy == "off" or not _axis_text_paint_visible(axis, "tick_label_color", "tick_color"):
         return title_room
     if (
@@ -2555,6 +2574,13 @@ def _x_axis_rooms(
             continue
         title_side = axis.get("side", "bottom")
         room_sides = set(_axis_tick_label_sides(axis, is_x=True))
+        # `tick_sides` can put marks on a side the labels and the axis itself
+        # do not use, and that side still needs its band.
+        room_sides.update(
+            side
+            for side in _axis_tick_sides(axis, is_x=True)
+            if _axis_outward_tick_room(axis, side) > 0.0
+        )
         if _axis_tick_label_strategy(axis) == "off" or axis.get("label"):
             room_sides.add(title_side)
         for side in room_sides:

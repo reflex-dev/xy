@@ -576,9 +576,10 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     )
     # No authored tick geometry, no marks, no band.
     assert right_gutter(tick_label_strategy="off") == 0
-    # Geometry is not ink. A transparent `tick_color` draws nothing, and
+    # Geometry is not ink. A transparent `tick_color` paints no visible stroke
+    # (the exporter still emits the `<line>`, just fully transparent), and
     # `tick_label_strategy="none"` drops the tick values and so the marks with
-    # them — both renderers stop emitting the lines entirely.
+    # them entirely. Either way nothing is drawn, so nothing is reserved.
     assert (
         right_gutter(
             tick_label_strategy="off",
@@ -601,10 +602,23 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     # the two combined.)
     assert right_gutter(show=False) == 0
     assert WIDTH - _svg_plot_rect(_parity_chart(x={"show": False}, y={"show": False}))[2] == 0
-    # Only the LENGTH gates the room: `tickParts` clamps a drawn mark's width
-    # to 0.5, so `tick_width: 0` still paints a hairline, and collapsing under
-    # it would clip a mark that is drawn.
-    assert right_gutter(tick_label_strategy="off", style={**long_ticks, "tick_width": 0}) > 0
+    # An authored zero width draws nothing in any renderer — the exporters
+    # emit `stroke-width="0"` / skip a non-positive width, and the browser's
+    # 0.5 floor is for sub-pixel widths rather than a way to resurrect a mark
+    # the author switched off.
+    assert right_gutter(tick_label_strategy="off", style={**long_ticks, "tick_width": 0}) == 0
+    # Minor ticks carry their own geometry and are drawn by the same loop, so
+    # a longer minor tier claims the band even with no major ticks at all.
+    minor_only = _parity_chart(
+        x={"show": False},
+        y={
+            "tick_label_strategy": "off",
+            "minor_style": {"tick_length": 50, "tick_width": 2},
+        },
+    )
+    minor_browser = _browser_plot_rect(minor_only, "minor ticks only")
+    _assert_parity("minor ticks only", minor_browser, _svg_plot_rect(minor_only))
+    assert WIDTH - minor_browser[2] > 50, minor_browser
     # `tick_sides` decides which gutter the marks go in. A right-side axis
     # drawing its ticks on the LEFT claims the left band and leaves the right
     # edge flush — `right_gutter` above sums both sides, so this one reads the
@@ -622,6 +636,17 @@ def test_outward_tick_marks_keep_a_gutter_with_no_text_at_all() -> None:
     _assert_parity("right axis, left ticks", browser, _svg_plot_rect(left_ticked))
     assert browser[0] > 0, browser
     assert browser[0] + browser[2] == float(WIDTH), browser
+
+    # The same on x: `tick_sides: ["top"]` on a bottom axis reserves the TOP
+    # band, which the flat 26/32 px default is too small to hold at
+    # `tick_length=40`.
+    top_ticked = _parity_chart(
+        x={"tick_label_strategy": "off", "tick_sides": ["top"], "style": long_ticks},
+        y={"show": False},
+    )
+    top_browser = _browser_plot_rect(top_ticked, "x ticks on top only")
+    _assert_parity("x ticks on top only", top_browser, _svg_plot_rect(top_ticked))
+    assert top_browser[1] > long_ticks["tick_length"], top_browser
 
     # The colorbar clears the marks rather than sitting on them.
     bar_x_px, plot_right = _colorbar_bar(tick_label_strategy="off", style=long_ticks)
