@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -371,3 +372,48 @@ def test_off_does_not_zero_the_title_it_still_draws() -> None:
     )
     assert _browser_plot_rect(rotated, "off + rotated")[3] == float(HEIGHT)
     assert _svg_plot_rect(rotated)[3] == float(HEIGHT)
+
+
+def test_a_collapsed_right_gutter_does_not_push_the_colorbar_out() -> None:
+    """The colorbar's right-axis room asks the same question layout does.
+
+    `_colorbar_right_axis_room` carried its own spelling of the predicate, so a
+    right axis whose gutter layout had just collapsed still stepped the
+    vertical colorbar 54 px outward — a bar floating past a plot that reaches
+    the canvas edge. The browser reuses the single `_rightAxisRoom` it computed
+    in `_layout`, so only the exporter could drift.
+    """
+    from xy import _svg
+
+    def bar_x(**axis) -> tuple[float, float]:
+        chart = xy.chart(
+            xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
+            xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
+            xy.y_axis(id="y2", side="right", domain=(100.0, 200.0), **axis),
+            xy.colorbar(title="Field"),
+            width=560,
+            height=300,
+        )
+        figure = chart.figure()
+        spec, _blob = figure.build_payload()
+        *_rest, plot = _svg.layout(spec)
+        root = ET.fromstring(figure.to_svg())
+        bar = next(
+            node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+        )
+        return float(bar.get("x", "nan")), plot["x"] + plot["w"]
+
+    # A drawn right axis keeps its gutter, and the bar clears the rotated title
+    # at plot-right + 40.
+    x, plot_right = bar_x(label="Secondary")
+    assert x > plot_right + 40, (x, plot_right)
+
+    # Switched off, there is no gutter to clear, so the bar sits against the
+    # plot rather than 54 px beyond where the axis used to be.
+    off_x, off_plot_right = bar_x(show=True, tick_label_strategy="off")
+    assert off_x < off_plot_right + 40, (off_x, off_plot_right)
+    # An inside-only title is drawn over the plot and reserves nothing either.
+    inside_x, inside_plot_right = bar_x(
+        label="Secondary", label_position="inside_center", show=False
+    )
+    assert inside_x < inside_plot_right + 40, (inside_x, inside_plot_right)

@@ -2092,11 +2092,17 @@ def _colorbar_right_axis_room(
 
     The vertical colorbar shifts right by this amount so its bar/ticks/label
     clear the axis tick labels (plot-right+8) and rotated axis title
-    (plot-right+40); the JS client applies the identical rule."""
+    (plot-right+40); the JS client applies the identical rule (it reuses the
+    one `_rightAxisRoom` it computed in `_layout`, so it cannot drift).
+
+    This must ask the same question `layout()` asks — hence
+    `_axis_gutter_visible` rather than a second spelling of it. A gutter that
+    layout collapses but the colorbar still steps over leaves the bar floating
+    54 px out from a plot that reaches the edge."""
     axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
     if any(
         (axis.get("side", "left") == "right" or "right" in _axis_tick_label_sides(axis, is_x=False))
-        and _axis_tick_label_strategy(axis) != "none"
+        and _axis_gutter_visible(axis)
         for axis in axes
     ):
         return 42.0 if compact else 54.0
