@@ -710,9 +710,21 @@ Object.assign(ChartView.prototype, {
     const slot = this._bandPicks.get(msg.seq);
     this._bandPicks.delete(msg.seq);
     const rows = this._bandRows;
-    if (!msg.row || !rows || slot === undefined || slot >= rows.length) return;
-    const rowG = this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
-    if (!rowG) return;
+    if (!rows || slot === undefined || slot >= rows.length) return;
+    // Exact or nothing (§16), as in nearest mode: a reply the kernel could not
+    // resolve, or one whose trace has since gone, means the band no longer
+    // describes the data it was built from. Returning silently left its rows
+    // and cursor on screen describing points that are not there.
+    const rowG = msg.row && this.gpuTraces.find((t) => t.trace.id === msg.row.trace);
+    if (!msg.row || !rowG) {
+      this._hideTooltip();
+      return;
+    }
+    // A reply is only allowed to replace the row it was requested for. `seq`
+    // alone does not prove that: the map is rebuilt per band, so a late reply
+    // from a previous band could land in a slot that now holds another series.
+    const target = this._hoverTargets && this._hoverTargets[slot];
+    if (!target || msg.row.trace !== target.trace || msg.row.index !== target.index) return;
     for (const channel of ["x", "y"]) {
       if (typeof msg.row[channel] !== "number") continue;
       const [value, kind] = this._sourceDisplayValue(

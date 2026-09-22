@@ -204,8 +204,8 @@ halfway between adjacent points, a cursor line marks the selected x, each series
 shows an active dot, and the tooltip follows the pointer. Bars join by their
 footprint: a grouped bar chart lists every series of the category under the
 pointer, with one cursor on the category centre. `mode="y"` does the same along
-the y axis for horizontal layouts. The default, `mode="nearest"`,
-keeps the 12 px nearest-point behavior.
+the y axis — useful for horizontal layouts, but available on any Cartesian
+chart. The default, `mode="nearest"`, keeps the 12 px nearest-point behavior.
 
 ~~~python demo exec
 import reflex_xy
