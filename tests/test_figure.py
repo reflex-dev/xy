@@ -7,6 +7,8 @@ from __future__ import annotations
 import datetime as dt
 import html as _html
 import json
+import os
+import stat
 import warnings
 from pathlib import Path
 
@@ -1251,6 +1253,37 @@ def test_to_html_path_keeps_existing_file_on_atomic_replace_failure(
 
     assert target.read_text(encoding="utf-8") == "old chart artifact"
     assert not list(tmp_path.glob(".chart.html.*.tmp"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+@pytest.mark.parametrize("name", ["chart.html", "chart.png", "chart.svg", "chart.pdf"])
+def test_path_exports_get_the_permissions_open_would_give(tmp_path: Path, name: str):
+    """The atomic temp file must not leak its owner-only mode onto the export:
+    a new file follows the umask like `open(path, "w")`, and an existing file
+    keeps its own mode."""
+    fig = Figure(title="permissions").line([0.0, 1.0], [1.0, 2.0])
+
+    def export(target: Path) -> None:
+        if target.suffix == ".html":
+            fig.to_html(target)
+        else:
+            fig.write_image(target)
+
+    previous = os.umask(0o022)
+    try:
+        created = tmp_path / name
+        export(created)
+        assert stat.S_IMODE(created.stat().st_mode) == 0o644
+
+        existing = tmp_path / f"shared-{name}"
+        existing.write_bytes(b"old")
+        existing.chmod(0o664)
+        export(existing)
+        assert stat.S_IMODE(existing.stat().st_mode) == 0o664
+        assert existing.read_bytes() != b"old"
+    finally:
+        os.umask(previous)
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 def test_figure_dom_slots_are_validated_before_export():

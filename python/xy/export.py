@@ -10,7 +10,9 @@ import math
 import numbers
 import os
 import re as _re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -216,11 +218,44 @@ _DECODE_B64_JS = (
 )
 
 
+def _sibling_temp(target: Path, *, binary: bool) -> tuple[int, Path]:
+    """Create `.<name>.<random>.tmp` beside `target` for an atomic replace.
+
+    The temp file gets the permissions `open(target, "w")` would have given
+    the export: `0o666` less the umask for a new file, or the existing file's
+    own mode. `tempfile.mkstemp` always creates `0o600`, and `os.replace`
+    carries that mode onto the target, so every export ended up owner-only
+    (unreadable by a web server or another user, even over a `0o644` file).
+    """
+    try:
+        mode: int | None = stat.S_IMODE(os.stat(target).st_mode) & 0o777
+    except OSError:
+        mode = None
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    if binary:
+        flags |= getattr(os, "O_BINARY", 0)
+    for _ in range(tempfile.TMP_MAX):
+        tmp_path = target.parent / f".{target.name}.{secrets.token_hex(4)}.tmp"
+        try:
+            fd = os.open(tmp_path, flags, 0o666)  # the umask applies, as for open()
+        except FileExistsError:
+            continue
+        if mode is not None:
+            try:
+                os.chmod(tmp_path, mode)
+            except OSError:
+                os.close(fd)
+                with suppress(FileNotFoundError):
+                    tmp_path.unlink()
+                raise
+        return fd, tmp_path
+    raise FileExistsError(f"no free temporary file name beside {str(target)!r}")
+
+
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
     """Write bytes through a same-directory temp file, then replace atomically."""
     target = Path(path)
-    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
-    tmp_path = Path(tmp_name)
+    fd, tmp_path = _sibling_temp(target, binary=True)
     try:
         with os.fdopen(fd, "wb") as f:
             fd = -1
@@ -240,14 +275,7 @@ def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
 def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
     """Write text through a same-directory temp file, then replace atomically."""
     target = Path(path)
-    parent = target.parent
-    fd, tmp_name = tempfile.mkstemp(
-        dir=parent,
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-        text=True,
-    )
-    tmp_path = Path(tmp_name)
+    fd, tmp_path = _sibling_temp(target, binary=False)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1

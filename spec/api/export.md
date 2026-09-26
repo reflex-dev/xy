@@ -228,7 +228,9 @@ Two properties are the point of the API:
   browser at all.
 
 Writes are atomic per file (same-directory temp file, fsync, `os.replace`), so a
-reader never observes a partial image. Failure mid-batch is not transactional:
+reader never observes a partial image. The temp file is created with the mode a
+plain `open(path, "w")` would give (`0o666` less the umask, or the existing
+file's mode), so the replace does not leave an owner-only export. Failure mid-batch is not transactional:
 files already written stay on disk. The return value is the list of written
 byte strings, in input order.
 ## 9. What styling survives which export path
