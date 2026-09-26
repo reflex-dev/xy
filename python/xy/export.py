@@ -10,7 +10,9 @@ import math
 import numbers
 import os
 import re as _re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -216,6 +218,52 @@ _DECODE_B64_JS = (
 )
 
 
+def _open_file_mode(target: Path) -> int:
+    """The permission bits `open(target, "w")` would leave on `target`.
+
+    An existing file keeps its own bits (`open` never changes them; the kernel
+    clears setuid/setgid on write, hence the `0o777` mask). A new file gets
+    `0o666` filtered by whatever governs creation in that directory — the
+    umask, or a default ACL — which is read back from an empty probe file
+    rather than by flipping the process-wide umask.
+    """
+    try:
+        return stat.S_IMODE(os.stat(target).st_mode) & 0o777
+    except OSError:
+        pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(tempfile.TMP_MAX):
+        probe = target.parent / f".{target.name}.{secrets.token_hex(4)}.mode"
+        try:
+            fd = os.open(probe, flags, 0o666)
+        except FileExistsError:
+            continue
+        try:
+            return stat.S_IMODE(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
+            with suppress(FileNotFoundError):
+                probe.unlink()
+    raise FileExistsError(f"no free temporary file name beside {str(target)!r}")
+
+
+def _publish_mode(fd: int, target: Path) -> None:
+    """Give the finished temp file the mode `open()` would have given the export.
+
+    `tempfile.mkstemp` creates `0o600` so nothing can read the file while it is
+    being written, but `os.replace` then carries that mode onto the target and
+    every export ended up owner-only. The final mode is applied through the
+    descriptor, after the data is flushed and immediately before the replace.
+    Best effort: if the mode cannot be determined or applied (no free inode for
+    the probe, a filesystem without chmod), the finished export is still
+    published, just owner-only as before.
+    """
+    if not hasattr(os, "fchmod"):  # POSIX; Windows has no owner-only mode to undo
+        return
+    with suppress(OSError):
+        os.fchmod(fd, _open_file_mode(target))
+
+
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
     """Write bytes through a same-directory temp file, then replace atomically."""
     target = Path(path)
@@ -227,6 +275,7 @@ def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+            _publish_mode(f.fileno(), target)
         os.replace(tmp_path, target)
     except Exception:
         if fd != -1:
@@ -254,6 +303,7 @@ def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
+            _publish_mode(f.fileno(), target)
         os.replace(tmp_path, target)
     except Exception:
         if fd != -1:

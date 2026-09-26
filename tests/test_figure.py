@@ -5,8 +5,11 @@ buffers (§19), memory report honesty (§27)."""
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import html as _html
 import json
+import os
+import stat
 import warnings
 from pathlib import Path
 
@@ -1251,6 +1254,87 @@ def test_to_html_path_keeps_existing_file_on_atomic_replace_failure(
 
     assert target.read_text(encoding="utf-8") == "old chart artifact"
     assert not list(tmp_path.glob(".chart.html.*.tmp"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+@pytest.mark.parametrize("name", ["chart.html", "chart.png", "chart.svg", "chart.pdf", "batch.png"])
+def test_path_exports_get_the_permissions_open_would_give(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+):
+    """The atomic temp file must not leak its owner-only mode onto the export:
+    a new file gets the mode `open(path, "w")` gives beside it, and an existing
+    file keeps its own mode. The temp file stays private until it is complete."""
+    fig = Figure(title="permissions").line([0.0, 1.0], [1.0, 2.0])
+
+    def export(target: Path) -> None:
+        if name.startswith("batch"):
+            export_module.write_images([fig], [target])
+        elif target.suffix == ".html":
+            fig.to_html(target)
+        elif target.suffix == ".svg":
+            fig.to_svg(target)
+        else:
+            fig.write_image(target)
+
+    written_modes: list[int] = []
+    real_fsync = export_module.os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        written_modes.append(stat.S_IMODE(os.fstat(fd).st_mode))
+        real_fsync(fd)
+
+    monkeypatch.setattr(export_module.os, "fsync", recording_fsync)
+    previous = os.umask(0o022)
+    try:
+        reference = tmp_path / "reference"
+        reference.open("w").close()
+        expected = stat.S_IMODE(reference.stat().st_mode)
+
+        created = tmp_path / name
+        export(created)
+        assert stat.S_IMODE(created.stat().st_mode) == expected
+
+        existing = tmp_path / f"shared-{name}"
+        existing.write_bytes(b"old")
+        existing.chmod(0o664)
+        export(existing)
+        assert stat.S_IMODE(existing.stat().st_mode) == 0o664
+        assert existing.read_bytes() != b"old"
+    finally:
+        os.umask(previous)
+    assert written_modes and all(mode == 0o600 for mode in written_modes)
+    assert not list(tmp_path.glob(".*.tmp")) and not list(tmp_path.glob(".*.mode"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+@pytest.mark.parametrize("failure", ["probe", "fchmod"])
+def test_export_still_lands_when_the_mode_cannot_be_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    """Applying the open()-style mode is best effort: a directory that cannot
+    take one more file (no free inode), or a filesystem without chmod, still
+    gets the finished export, owner-only as before."""
+    fig = Figure(title="probe").line([0.0, 1.0], [1.0, 2.0])
+    if failure == "probe":
+        real_open = export_module.os.open
+
+        def no_probe(path, flags, mode=0o777, *args, **kwargs):
+            if str(path).endswith(".mode"):
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        monkeypatch.setattr(export_module.os, "open", no_probe)
+    else:
+
+        def no_fchmod(fd, mode):
+            raise OSError(errno.EPERM, os.strerror(errno.EPERM))
+
+        monkeypatch.setattr(export_module.os, "fchmod", no_fchmod)
+    target = tmp_path / "chart.html"
+    html = fig.to_html(target)
+    assert target.read_text(encoding="utf-8") == html
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(".*.tmp")) and not list(tmp_path.glob(".*.mode"))
 
 
 def test_figure_dom_slots_are_validated_before_export():
