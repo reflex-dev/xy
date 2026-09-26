@@ -168,3 +168,46 @@ def test_zone_map_cache_roundtrip_and_staleness(tmp_path):
     os.utime(tmp_path / "z.f64", ns=(0, 0))
     reopened = open_f64(tmp_path / "z.f64")
     assert _load_zone_cache(reopened) is None
+
+
+def test_zone_map_cache_keeps_views_of_one_file_apart(tmp_path):
+    """Two same-length columns mapped from one file (rows of a 2-D table memmap)
+    each keep their own zone-map sidecar, so a warm rebuild does not hand one
+    column the other's min/max."""
+    n = 1000
+    path = tmp_path / "table.f64"
+    table = np.memmap(path, dtype=np.float64, mode="w+", shape=(2, n))
+    table[0] = np.linspace(0.0, 1.0, n)
+    table[1] = np.linspace(1000.0, 2000.0, n)
+    table.flush()
+    del table
+
+    def build_ranges():
+        mapped = np.memmap(path, dtype=np.float64, mode="r", shape=(2, n))
+        fig = xy.chart(xy.scatter(x=mapped[0], y=mapped[1])).figure()
+        trace = fig.traces[0]
+        return (trace.x.min, trace.x.max), (trace.y.min, trace.y.max)
+
+    cold = build_ranges()  # folds both columns and writes the sidecars
+    warm = build_ranges()  # reloads them
+    assert cold == ((0.0, 1.0), (1000.0, 2000.0))
+    assert warm == cold
+
+
+def test_zone_map_cache_keys_on_file_offset(tmp_path):
+    """`np.memmap(..., offset=)` columns of one file cache separately too."""
+    from xy import columns
+
+    n = 500
+    path = tmp_path / "packed.f64"
+    np.concatenate([np.full(n, -5.0), np.full(n, 7.0)]).tofile(path)
+
+    def view(offset):
+        return np.memmap(path, dtype=np.float64, mode="r", offset=offset, shape=(n,))
+
+    assert columns._zone_maps_for(view(0)).max == -5.0
+    assert columns._zone_maps_for(view(n * 8)).min == 7.0
+    # Warm reloads read each column's own sidecar.
+    assert columns._zone_maps_for(view(0)).max == -5.0
+    assert columns._zone_maps_for(view(n * 8)).min == 7.0
+    assert columns._zone_cache_path(view(0)) != columns._zone_cache_path(view(n * 8))

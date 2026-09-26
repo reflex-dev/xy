@@ -133,6 +133,30 @@ def backing_path(arr: Any) -> str | None:
     return None
 
 
+def backing_offset(arr: Any) -> int | None:
+    """Byte offset of ``arr``'s first element within its backing file, or
+    ``None`` when ``arr`` is not disk-backed.
+
+    Views of one file share its path, so the path alone does not name a
+    column: the rows of a 2-D table memmap, or two ``np.memmap(offset=...)``
+    columns packed into one file, all map the same file. A view's
+    ``.offset`` is inherited from the memmap it was sliced from, so the
+    offset is measured from the root memmap (the one mapping the file
+    directly, whose ``.offset`` is its file position) to ``arr``'s data.
+    """
+    root = None
+    seen = arr
+    while isinstance(seen, np.ndarray):
+        if isinstance(seen, np.memmap):
+            root = seen
+        seen = seen.base
+    if root is None:
+        return None
+    start = int(root.__array_interface__["data"][0])
+    here = int(np.asarray(arr).__array_interface__["data"][0])
+    return int(root.offset) + (here - start)
+
+
 def open_f64(path: str | os.PathLike[str]) -> npt.NDArray[np.float64]:
     """Reopen an existing canonical f64 file as a read-only memmap column.
 
