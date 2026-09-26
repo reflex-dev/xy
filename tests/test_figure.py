@@ -5,6 +5,7 @@ buffers (§19), memory report honesty (§27)."""
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import html as _html
 import json
 import os
@@ -1306,24 +1307,34 @@ def test_path_exports_get_the_permissions_open_would_give(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
-def test_export_still_lands_when_the_mode_probe_cannot_be_created(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", ["probe", "fchmod"])
+def test_export_still_lands_when_the_mode_cannot_be_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ):
-    """The mode probe is best effort: a directory that can take the export but
-    not one more file (no free inode) still gets the export, owner-only."""
+    """Applying the open()-style mode is best effort: a directory that cannot
+    take one more file (no free inode), or a filesystem without chmod, still
+    gets the finished export, owner-only as before."""
     fig = Figure(title="probe").line([0.0, 1.0], [1.0, 2.0])
-    real_open = export_module.os.open
+    if failure == "probe":
+        real_open = export_module.os.open
 
-    def no_probe(path, flags, mode=0o777, *args, **kwargs):
-        if str(path).endswith(".mode"):
-            raise OSError(28, "No space left on device")
-        return real_open(path, flags, mode, *args, **kwargs)
+        def no_probe(path, flags, mode=0o777, *args, **kwargs):
+            if str(path).endswith(".mode"):
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            return real_open(path, flags, mode, *args, **kwargs)
 
-    monkeypatch.setattr(export_module.os, "open", no_probe)
+        monkeypatch.setattr(export_module.os, "open", no_probe)
+    else:
+
+        def no_fchmod(fd, mode):
+            raise OSError(errno.EPERM, os.strerror(errno.EPERM))
+
+        monkeypatch.setattr(export_module.os, "fchmod", no_fchmod)
     target = tmp_path / "chart.html"
     html = fig.to_html(target)
     assert target.read_text(encoding="utf-8") == html
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(".*.tmp")) and not list(tmp_path.glob(".*.mode"))
 
 
 def test_figure_dom_slots_are_validated_before_export():

@@ -254,17 +254,14 @@ def _publish_mode(fd: int, target: Path) -> None:
     being written, but `os.replace` then carries that mode onto the target and
     every export ended up owner-only. The final mode is applied through the
     descriptor, after the data is flushed and immediately before the replace.
-    Best effort: if the mode cannot be determined (the probe file cannot be
-    created, e.g. no free inode), the finished export is still published, just
-    owner-only as before.
+    Best effort: if the mode cannot be determined or applied (no free inode for
+    the probe, a filesystem without chmod), the finished export is still
+    published, just owner-only as before.
     """
     if not hasattr(os, "fchmod"):  # POSIX; Windows has no owner-only mode to undo
         return
-    try:
-        mode = _open_file_mode(target)
-    except OSError:
-        return
-    os.fchmod(fd, mode)
+    with suppress(OSError):
+        os.fchmod(fd, _open_file_mode(target))
 
 
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
