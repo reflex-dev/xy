@@ -98,7 +98,10 @@ class ZoneMaps:
 # restart) loads a ~10 MB sidecar in well under a second. The cache self-
 # invalidates if the source file's size or mtime changed, or the chunk size /
 # row count no longer matches, so a stale/edited column is never trusted.
-_ZONE_CACHE_MAGIC = b"XYZONEC1"
+# Version 2 names the sidecar by the column's byte offset in its file (see
+# `_zone_cache_path`). A version-1 sidecar may hold another column's maps, so
+# the magic changed with the name and old files are never read.
+_ZONE_CACHE_MAGIC = b"XYZONEC2"
 _ZONE_CACHE_SUFFIX = ".xyzones"
 # 6 f64 planes + 2 u64 planes per chunk (mirrors ZoneMaps' fields, in order).
 _ZONE_F64_FIELDS = ("mins", "maxs", "sums", "sum_sqs", "positive_mins", "positive_maxs")
@@ -106,8 +109,22 @@ _ZONE_U64_FIELDS = ("counts", "null_counts")
 
 
 def _zone_cache_path(arr: Any) -> str | None:
+    """Sidecar path for one memmapped column.
+
+    Several columns can map the same file (rows of a 2-D table memmap, or
+    `np.memmap(offset=...)` columns packed into one file), so the sidecar is
+    named `<file>.<byte offset>.xyzones`: sharing one path let a same-length
+    column reload another column's maps (its min/max, hence its axis range).
+    The offset is always written, even when it is 0, so `table` at offset 8
+    and a file named `table.8` at offset 0 cannot share a name either.
+    """
     bp = _ooc.backing_path(arr)
-    return (bp + _ZONE_CACHE_SUFFIX) if bp is not None else None
+    if bp is None:
+        return None
+    offset = _ooc.backing_offset(arr)
+    if offset is None:
+        return None
+    return f"{bp}.{offset}{_ZONE_CACHE_SUFFIX}"
 
 
 def _zone_source_stamp(source: str) -> tuple[int, int]:
