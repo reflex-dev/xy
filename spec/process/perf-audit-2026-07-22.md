@@ -35,14 +35,14 @@ columns) that is a ~53 s NVMe-bound scan paid on **every** process start
 an immutable file.
 
 Fix (`columns.py`, Python side — no kernel/ABI change): persist the fold to a
-`<column>.xyzones` sidecar and reload it on the next build instead of
+sidecar file and reload it on the next build instead of
 rescanning. The sidecar carries the source file's size + mtime and the
 `(ZONE_CHUNK, row-count)` it was folded at; any mismatch rejects it, so an
-edited or truncated column is never trusted. A column that starts partway into
-its file (a row of a 2-D table memmap, or an `np.memmap(offset=...)` column)
-gets its own `<column>.<byte offset>.xyzones` sidecar, since columns sharing a
-file and a row count would otherwise reload each other's maps. First build pays the scan and
-writes the sidecar (21 MB for both planet columns); every later build loads it
+edited or truncated column is never trusted. The sidecar is named
+`<file>.<byte offset>.xyzones` because several columns can map one file (the
+rows of a 2-D table memmap, or `np.memmap(offset=...)` columns); sharing a
+name let a same-length column reload another column's maps. First build pays
+the scan and writes the sidecar (21 MB for both planet columns); every later build loads it
 bit-identically. Measured on the real 10.74 B-row planet columns: **52.8 s →
 0.01 s** figure build, identical domain. The fused `zone_maps_pair` still does
 both columns in one pass on a cold miss; only genuinely disk-backed columns are

@@ -188,7 +188,12 @@ def test_zone_map_cache_keeps_views_of_one_file_apart(tmp_path):
         trace = fig.traces[0]
         return (trace.x.min, trace.x.max), (trace.y.min, trace.y.max)
 
+    from xy.columns import _load_zone_cache
+
     cold = build_ranges()  # folds both columns and writes the sidecars
+    mapped = np.memmap(path, dtype=np.float64, mode="r", shape=(2, n))
+    assert _load_zone_cache(mapped[0]).max == 1.0  # each row persisted its own
+    assert _load_zone_cache(mapped[1]).min == 1000.0
     warm = build_ranges()  # reloads them
     assert cold == ((0.0, 1.0), (1000.0, 2000.0))
     assert warm == cold
@@ -208,6 +213,24 @@ def test_zone_map_cache_keys_on_file_offset(tmp_path):
     assert columns._zone_maps_for(view(0)).max == -5.0
     assert columns._zone_maps_for(view(n * 8)).min == 7.0
     # Warm reloads read each column's own sidecar.
-    assert columns._zone_maps_for(view(0)).max == -5.0
-    assert columns._zone_maps_for(view(n * 8)).min == 7.0
+    assert columns._load_zone_cache(view(0)).max == -5.0
+    assert columns._load_zone_cache(view(n * 8)).min == 7.0
     assert columns._zone_cache_path(view(0)) != columns._zone_cache_path(view(n * 8))
+
+    # A file whose name ends in `.<digits>` gets a distinct sidecar from the
+    # same-named column at that offset of the shorter-named file.
+    suffixed = tmp_path / f"packed.f64.{n * 8}"
+    np.full(n, 3.0).tofile(suffixed)
+    at_zero = np.memmap(suffixed, dtype=np.float64, mode="r", shape=(n,))
+    assert columns._zone_cache_path(at_zero) != columns._zone_cache_path(view(n * 8))
+    assert columns._zone_maps_for(at_zero).max == 3.0
+    assert columns._load_zone_cache(view(n * 8)).min == 7.0
+
+
+def test_backing_offset_without_file_metadata_is_not_disk_backed():
+    """A memmap-typed view with no mapping behind it has no file offset."""
+    from xy._ooc import backing_offset
+
+    orphan = np.arange(4, dtype=np.float64).view(np.memmap)
+    assert backing_offset(orphan) is None
+    assert backing_offset(np.arange(4, dtype=np.float64)) is None

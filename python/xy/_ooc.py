@@ -150,11 +150,12 @@ def backing_offset(arr: Any) -> int | None:
         if isinstance(seen, np.memmap):
             root = seen
         seen = seen.base
-    if root is None:
+    root_offset = getattr(root, "offset", None)
+    if root is None or root_offset is None:
         return None
     start = int(root.__array_interface__["data"][0])
     here = int(np.asarray(arr).__array_interface__["data"][0])
-    return int(root.offset) + (here - start)
+    return int(root_offset) + (here - start)
 
 
 def open_f64(path: str | os.PathLike[str]) -> npt.NDArray[np.float64]:
