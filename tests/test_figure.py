@@ -1256,24 +1256,42 @@ def test_to_html_path_keeps_existing_file_on_atomic_replace_failure(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
-@pytest.mark.parametrize("name", ["chart.html", "chart.png", "chart.svg", "chart.pdf"])
-def test_path_exports_get_the_permissions_open_would_give(tmp_path: Path, name: str):
+@pytest.mark.parametrize("name", ["chart.html", "chart.png", "chart.svg", "chart.pdf", "batch.png"])
+def test_path_exports_get_the_permissions_open_would_give(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+):
     """The atomic temp file must not leak its owner-only mode onto the export:
-    a new file follows the umask like `open(path, "w")`, and an existing file
-    keeps its own mode."""
+    a new file gets the mode `open(path, "w")` gives beside it, and an existing
+    file keeps its own mode. The temp file stays private until it is complete."""
     fig = Figure(title="permissions").line([0.0, 1.0], [1.0, 2.0])
 
     def export(target: Path) -> None:
-        if target.suffix == ".html":
+        if name.startswith("batch"):
+            export_module.write_images([fig], [target])
+        elif target.suffix == ".html":
             fig.to_html(target)
+        elif target.suffix == ".svg":
+            fig.to_svg(target)
         else:
             fig.write_image(target)
 
+    written_modes: list[int] = []
+    real_fsync = export_module.os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        written_modes.append(stat.S_IMODE(os.fstat(fd).st_mode))
+        real_fsync(fd)
+
+    monkeypatch.setattr(export_module.os, "fsync", recording_fsync)
     previous = os.umask(0o022)
     try:
+        reference = tmp_path / "reference"
+        reference.open("w").close()
+        expected = stat.S_IMODE(reference.stat().st_mode)
+
         created = tmp_path / name
         export(created)
-        assert stat.S_IMODE(created.stat().st_mode) == 0o644
+        assert stat.S_IMODE(created.stat().st_mode) == expected
 
         existing = tmp_path / f"shared-{name}"
         existing.write_bytes(b"old")
@@ -1283,7 +1301,8 @@ def test_path_exports_get_the_permissions_open_would_give(tmp_path: Path, name: 
         assert existing.read_bytes() != b"old"
     finally:
         os.umask(previous)
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert written_modes and all(mode == 0o600 for mode in written_modes)
+    assert not list(tmp_path.glob(".*.tmp")) and not list(tmp_path.glob(".*.mode"))
 
 
 def test_figure_dom_slots_are_validated_before_export():

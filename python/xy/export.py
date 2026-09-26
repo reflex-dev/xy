@@ -218,50 +218,59 @@ _DECODE_B64_JS = (
 )
 
 
-def _sibling_temp(target: Path, *, binary: bool) -> tuple[int, Path]:
-    """Create `.<name>.<random>.tmp` beside `target` for an atomic replace.
+def _open_file_mode(target: Path) -> int:
+    """The permission bits `open(target, "w")` would leave on `target`.
 
-    The temp file gets the permissions `open(target, "w")` would have given
-    the export: `0o666` less the umask for a new file, or the existing file's
-    own mode. `tempfile.mkstemp` always creates `0o600`, and `os.replace`
-    carries that mode onto the target, so every export ended up owner-only
-    (unreadable by a web server or another user, even over a `0o644` file).
+    An existing file keeps its own bits (`open` never changes them; the kernel
+    clears setuid/setgid on write, hence the `0o777` mask). A new file gets
+    `0o666` filtered by whatever governs creation in that directory — the
+    umask, or a default ACL — which is read back from an empty probe file
+    rather than by flipping the process-wide umask.
     """
     try:
-        mode: int | None = stat.S_IMODE(os.stat(target).st_mode) & 0o777
+        return stat.S_IMODE(os.stat(target).st_mode) & 0o777
     except OSError:
-        mode = None
-    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    if binary:
-        flags |= getattr(os, "O_BINARY", 0)
+        pass
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     for _ in range(tempfile.TMP_MAX):
-        tmp_path = target.parent / f".{target.name}.{secrets.token_hex(4)}.tmp"
+        probe = target.parent / f".{target.name}.{secrets.token_hex(4)}.mode"
         try:
-            fd = os.open(tmp_path, flags, 0o666)  # the umask applies, as for open()
+            fd = os.open(probe, flags, 0o666)
         except FileExistsError:
             continue
-        if mode is not None:
-            try:
-                os.chmod(tmp_path, mode)
-            except OSError:
-                os.close(fd)
-                with suppress(FileNotFoundError):
-                    tmp_path.unlink()
-                raise
-        return fd, tmp_path
+        try:
+            return stat.S_IMODE(os.fstat(fd).st_mode)
+        finally:
+            os.close(fd)
+            with suppress(FileNotFoundError):
+                probe.unlink()
     raise FileExistsError(f"no free temporary file name beside {str(target)!r}")
+
+
+def _publish_mode(fd: int, target: Path) -> None:
+    """Give the finished temp file the mode `open()` would have given the export.
+
+    `tempfile.mkstemp` creates `0o600` so nothing can read the file while it is
+    being written, but `os.replace` then carries that mode onto the target and
+    every export ended up owner-only. The final mode is applied through the
+    descriptor, after the data is flushed and immediately before the replace.
+    """
+    if hasattr(os, "fchmod"):  # POSIX; Windows has no owner-only mode to undo
+        os.fchmod(fd, _open_file_mode(target))
 
 
 def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
     """Write bytes through a same-directory temp file, then replace atomically."""
     target = Path(path)
-    fd, tmp_path = _sibling_temp(target, binary=True)
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as f:
             fd = -1
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
+            _publish_mode(f.fileno(), target)
         os.replace(tmp_path, target)
     except Exception:
         if fd != -1:
@@ -275,13 +284,21 @@ def _atomic_write_bytes(path: str | PathLike[str], data: bytes) -> None:
 def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
     """Write text through a same-directory temp file, then replace atomically."""
     target = Path(path)
-    fd, tmp_path = _sibling_temp(target, binary=False)
+    parent = target.parent
+    fd, tmp_name = tempfile.mkstemp(
+        dir=parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = -1
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
+            _publish_mode(f.fileno(), target)
         os.replace(tmp_path, target)
     except Exception:
         if fd != -1:
