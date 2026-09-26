@@ -1305,6 +1305,27 @@ def test_path_exports_get_the_permissions_open_would_give(
     assert not list(tmp_path.glob(".*.tmp")) and not list(tmp_path.glob(".*.mode"))
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_export_still_lands_when_the_mode_probe_cannot_be_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The mode probe is best effort: a directory that can take the export but
+    not one more file (no free inode) still gets the export, owner-only."""
+    fig = Figure(title="probe").line([0.0, 1.0], [1.0, 2.0])
+    real_open = export_module.os.open
+
+    def no_probe(path, flags, mode=0o777, *args, **kwargs):
+        if str(path).endswith(".mode"):
+            raise OSError(28, "No space left on device")
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(export_module.os, "open", no_probe)
+    target = tmp_path / "chart.html"
+    html = fig.to_html(target)
+    assert target.read_text(encoding="utf-8") == html
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
 def test_figure_dom_slots_are_validated_before_export():
     fig = Figure().line([0.0, 1.0], [1.0, 2.0])
     fig.class_names = {"legend": "ok", "legnd": "typo"}
