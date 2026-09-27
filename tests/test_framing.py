@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import struct
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 from scripts.js_exports import missing_esm_exports
 
+import xy
 from xy.channel import (
     FRAME_ALIGNMENT,
     FRAME_HEADER_SIZE,
@@ -332,6 +334,110 @@ def test_javascript_rejects_malformed_and_unaligned_frames() -> None:
     assert all(result["rejected"])
     assert result["unalignedRejected"] is True
     assert result["limitRejected"] is True
+
+
+def test_javascript_column_dtypes_are_exhaustive_for_every_wire_layout() -> None:
+    chart = xy.scatter_chart(
+        xy.scatter(
+            x=[1.0, 2.0],
+            y=[3.0, 4.0],
+            color=["A", "B"],
+            key=["ES", "FR"],
+        ),
+        xy.animation(match="key"),
+    )
+    figure = chart.figure()
+    packed_spec, packed_raw = figure.build_payload()
+    split_spec, split_raw = figure.build_payload_split()
+    packed_encoded = base64.b64encode(packed_raw).decode("ascii")
+    split_encoded = [base64.b64encode(bytes(value)).decode("ascii") for value in split_raw]
+    header_source = (ROOT / "js" / "src" / "00_header.ts").read_bytes()
+    header_url = "data:text/javascript;base64," + base64.b64encode(header_source).decode("ascii")
+    script = f"""
+      import {{ ChartView }} from {CLIENT.as_uri()!r};
+      import {{ payloadCoherent }} from {header_url!r};
+
+      const decode = (value) => Uint8Array.from(Buffer.from(value, 'base64'));
+      const packedSpec = {json.dumps(packed_spec)};
+      const splitSpec = {json.dumps(split_spec)};
+      const packed = decode({packed_encoded!r});
+      const split = {json.dumps(split_encoded)}.map(decode);
+      const columnView = ChartView.prototype._columnView;
+      const names = (spec, payload) => spec.columns.map((meta, index) =>
+        columnView.call(null, payload, meta, `column ${{index}}`).constructor.name);
+      const capture = (fn) => {{
+        try {{ fn(); return {{threw: false, message: ''}}; }}
+        catch (error) {{ return {{threw: true, message: String(error && error.message)}}; }}
+      }};
+      const badPacked = structuredClone(packedSpec);
+      badPacked.columns[0].dtype = 'f64';
+      const badSplit = structuredClone(splitSpec);
+      badSplit.columns[0].dtype = 'future32';
+
+      const receiver = {{
+        _asF32: ChartView.prototype._asF32,
+        _asU8: ChartView.prototype._asU8,
+        _asU32: ChartView.prototype._asU32,
+      }};
+      const updateView = ChartView.prototype._wireColumnView;
+      const explicit = [
+        updateView.call(receiver, packed, {{}}, 'drill x').constructor.name,
+        updateView.call(receiver, packed, {{dtype: 'f32'}}, 'drill opacity').constructor.name,
+        updateView.call(receiver, packed, {{dtype: 'u8'}}, 'drill color').constructor.name,
+        updateView.call(receiver, packed, {{dtype: 'u32'}}, 'drill key').constructor.name,
+      ];
+
+      process.stdout.write(JSON.stringify({{
+        packedNames: names(packedSpec, packed),
+        splitNames: names(splitSpec, split),
+        packedCoherent: payloadCoherent(packedSpec, packed),
+        splitCoherent: payloadCoherent(splitSpec, split),
+        packedColumnError: capture(() =>
+          columnView.call(null, packed, badPacked.columns[0], 'packed column 0')),
+        splitColumnError: capture(() =>
+          columnView.call(null, split, badSplit.columns[0], 'split column 0')),
+        packedCoherenceError: capture(() => payloadCoherent(badPacked, packed)),
+        splitCoherenceError: capture(() => payloadCoherent(badSplit, split)),
+        explicit,
+        updateError: capture(() =>
+          updateView.call(receiver, packed, {{dtype: 'i32'}}, 'drill color')),
+      }}));
+    """
+
+    result = _node(script)
+
+    expected = ["Float32Array", "Float32Array", "Uint32Array", "Uint32Array", "Uint8Array"]
+    assert result["packedNames"] == expected
+    assert result["splitNames"] == expected
+    assert result["packedCoherent"] is True
+    assert result["splitCoherent"] is True
+    assert result["explicit"] == ["Float32Array", "Float32Array", "Uint8Array", "Uint32Array"]
+    for key, dtype, context in (
+        ("packedColumnError", "f64", "packed column 0"),
+        ("splitColumnError", "future32", "split column 0"),
+        ("packedCoherenceError", "f64", "column 0"),
+        ("splitCoherenceError", "future32", "column 0"),
+        ("updateError", "i32", "drill color"),
+    ):
+        error = result[key]
+        assert error["threw"] is True
+        assert dtype in error["message"]
+        assert context in error["message"]
+
+
+def test_javascript_wire_dtype_decisions_stay_centralized() -> None:
+    sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "js" / "src").glob("*.ts"))
+    }
+    dtype_decision = re.compile(r"\.dtype\s*(?:===|==|!==|!=|\|\||\?\?)")
+
+    assert "wireColumnDtype" in sources["00_header.ts"]
+    for name, source in sources.items():
+        if name != "00_header.ts":
+            assert not dtype_decision.search(source), f"dtype interpretation escaped into {name}"
+    for name in ("45_lod.ts", "50_chartview.ts", "54_kernel.ts", "56_animation.ts"):
+        assert "wireColumnDtype" in sources[name]
 
 
 def test_widget_entry_no_longer_slices_binary_views() -> None:
