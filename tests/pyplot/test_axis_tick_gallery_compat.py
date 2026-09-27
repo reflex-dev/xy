@@ -294,3 +294,40 @@ def test_named_annotation_accepts_relative_fontsize() -> None:
     annotation = ax.annotate(text="note", xy=(0, 0), fontsize="small")
 
     assert annotation._entry["kwargs"]["style"]["font_size"] == pytest.approx(8.5)
+
+
+def test_minorticks_on_leaves_automatic_major_ticks_unpinned() -> None:
+    """Enabling minor ticks must not freeze the majors into authored positions.
+
+    Authored `tick_values` are filtered to the visible window by the renderer,
+    so pinning them here makes the tick labels disappear once the view is
+    zoomed past them.
+    """
+    _fig, ax = plt.subplots()
+    ax.plot([0, 10], [0, 10])
+    ax.minorticks_on()
+
+    spec, _blob = ax._build_chart(600, 400).figure().build_payload()
+    assert spec["x_axis"].get("minor_tick_values")
+    assert spec["x_axis"].get("tick_values") is None
+
+
+@pytest.mark.parametrize("scale", ["symlog", "asinh", "logit"])
+def test_shared_axis_keeps_nonlinear_labels_paired_with_positions(scale: str) -> None:
+    """A follower axis publishes tick labels, so it must publish positions too.
+
+    Scale defaults live on the axes that set the scale, not on the shared ticker
+    source, so a `sharex` follower reaches the label branch with no locator of
+    its own. Labels without positions are rejected when the chart is built.
+    """
+    xs = np.linspace(-100, 100, 50)
+    _fig, (leader, follower) = plt.subplots(2, sharex=True)
+    leader.plot(xs, xs)
+    follower.plot(xs, xs)
+    follower.set_xscale(scale, **({"linthresh": 2.0} if scale == "symlog" else {}))
+    follower.minorticks_on()
+
+    spec, _blob = follower._build_chart(600, 400).figure().build_payload()
+    x_axis = spec["x_axis"]
+
+    assert len(x_axis["tick_labels"]) == len(x_axis["tick_values"])
