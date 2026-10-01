@@ -599,17 +599,24 @@ Object.assign(ChartView.prototype, {
     // is its own coordinate, so this never moves it.
     // Projected through the axes as they are NOW, not as they were at hover:
     // the band survives a pan or zoom, and a stale pixel span clamped the
-    // cursor onto a stretch the bar had already left.
-    const edge = (v) => {
+    // cursor onto a stretch the bar had already left. Each slot is projected
+    // through ITS OWN axes before the union, because a band can hold series on
+    // different ones and their data values do not share a number line.
+    const edge = (v, xAxis, yAxis) => {
       const [ex, ey] = this._projectDataPoint(
-        a.xAxis, a.yAxis, a.dim === "x" ? v : a.x, a.dim === "x" ? a.y : v,
+        xAxis, yAxis, a.dim === "x" ? v : a.x, a.dim === "x" ? a.y : v,
       );
       return a.dim === "x" ? ex : ey;
     };
-    const e0 = edge(a.dLo);
-    const e1 = edge(a.dHi);
-    const spanLo = Math.min(e0, e1);
-    const spanHi = Math.max(e0, e1);
+    let spanLo = Infinity;
+    let spanHi = -Infinity;
+    for (const s of a.spans || []) {
+      const e0 = edge(s.lo, s.xAxis, s.yAxis);
+      const e1 = edge(s.hi, s.xAxis, s.yAxis);
+      if (!Number.isFinite(e0) || !Number.isFinite(e1)) continue;
+      spanLo = Math.min(spanLo, e0, e1);
+      spanHi = Math.max(spanHi, e0, e1);
+    }
     if (
       Number.isFinite(spanLo) && Number.isFinite(spanHi) && spanHi > spanLo
       && spanHi >= lo && spanLo <= hi

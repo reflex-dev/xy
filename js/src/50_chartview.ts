@@ -8982,7 +8982,13 @@ export class ChartView {
       const prev = g._transitionPrevValue0Values;
       const progress = g._transitionPositionProgress;
       if (prev && Number.isFinite(progress) && idx < prev.length) {
-        const from = this._decodeValue(prev, cb.value0Meta, idx);
+        // `_transitionPrevValue0Values` is written as
+        // `encode(value0, newBar.value1Meta)` and read back by the animation
+        // itself through `oldBar.value1Meta`: the start baseline rides the
+        // TIP's metadata, not the baseline column's. Decoding it with
+        // `value0Meta` measured a different bar from the one being drawn
+        // wherever the two columns differ in scale or offset.
+        const from = this._decodeValue(prev, cb.value1Meta, idx);
         base = Number.isFinite(from) ? from + (settled - from) * progress : settled;
       } else {
         base = settled;
@@ -9187,23 +9193,25 @@ export class ChartView {
       this._bandCursor = null;
       this._hideTooltipCursor();
     } else {
-      // Carry the band's footprint along the band axis -- in DATA space, the
-      // union over its slots -- so the cursor can be drawn on the part of a
-      // clipped bar that is actually visible. Plot pixels would be stale the
-      // moment the view moved, since the cursor is repositioned on every draw
-      // but the band is not rebuilt by a pan or zoom. A point band's footprint
-      // is its own coordinate, which changes nothing.
-      const spans = band.hits.filter(
-        (h) => Number.isFinite(h.dLo) && Number.isFinite(h.dHi),
-      );
+      // Carry the band's footprint along the band axis in DATA space, so the
+      // cursor can be drawn on the part of a clipped bar that is actually
+      // visible. Plot pixels would be stale the moment the view moved, since
+      // the cursor is repositioned on every draw but the band is not rebuilt
+      // by a pan or zoom. Each slot keeps its OWN axes: a band can hold series
+      // bound to different ones, and unlike pixels, data values from two axes
+      // do not share a number line -- unioning them produced a range neither
+      // bar occupies. They are projected separately and unioned as pixels.
+      // A point band's footprint is its own coordinate, which changes nothing.
+      const spans = band.hits
+        .filter((h) => Number.isFinite(h.dLo) && Number.isFinite(h.dHi))
+        .map((h) => ({ lo: h.dLo, hi: h.dHi, xAxis: h.g.xAxis, yAxis: h.g.yAxis }));
       this._bandCursor = {
         dim,
         xAxis: ag.xAxis,
         yAxis: ag.yAxis,
         x: at.x,
         y: at.y,
-        dLo: spans.length ? Math.min(...spans.map((h) => h.dLo)) : undefined,
-        dHi: spans.length ? Math.max(...spans.map((h) => h.dHi)) : undefined,
+        spans,
       };
       this._renderBandTooltip(e.clientX, e.clientY);
       this._positionTooltipCursor();

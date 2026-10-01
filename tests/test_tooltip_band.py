@@ -1039,12 +1039,18 @@ def test_browser_a_lost_context_drops_the_band_too() -> None:
 
 
 def _band_at_centre(chart, label: str, setup: str = "") -> dict:
-    """Hover the middle of the plot and report what the band shows."""
+    """Hover the middle of the plot and report what the band shows.
+
+    `hover(x, y)` is CANVAS-relative: it sets `clientX = rect.left + x` and
+    `_hover` takes `clientX - rect.left` straight back out. Passing plot sizes
+    put the pointer `(plot.x, plot.y)` up and left of the plot's centre, which
+    is a different band coordinate than the name claims.
+    """
     return _run_edge(
         chart,
         setup
         + """
-  hover(view.plot.w / 2, view.plot.h / 2);
+  hover(view.plot.x + view.plot.w / 2, view.plot.y + view.plot.h / 2);
   done({ state: state() });
 """,
         label,
@@ -1091,7 +1097,7 @@ def test_browser_a_bar_is_a_span_on_whichever_axis_is_perpendicular() -> None:
     straddles. It is excluded only when the whole span is outside.
     """
 
-    def rows(mode, axes, values=(3.0,), xs=(0.0,)):
+    def band(mode, axes, values=(3.0,), xs=(0.0,)):
         return _band_at_centre(
             xy.bar_chart(
                 xy.bar(list(xs), list(values), name="v"),
@@ -1101,7 +1107,10 @@ def test_browser_a_bar_is_a_span_on_whichever_axis_is_perpendicular() -> None:
                 height=360,
             ),
             f"bar span {mode}",
-        )["state"]["rows"]
+        )["state"]
+
+    def rows(*a, **k):
+        return band(*a, **k)["rows"]
 
     # Band axis = value axis, so x is perpendicular. The bar spans -0.4..0.4
     # and the view starts at 0.1: its centre is off-plot, part of it is drawn.
@@ -1109,14 +1118,17 @@ def test_browser_a_bar_is_a_span_on_whichever_axis_is_perpendicular() -> None:
     assert rows("y", clipped) == ["v0"], rows("y", clipped)
     # Same bar, view moved past it entirely.
     gone = (xy.x_axis(domain=(1.0, 3.0)), xy.y_axis(domain=(0.0, 5.0)))
-    assert rows("y", gone) == [], rows("y", gone)
+    # Rows alone would pass while the invisible bar stayed an active target.
+    away_y = band("y", gone)
+    assert away_y["rows"] == [] and away_y["targets"] == 0, away_y
     # Band axis = position axis: the value axis is perpendicular, and a bar
     # whose body crosses the plot with its tip far above stays.
     tall = (xy.y_axis(domain=(0.0, 5.0)),)
     assert rows("x", tall, values=(50.0,)) == ["v50"], rows("x", tall, values=(50.0,))
     # Baseline and value both outside: nothing of it is drawn.
     away = (xy.y_axis(domain=(100.0, 200.0)),)
-    assert rows("x", away, values=(1.0,)) == [], rows("x", away, values=(1.0,))
+    away_x = band("x", away, values=(1.0,))
+    assert away_x["rows"] == [] and away_x["targets"] == 0, away_x
 
 
 def test_browser_a_tie_on_the_band_coordinate_prefers_a_drawn_row() -> None:
@@ -1130,15 +1142,24 @@ def test_browser_a_tie_on_the_band_coordinate_prefers_a_drawn_row() -> None:
     coordinate, and §7.3 omits a series with no point at the coordinate rather
     than guessing one.
     """
-    state = _band_at_centre(
-        xy.scatter_chart(
-            xy.scatter([1.0, 1.0, 2.0], [500.0, 2.0, 3.0], name="s"),
-            xy.y_axis(domain=(0.0, 5.0)),
-            xy.x_axis(domain=(0.5, 2.5)),
-            xy.tooltip(mode="x"),
-            width=600,
-            height=360,
-        ),
+    chart = xy.scatter_chart(
+        xy.scatter([1.0, 1.0, 2.0], [500.0, 2.0, 3.0], name="s"),
+        xy.y_axis(domain=(0.0, 5.0)),
+        xy.x_axis(domain=(0.5, 2.5)),
+        xy.tooltip(mode="x"),
+        width=600,
+        height=360,
+    )
+    # Hover x = 1 itself, where the tie is -- not the plot centre, which is a
+    # different band coordinate and would pick the lone point at x = 2.
+    state = _run_edge(
+        chart,
+        """
+  const g = view.gpuTraces[0];
+  const [tx] = view._projectDataPoint(g.xAxis, g.yAxis, 1, 0);
+  hover(tx, view.plot.y + view.plot.h / 2);
+  done({ state: state() });
+""",
         "band coordinate tie",
     )["state"]
     assert state["rows"] == ["s2"], state
@@ -1217,8 +1238,12 @@ def test_browser_an_animating_bar_is_measured_where_it_is_drawn() -> None:
     """
     chart = xy.bar_chart(
         # A varying `base` ships as a value0 COLUMN rather than a constant,
-        # which is what carries an animatable baseline.
-        xy.bar(["a", "b"], [0.0, 0.0], base=[0.0, 1.0], name="v"),
+        # which is what carries an animatable baseline. The two columns are
+        # given deliberately different ranges so `value0Meta` and `value1Meta`
+        # disagree (offset 0.5 against 10000): decoding the start baseline with
+        # the wrong one then lands thousands of units away, which is what makes
+        # the metadata mix-up observable rather than a rounding difference.
+        xy.bar(["a", "b"], [0.0, 20000.0], base=[0.0, 1.0], name="v"),
         xy.y_axis(domain=(100.0, 200.0)),
         xy.tooltip(mode="x"),
         width=600,
@@ -1230,12 +1255,17 @@ def test_browser_an_animating_bar_is_measured_where_it_is_drawn() -> None:
   // Find the stacked slice that carries an explicit baseline column.
   const g = view.gpuTraces.find((t) => t._cpuBar && t._cpuBar.value0);
   if (!g) { done({ skipped: "no stacked baseline column" }); return; }
-  const m = g._cpuBar.value0Meta;
+  // `_transitionPrevValue0Values` rides the TIP's metadata (the animation
+  // writes `encode(value0, newBar.value1Meta)`), so the probe must encode it
+  // the same way or it tests the decode against its own assumption.
+  const m = g._cpuBar.value1Meta;
   const ym = g._cpu.yMeta || g.yMeta;
   const enc = (v, meta) => (v - meta.offset) * (meta.scale || 1);
   // Settled span is 0..0 -- far below the 100..200 view. Halfway through a
   // transition from a baseline of 300 and a tip of 100 the drawn bar runs
-  // 50..150, which crosses the view.
+  // 50..150, which crosses the view. Decoded through `value0Meta` instead the
+  // start baseline reads -9699.5, the span becomes -4849..50, and the bar
+  // misses the view entirely.
   g._transitionPrevValue0Values = new Float32Array([enc(300, m), enc(300, m)]);
   g._transitionPrevYValues = new Float32Array([enc(100, ym), enc(100, ym)]);
   g._transitionPositionProgress = 0.5;
@@ -1257,3 +1287,54 @@ def test_browser_an_animating_bar_is_measured_where_it_is_drawn() -> None:
         pytest.skip(payload["skipped"])
     assert payload["drawn"]["targets"] == 1, payload
     assert payload["settled"]["targets"] == 0, payload
+
+
+def test_browser_a_mixed_axis_band_keeps_each_footprint_on_its_own_axis() -> None:
+    """A band can hold series bound to different axes, and data values from two
+    axes do not share a number line.
+
+    The cursor's footprint is carried in data space so it survives a pan. Taking
+    one `min`/`max` across the whole band mixed those scales: with bars at
+    `0.6..1.4` on `x` and `60..140` on `x2`, the union is `0.6..140`, a range
+    neither bar occupies, and it was then projected through the anchor's axis
+    alone. Each slot keeps its own axes and is projected separately.
+
+    This pins the mechanism rather than a moved pixel: the bad union only ever
+    widened the span, and a span wider than the plot clamps to the plot, which
+    is where a bar clipped at the edge wanted the cursor anyway. No input I
+    could build moved it, so the guard is structural.
+    """
+    chart = xy.bar_chart(
+        xy.bar([1.0, 2.0], [3.0, 4.0], name="a", width=0.8),
+        xy.bar([100.0, 200.0], [3.0, 4.0], name="b", width=80.0, x_axis="x2"),
+        xy.x_axis(domain=(0.6, 2.6)),
+        xy.x_axis(id="x2", domain=(60.0, 260.0)),
+        xy.tooltip(mode="x"),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const g = view.gpuTraces[0];
+  const at = (v) => view._projectDataPoint(g.xAxis, g.yAxis, v, 0)[0];
+  hover(at(1), 8);
+  done({ state: state(), spans: (view._bandCursor || {}).spans || null,
+         plotX: view.plot.x, plotW: view.plot.w,
+         cursorLeft: (view._bandCursor || {}) && state().cursorLeft });
+""",
+        "mixed axis band",
+    )
+    assert payload["state"]["shown"] is True, payload
+    spans = payload["spans"]
+    # Both series really do join one band, on different axes.
+    assert spans is not None and len(spans) == 2, payload
+    assert {s["xAxis"] for s in spans} == {"x", "x2"}, spans
+    # Each carries ITS OWN bounds, in its own axis's units -- not a union.
+    by_axis = {s["xAxis"]: (s["lo"], s["hi"]) for s in spans}
+    assert by_axis["x"][0] == pytest.approx(0.6) and by_axis["x"][1] == pytest.approx(1.4), spans
+    assert by_axis["x2"][0] == pytest.approx(60.0) and by_axis["x2"][1] == pytest.approx(140.0), (
+        spans
+    )
+    # And the cursor still lands inside the plot.
+    assert payload["plotX"] <= payload["state"]["cursorLeft"] <= payload["plotX"] + payload["plotW"]
