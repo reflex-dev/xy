@@ -472,7 +472,12 @@ Object.assign(ChartView.prototype, {
     // context is lost. The restore path rebuilds every affected GPU object
     // from this latest payload; attempting partial uploads to a dead context
     // would only create handles that must immediately be discarded.
-    if (this._glLost || !this.gl) return;
+    if (this._glLost || !this.gl) {
+      // As in `updatePayload`: the payload is retained, the restore path
+      // rebuilds the GPU traces from it, and nothing else drops the band.
+      this._clearBandHover?.();
+      return;
+    }
     const texSeen = new Set();
     for (const id of msg.affected || []) {
       const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
@@ -482,6 +487,10 @@ Object.assign(ChartView.prototype, {
         ? prevSpec.traces.find((t) => t.id === id)
         : null;
       if (this._appendTraceInPlace(this.gpuTraces[i], prevTs, prevSpec, ts, payload)) continue;
+      // Not an in-place append: this trace object is replaced, and the band may
+      // be holding it (and rows resolved from it). An in-place append keeps the
+      // object and only grows its columns, so it needs no reset.
+      this._clearBandHover?.();
       this._destroyTraceResources(this.gpuTraces[i], texSeen);
       this.gpuTraces[i] = this._buildTrace(payload, ts);
     }
@@ -848,6 +857,12 @@ Object.assign(ChartView.prototype, {
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
     } else if (msg.type === "pick_result") {
+      // A shared-axis band sends one pick per series; each reply belongs to
+      // its own row (§7.3), not to the single-pick sequence below.
+      if (this._bandPicks && this._bandPicks.has(msg.seq)) {
+        this._applyBandPickResult(msg);
+        return;
+      }
       if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
       if (!msg.row) { this._hideTooltip(); return; }
       // The kernel returns exact values for the picked trace only. Rehydrate

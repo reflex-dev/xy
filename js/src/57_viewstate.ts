@@ -548,7 +548,20 @@ Object.assign(ChartView.prototype, {
   // by exact axis ID (one entry per declared axis — a chart-root pixel maps
   // to a different value on every axis, so a bare {x, y} would be ambiguous
   // with a y2 declared).
-  _hoverPayload(row, hit, clientX, clientY, exact = false) {
+  _hoverPoint(row, hit) {
+    const g = hit && hit.g;
+    return {
+      trace: (g && g.trace && g.trace.name) || row.trace,
+      index: row.index,
+      row,
+      x_axis: (g && g.xAxis) || "x",
+      y_axis: (g && g.yAxis) || "y",
+      color: this._seriesColorCss(g),
+    };
+  },
+
+  // `points` lets a shared-axis band (§7.3) supply one entry per series.
+  _hoverPayload(row, hit, clientX, clientY, exact = false, points = null) {
     const rootRect = this.root.getBoundingClientRect();
     const canvasRect = this.canvas.getBoundingClientRect();
     const cssX = Math.max(0, Math.min(canvasRect.width, clientX - canvasRect.left));
@@ -563,15 +576,7 @@ Object.assign(ChartView.prototype, {
       );
       data[axisId] = dim === "x" ? x : y;
     }
-    const g = hit && hit.g;
-    const points = row ? [{
-      trace: (g && g.trace && g.trace.name) || row.trace,
-      index: row.index,
-      row,
-      x_axis: (g && g.xAxis) || "x",
-      y_axis: (g && g.yAxis) || "y",
-      color: this._seriesColorCss(g),
-    }] : [];
+    if (!points) points = row ? [this._hoverPoint(row, hit)] : [];
     const payload: any = {
       active: true,
       cursor: {

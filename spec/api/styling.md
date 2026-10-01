@@ -716,6 +716,7 @@ raises before it reaches the client.
 | `tooltip_row` | One tooltip field row |
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
+| `tooltip_cursor` | Line across the plot at the shared-tooltip band coordinate (`xy.tooltip(mode="x"\|"y")`, interaction spec §7.3) |
 | `modebar` | Mode/tool bar container |
 | `modebar_drag_handle` | Draggable grip that reveals and moves the modebar |
 | `modebar_control_group` | Main top-level control group |

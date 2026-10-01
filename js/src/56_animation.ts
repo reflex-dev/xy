@@ -556,10 +556,20 @@ Object.assign(ChartView.prototype, {
     });
     const target = { ...this.view0 };
     if (this._glLost || !this.gl) {
+      // The retained spec and payload have already been replaced above, and
+      // the restore path rebuilds every GPU trace from them without touching
+      // hover state. The band would then hold retired trace objects across the
+      // recovery, exactly as it would on the live path below.
+      this._clearBandHover?.();
       this.view = { ...target };
       this._markBestLegendsDirty?.();
       return true;
     }
+    // The band holds GPU trace objects and rows resolved from them. Every one
+    // is about to be replaced, so a draw before the next pointer move would
+    // paint active dots and tooltip rows from the old data against the new
+    // axes. The band is rebuilt by the next hover; it cannot survive this.
+    this._clearBandHover?.();
     this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
     // The legend DOM is unchanged on updatePayload, but every rendered mark
     // underneath it was replaced. Keep this pending through `_dataAnim`; the
