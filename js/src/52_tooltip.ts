@@ -597,8 +597,19 @@ Object.assign(ChartView.prototype, {
     // mark the part that IS visible rather than dropping the cursor and
     // leaving the tooltip with nothing locating it. A point band's footprint
     // is its own coordinate, so this never moves it.
-    const spanLo = lo + a.lo;
-    const spanHi = lo + a.hi;
+    // Projected through the axes as they are NOW, not as they were at hover:
+    // the band survives a pan or zoom, and a stale pixel span clamped the
+    // cursor onto a stretch the bar had already left.
+    const edge = (v) => {
+      const [ex, ey] = this._projectDataPoint(
+        a.xAxis, a.yAxis, a.dim === "x" ? v : a.x, a.dim === "x" ? a.y : v,
+      );
+      return a.dim === "x" ? ex : ey;
+    };
+    const e0 = edge(a.dLo);
+    const e1 = edge(a.dHi);
+    const spanLo = Math.min(e0, e1);
+    const spanHi = Math.max(e0, e1);
     if (
       Number.isFinite(spanLo) && Number.isFinite(spanHi) && spanHi > spanLo
       && spanHi >= lo && spanLo <= hi

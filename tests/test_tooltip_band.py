@@ -1027,7 +1027,7 @@ def test_browser_a_lost_context_drops_the_band_too() -> None:
   view.updatePayload(spec, new ArrayBuffer(0));
   const after = state();
   done({ before, after, key: view._bandKey ?? null, rowsLeft: (view._bandRows || []).length,
-         picks: Object.keys(view._bandPicks || {}).length });
+         picks: view._bandPicks ? view._bandPicks.size : 0 });
 """,
         "lost context band",
     )
@@ -1038,8 +1038,21 @@ def test_browser_a_lost_context_drops_the_band_too() -> None:
     assert payload["picks"] == 0, payload
 
 
-def test_browser_a_series_off_plot_on_the_other_axis_leaves_the_band() -> None:
-    """The band axis is not the only axis a series can leave.
+def _band_at_centre(chart, label: str, setup: str = "") -> dict:
+    """Hover the middle of the plot and report what the band shows."""
+    return _run_edge(
+        chart,
+        setup
+        + """
+  hover(view.plot.w / 2, view.plot.h / 2);
+  done({ state: state() });
+""",
+        label,
+    )
+
+
+def test_browser_a_row_off_plot_on_the_other_axis_leaves_the_band() -> None:
+    """The band axis is not the only axis a row can leave.
 
     `_bandCandidate` bounds its footprint along the band axis, for the reason
     its own comment gives: a coordinate that has left the plot cannot be picked
@@ -1047,14 +1060,166 @@ def test_browser_a_series_off_plot_on_the_other_axis_leaves_the_band() -> None:
     nothing on screen marking where it is. The perpendicular axis was never
     asked the same question, so a series pushed out of view by a zoom on *it*
     still reported a value -- 504 while the axis showed 0..5 -- and painted no
-    pixel anywhere to locate it. The pointer ignores that axis when choosing
-    the band; visibility is a separate question from selection.
+    pixel anywhere to locate it. The pointer still ignores that axis when
+    choosing the band; visibility is a separate question from selection.
     """
     xs = list(range(10))
-    chart = xy.line_chart(
-        xy.line(xs, [1.0 + i * 0.1 for i in xs], name="A"),
-        xy.line(xs, [500.0 + i for i in xs], name="B"),
-        xy.y_axis(domain=(0.0, 5.0)),
+    state = _band_at_centre(
+        xy.line_chart(
+            xy.line(xs, [1.0 + i * 0.1 for i in xs], name="A"),
+            xy.line(xs, [500.0 + i for i in xs], name="B"),
+            xy.y_axis(domain=(0.0, 5.0)),
+            xy.tooltip(mode="x"),
+            width=600,
+            height=360,
+        ),
+        "off-plot perpendicular",
+    )["state"]
+    assert state["shown"] is True, state
+    assert [row for row in state["rows"] if row.startswith("B")] == [], state
+    assert state["targets"] == 1, state
+
+
+def test_browser_a_bar_is_a_span_on_whichever_axis_is_perpendicular() -> None:
+    """A bar is a span on BOTH its axes, and `mode` decides which is which.
+
+    Across its position axis a bar covers `pos ± width/2`; along its value axis
+    it runs from its baseline to its value. Measuring only the second dropped
+    every visibly clipped bar whenever the band axis was the value axis --
+    `mode="y"` on vertical bars, `mode="x"` on horizontal ones -- because the
+    bar was then treated as a bare coordinate on the position axis it actually
+    straddles. It is excluded only when the whole span is outside.
+    """
+
+    def rows(mode, axes, values=(3.0,), xs=(0.0,)):
+        return _band_at_centre(
+            xy.bar_chart(
+                xy.bar(list(xs), list(values), name="v"),
+                *axes,
+                xy.tooltip(mode=mode),
+                width=600,
+                height=360,
+            ),
+            f"bar span {mode}",
+        )["state"]["rows"]
+
+    # Band axis = value axis, so x is perpendicular. The bar spans -0.4..0.4
+    # and the view starts at 0.1: its centre is off-plot, part of it is drawn.
+    clipped = (xy.x_axis(domain=(0.1, 3.0)), xy.y_axis(domain=(0.0, 5.0)))
+    assert rows("y", clipped) == ["v0"], rows("y", clipped)
+    # Same bar, view moved past it entirely.
+    gone = (xy.x_axis(domain=(1.0, 3.0)), xy.y_axis(domain=(0.0, 5.0)))
+    assert rows("y", gone) == [], rows("y", gone)
+    # Band axis = position axis: the value axis is perpendicular, and a bar
+    # whose body crosses the plot with its tip far above stays.
+    tall = (xy.y_axis(domain=(0.0, 5.0)),)
+    assert rows("x", tall, values=(50.0,)) == ["v50"], rows("x", tall, values=(50.0,))
+    # Baseline and value both outside: nothing of it is drawn.
+    away = (xy.y_axis(domain=(100.0, 200.0)),)
+    assert rows("x", away, values=(1.0,)) == [], rows("x", away, values=(1.0,))
+
+
+def test_browser_a_tie_on_the_band_coordinate_prefers_a_drawn_row() -> None:
+    """Rows that share a band coordinate are equally "at" it, so the one that
+    is drawn wins.
+
+    `_nearestCpuIndexAlong` keeps the first of a tie. Once visibility gates the
+    candidate, that arbitrary pick decides whether the series appears at all:
+    a point whose twin at the same x is plotted took the series out of the band
+    entirely. Only exact ties qualify -- a farther row sits at a different
+    coordinate, and §7.3 omits a series with no point at the coordinate rather
+    than guessing one.
+    """
+    state = _band_at_centre(
+        xy.scatter_chart(
+            xy.scatter([1.0, 1.0, 2.0], [500.0, 2.0, 3.0], name="s"),
+            xy.y_axis(domain=(0.0, 5.0)),
+            xy.x_axis(domain=(0.5, 2.5)),
+            xy.tooltip(mode="x"),
+            width=600,
+            height=360,
+        ),
+        "band coordinate tie",
+    )["state"]
+    assert state["rows"] == ["s2"], state
+    assert state["targets"] == 1, state
+
+
+def test_browser_the_band_cursor_reprojects_its_footprint_after_a_view_change() -> None:
+    """The cursor outlives the view that measured it.
+
+    A clipped bar's cursor is clamped onto the part of its footprint that is
+    drawn. That footprint was captured in plot PIXELS at hover time, while
+    `_positionTooltipCursor` reprojects the band's `x`/`y` on every draw and the
+    band itself is not rebuilt by a pan or zoom. The two drifted apart, so the
+    cursor clamped to where the bar used to be: with B's bar panned to span
+    -10.1..78.6 against a plot starting at 62, it sat at 73.1 instead of the
+    visible edge at 62. Carrying the footprint in data space moves it with the
+    point.
+    """
+    chart = xy.bar_chart(
+        xy.bar(_CATS, _PV5),
+        xy.tooltip(mode="x"),
+        xy.interaction_config(hover=True),
+        width=640,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  const span = view.view.ranges.x[1] - view.view.ranges.x[0];
+  const g = view.gpuTraces[0];
+  const at = (v) => view._projectDataPoint(g.xAxis, g.yAxis, v, 0)[0];
+  // Hover B with its bar fully in view, so the recorded footprint is centred.
+  view.view.ranges.x = [0.5, 0.5 + span];
+  view._drawNow();
+  hover(at(1) - view.plot.x, 8);
+  const before = state();
+  // Pan until B's bar is clipped and its centre has left the plot. The band
+  // survives; only the projection changes, and the draw repositions the cursor.
+  view.view.ranges.x = [1.25, 1.25 + span];
+  view._drawNow();
+  const half = g.width / 2;
+  done({
+    before, after: state(), centre: at(1),
+    barLo: Math.min(at(1 - half), at(1 + half)),
+    barHi: Math.max(at(1 - half), at(1 + half)),
+    plotX: view.plot.x, plotW: view.plot.w,
+  });
+""",
+        "cursor reprojection",
+    )
+    before, after = payload["before"], payload["after"]
+    assert before["shown"] is True and before["title"] == "B", before
+    # The band survives the pan and still draws its cursor.
+    assert after["shown"] is True and after["title"] == "B", after
+    assert after["cursorShown"] is True, after
+    # The bar really is clipped now, which is what makes the clamp bite.
+    assert payload["barLo"] < payload["plotX"] < payload["barHi"], payload
+    assert payload["centre"] < payload["plotX"], payload
+    # The cursor marks the band coordinate clamped into the part of the bar
+    # that is drawn -- computed from where the bar is NOW.
+    expected = min(
+        max(payload["centre"], max(payload["barLo"], payload["plotX"])),
+        min(payload["barHi"], payload["plotX"] + payload["plotW"]),
+    )
+    assert abs(after["cursorLeft"] - expected) < 0.5, (after, expected, payload)
+
+
+def test_browser_an_animating_bar_is_measured_where_it_is_drawn() -> None:
+    """A stacked update animates the baseline, so the band has to read the
+    interpolated one.
+
+    `_cpuPointValue` already interpolates the tip; the baseline was read
+    settled. Mid-transition a bar is drawn between its old and new span, so a
+    bar whose settled span is outside the view while the drawn one crosses it
+    vanished from the band while it was plainly on screen.
+    """
+    chart = xy.bar_chart(
+        # A varying `base` ships as a value0 COLUMN rather than a constant,
+        # which is what carries an animatable baseline.
+        xy.bar(["a", "b"], [0.0, 0.0], base=[0.0, 1.0], name="v"),
+        xy.y_axis(domain=(100.0, 200.0)),
         xy.tooltip(mode="x"),
         width=600,
         height=360,
@@ -1062,53 +1227,33 @@ def test_browser_a_series_off_plot_on_the_other_axis_leaves_the_band() -> None:
     payload = _run_edge(
         chart,
         """
-  hover(view.plot.w / 2, view.plot.h / 2);
-  done({ state: state() });
+  // Find the stacked slice that carries an explicit baseline column.
+  const g = view.gpuTraces.find((t) => t._cpuBar && t._cpuBar.value0);
+  if (!g) { done({ skipped: "no stacked baseline column" }); return; }
+  const m = g._cpuBar.value0Meta;
+  const ym = g._cpu.yMeta || g.yMeta;
+  const enc = (v, meta) => (v - meta.offset) * (meta.scale || 1);
+  // Settled span is 0..0 -- far below the 100..200 view. Halfway through a
+  // transition from a baseline of 300 and a tip of 100 the drawn bar runs
+  // 50..150, which crosses the view.
+  g._transitionPrevValue0Values = new Float32Array([enc(300, m), enc(300, m)]);
+  g._transitionPrevYValues = new Float32Array([enc(100, ym), enc(100, ym)]);
+  g._transitionPositionProgress = 0.5;
+  view._drawNow();
+  hover(view.plot.w * 0.25, view.plot.h / 2);
+  const drawn = state();
+  // With the transition over, the bar really is outside and should go.
+  delete g._transitionPrevValue0Values;
+  delete g._transitionPrevYValues;
+  delete g._transitionPositionProgress;
+  view._hoverId = -1; view._bandKey = null;
+  view._drawNow();
+  hover(view.plot.w * 0.25, view.plot.h / 2);
+  done({ drawn, settled: state() });
 """,
-        "off-plot perpendicular",
+        "animating baseline",
     )
-    state = payload["state"]
-    # A is in view and still bands; B is 100x above the top and does not.
-    assert state["shown"] is True, state
-    assert [row for row in state["rows"] if row.startswith("B")] == [], state
-    assert state["targets"] == 1, state
-
-
-def test_browser_a_bar_is_a_span_on_the_perpendicular_axis_not_a_point() -> None:
-    """A bar reaches from its baseline to its value, so the perpendicular rule
-    has to admit the part of it that is drawn.
-
-    Collapsing the bar to its value coordinate would drop every bar taller than
-    the view -- the ordinary case for a zoomed bar chart, where the top is off
-    the plot and the body fills it. It is excluded only when the whole span is
-    outside, which mirrors the footprint rule already used along the band axis.
-    """
-
-    def rows_for(values, domain):
-        chart = xy.bar_chart(
-            xy.bar(["a", "b", "c"], values, name="bars"),
-            *([xy.y_axis(domain=domain)] if domain else []),
-            xy.tooltip(mode="x"),
-            width=600,
-            height=360,
-        )
-        payload = _run_edge(
-            chart,
-            """
-  hover(view.plot.w / 2, view.plot.h / 2);
-  done({ state: state() });
-""",
-            "bar perpendicular span",
-        )
-        return payload["state"]
-
-    # Body crosses the whole plot, top far above it: kept.
-    crossing = rows_for([50.0, 50.0, 50.0], (0.0, 5.0))
-    assert crossing["rows"] == ["bars50"], crossing
-    # Baseline and value both below the view: nothing of it is drawn, so gone.
-    away = rows_for([1.0, 1.0, 1.0], (100.0, 200.0))
-    assert away["rows"] == [], away
-    assert away["targets"] == 0, away
-    # An ordinary in-view bar is untouched.
-    plain = rows_for([3.0, 4.0, 2.0], None)
-    assert plain["rows"] == ["bars4"], plain
+    if payload.get("skipped"):
+        pytest.skip(payload["skipped"])
+    assert payload["drawn"]["targets"] == 1, payload
+    assert payload["settled"]["targets"] == 0, payload

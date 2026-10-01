@@ -8847,7 +8847,7 @@ export class ChartView {
   // (so a log axis measures decades, not values). The x form is the point
   // tooltip's fallback when the GPU pick misses; the y form serves
   // `xy.tooltip(mode="y")` bands (interaction spec §7.3).
-  _nearestCpuIndexAlong(g, dim, target) {
+  _nearestCpuIndexAlong(g, dim, target, prefer = null) {
     const cpu = g && g._cpu;
     const column = cpu && (dim === "x" ? cpu.x : cpu.y);
     if (!column || !column.length) return -1;
@@ -8858,6 +8858,14 @@ export class ChartView {
     const coord = this._axisCoord(axis, target);
     let best = -1;
     let bestDist = Infinity;
+    // Rows that TIE on the band coordinate are all equally "at" it, and the
+    // scan below keeps the first. When the caller can say which rows are drawn,
+    // a tie prefers one that is: picking the hidden twin of a plotted point
+    // dropped the whole series from the band. Only exact ties qualify -- a
+    // farther row sits at a different coordinate, and the band omits a series
+    // with no point at the coordinate rather than guessing one.
+    let tied = -1;
+    let tiedDist = Infinity;
     // A category-filtered trace DRAWS A SUBSET (§10): `_visMap` maps each drawn
     // instance to its shipped row and `g.n` counts the drawn ones, so treating
     // `g.n` as a prefix of the CPU column both scans rows the legend hid and
@@ -8878,8 +8886,12 @@ export class ChartView {
         bestDist = d;
         best = i;
       }
+      if (prefer && d < tiedDist && prefer(i)) {
+        tiedDist = d;
+        tied = i;
+      }
     }
-    return best;
+    return tied >= 0 && tiedDist === bestDist ? tied : best;
   }
 
   // The retained row's data-space (x, y), transition-interpolated like the
@@ -8918,8 +8930,77 @@ export class ChartView {
   // One band candidate for a series: its point nearest `target` along the
   // band axis, projected, with a bar's footprint along its position axis
   // (`pos ± width/2`) as the extent — a point's extent is its coordinate.
+  // Whether row `idx` is drawn on the axis PERPENDICULAR to the band axis.
+  // The band axis is what the pointer picks along, so only it bounds a
+  // candidate's `lo`/`hi` -- but a row pushed off the plot by a zoom on the
+  // other axis is just as invisible, and left a row reading its value with
+  // nothing on screen marking the point. A bar is a span there rather than a
+  // coordinate (see `_barSpanAcross`), so it stays while any part overlaps.
+  // This bounds visibility only; what the pointer selects is unchanged.
+  _bandCrossVisible(g, dim, idx) {
+    const [x, y] = this._cpuPointValue(g, idx);
+    const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y);
+    const crossAxis = dim === "x" ? "y" : "x";
+    const extent = dim === "x" ? this.plot.h : this.plot.w;
+    let lo = dim === "x" ? chartY - this.plot.y : chartX - this.plot.x;
+    let hi = lo;
+    const span = g.trace && g.trace.bar ? this._barSpanAcross(g, idx, crossAxis, x, y) : null;
+    if (span) {
+      lo = Math.min(lo, span[0]);
+      hi = Math.max(hi, span[1]);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return false;
+    return !(hi < -0.5 || lo > extent + 0.5);
+  }
+
+  // A bar's extent along `axis`, in plot pixels, or null when it has none
+  // there. Across its POSITION axis a bar covers `pos ± width/2`; along its
+  // VALUE axis it runs from its baseline to its value. The baseline is
+  // interpolated during a transition the same way `_cpuPointValue`
+  // interpolates the tip -- a stacked update animates the base, so reading the
+  // settled one made a bar that still crosses the plot vanish from the band
+  // while it was on screen.
+  _barSpanAcross(g, idx, axis, x, y) {
+    const posAxis = g.orientation === 1 ? "y" : "x";
+    const at = (vx, vy) => {
+      const [cx, cy] = this._projectDataPoint(g.xAxis, g.yAxis, vx, vy);
+      return axis === "x" ? cx - this.plot.x : cy - this.plot.y;
+    };
+    if (axis === posAxis) {
+      if (!(g.width > 0)) return null;
+      const half = g.width / 2;
+      const pos = posAxis === "x" ? x : y;
+      const a = posAxis === "x" ? at(pos - half, y) : at(x, pos - half);
+      const b = posAxis === "x" ? at(pos + half, y) : at(x, pos + half);
+      return Number.isFinite(a) && Number.isFinite(b) ? [Math.min(a, b), Math.max(a, b)] : null;
+    }
+    const cb = g._cpuBar;
+    if (!cb) return null;
+    let base;
+    if (cb.value0) {
+      const settled = this._decodeValue(cb.value0, cb.value0Meta, idx);
+      const prev = g._transitionPrevValue0Values;
+      const progress = g._transitionPositionProgress;
+      if (prev && Number.isFinite(progress) && idx < prev.length) {
+        const from = this._decodeValue(prev, cb.value0Meta, idx);
+        base = Number.isFinite(from) ? from + (settled - from) * progress : settled;
+      } else {
+        base = settled;
+      }
+    } else {
+      base = Number(cb.value0Const) || 0;
+    }
+    if (!Number.isFinite(base)) return null;
+    const tip = axis === "x" ? at(x, y) : at(x, y);
+    const foot = axis === "x" ? at(base, y) : at(x, base);
+    return Number.isFinite(tip) && Number.isFinite(foot)
+      ? [Math.min(tip, foot), Math.max(tip, foot)]
+      : null;
+  }
+
   _bandCandidate(g, dim, target) {
-    const idx = this._nearestCpuIndexAlong(g, dim, target);
+    const idx = this._nearestCpuIndexAlong(g, dim, target, (i) =>
+      this._bandCrossVisible(g, dim, i));
     if (idx < 0) return null;
     const [x, y] = this._cpuPointValue(g, idx);
     const [chartX, chartY] = this._projectDataPoint(g.xAxis, g.yAxis, x, y);
@@ -8927,6 +9008,13 @@ export class ChartView {
     if (!Number.isFinite(px)) return null;
     let lo = px;
     let hi = px;
+    // The same footprint in DATA space. Pixels are only true for the view that
+    // measured them, and the cursor outlives that view: it reprojects `x`/`y`
+    // on every draw, so a pan or zoom left it clamping to a span the bar had
+    // moved out of. Data bounds reproject with the point.
+    const bandValue = dim === "x" ? x : y;
+    let dLo = bandValue;
+    let dHi = bandValue;
     const bar = !!g.trace.bar;
     // A bar spreads along the band axis only when that axis is its POSITION
     // axis; along its value axis it is picked as a coordinate, like a point.
@@ -8945,6 +9033,8 @@ export class ChartView {
       if (Number.isFinite(a) && Number.isFinite(b)) {
         lo = Math.min(a, b);
         hi = Math.max(a, b);
+        dLo = pos - half;
+        dHi = pos + half;
       }
     }
     // A row whose coordinate has left the plot after a pan or zoom cannot be
@@ -8960,30 +9050,20 @@ export class ChartView {
     // picks along, so only it bounds `lo`/`hi` above -- but a series pushed off
     // the plot by a zoom on the perpendicular axis is just as invisible, and
     // left a row reading its value with nothing on screen marking the point.
-    // A bar is a span there rather than a coordinate: it runs from its baseline
-    // to its value, so it stays visible while any part of that span overlaps,
-    // exactly as its footprint does along the band axis.
-    const crossExtent = dim === "x" ? this.plot.h : this.plot.w;
-    const crossOf = (cx, cy) => (dim === "x" ? cy - this.plot.y : cx - this.plot.x);
-    let crossLo = crossOf(chartX, chartY);
-    let crossHi = crossLo;
-    if (barFootprint && g._cpuBar) {
-      const b = g._cpuBar;
-      const base = b.value0
-        ? this._decodeValue(b.value0, b.value0Meta, idx)
-        : Number(b.value0Const) || 0;
-      const [zx, zy] = this._projectDataPoint(
-        g.xAxis, g.yAxis, dim === "x" ? x : base, dim === "x" ? base : y,
-      );
-      const z = crossOf(zx, zy);
-      if (Number.isFinite(z)) {
-        crossLo = Math.min(crossLo, z);
-        crossHi = Math.max(crossHi, z);
-      }
-    }
-    if (!Number.isFinite(crossLo)) return null;
-    if (crossHi < -0.5 || crossLo > crossExtent + 0.5) return null;
-    return { trace: g.trace.id, index: idx, g, px, lo, hi, bar, x, y, dist: 0, synthetic: true };
+    //
+    // A bar is a SPAN on both of its axes, and which one is perpendicular
+    // depends on `mode`: across its position axis it covers `pos ± width/2`,
+    // along its value axis it runs from its baseline to its value. Measuring
+    // only one of those dropped visibly clipped bars whenever the band axis
+    // was the value axis (`mode="y"` on vertical bars, `mode="x"` on
+    // horizontal ones). It stays while any part of the span overlaps, exactly
+    // as its footprint does along the band axis. This bounds visibility only;
+    // what the pointer selects along the band axis is unchanged.
+    if (!this._bandCrossVisible(g, dim, idx)) return null;
+    return {
+      trace: g.trace.id, index: idx, g, px, lo, hi, dLo, dHi, bar, x, y,
+      dist: 0, synthetic: true,
+    };
   }
 
   _bandTarget(g, dim, cssX, cssY) {
@@ -9107,12 +9187,14 @@ export class ChartView {
       this._bandCursor = null;
       this._hideTooltipCursor();
     } else {
-      // Carry the band's footprint along the band axis (plot-relative px, the
-      // union over its slots) so the cursor can be drawn on the part of a
-      // clipped bar that is actually visible. A point band's footprint is its
-      // own coordinate, which changes nothing.
+      // Carry the band's footprint along the band axis -- in DATA space, the
+      // union over its slots -- so the cursor can be drawn on the part of a
+      // clipped bar that is actually visible. Plot pixels would be stale the
+      // moment the view moved, since the cursor is repositioned on every draw
+      // but the band is not rebuilt by a pan or zoom. A point band's footprint
+      // is its own coordinate, which changes nothing.
       const spans = band.hits.filter(
-        (h) => Number.isFinite(h.lo) && Number.isFinite(h.hi),
+        (h) => Number.isFinite(h.dLo) && Number.isFinite(h.dHi),
       );
       this._bandCursor = {
         dim,
@@ -9120,8 +9202,8 @@ export class ChartView {
         yAxis: ag.yAxis,
         x: at.x,
         y: at.y,
-        lo: spans.length ? Math.min(...spans.map((h) => h.lo)) : undefined,
-        hi: spans.length ? Math.max(...spans.map((h) => h.hi)) : undefined,
+        dLo: spans.length ? Math.min(...spans.map((h) => h.dLo)) : undefined,
+        dHi: spans.length ? Math.max(...spans.map((h) => h.dHi)) : undefined,
       };
       this._renderBandTooltip(e.clientX, e.clientY);
       this._positionTooltipCursor();
