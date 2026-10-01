@@ -8928,7 +8928,10 @@ export class ChartView {
     let lo = px;
     let hi = px;
     const bar = !!g.trace.bar;
-    if (bar && (g.orientation === 1 ? "y" : "x") === dim && g.width > 0) {
+    // A bar spreads along the band axis only when that axis is its POSITION
+    // axis; along its value axis it is picked as a coordinate, like a point.
+    const barFootprint = bar && (g.orientation === 1 ? "y" : "x") === dim && g.width > 0;
+    if (barFootprint) {
       const half = g.width / 2;
       const pos = dim === "x" ? x : y;
       const [ax, ay] = this._projectDataPoint(
@@ -8953,6 +8956,33 @@ export class ChartView {
     // different value).
     const extent = dim === "x" ? this.plot.w : this.plot.h;
     if (hi < -0.5 || lo > extent + 0.5) return null;
+    // The same question on the OTHER axis. The band axis is what the pointer
+    // picks along, so only it bounds `lo`/`hi` above -- but a series pushed off
+    // the plot by a zoom on the perpendicular axis is just as invisible, and
+    // left a row reading its value with nothing on screen marking the point.
+    // A bar is a span there rather than a coordinate: it runs from its baseline
+    // to its value, so it stays visible while any part of that span overlaps,
+    // exactly as its footprint does along the band axis.
+    const crossExtent = dim === "x" ? this.plot.h : this.plot.w;
+    const crossOf = (cx, cy) => (dim === "x" ? cy - this.plot.y : cx - this.plot.x);
+    let crossLo = crossOf(chartX, chartY);
+    let crossHi = crossLo;
+    if (barFootprint && g._cpuBar) {
+      const b = g._cpuBar;
+      const base = b.value0
+        ? this._decodeValue(b.value0, b.value0Meta, idx)
+        : Number(b.value0Const) || 0;
+      const [zx, zy] = this._projectDataPoint(
+        g.xAxis, g.yAxis, dim === "x" ? x : base, dim === "x" ? base : y,
+      );
+      const z = crossOf(zx, zy);
+      if (Number.isFinite(z)) {
+        crossLo = Math.min(crossLo, z);
+        crossHi = Math.max(crossHi, z);
+      }
+    }
+    if (!Number.isFinite(crossLo)) return null;
+    if (crossHi < -0.5 || crossLo > crossExtent + 0.5) return null;
     return { trace: g.trace.id, index: idx, g, px, lo, hi, bar, x, y, dist: 0, synthetic: true };
   }
 

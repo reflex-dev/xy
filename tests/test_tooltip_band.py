@@ -1036,3 +1036,79 @@ def test_browser_a_lost_context_drops_the_band_too() -> None:
     assert payload["after"]["cursorShown"] is False, payload
     assert payload["key"] is None and payload["rowsLeft"] == 0, payload
     assert payload["picks"] == 0, payload
+
+
+def test_browser_a_series_off_plot_on_the_other_axis_leaves_the_band() -> None:
+    """The band axis is not the only axis a series can leave.
+
+    `_bandCandidate` bounds its footprint along the band axis, for the reason
+    its own comment gives: a coordinate that has left the plot cannot be picked
+    by a pointer inside it, and accepting one produces a row for a point with
+    nothing on screen marking where it is. The perpendicular axis was never
+    asked the same question, so a series pushed out of view by a zoom on *it*
+    still reported a value -- 504 while the axis showed 0..5 -- and painted no
+    pixel anywhere to locate it. The pointer ignores that axis when choosing
+    the band; visibility is a separate question from selection.
+    """
+    xs = list(range(10))
+    chart = xy.line_chart(
+        xy.line(xs, [1.0 + i * 0.1 for i in xs], name="A"),
+        xy.line(xs, [500.0 + i for i in xs], name="B"),
+        xy.y_axis(domain=(0.0, 5.0)),
+        xy.tooltip(mode="x"),
+        width=600,
+        height=360,
+    )
+    payload = _run_edge(
+        chart,
+        """
+  hover(view.plot.w / 2, view.plot.h / 2);
+  done({ state: state() });
+""",
+        "off-plot perpendicular",
+    )
+    state = payload["state"]
+    # A is in view and still bands; B is 100x above the top and does not.
+    assert state["shown"] is True, state
+    assert [row for row in state["rows"] if row.startswith("B")] == [], state
+    assert state["targets"] == 1, state
+
+
+def test_browser_a_bar_is_a_span_on_the_perpendicular_axis_not_a_point() -> None:
+    """A bar reaches from its baseline to its value, so the perpendicular rule
+    has to admit the part of it that is drawn.
+
+    Collapsing the bar to its value coordinate would drop every bar taller than
+    the view -- the ordinary case for a zoomed bar chart, where the top is off
+    the plot and the body fills it. It is excluded only when the whole span is
+    outside, which mirrors the footprint rule already used along the band axis.
+    """
+
+    def rows_for(values, domain):
+        chart = xy.bar_chart(
+            xy.bar(["a", "b", "c"], values, name="bars"),
+            *([xy.y_axis(domain=domain)] if domain else []),
+            xy.tooltip(mode="x"),
+            width=600,
+            height=360,
+        )
+        payload = _run_edge(
+            chart,
+            """
+  hover(view.plot.w / 2, view.plot.h / 2);
+  done({ state: state() });
+""",
+            "bar perpendicular span",
+        )
+        return payload["state"]
+
+    # Body crosses the whole plot, top far above it: kept.
+    crossing = rows_for([50.0, 50.0, 50.0], (0.0, 5.0))
+    assert crossing["rows"] == ["bars50"], crossing
+    # Baseline and value both below the view: nothing of it is drawn, so gone.
+    away = rows_for([1.0, 1.0, 1.0], (100.0, 200.0))
+    assert away["rows"] == [], away
+    assert away["targets"] == 0, away
+    # An ordinary in-view bar is untouched.
+    plain = rows_for([3.0, 4.0, 2.0], None)
+    assert plain["rows"] == ["bars4"], plain
