@@ -56,7 +56,15 @@ not break.
   auto-inferred from marks (time columns → time; bar categories → category)
   but overridable on the axis node. Mixing marks whose natural scales
   conflict (bar-category + scatter-linear x) is a build-time error with a
-  fix-it message, not a coercion.
+  fix-it message, not a coercion. So is forcing `type_="time"|"log"|"symlog"`
+  onto an axis whose marks made it categorical (`Figure._axis_kind`): category
+  positions are label indices, and coercing them produced 1970 epoch ticks or
+  put category 0 off a log axis. Category detection is by value, not by
+  container: an object-dtype column whose non-missing values are all real
+  numbers (a list holding a `None`, a CSV column read as `object`, Decimals) is
+  numeric with NaN holes — the rule the color channel already applied
+  (`channels._object_array_is_real_numeric`) — while strings, bytes, bools and
+  mixed values become categories.
 - **G4 — Chrome reads, never owns.** Legend derives entries from mark
   channel modes (already true); axes derive from scales; tooltips derive
   from the hovered mark's readout row. Adding a mark kind never edits chrome
@@ -267,6 +275,10 @@ integer, and `gap` a non-negative one.
   `max(120, (width - (cols - 1) * gap) // cols)` pixels wide
   (`FacetGrid.rows`, `FacetGrid.panel_width`, `facets.py:146-154`). Each
   panel's chart title is its facet label.
+- **`by=` must cover every row.** A `by=` array whose length differs from the
+  data's row count (chart-level or mark-level `data=`) is a `ValueError`
+  (`facets._subset_data`); it used to pass the table through unsplit, so every
+  panel drew the whole dataset under its own label.
 - **`share_x` / `share_y` are global, not per-panel.** For each shared axis
   id the grid takes every panel's `_range(axis_id)` and applies the merged
   `(min, max)` to all panels (`components.py:3657-3666`). Categorical axes

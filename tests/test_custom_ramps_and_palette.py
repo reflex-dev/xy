@@ -609,3 +609,18 @@ def test_text_switch_does_not_collide_with_tick_labels():
     axis = xy.x_axis(tick_values=(0.0, 1.0), tick_labels=("lo", "hi"), text=False)
     assert axis.tick_labels == ["lo", "hi"]
     assert axis.style["tick_label_color"] == "#00000000"
+
+
+def test_colormap_positions_must_be_non_decreasing() -> None:
+    """Out-of-order stops were clamped CSS-style, so [(1, red), (0, blue)]
+    silently became 255 red texels and one blue."""
+    from xy import channels
+
+    with pytest.raises(ValueError, match=r"non-decreasing.*reverse the stop order"):
+        channels.resolve_colormap([(1.0, "red"), (0.0, "blue")])
+    with pytest.raises(ValueError, match=r"colormap\[2\] at 0.2 follows a stop at 0.5"):
+        channels.resolve_colormap([(0.5, "red"), "white", (0.2, "blue")])
+    # Ordered stops resolve as before, and equal positions (a hard stop) stay legal.
+    lut = channels.resolve_colormap([(0.0, "blue"), (1.0, "red")])
+    assert lut[0] == [0, 0, 255] and lut[-1] == [255, 0, 0]
+    channels.resolve_colormap([(0.0, "blue"), (0.5, "red"), (0.5, "white"), (1.0, "black")])
