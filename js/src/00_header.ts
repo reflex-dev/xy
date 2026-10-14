@@ -130,6 +130,27 @@ export function bytesToSpan(b) {
   return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
+const WIRE_F32 = Object.freeze({ name: "f32", bytesPerElement: 4, ArrayType: Float32Array });
+const WIRE_U8 = Object.freeze({ name: "u8", bytesPerElement: 1, ArrayType: Uint8Array });
+const WIRE_U32 = Object.freeze({ name: "u32", bytesPerElement: 4, ArrayType: Uint32Array });
+
+/** Resolve one column-like wire descriptor exhaustively.
+ *
+ * First-paint float columns omit `dtype`; incremental LOD/style messages use
+ * explicit `f32`. Both spellings mean the same thing. Every explicit future
+ * or malformed value is a protocol error: treating an unknown four-byte type
+ * as f32 can produce a coherent-looking span and a plausible but corrupt
+ * chart, which is worse than rejecting the payload at the boundary. */
+export function wireColumnDtype(meta, context = "column") {
+  const dtype = meta?.dtype;
+  if (dtype === undefined || dtype === "f32") return WIRE_F32;
+  if (dtype === "u8") return WIRE_U8;
+  if (dtype === "u32") return WIRE_U32;
+  throw new TypeError(
+    `xy: unsupported ${context} dtype ${JSON.stringify(dtype)}; expected f32, u8, or u32`,
+  );
+}
+
 /** True when every column in the spec fits inside the supplied buffers.
  * Trait-transported appends can observe a torn update on hosts that set
  * spec and buffers non-atomically (one change event fires between the two
@@ -140,17 +161,20 @@ export function bytesToSpan(b) {
 export function payloadCoherent(spec, raw) {
   const cols = spec?.columns;
   if (!Array.isArray(cols)) return false;
-  const size = (c) => (c.dtype === "u8" ? 1 : 4);
   if (spec.buffer_layout === "split") {
     if (!Array.isArray(raw)) return false;
-    return cols.every((c) => {
+    return cols.every((c, index) => {
+      const { bytesPerElement } = wireColumnDtype(c, `column ${index}`);
       if (!Number.isInteger(c.buf)) return true; // raster-only borrowed span
       const b = raw[c.buf];
-      return !!b && c.len * size(c) <= b.byteLength;
+      return !!b && c.len * bytesPerElement <= b.byteLength;
     });
   }
   if (Array.isArray(raw) || !raw) return false;
-  return cols.every((c) => c.byte_offset + c.len * size(c) <= raw.byteLength);
+  return cols.every((c, index) => {
+    const { bytesPerElement } = wireColumnDtype(c, `column ${index}`);
+    return c.byte_offset + c.len * bytesPerElement <= raw.byteLength;
+  });
 }
 
 /** Wire buffers in the shape the spec declares (§29): packed is one blob;
