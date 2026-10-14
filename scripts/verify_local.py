@@ -131,6 +131,12 @@ def _base_checks(
             requires_modules=("pytest",),
         ),
         Check(
+            "docs",
+            "docs app tests, quickstart, and quality hooks",
+            (py, "scripts/verify_docs_local.py"),
+            requires_executables=("uv",),
+        ),
+        Check(
             "security_export",
             "standalone HTML escaping, atomic writes, and client text-sink guardrails",
             (
