@@ -169,6 +169,8 @@ aliases for `ranges.x`/`ranges.y` (`50_chartview.ts`, `_eventView`).
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
 | `xy:select` | `{total, view}` — the resolved count after the kernel replies, or `total: 0` on clear. |
 | `xy:view_change` | `{ranges, source, axes, phase, interaction_id}` plus `x0`/`x1`/`y0`/`y1` aliases, coalesced to one dispatch per animation frame. Fields explained below. |
+| `xy:legendtoggle` | `{name, hidden, traces, category?}` — a legend row hid or showed what it stands for (§10). One per changed row, including every row a double-click isolate changes. |
+| `xy:legendisolate` | `{name, isolated, traces, category?}` — a legend double-click isolated one entry (`isolated: true`) or restored every entry (`false`); dispatched after that gesture's per-row `xy:legendtoggle` events (§10). |
 
 A view event carries four fields beyond `ranges`/aliases. `source` names the
 input that caused the change — exactly one of `pan_drag`, `wheel_zoom`,
@@ -205,8 +207,8 @@ They carry no `view`, and no interaction switch gates them:
 | `xy:context_restored` | `{loss_count, restore_count}` — a live frame is back (`:775`). |
 | `xy:context_restore_failed` | `{loss_count, message}` — recovery gave up; the root is replaced with an error string (`:761`). |
 
-Those nine are the whole `xy:` surface — every one goes through
-`_dispatchChartEvent` (`50_chartview.ts:451`), and there is no other
+Those eleven are the whole `xy:` surface — every one goes through
+`_dispatchChartEvent` (`50_chartview.ts`), and there is no other
 `CustomEvent` dispatch in `js/src/`.
 
 Kernel-side callbacks (`python/xy/channel.py`), wired through
@@ -470,6 +472,26 @@ opt-out only on the wire. `extra_legends` rows stay inert (no trace
 linkage). A toggled-off row fades (35%, grayscale, `data-xy-legend-off`
 attribute for author styling) and is inert for §9 hover emphasis. The DOM
 event `xy:legendtoggle` fires with `{name, hidden, traces, category?}`.
+
+**Double-click isolate** (Plotly's `legenddoubleclick` model). Double-clicking
+a linked row shows only that entry — every other linked row, across all
+legend boxes, goes hidden; double-clicking the row that is already the only
+one showing restores every entry. Gating: `xy.legend(isolate=False)`, same
+default-on, opt-out-only wire rule, and independent of `toggle`: with
+`toggle=False` single clicks are inert while double-click still isolates.
+Single clicks commit immediately — there is no Plotly-style 300 ms
+disambiguation delay — so the gesture's first click has already toggled the
+row when `dblclick` fires; the client ignores the second click of the burst
+(`event.detail >= 2`) and decides isolate-vs-restore against the
+*pre-gesture* state, so the end state is exactly what a fresh isolate
+produces. The transient first-click frame is the recorded cost of keeping
+single clicks instant. Each row that changes goes through the ordinary
+toggle path — one `legend_toggle` message and one `xy:legendtoggle` per
+row — and category re-filtering (below) runs once per affected trace after
+the whole batch. One `xy:legendisolate {name, isolated, traces, category?}`
+then names the gesture; it does not fire when nothing changed. The second
+press of a double-click is `preventDefault`ed on `mousedown` so the label
+text is not selected; single presses keep native focus and selection rules.
 
 **State sync.** Every toggle sends `legend_toggle {trace, category?,
 hidden}` — fire-and-forget, no reply. The kernel records `Trace.hidden` /

@@ -192,6 +192,43 @@ using safe built-in chrome, and the same object is also available through
 Exact parameters and defaults are in
 [Marks and components reference](/docs/xy/api-reference/marks-and-components/).
 
+## Toggle and Isolate Series
+
+Legend rows backed by live series are interactive in the browser; static
+exports are unaffected. Hovering a row emphasizes its series by dimming the
+others. A single click hides or shows that series or category. A double-click
+isolates it — every other row goes hidden — and double-clicking the same row
+again brings everything back. With many data-driven categories, isolating is the
+one-gesture way to inspect a single series instead of clicking the rest off one
+by one.
+
+Each behavior has its own opt-out: `highlight=False`, `toggle=False`, and
+`isolate=False`. They are independent — `toggle=False` with the default
+`isolate=True` leaves single clicks inert while double-click still isolates.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+interactive_legend_chart = xy.line_chart(
+    xy.line([0, 1, 2, 3, 4], [3, 6, 5, 9, 12], name="Alpha", color="#6e56cf"),
+    xy.line([0, 1, 2, 3, 4], [2, 4, 7, 8, 10], name="Beta", color="#2563eb"),
+    xy.line([0, 1, 2, 3, 4], [1, 3, 2, 5, 7], name="Gamma", color="#16a34a"),
+    xy.line([0, 1, 2, 3, 4], [4, 2, 6, 3, 8], name="Delta", color="#d97706"),
+    xy.legend(loc="upper left", title="Click to toggle, double-click to isolate"),
+    xy.x_axis(label="sprint"),
+    xy.y_axis(label="features shipped"),
+    title="Interactive legend",
+)
+
+
+def interactive_legend_demo():
+    return reflex_xy.chart(interactive_legend_chart, height="320px")
+~~~
+
+In the browser the chart root dispatches `xy:legendtoggle` for every row whose
+visibility changed and `xy:legendisolate` once per double-click gesture.
+
 ## FAQ
 
 ### How do I add a legend to a chart in Python?
