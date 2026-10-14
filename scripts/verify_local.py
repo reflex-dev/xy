@@ -151,6 +151,11 @@ def _base_checks(
             requires_modules=("pytest",),
         ),
         Check(
+            "dependency_lock_inventory",
+            "committed dependency lockfiles are covered by security audits",
+            (py, "scripts/verify_dependency_lock_inventory.py"),
+        ),
+        Check(
             "error_safety",
             "public error messages, LOD boundaries, and mutation-safety tests",
             (

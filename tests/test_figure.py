@@ -2011,7 +2011,7 @@ def test_html_to_png_uses_browser_sandbox_by_default(monkeypatch):
     assert "--no-sandbox" in seen[1]
 
 
-def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
+def test_html_to_png_fails_closed_when_sandboxed_browser_crashes(monkeypatch):
     from xy import export
 
     seen = []
@@ -2021,21 +2021,15 @@ def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
     def fake_run(args, **kwargs):
         del kwargs
         seen.append(args)
-        if len(seen) == 2:
-            shot = next(
-                arg.removeprefix("--screenshot=") for arg in args if arg.startswith("--screenshot=")
-            )
-            Path(shot).write_bytes(b"\x89PNG\r\n\x1a\nfake")
-            return export_module.subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         return export_module.subprocess.CompletedProcess(args, -6, stdout="", stderr="crashed")
 
     monkeypatch.setattr(export.subprocess, "run", fake_run)
 
-    data = export.html_to_png("<!doctype html>", 320, 200)
+    with pytest.raises(RuntimeError, match="sandboxed launch produced no screenshot"):
+        export.html_to_png("<!doctype html>", 320, 200)
 
-    assert data == b"\x89PNG\r\n\x1a\nfake"
+    assert len(seen) == 1
     assert "--no-sandbox" not in seen[0]
-    assert "--no-sandbox" in seen[1]
 
 
 # ---------------------------------------------------------------------------
