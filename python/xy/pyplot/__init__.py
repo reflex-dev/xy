@@ -38,9 +38,11 @@ from ._artists import (
     GroupedBarReturn,
     Legend,
     Line2D,
+    Patch,
     PathCollection,
     PieContainer,
     PolyCollection,
+    Rectangle,
     StemContainer,
     StepPatch,
     StreamplotSet,
@@ -102,6 +104,8 @@ __all__ = [
     "MultipleLocator",
     "NullFormatter",
     "NullLocator",
+    "Patch",
+    "Rectangle",
     "ScalarFormatter",
     "StrMethodFormatter",
     "acorr",
@@ -172,8 +176,10 @@ __all__ = [
     "imsave",
     "imshow",
     "legend",
+    "locator_params",
     "loglog",
     "magnitude_spectrum",
+    "margins",
     "matshow",
     "minorticks_off",
     "minorticks_on",
@@ -220,6 +226,7 @@ __all__ = [
     "suptitle",
     "table",
     "text",
+    "tick_params",
     "ticklabel_format",
     "tight_layout",
     "title",
@@ -2641,6 +2648,21 @@ def minorticks_off() -> None:
     return gca().minorticks_off()
 
 
+def tick_params(axis: str = "both", **kwargs: Any) -> None:
+    """Style the current axes' ticks and tick labels (see `Axes.tick_params`)."""
+    return gca().tick_params(axis=axis, **kwargs)
+
+
+def margins(*args: Any, **kwargs: Any) -> tuple[float, float] | None:
+    """Set or query the current axes' autoscale margins (see `Axes.margins`)."""
+    return gca().margins(*args, **kwargs)
+
+
+def locator_params(axis: str = "both", nbins: int | None = None, **kwargs: Any) -> None:
+    """Tune the current axes' major tick locators (see `Axes.locator_params`)."""
+    return gca().locator_params(axis=axis, nbins=nbins, **kwargs)
+
+
 def get_xbound() -> tuple[float, float]:
     """The current axes' x bounds as an ascending ``(lower, upper)``."""
     return gca().get_xbound()
@@ -2751,13 +2773,22 @@ def subplots_adjust(**kwargs: Any) -> None:
     gcf().subplots_adjust(**kwargs)
 
 
-def get_cmap(name: str | None = None, lut: int | None = None) -> Cmap:
+def get_cmap(name: Any = None, lut: int | None = None) -> Any:
     """Look up a colormap by name (default viridis).
 
-    ``lut`` resamples it to that many entries.
+    ``lut`` resamples it to that many entries. Engine colormaps return a
+    `Cmap`; Matplotlib's qualitative palettes (``tab10``, ``Set2``, ...) return
+    a callable `ListedColormap`. A colormap object passes through.
     """
-    from ._colors import Cmap
+    from ._colors import Cmap, qualitative_colormap
 
+    if name is not None and not isinstance(name, str) and callable(name):
+        if lut is None:
+            return name
+        return name.resampled(int(lut)) if hasattr(name, "resampled") else name
+    listed = qualitative_colormap(name)
+    if listed is not None:
+        return listed if lut is None else listed.resampled(int(lut))
     cmap = Cmap("viridis" if name is None else name)
     return cmap if lut is None else cmap.resampled(int(lut))
 
@@ -2851,26 +2882,37 @@ def _install_ipython_display_hook() -> None:
 
 
 class _CmapNamespace:
-    """plt.cm.viridis and friends: name carriers the shim resolves by name."""
+    """plt.cm.viridis and friends: callable colormap objects, as in Matplotlib.
+
+    Engine colormaps come back as `Cmap` (usable as ``cmap=`` and callable,
+    ``plt.cm.viridis(np.linspace(0, 1, 3))``); Matplotlib's qualitative
+    palettes (``tab10``, ``Set1``, ``Paired``, ...) come back as
+    `ListedColormap` — callable with integer indices or fractions, but not
+    passable as ``cmap=`` since the engine has no table for them.
+    """
 
     @staticmethod
-    def get_cmap(name: str | None = None, lut: int | None = None) -> Cmap:
+    def get_cmap(name: str | None = None, lut: int | None = None) -> Any:
         # matplotlib removed cm.get_cmap in 3.9; older scripts still call it.
         return get_cmap(name, lut)
 
     def __getattr__(self, name: str) -> Any:
-        from ._colors import resolve_cmap
+        from ._colors import Cmap, qualitative_colormap, resolve_cmap
 
         if name == "ScalarMappable":
             return type("ScalarMappable", (), {"__init__": lambda self, **kwargs: None})
-
+        if name.startswith("__"):
+            raise AttributeError(name)
+        listed = qualitative_colormap(name)
+        if listed is not None:
+            return listed
         try:
             resolve_cmap(name)
         except ValueError:
-            pass
-        else:
-            return name
-        raise AttributeError(f"colormap {name!r} is not supported; see spec/matplotlib/compat.md")
+            raise AttributeError(
+                f"colormap {name!r} is not supported; see spec/matplotlib/compat.md"
+            ) from None
+        return Cmap(name)
 
 
 cm = _CmapNamespace()

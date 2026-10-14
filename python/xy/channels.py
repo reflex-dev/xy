@@ -182,6 +182,12 @@ class ColorChannel:
     _buffer: Optional[npt.NDArray[np.float64]] = field(
         default=None, init=False, repr=False, compare=False
     )
+    # Cached "every value is finite" verdict, None until probed. Rows with a
+    # non-finite continuous value are not drawn (§19), so every emitter — the
+    # direct tier, the density grid/sample/mean-color path, the drill — asks;
+    # the probe is an O(N) `isfinite().all()` over an immutable column and must
+    # not repeat per request (`nonfinite_channel_arrays`). Reset on append.
+    _all_finite: Optional[bool] = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def colors(self) -> list[str]:
@@ -237,10 +243,11 @@ class SizeChannel:
     values: Optional[npt.NDArray[np.float64]] = None
     domain: Optional[tuple[float, float]] = None
     range_px: tuple[float, float] = (2.0, 18.0)
-    # See ColorChannel._buffer.
+    # See ColorChannel._buffer / ColorChannel._all_finite.
     _buffer: Optional[npt.NDArray[np.float64]] = field(
         default=None, init=False, repr=False, compare=False
     )
+    _all_finite: Optional[bool] = field(default=None, init=False, repr=False, compare=False)
 
     def spec(self) -> dict[str, Any]:
         """The channel's resolved settings as a plain dict, exactly as
@@ -500,8 +507,9 @@ def append_continuous(channel: Any, values: npt.NDArray[np.float64], label: str)
     Geometry columns already use a capacity-doubling buffer for streaming;
     channel arrays need the same contract. The domain expands monotonically so
     a newly appended value is not silently clamped to the old color/size scale.
-    Non-finite values remain valid channel inputs and are handled by the
-    existing normalization policy; they do not expand the domain.
+    Non-finite values remain valid channel inputs — the emitters skip those
+    rows at build (`_payload._finite_sel`, §19) — and they do not expand the
+    domain.
     """
     if channel.mode != "continuous" or channel.values is None:
         raise ValueError(f"{label} channel is not continuous")
@@ -530,11 +538,56 @@ def append_continuous(channel: Any, values: npt.NDArray[np.float64], label: str)
         buffer[:n_old] = current
     buffer[n_old:n_new] = tail
     channel.values = buffer[:n_new]
+    channel._all_finite = None  # the tail may have introduced (or not) a non-finite value
 
     finite = tail[np.isfinite(tail)]
     if len(finite):
         lo, hi = channel.domain or _continuous_domain(current)
         channel.domain = (min(lo, float(finite.min())), max(hi, float(finite.max())))
+
+
+def nonfinite_channel_arrays(trace: Any, n: int) -> list[np.ndarray]:
+    """The continuous color/size arrays of `trace` (of length `n`) that hold
+    at least one non-finite value — the arrays an emitter must feed to
+    `kernels.valid_indices_f64` to find the rows it may not draw (§19).
+
+    The per-channel verdict is cached on the channel (`_all_finite`), so the
+    common all-finite case costs one vectorized `isfinite().all()` per channel
+    per trace lifetime rather than per payload or per density request; the
+    native multi-column scan (about six times dearer on the all-finite path,
+    CodSpeed `test_first_payload_scatter_continuous_channels`) runs only on a
+    channel that really needs it. A channel whose length differs from `n` is
+    skipped: a streaming append can leave it momentarily shorter than the
+    geometry, and geometry must never be indexed with a foreign-length mask.
+    """
+    arrays: list[np.ndarray] = []
+    for channel in (trace.color_ch, trace.size_ch):
+        if channel is None or channel.mode != "continuous" or channel.values is None:
+            continue
+        values = channel.values
+        if len(values) != n:
+            continue
+        if channel._all_finite is None:
+            channel._all_finite = bool(np.isfinite(values).all())
+        if not channel._all_finite:
+            arrays.append(values)
+    return arrays
+
+
+def finite_channel_rows(trace: Any) -> Optional[np.ndarray]:
+    """Canonical row ids whose continuous color/size values are all finite,
+    or None when every row qualifies (the common case, answered from the
+    cached probe without touching the columns).
+
+    The density tier's visible-row space: the count grid, the mean-color
+    plane, the sample overlay, the pyramid, and drill selections all narrow
+    to these rows so a point with an undefined color or size is not drawn at
+    any zoom level — the same exclusion the direct tier applies per row.
+    """
+    arrays = nonfinite_channel_arrays(trace, trace.n_points)
+    if not arrays:
+        return None
+    return kernels.valid_indices_f64(tuple(arrays))
 
 
 def resolve_color(
@@ -731,9 +784,13 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
+
     Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex
-    (design dossier §19); the validity story tightens with real bitmaps
-    later."""
+    (design dossier §19). That floor is a safety net, not a rendering: the
+    emitters exclude rows whose continuous color/size is non-finite before
+    shipping (`_payload._finite_sel`, `_figure._rect_finite_sel`), so on the
+    build path such a value is never drawn rather than drawn in the minimum
+    color. The validity story tightens with real bitmaps later."""
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 

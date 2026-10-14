@@ -251,7 +251,9 @@ KNOWN_RENDERER_DIVERGENCES: tuple[RendererDivergence, ...] = (
 #: and has nothing in a file to style.
 _SLOT_SUBSET_NOTE = (
     "Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, "
-    "letter-spacing, opacity and the text paint (`fill`, or `color`). The raster "
+    "letter-spacing, opacity and the text paint (`fill`, or `color`); PDF embeds "
+    "no fonts, so font-family there selects a base-14 substitute (serif → Times, "
+    "monospace → Courier, otherwise Helvetica; export.md §9 has the table). The raster "
     "writer's glyph primitive takes a size and one RGBA paint and nothing else, "
     "so it honors font-size and the paint only — font-weight, font-style, "
     "font-family, letter-spacing and opacity are vector-only rather than "
