@@ -1363,12 +1363,7 @@ export function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   }
   const inside = d && !g._drillDying && view._viewInside(d.win);
   const density = lodDensityForView(view, g);
-  const drawMarks = (alpha) => view._drawPoints(
-    d,
-    view._map(d.xMeta, x0, x1, d.xAxis),
-    view._map(d.yMeta, y0, y1, d.yAxis),
-    alpha
-  );
+  const drawMarks = (alpha) => view._drawPoints(d, [x0, x1], [y0, y1], alpha);
   if (inside) {
     // Boundary re-entry — or entry with an exit fade mid-flight — continues
     // from the marks alpha currently on screen; never a snap to full.
