@@ -67,10 +67,11 @@ control.
   `tests/pyplot/corpus/` + `spec/matplotlib/compat.md`.
 - `python/reflex_xy/` — the bundled Reflex integration (import namespace
   `reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
-  data rides the app's own websocket as a second socket.io namespace;
-  figures live in a per-process registry rebuilt from Reflex state on miss.
-  The source ships in every `xy` artifact; the `xy[reflex]` extra selects the
-  supported Reflex floor while plain `xy` keeps no Reflex runtime dependency.
+  data rides the app's own websocket as a dedicated Reflex channel (`/_xy`,
+  `data_plane.py`); figures live in a per-process registry rebuilt from Reflex
+  state on miss. The source ships in every `xy` artifact; the `xy[reflex]`
+  extra selects the supported Reflex while plain `xy` keeps no Reflex runtime
+  dependency.
   The core `python/xy` package must never import Reflex. The render client is
   linked out of that package at app compile (no second copy to drift).
   Tests: `tests/reflex_adapter/` (skip unless Reflex is installed).

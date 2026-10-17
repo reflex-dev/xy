@@ -5,6 +5,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 # Actions are pinned to full commit SHAs (`@<40-hex> # vX`) per the org policy,
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
 # must not silently turn these negative tests into no-ops.
@@ -1319,6 +1321,188 @@ def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "if: always()" in error for error in errors)
+
+
+def test_ci_workflow_rejects_browser_evidence_upload_that_skips_after_failures(
+    tmp_path: Path,
+) -> None:
+    """The screenshot is only evidence if it survives the run that failed."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload browser evidence\n        if: always()\n",
+            "      - name: Upload browser evidence\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("Upload browser evidence" in error and "if: always()" in error for error in errors)
+
+
+def test_ci_workflow_rejects_upload_condition_that_only_survives_in_a_comment(
+    tmp_path: Path,
+) -> None:
+    """The condition is read as a YAML key, not matched as text.
+
+    Two steps in this job share `if: always()`, so a substring needle can be
+    satisfied by the neighbour — or by the condition lingering in a comment
+    after the real key is gone — while the upload silently stops running.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "      - name: Upload regression benchmark report\n        if: always()\n",
+            "      - name: Upload regression benchmark report\n        # if: always()\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any(
+        "Upload regression benchmark report" in error and "if: always()" in error
+        for error in errors
+    )
+
+
+def test_ci_workflow_rejects_a_same_named_step_vouching_for_its_shadow(
+    tmp_path: Path,
+) -> None:
+    """A namesake must not satisfy a check the step it shadows no longer passes.
+
+    Actions allows two steps to share a name, so addressing steps by name is
+    ambiguous: strip the condition from the real upload, add a conditioned
+    step of the same name after it, and a last-one-wins lookup would validate
+    the decoy while the artifact silently stops uploading after a failed gate.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    real = verify_ci_workflow._named_step_blocks(jobs["test"])["Upload regression benchmark report"]
+    decoy = (
+        "      - name: Upload regression benchmark report\n"
+        "        if: always()\n"
+        "        run: echo decoy\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(real, real.replace("        if: always()\n", "", 1) + decoy),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("repeats step names" in error for error in errors)
+    assert any("missing required CI step" in error for error in errors)
+
+
+def test_ci_workflow_rejects_a_quoted_namesake_shadowing_a_step(tmp_path: Path) -> None:
+    """`"Upload it"` and `Upload it` are one name to Actions, two to a lexer.
+
+    Comparing raw text would miss the collision entirely: the duplicate check
+    would not fire and the by-name lookup would find whichever spelling the
+    gate happens to ask for, leaving its namesake unguarded.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    name = "Upload regression benchmark report"
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    real = verify_ci_workflow._named_step_blocks(jobs["test"])[name]
+    quoted_real = real.replace(f"- name: {name}", f'- name: "{name}"', 1)
+    decoy = f"      - name: {name}\n        if: always()\n        run: echo decoy\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(real, quoted_real.replace("        if: always()\n", "", 1) + decoy),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("repeats step names" in error and name in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "decoy",
+    [
+        pytest.param(
+            "      - uses: actions/checkout@v6\n        name: {name}\n        if: always()\n",
+            id="name-after-uses",
+        ),
+        pytest.param(
+            '      - "name": {name}\n        if: always()\n        run: echo decoy\n',
+            id="quoted-name-key",
+        ),
+    ],
+)
+def test_ci_workflow_rejects_a_namesake_in_any_step_spelling(tmp_path: Path, decoy: str) -> None:
+    """A step's name key is its name wherever it sits and however it is quoted.
+
+    Reading only a first-line ``- name:`` missed a namesake that starts with
+    ``uses`` or quotes its key, so the duplicate check never saw it.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    name = "Upload regression benchmark report"
+    real = verify_ci_workflow._named_step_blocks(verify_ci_workflow._job_blocks(workflow)["test"])[
+        name
+    ]
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(real, real + decoy.format(name=name)), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("repeats step names" in error and name in error for error in errors)
+
+
+def test_ci_workflow_finds_a_step_named_after_its_uses_key(tmp_path: Path) -> None:
+    """A step that starts with ``uses`` and names itself after it is still found."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    name = "Upload regression benchmark report"
+    real = verify_ci_workflow._named_step_blocks(verify_ci_workflow._job_blocks(workflow)["test"])[
+        name
+    ]
+    lines = real.splitlines()
+    uses = next(line for line in lines if line.startswith("        uses:"))
+    reordered = [f"      - {uses.strip()}", f"        name: {name}"] + [
+        line for line in lines[1:] if line != uses
+    ]
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(real, "\n".join(reordered)), encoding="utf-8")
+
+    assert verify_ci_workflow.validate_workflow(path) == []
+
+
+def test_ci_workflow_rejects_a_step_name_it_cannot_resolve(tmp_path: Path) -> None:
+    """A name spelled as a block scalar is unreadable to a line-local lexer.
+
+    Guessing at it would be worse than refusing: the gates address steps by
+    name, so a name they cannot read is a step they cannot verify.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "- name: Upload regression benchmark report",
+            "- name: >-\n          Upload regression benchmark report",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("cannot resolve" in error for error in errors)
+
+
+def test_ci_workflow_accepts_a_quoted_step_name_with_no_namesake(tmp_path: Path) -> None:
+    """Normalizing names must not make ordinary quoting a failure."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    name = "Upload regression benchmark report"
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(f"- name: {name}", f'- name: "{name}"', 1), encoding="utf-8")
+
+    assert verify_ci_workflow.validate_workflow(path) == []
 
 
 def test_ci_workflow_rejects_missing_wheel_upload(tmp_path: Path) -> None:

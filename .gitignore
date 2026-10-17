@@ -18,3 +18,7 @@ node_modules/
 python/xy/static/index.js
 python/xy/static/standalone.js
 **/assets/external/
+
+# Browser evidence kept by the Reflex channel test when XY_BROWSER_EVIDENCE is
+# set (CI uploads it as an artifact); local runs default to pytest's tmp_path.
+/browser-evidence/

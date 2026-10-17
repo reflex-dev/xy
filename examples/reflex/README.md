@@ -5,7 +5,7 @@ One page walks through the ways to link chart data into a Reflex app, and each
 section carries a **Code** accordion showing its source via
 `inspect.getsource`.
 
-Chart data rides the app's own websocket as a second socket.io namespace of
+Chart data rides the app's own websocket as a dedicated Reflex channel of
 binary columns; Reflex state holds only a tiny handle per chart. Charts use
 the data-bound component API — structure declared in the page, compiled to a
 validated plan at `reflex run`, columns supplied by `@reflex_xy.data` —

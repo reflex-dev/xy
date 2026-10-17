@@ -62,7 +62,7 @@ Beyond the mark set, four capability layers now ship on `main`:
   thread), so a kernel-less page refines instead of stretching the overview.
 - **Reflex-first reactive API (`python/reflex_xy/`):** xy figures as
   first-class Reflex components (PR #55). Chart data multiplexes onto the
-  app's existing websocket as a second socket.io namespace (`/_xy`) with
+  app's existing websocket as a dedicated Reflex channel (`/_xy`) with
   binary column attachments (§29 — no JSON numbers, no sidecar HTTP
   endpoints); the only chart state in Reflex is a token string. The
   `@reflex_xy.figure` computed-var decorator binds figure builders to Reflex

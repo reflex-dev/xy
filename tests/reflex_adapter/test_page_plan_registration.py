@@ -78,14 +78,9 @@ def test_apps_without_unevaluated_pages_are_a_noop():
 
 
 def _fake_app(pages: dict, tasks: list) -> SimpleNamespace:
-    """Enough of an `rx.App` for `setup()`: a socket server and task sink."""
-
-    class _Sio:
-        def register_namespace(self, namespace) -> None:
-            pass
-
+    """Enough of an `rx.App` for `setup()`: a channel sink and a task sink."""
     return SimpleNamespace(
-        sio=_Sio(),
+        register_channel=lambda channel: None,
         _unevaluated_pages=pages,
         register_lifespan_task=tasks.append,
         _state=None,
