@@ -8,13 +8,19 @@
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
   <a href="https://reflex.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex.dev-blue" alt="Docs" /></a>
   <a href="https://mybinder.org/v2/gh/reflex-dev/xy/main?urlpath=lab/tree/examples" target="_blank" rel="noopener noreferrer"><img src="https://mybinder.org/badge_logo.svg" alt="Launch the examples on Binder" /></a>
+  <a href="https://github.com/reflex-dev/xy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/reflex-dev/xy"></a>
+  <a href="https://pypi.org/project/xy/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/xy"></a>
 </p>
 
-XY is an extremely fast, interactive, customizable Python charting library for
-the web, notebooks, and static exports.
+# XY: Fast, interactive Python graphing library
 
-Charts are composed declaratively or through matplotlib conventions. You can
-fully customize them with Python, CSS, or Tailwind.
+XY is an open-source Python graphing and charting library built by Reflex for
+interactive data visualization in notebooks, web apps, and static exports.
+Its Rust compute core and WebGL2 renderer support everyday plots and large
+datasets, with declarative and Matplotlib-style Python APIs.
+
+Customize data marks with Python and style browser chart interfaces with CSS
+or Tailwind.
 
 With small charts, every point is sent to the browser. For large charts, the
 Rust core computes only what the screen needs to display, based on its
@@ -27,12 +33,63 @@ With XY we rendered the entirety of OpenStreetMap — a **10,000,000,000 point**
 > **XY is in alpha** and is receiving frequent enhancements.
 > ⭐️ Star the repo to follow the progress.
 
+[Quick start](#installation) · [Compare libraries](#xy-vs-matplotlib-plotly-and-bokeh) ·
+[Benchmarks](#benchmarks) · [FAQ](#frequently-asked-questions) ·
+[Documentation](https://reflex.dev/docs/xy/)
+
+## XY vs. Matplotlib, Plotly, and Bokeh
+
+Considering a Matplotlib, Plotly, or Bokeh alternative? XY combines large-data
+rendering with CSS and Tailwind styling for chart interfaces. The table below
+compares how you author and display charts; the separate benchmark table
+measures a specific scatter workload.
+
+| Capability | XY | Matplotlib | Plotly | Bokeh |
+| --- | --- | --- | --- | --- |
+| Python API | Declarative composition and experimental `xy.pyplot` compatibility | `pyplot` and object-oriented APIs | Plotly Express and graph objects | `bokeh.plotting` and models |
+| Notebook and web display | Notebook widget, standalone HTML, and Reflex integration | Notebook backends, GUI backends, and WebAgg server | Notebook display and standalone HTML; embed figures in web apps | Notebook display, standalone HTML, and Bokeh server apps |
+| Styling approach | Python properties plus CSS/Tailwind hooks for browser chart chrome | Artist properties, `rcParams`, and style sheets | Figure properties and templates | Glyph properties and themes; CSS for DOM elements |
+| Reusing Matplotlib code | Supported calls through `xy.pyplot`; check compatibility coverage | Native Matplotlib behavior | Port plotting calls to Plotly's API | Port plotting calls to Bokeh's API |
+
+Sources: [XY compatibility](spec/matplotlib/compat.md),
+[Matplotlib backends](https://matplotlib.org/stable/users/explain/figure/backends.html),
+[Plotly HTML export](https://plotly.com/python/interactive-html-export/),
+[Bokeh embedding](https://docs.bokeh.org/en/latest/docs/user_guide/output/embed.html),
+and [Bokeh DOM styling](https://docs.bokeh.org/en/latest/docs/user_guide/styling/dom.html).
+
+**Published interactive scatter results at 10 million points:**
+
+| Library and rendering mode | Time to correct, stable first render | Peak Python-side memory |
+| --- | ---: | ---: |
+| XY, density overview | 0.083 s | 0.32 GiB |
+| XY, exact markers (`density=False`) | 0.206 s | 0.57 GiB |
+| Matplotlib, WebAgg | 2.804 s | 0.84 GiB |
+| Plotly, `scattergl` | 3.367 s | 1.86 GiB |
+| Bokeh, standalone | Not measured in this comparison | Not measured in this comparison |
+
+These are XY's own measurements on one Apple M5 Pro, one run per cell, not a
+universal library ranking. Every arm receives all source rows, but XY's density
+mode aggregates them into a screen-bounded overview; the exact-marker row
+shows XY without aggregation. Memory excludes the browser. See
+[Benchmarks](#benchmarks) for the full size ladder and reproduction methodology.
+
 ## Is XY right for me?
 
 XY is for Python users who want one flexible charting library for everything
 from everyday plots to custom application visuals and large datasets. Build a
 chart once, then use it in notebooks and web apps or export it as HTML, PNG,
 SVG, or PDF.
+
+- **Large datasets:** Explore dense scatter plots and long time series with
+  native aggregation or decimation, and refine the visible range with a live host.
+- **Application charts:** Style titles, axes, legends, and tooltips with your
+  app's CSS or Tailwind classes, alongside Python controls for data marks.
+- **Matplotlib migration:** Try supported `pyplot` workflows on XY's engine by
+  changing the import, then check the [compatibility guide](spec/matplotlib/compat.md).
+
+XY is still pre-1.0. Evaluate the chart families, API coverage, export behavior,
+and [alpha limitations](docs/api-reference/limitations-and-alpha-status.md)
+your application needs before migrating.
 
 ## Installation
 
@@ -100,7 +157,7 @@ chart = xy.scatter_chart(
 chart
 ```
 
-### Coming from matplotlib
+### Coming from Matplotlib
 
 For common pyplot workflows, change the import and keep the plotting code:
 
@@ -121,6 +178,10 @@ functionality are supported yet.
 ## Customize every layer
 
 Use Python to control the chart, from marks and axes to interactions and layout.
+Browser chart chrome also exposes CSS and Tailwind hooks through `class_name`
+and `class_names`, so it can share your application's design system. Data marks
+use Python properties or a supported `style=` subset; arbitrary CSS and
+Tailwind classes do not carry into every static export.
 
 - **Marks:** Control color, size, opacity, symbols, gradients, strokes, curves,
   and colormaps.
@@ -154,23 +215,25 @@ their last chunk lands.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time-dark.png">
-    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time to correct, stable first render for 10k to 100M source points: XY density and exact-marker modes, Matplotlib WebAgg, and Plotly scattergl. Lower is better." width="1200">
   </picture>
 </p>
 
-XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of
-magnitude, because above 200k rows it draws a screen-bounded density surface
-instead of one marker per row, and zoom drills back to exact rows. Every
+In this published scatter benchmark, XY's density mode records **0.071 s at
+10k and 0.081 s at 100M source points**. Above 200k rows it draws a
+screen-bounded density surface instead of one marker per row, and zoom drills
+back to exact rows. Every
 exact-marker path scales with N instead: Matplotlib crosses a second at ~3M
 and reaches 13.4 s at 50M; Plotly crosses at ~2.5M and reaches 9.8 s at 25M.
 
 The pale line is XY with `density=False`: the same engine drawing one marker
-per row, no aggregation credit. It renders 100M exact markers in 1.34 s on
-5.26 GiB.
+per row, no aggregation credit. In this run, it renders 100M exact markers in
+1.34 s with 5.26 GiB peak Python-side memory, excluding the browser.
 
-Time until every point is on screen, in seconds. `✕` is a size the library
-did not render: Plotly never finishes constructing the figure at 50M, and
-Matplotlib draws at 100M but never resolves the zoom that follows.
+Time to correct, stable first render, in seconds. Density mode represents all
+source rows as aggregates rather than individual markers. `✕` marks a failed
+benchmark cell: Plotly did not finish constructing the figure at 50M, and
+Matplotlib drew at 100M but did not resolve the zoom that followed in this run.
 
 | Points | 10k | 100k | 500k | 1M | 2.5M | 5M | 10M | 25M | 50M | 100M |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -198,6 +261,85 @@ carry roughly ±10 ms of run-to-run spread.
 For the environment, methodology, per-size videos, and raw results, see the
 [benchmark runbook](https://github.com/reflex-dev/xy/blob/main/benchmarks/README.md) and
 [competitive benchmark specification](https://github.com/reflex-dev/xy/blob/main/spec/benchmarks/results.md).
+
+## Frequently asked questions
+
+### Is XY a Python graphing library or a charting library?
+
+Both terms describe XY: an open-source Python library for interactive charts,
+plots, and data visualization. XY uses a Rust compute core and a WebGL2 browser
+renderer, with the same chart object usable in notebooks, web apps, and exports.
+
+### Is XY a good Matplotlib alternative?
+
+XY is worth evaluating when you want interactive web charts, large-data
+rendering, or CSS styling while retaining familiar plotting calls. Change
+`import matplotlib.pyplot as plt` to `import xy.pyplot as plt` for supported
+workflows. The compatibility layer is experimental: it does not reproduce
+Matplotlib's full Artist graph, transforms, or pixel output. Check the
+[method-by-method compatibility matrix](spec/matplotlib/compat-matrix.md)
+before migrating an existing script.
+
+### Is XY a Plotly or Bokeh alternative for Python dashboards?
+
+XY supports interactive charts, a native Reflex integration, and CSS/Tailwind
+hooks for browser chart chrome. That makes it an option for Python dashboards
+with dense data or a custom visual design. Plotly and Bokeh also support
+standalone HTML and web embedding. Compare the chart types and callbacks your
+app needs, and benchmark your actual workload; the published scatter comparison
+above includes Plotly but does not establish a standalone Bokeh speedup.
+
+### Is XY faster than Matplotlib or Plotly for large datasets?
+
+In XY's published 10-million-point scatter benchmark on one Apple M5 Pro,
+correct, stable first render took 0.083 s for XY's density overview, 0.206 s
+for XY's exact markers, 2.804 s for Matplotlib WebAgg, and 3.367 s for Plotly
+`scattergl`. These results describe that workload and machine, with one run
+per cell. Density aggregation and exact-marker rendering preserve different
+visual detail. See the [benchmark runbook](benchmarks/README.md) to reproduce
+the measurements and evaluate your own data.
+
+### How does XY plot millions of points while keeping exact data available?
+
+XY retains canonical columns in a Python-side `ColumnStore`, computes a
+representation in Rust, and sends typed binary buffers to the renderer.
+Large scatter overviews can use density aggregation and long lines can use
+decimation. With a live host, pan and zoom request a refined view, and supported
+hover and selection operations can query original rows. Ingestion, canonical
+memory, and initial computation still depend on source row count; a small
+render payload does not mean a small source dataset in memory.
+
+### Can I style Python charts with CSS or Tailwind?
+
+Yes. XY exposes browser chart chrome through `class_name` and per-slot
+`class_names`, including hooks for titles, legends, tooltips, and controls.
+Marks use Python properties or a validated CSS-property subset through
+`style=`. Native exports do not apply arbitrary browser stylesheets or Tailwind
+classes. See the [styling guide](docs/styling/index.md) and
+[export boundaries](docs/api-reference/limitations-and-alpha-status.md#styling-and-export-boundaries).
+
+### Does the same chart work in notebooks, web apps, and static exports?
+
+Yes. An XY chart can render in a notebook, mount in a Reflex app, or export to
+HTML, PNG, SVG, or PDF. Standalone HTML is a snapshot: Python callbacks and
+server-side refinement require a live widget or framework adapter, and an
+export does not follow later data appends. See the
+[Reflex integration guide](https://reflex.dev/docs/xy/integrations/reflex/).
+
+### What chart types does XY support?
+
+XY includes line, area, scatter, bar, histogram, box, violin, ECDF, heatmap,
+hexbin, contour, uncertainty, stem, segments, Sankey, and funnel charts. Polar
+families include radar, radial bar, pie and donut, and wind rose charts. Browse
+the [chart gallery](https://reflex.dev/docs/xy/overview/gallery/) for examples
+and family-specific capabilities.
+
+### Is XY ready for production use?
+
+XY is in alpha, and pre-1.0 releases can introduce breaking changes. Test the
+chart families, interactions, browser support, and export paths your app uses,
+and review the [limitations and alpha status](docs/api-reference/limitations-and-alpha-status.md)
+before committing to a long-lived integration.
 
 ## Embed XY in a Reflex app
 
@@ -342,7 +484,7 @@ next, no dates implied:
   unequal-width core polar bars, with Matplotlib-shaped helpers in `xy.pyplot`;
   nested donuts and variable-radius composition remain
 - **Candlestick / OHLC and finance overlays:** SMA, VWAP, Bollinger, RSI, MACD; prototyped, awaiting a fresh landing
-- **Waterfall and funnel**
+- **Waterfall**
 - **Treemap, sunburst, and icicle**
 - **Gauge / indicator:** build on the shipped polar axes and composable radial marks
 - **Slope, bump, and dumbbell**
