@@ -21,7 +21,7 @@ bokeh==3.9.1
     #   hvplot
     #   panel
     #   panel-material-ui
-certifi==2026.6.17
+certifi==2026.10.19
     # via requests
 charset-normalizer==3.4.9
     # via requests
