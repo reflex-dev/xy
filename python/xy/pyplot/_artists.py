@@ -1335,6 +1335,30 @@ def _rgba_css(value: Any) -> str:
 class PolyCollection(Artist):
     """Generic collection handle used by adapter-composed chart families."""
 
+    def __init__(
+        self,
+        axes: Any,
+        entry: dict[str, Any],
+        *,
+        companion_entries: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        super().__init__(axes, entry)
+        self._polygon_entries = list(companion_entries or [])
+
+    def _companion_entries(self) -> list[dict[str, Any]]:
+        return self._polygon_entries
+
+    def remove(self) -> None:
+        for entry in self._polygon_entries:
+            self._axes._remove_entry(entry)
+        self._polygon_entries.clear()
+        super().remove()
+
+    def set_zorder(self, level: float) -> None:
+        for entry in self._polygon_entries:
+            entry["_zorder"] = float(level)
+        super().set_zorder(level)
+
     def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
         _set_entry_clim(self, vmin, vmax)
 
@@ -1361,7 +1385,8 @@ class PolyCollection(Artist):
     def set_facecolors(self, colors: Any) -> None:
         """Set a constant face paint for a filled polygon collection."""
         rgba = resolve_rgba_array(colors, 1, "collection facecolors")[0]
-        self._entry.setdefault("kwargs", {})["color"] = _rgba_css(rgba)
+        for entry in self._owned_entries():
+            entry.setdefault("kwargs", {})["color"] = _rgba_css(rgba)
         self._touch()
 
     set_facecolor = set_facecolors

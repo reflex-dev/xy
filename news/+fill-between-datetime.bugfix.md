@@ -1,0 +1,2 @@
+Fixed `xy.pyplot.fill_between` raising a `TypeError` when passed `datetime`, `datetime64`, or masked date sequences. Standalone datetime fills now render calendar tick labels without requiring a line overlay.
+Shared x axes also retain calendar ticks when only one panel contains dates and refresh after date fills are added or removed. Removing a split fill now removes every polygon, including masked and interpolated regions.
