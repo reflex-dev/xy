@@ -195,8 +195,9 @@ parso==0.8.7
     # via jedi
 pexpect==4.9.0
     # via ipython
-pillow==12.3.0
+pillow==13.0.0
     # via
+    #   -r benchmarks/requirements-ci.in
     #   bokeh
     #   matplotlib
 platformdirs==4.11.0

@@ -39,7 +39,7 @@ dev = [
     "pyarrow>=15",
     # Decode oracle for the native JPEG/WebP encoders, never a runtime
     # dependency: the image-export tests importorskip it.
-    "pillow>=10",
+    "pillow>=13.0.0",
     # The FastAPI drilldown example's live_drilldown module imports Starlette at
     # load (its callback endpoint), never a runtime dependency of xy: the
     # drilldown pan-alignment browser test importorskips it, so it lives in dev
