@@ -564,6 +564,8 @@ def _promotion_fixture(tmp_path: Path) -> tuple[Path, Path]:
                         "rewrite_count": 0,
                         "ast_rewrite_verified": True,
                         "python_interpreter": PYTHON_INTERPRETER,
+                        "implementation_commit": AUDIT_COMMIT,
+                        "implementation_dirty": False,
                         "requested_pyplot_mode": None,
                         "resolved_pyplot_mode": None,
                         "requested_matplotlib_backend": "Agg",
@@ -598,6 +600,8 @@ def _promotion_fixture(tmp_path: Path) -> tuple[Path, Path]:
                         "rewrite_count": 1,
                         "ast_rewrite_verified": True,
                         "python_interpreter": PYTHON_INTERPRETER,
+                        "implementation_commit": AUDIT_COMMIT,
+                        "implementation_dirty": False,
                         "requested_pyplot_mode": "compat",
                         "resolved_pyplot_mode": "compat",
                         "requested_matplotlib_backend": "Agg",
@@ -762,6 +766,8 @@ def test_promotion_records_emitted_manifest_hash_and_immediately_verifies(
                             "status": "passed",
                             "capture_count": 1,
                             "wall_duration_seconds": 0.1,
+                            "implementation_commit": AUDIT_COMMIT,
+                            "implementation_dirty": False,
                         }
                         for engine in ("matplotlib", "xy")
                     },
@@ -865,6 +871,18 @@ def test_report_promotion_rejects_stale_or_fabricated_provenance(tmp_path: Path)
                 {"implementation": "cpython", "version": "0.0.0"},
             ),
             "python_interpreter",
+        ),
+        (
+            lambda report: report["examples"][0]["engines"]["xy"].__setitem__(
+                "implementation_commit", "b" * 40
+            ),
+            "implementation_commit",
+        ),
+        (
+            lambda report: report["examples"][0]["engines"]["xy"].__setitem__(
+                "implementation_dirty", True
+            ),
+            "implementation_dirty",
         ),
         (
             lambda report: report["examples"][0]["engines"]["xy"].__setitem__(

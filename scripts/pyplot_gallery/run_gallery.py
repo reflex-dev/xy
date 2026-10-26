@@ -690,6 +690,15 @@ def run_gallery(
         repository_start,
         repository_end,
     )
+    for case in cases:
+        for engine, result in case["engines"].items():
+            result["implementation_commit"] = implementation_commit
+            result["implementation_dirty"] = implementation_dirty
+            result_path = _artifact_dir(output_root, case["path"], engine) / "result.json"
+            result_path.write_text(
+                json.dumps(result, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
     report = {
         "schema_version": 2,
         "harness_version": HARNESS_VERSION,

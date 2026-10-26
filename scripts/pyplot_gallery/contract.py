@@ -1099,6 +1099,13 @@ def promote_reports(
                 )
                 continue
             cases_by_path[path] = case
+            for engine, result in case.get("engines", {}).items():
+                for field in ("implementation_commit", "implementation_dirty"):
+                    if result.get(field) != report.get(field):
+                        errors.append(
+                            f"{path}: {engine} {field} {result.get(field)!r} "
+                            f"does not match report {report.get(field)!r}"
+                        )
             expected_extended = extended_by_path.get(path)
             errors.extend(
                 _case_provenance_errors(

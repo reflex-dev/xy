@@ -74,6 +74,38 @@ def test_loopback_host_drains_queued_heartbeats_without_nested_pumps(monkeypatch
         manager.destroy()
 
 
+def test_loopback_host_nested_event_loop_can_dispatch_browser_input() -> None:
+    figure = Figure(figsize=(2, 1), dpi=100)
+    canvas = FigureCanvasXY(figure)
+    axes = figure.add_axes((0, 0, 1, 1))
+    axes.set(xlim=(0, 2), ylim=(-1, 1))
+    manager = FigureManagerXY(canvas, 92)
+    host = manager._refresh_browser_host()
+    received: list[str] = []
+    nested_observations: list[list[str]] = []
+
+    def on_press(_event) -> None:
+        received.append("press")
+        canvas.flush_events()
+        nested_observations.append(list(received))
+
+    canvas.mpl_connect("button_press_event", on_press)
+    canvas.mpl_connect("button_release_event", lambda _event: received.append("release"))
+    host._events.put_nowait(
+        {"type": "event", "name": "button_press_event", "x": 50, "y": 50, "button": 0}
+    )
+    host._events.put_nowait(
+        {"type": "event", "name": "button_release_event", "x": 50, "y": 50, "button": 0}
+    )
+
+    try:
+        assert host.pump() == 1
+        assert received == ["press", "release"]
+        assert nested_observations == [["press", "release"]]
+    finally:
+        manager.destroy()
+
+
 def _event_figure() -> tuple[object, FigureCanvasXY, object]:
     figure = Figure(figsize=(2, 1), dpi=100)
     canvas = FigureCanvasXY(figure)

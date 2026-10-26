@@ -144,7 +144,7 @@ class LoopbackHost:
         self._events: queue.Queue[Mapping[str, Any]] = queue.Queue(maxsize=_MAX_PENDING_EVENTS)
         self._lock = threading.Lock()
         self._closed = False
-        self._pumping = False
+        self._handling_heartbeat = False
         self._state: dict[str, Any] = {
             "svg": "",
             "width": 1.0,
@@ -335,24 +335,27 @@ class LoopbackHost:
     def pump(self) -> int:
         """Dispatch queued browser messages on Matplotlib's calling thread."""
         manager = self._manager_ref()
-        if manager is None or self._closed or self._pumping:
+        if manager is None or self._closed or self._handling_heartbeat:
             return 0
         canvas = cast("FigureCanvasXY", manager.canvas)
         delivered = 0
-        self._pumping = True
-        try:
-            while True:
-                try:
-                    message = self._events.get_nowait()
-                except queue.Empty:
-                    break
+        while True:
+            try:
+                message = self._events.get_nowait()
+            except queue.Empty:
+                break
+            heartbeat = message.get("type") == "event_loop"
+            if heartbeat:
+                self._handling_heartbeat = True
+            try:
                 widget = canvas.widget
                 widget._on_custom_msg(widget, message, [])
-                delivered += 1
-                if self._closed:
-                    break
-        finally:
-            self._pumping = False
+            finally:
+                if heartbeat:
+                    self._handling_heartbeat = False
+            delivered += 1
+            if self._closed:
+                break
         return delivered
 
     def close(self) -> None:

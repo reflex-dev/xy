@@ -737,7 +737,7 @@ fn dash_state(dash: &[f32], offset: f32) -> (usize, f32, bool) {
     // list length also flips the on/off state.
     let total: f32 =
         dash.iter().sum::<f32>() * if dash.len().is_multiple_of(2) { 1.0 } else { 2.0 };
-    let mut phase = if offset.is_finite() {
+    let mut phase = if offset.is_finite() && total.is_finite() {
         offset.rem_euclid(total)
     } else {
         0.0
@@ -3538,6 +3538,14 @@ mod tests {
         assert!(!usable_dash(&[6.0, f32::NAN]));
         assert!(!usable_dash(&[f32::INFINITY, 4.0]));
         assert!(!usable_dash(&[0.0, 4.0]));
+    }
+
+    #[test]
+    fn dash_state_handles_overflowing_cycle_length() {
+        assert_eq!(
+            dash_state(&[f32::MAX, f32::MAX], -1.0),
+            (0, f32::MAX, true)
+        );
     }
 
     #[test]

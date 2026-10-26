@@ -20,8 +20,9 @@ The initial canvas supports:
 - Matplotlib callback registration and explicit event dispatch;
 - live IPython anywidget and token-authenticated loopback `show()` hosts, both
   using the shared browser event adapter;
-- non-reentrant loopback queue pumping: heartbeat callbacks may flush events,
-  while the outer pump continues draining queued messages iteratively;
+- heartbeat-safe loopback queue pumping: a heartbeat callback cannot recursively
+  redispatch itself, while nested event loops inside genuine input callbacks
+  continue draining later browser input;
 - timers driven by browser heartbeats, the blocking main loop, or
   `flush_events`, including a deterministic `fire` method for tests;
 - a `NavigationToolbar2`-compatible controller for keyboard and pointer
@@ -47,8 +48,10 @@ The consumer also covers rectangular and arbitrary path clips, tiled hatches,
 quad meshes, and barycentrically interpolated Gouraud batches.
 Repeated shaped clips share one exact supersampled mask within a raster pass.
 Raster strokes preserve the display list's dash phase as well as its dash
-sequence. PNG text metadata is emitted as PNG text chunks; unsupported
-`pil_kwargs` fail explicitly instead of being silently ignored.
+sequence, and overflowing user-supplied patterns fall back to a zero phase
+instead of trapping the native walker. PNG text metadata is emitted as valid
+PNG text chunks; null-containing values and unsupported `pil_kwargs` fail
+explicitly instead of being silently ignored.
 Rectilinear Gouraud meshes use a vectorized four-triangle interpolation that is
 equivalent to Matplotlib's center-subdivided QuadMesh geometry; arbitrary
 triangle batches retain the general barycentric path.

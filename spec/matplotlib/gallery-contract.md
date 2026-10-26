@@ -118,9 +118,10 @@ and keeps reference/xy/difference PNGs only for failed or review-required
 comparisons. The top-level report repeats the selected execution interpreter;
 resumption rejects cached results from another interpreter, another clean
 implementation commit, a dirty checkout, or from before this provenance was
-recorded. Every per-engine result records that implementation identity before
-it can be reused. Promotion requires every engine result to agree with that
-report-level identity.
+recorded. Every per-engine result is rewritten with the final start/end
+implementation identity before the report is emitted and before it can be
+reused. Promotion validates every engine result against that report-level
+identity.
 
 ## Interaction, navigation, and animation evidence
 

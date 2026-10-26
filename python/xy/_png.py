@@ -54,6 +54,8 @@ def with_metadata(data: bytes, metadata: Mapping[Any, Any]) -> bytes:
     for raw_key, raw_value in metadata.items():
         key = str(raw_key)
         value = str(raw_value)
+        if "\x00" in value:
+            raise ValueError("PNG metadata values cannot contain null characters")
         try:
             encoded_key = key.encode("latin-1", "strict")
         except UnicodeEncodeError:

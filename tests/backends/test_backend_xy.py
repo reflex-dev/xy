@@ -458,6 +458,8 @@ def test_print_png_preserves_text_metadata_and_rejects_unsupported_pil_kwargs() 
     assert b"Author\x00xy" in output.getvalue()
     with pytest.raises(NotImplementedError, match="pil_kwargs"):
         canvas.print_png(io.BytesIO(), pil_kwargs={"compress_level": 1})
+    with pytest.raises(ValueError, match="null characters"):
+        canvas.print_png(io.BytesIO(), metadata={"Title": "bad\0value"})
 
 
 def test_timer_callback_may_flush_events_without_recursive_redispatch() -> None:
