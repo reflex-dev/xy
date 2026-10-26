@@ -812,6 +812,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "steps.scope.outputs.pyplot",
     )
     scopes = {
+        "build": "build",
         "matplotlib_reference": "pyplot",
         "matplotlib_patch_smoke": "pyplot",
         "pyplot_gallery": "pyplot",

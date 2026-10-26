@@ -1795,3 +1795,15 @@ def test_python_floor_installs_yaml_for_workflow_tests(tmp_path: Path) -> None:
         "floor" in error and "pyyaml" in error
         for error in verify_ci_workflow.validate_ci_workflow(path)
     )
+
+
+def test_shared_build_condition_cannot_skip_selected_consumers(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    mutated = workflow.replace("if: needs.changes.outputs.build == 'true'", "if: false")
+    assert mutated != workflow
+    path = tmp_path / "skipped-build.yml"
+    path.write_text(mutated)
+    assert any(
+        "build" in error and "scope" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )

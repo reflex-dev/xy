@@ -72,7 +72,8 @@ correctness, gallery, browser and packaging lanes remain blocking. `CI result`
 rejects failed/cancelled hard dependencies and accepts intentionally skipped
 lanes, so it also completes on docs-only PRs. Repositories can require this
 stable status instead of individually selected jobs. The verifier protects every
-blocking summary dependency and its exact failure/selection assertions, including
+blocking summary dependency, the shared-build selection condition, and its exact
+failure/selection assertions, including
 packaging failures. The Python-floor environment explicitly installs PyYAML for
 the workflow tests. Workflow changes do not
 change repository branch-protection settings automatically.
@@ -80,7 +81,8 @@ change repository branch-protection settings automatically.
 One `ubuntu-24.04` producer builds and verifies a native Linux x64 wheel at the
 implementation SHA. Compatible consumers check out that same SHA and download
 only this run's artifact. The gallery, reference, Python-floor and benchmark
-consumers install that wheel. A local composite action also extracts its native
+consumers that exercise XY install that wheel. Competitor-only benchmark shards
+(`matrix.xy: false`) skip both restoration and XY installation. A local composite action also extracts its native
 library and JS bundles into source paths for repository tests and stdlib smokes.
 The locked runtime development environment retains its editable install with
 `XY_SKIP_CARGO=1`, reusing the verified native library; no consuming lane recompiles

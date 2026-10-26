@@ -11,6 +11,8 @@ import pytest
 import yaml
 from scripts.ci_scope import GROUPS, select_checks
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 @pytest.mark.parametrize(
     "path", ["docs/app/xy_docs/page.py", "spec/design-dossier.md", "README.md", "news/ci.misc.md"]
@@ -84,7 +86,7 @@ def test_deleted_and_renamed_inputs_are_in_complete_diff(tmp_path):
 
 
 def test_shared_build_dependencies_and_summary():
-    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     jobs = workflow["jobs"]
     consumers = [
         "test",
@@ -120,7 +122,7 @@ def test_shared_build_dependencies_and_summary():
 def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
     from zipfile import ZipFile
 
-    action = yaml.safe_load(Path(".github/actions/restore-ci-build/action.yml").read_text())
+    action = yaml.safe_load((ROOT / ".github/actions/restore-ci-build/action.yml").read_text())
     dist = tmp_path / "dist"
     dist.mkdir()
     with ZipFile(dist / "xy-test.whl", "w") as wheel:
@@ -164,7 +166,7 @@ def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
 def test_ci_summary_rejects_selected_failures(tmp_path, failed_job, status):
     import json
 
-    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     result = workflow["jobs"]["result"]
     results = {name: {"result": "skipped"} for name in result["needs"]}
     results["changes"]["result"] = "success"
@@ -218,7 +220,7 @@ def test_benchmark_inputs_select_blocking_runtime_checks(path):
 def test_codspeed_keeps_pyplot_performance_checks_selected():
     from fnmatch import fnmatchcase
 
-    workflow = yaml.safe_load(Path(".github/workflows/codspeed.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/codspeed.yml").read_text())
     # PyYAML's YAML 1.1 loader interprets the unquoted Actions `on` key as True.
     ignored = workflow[True]["pull_request"]["paths-ignore"]
     assert not any(fnmatchcase("python/xy/pyplot/_axes.py", pattern) for pattern in ignored)
@@ -229,7 +231,7 @@ def test_actual_contributor_instructions_are_docs_only():
 
 
 def test_codspeed_excludes_nested_markdown_and_license_changes():
-    workflow = yaml.safe_load(Path(".github/workflows/codspeed.yml").read_text())
+    workflow = yaml.safe_load((ROOT / ".github/workflows/codspeed.yml").read_text())
     ignored = workflow[True]["pull_request"]["paths-ignore"]
     assert "**.md" in ignored
     assert "LICENSE" in ignored
