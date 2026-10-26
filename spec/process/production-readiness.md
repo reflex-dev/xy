@@ -23,8 +23,8 @@ screen-bounded performance core, but the stable commitments today are narrower:
   Rust, Node, npm, or a CDN.**
 - Source distributions contain only install and build inputs: the `xy` package,
   bundled `reflex_xy` integration, Rust/JS sources, and the prebuilt render
-  client. Repository-only docs, tests, benchmarks, scripts, and examples are
-  excluded. Installing from an sdist therefore needs no Node.
+  client. Repository-only docs, tests, gallery evidence, benchmarks, scripts,
+  and examples are excluded. Installing from an sdist therefore needs no Node.
 - Building from a raw source checkout (`pip install` from a clone, or the dev
   workflow) requires a Rust toolchain for the native core and Node/npm for the
   render client — the same two toolchains CI uses. The two differ in strictness:
@@ -42,6 +42,171 @@ screen-bounded performance core, but the stable commitments today are narrower:
 
 The composition API, chart-type set, visual styling surface, and Reflex
 integration are still experimental and may change before a 1.0 release.
+
+## Pull-request CI selection and build reuse
+
+`ci.yml` always runs a lightweight selector and the stable `CI result` summary.
+The selector uses the complete local Git three-dot PR diff, with rename detection
+disabled so a move out of a source directory still checks the removed source.
+It does not rely on GitHub's path-filter file limit. Selection failures fail CI;
+unknown paths conservatively select the general lanes, excluding pyplot. Pushes
+and manual dispatches run all lanes, including documentation-only pushes to main.
+
+| PR changes | Selected main CI lanes |
+| --- | --- |
+| Only `docs/`, `spec/`, `news/`, README, changelog, contributor instructions or license | Selector and summary; the separate Docs workflow handles its matching paths |
+| `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
+| Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
+| `benchmarks/` or `scripts/bench*` | Blocking runtime/Python-floor regression checks plus advisory cross-library/methodology benchmarks and their report merge |
+| `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
+| Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
+
+CI and CodSpeed bootstrapping use explicit tool versions, not moving channels:
+
+| Bootstrap input | Pinned value |
+| --- | --- |
+| Rust toolchain | `1.99.1` (`clippy` explicitly installed for the Rust check lane) |
+| Node.js | `22.23.3` |
+| uv | `0.13.5` |
+| Python floor / CodSpeed interpreter | `3.11.17` |
+| Linux wheel repair utility | `auditwheel==6.8.2`, including the execution command |
+
+These versions match the passing CI runs used to review this change. Every
+checkout in `ci.yml` and `codspeed.yml` explicitly sets
+`persist-credentials: false`; full history remains available for local version
+and gallery-baseline queries without retaining Git authentication for later
+build/test code. Action code remains SHA-pinned. CodSpeed points directly to
+commit `f99becdce5e5d51fd556489ebef684f4ecfd6286`, the verified target of its
+previous signed tag object `4bee4eada46987d4607fc208971a36367352b83d`, so this
+normalization preserves the action code and its bundled runner version.
+For bootstrap actions present in the workflow, the verifier structurally requires
+credential isolation, full-SHA references and reviewed action inputs, rejecting
+missing, duplicated, ambiguous or comment-only input values. This check validates
+existing action steps; it does not require every job to declare a setup action
+for every tool it uses. The auditwheel installation and execution pins
+are enforced by
+`tests/test_ci_scope.py::test_wheel_repair_installs_and_executes_the_pinned_auditwheel`.
+Updating the toolchain requires updating the workflow inputs, verifier contract, tests
+and this table together, then exercising the hosted gates. These controls cover
+CI/CodSpeed bootstrapping; hosted OS images and dependency-range installation
+smokes retain their existing update/support-range contracts.
+
+The runtime selection runs four independent blocking jobs:
+
+| Job | Dependencies | Checks |
+| --- | --- | --- |
+| `rust_checks` — Rust tests + Clippy | Selector only | Rust unit tests and Clippy; starts alongside the shared-wheel build |
+| `test` — Python tests + quality | Selector and shared wheel | Locked Reflex dev environment, API, Ruff, types and full selected pytest coverage with required Chromium |
+| `browser_smokes` — Browser rendering + integration | Selector and shared wheel | JS parsing, native ABI, stdlib render/append/export probes, real-chart rendering, lifecycle, visuals, stress and dashboard reliability; focused pyplot gate when selected |
+| `regression_checks` — Blocking regression checks | Selector and shared wheel | Native/scatter/transport regression reports, deterministic payload gates, report upload and the benchmark smoke harness |
+
+Runtime job and step mappings reject `continue-on-error` structurally, including
+quoted and escaped key spellings.
+Step conditions are structurally forbidden except the exact pyplot-selection
+condition on its focused gate and `always()` on regression-report upload.
+These jobs never depend on one another. Python, browser and regression jobs each
+restore the same native/client artifacts and run in parallel once the wheel is
+ready. Python tests retain their real-browser coverage rather than deferring it
+to another job. The shared `setup-ci-chromium` composite restores a browser cache
+keyed by OS/architecture/frontend lockfile, installs full Chromium without apt
+on the fixed Ubuntu image, and verifies that it launches. Each caller bounds
+this setup to five minutes. The `CI result` summary requires all four jobs and
+rejects failures/cancellations from each, alongside the existing Python-floor,
+conformance and packaging gates. Validation covers their independent dependency
+graph, unchanged mandatory checks and failure propagation. Hosted start/end
+metadata (`gh run view <run> --json jobs`) supplies evidence of actual overlap;
+no elapsed-time improvement is claimed before a fresh hosted run.
+
+Mixed PRs take the union. On pull requests, the reference/patch jobs, both gallery
+profiles and the focused pyplot test step require an explicit change under the
+compatibility paths above. CI workflow/helper changes, shared implementation
+changes, and unknown paths do not enable them by themselves. A mixed PR that
+also edits compatibility still runs those gates regardless of file order.
+Runtime and floor tests omit `tests/pyplot` and
+`tests/backends` when compatibility is unselected; the explicit Chromium pyplot
+step follows the same compatibility output. Benchmarks remain advisory; selected
+correctness, gallery, browser and packaging lanes remain blocking. `CI result`
+rejects failed/cancelled hard dependencies and accepts intentionally skipped
+lanes, so it also completes on docs-only PRs. Repositories can require this
+stable status instead of individually selected jobs. The verifier protects every
+blocking summary dependency, the shared-build selection condition, and its exact
+failure/selection assertions, including packaging failures. The summary step must
+define one direct `env.RESULTS` assignment equal to `${{ toJSON(needs) }}`;
+comments, inherited values and duplicate mappings cannot satisfy that contract.
+The Python-floor environment explicitly installs PyYAML for the workflow tests. Workflow changes do not
+change repository branch-protection settings automatically.
+
+One `ubuntu-24.04` producer builds and verifies a native Linux x64 wheel at the
+implementation SHA. Compatible consumers check out that same SHA and download
+only this run's artifact. The gallery, reference, Python-floor and benchmark
+consumers that exercise XY install that wheel. Competitor-only benchmark shards
+(`matrix.xy: false`) skip both restoration and XY installation. A local composite action also extracts its native
+library and JS bundles into source paths for repository tests and stdlib smokes.
+The three locked runtime development environments retain editable installs with
+`XY_SKIP_CARGO=1`, reusing the verified native library; no consuming lane recompiles
+the release core or rebundles JS. Rust unit tests and Clippy still compile their
+test/debug targets. The Linux x64 packaging smoke repairs and installs the same
+wheel without waiting for the whole runtime suite. ARM64 and Windows builds,
+sdist source-build probes, and the deliberately coreless build remain independent.
+CodSpeed and Docs retain independent environments/builds across workflows;
+CodSpeed PR filters omit backend/gallery-only changes, CI workflows/actions and
+selector/verifier scripts, tests, Markdown at any depth, license-only changes,
+docs and news. CI-only PRs do not download CodSpeed tooling or run its benchmarks.
+Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
+Published release build workflows and their full platform coverage are unchanged.
+
+The three-engine conformance job uses the official Playwright image
+`mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48`.
+The image supplies browsers and their OS libraries in one prebuilt, digest-pinned
+bundle. Its version must match the exact Playwright devDependency in
+`package.json` and `package-lock.json`; update the image digest and verifier
+contract together when upgrading Playwright. The job verifies the binary paths
+and runs the same Chromium/Firefox/WebKit WebGL and accessibility checks under
+Xvfb, with a fifteen-minute total timeout and a five-minute conformance-step timeout.
+The job budget covers the five-minute npm setup, one-minute preflight and
+five-minute conformance limits, plus four minutes for checkout and other setup.
+The verifier checks the preflight's exact active `run` body, so comments or an
+empty engine loop cannot satisfy the executable-path checks.
+The browser step sets `HOME=/root` to match the container's root user; Firefox
+rejects GitHub's mounted `/github/home` because it belongs to a different UID.
+It performs no apt or browser-engine installation. Its image pull is still a
+network operation; the workflow does not assume hosted runners retain Docker
+layers between runs. Other Chromium-only jobs keep their existing lockfile-keyed
+browser caches. Reproduce the image metadata/digest through
+`https://mcr.microsoft.com/v2/playwright/manifests/v1.61.1-noble` with a Docker
+manifest-list Accept header, and verify the manifest body's SHA-256 before
+updating the pin. [Playwright documents the preinstalled browser/dependency
+contract](https://playwright.dev/docs/docker).
+
+The advisory methodology job keeps the standard workload sizes and repetition
+counts. CI-only PRs skip it and the cross-library benchmark/report jobs; mixed
+PRs that edit benchmark or shared implementation inputs still select them.
+Main pushes and manual dispatches retain all benchmark coverage.
+On the fixed `ubuntu-24.04` hosted image, methodology installs the lockfile-pinned
+Chromium without `--with-deps`, reusing the system browser libraries already
+provided by the [runner image](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#browsers-and-drivers). Its Chromium cache is keyed by OS, architecture and the
+frontend lockfile. Only full Chromium is needed: Python probes invoke its exact
+executable path, so the separate headless-shell download is omitted. Browser
+installation has a five-minute limit; the complete job has a twenty-minute limit.
+A one-minute browser-launch preflight fails on missing Chromium or system
+libraries before measurements begin; it never substitutes a different renderer
+or silently accepts a missing browser.
+
+The motivating hosted run [40357494239, methodology job](https://github.com/reflex-dev/xy/actions/runs/40357494239/job/121694488499)
+spent 9m50s installing Chromium, including 9m17s fetching Ubuntu packages, while
+the interaction step took 42s. Reproduce these setup-duration observations with
+`gh api repos/reflex-dev/xy/actions/jobs/121694488499` and that job's `/logs`
+endpoint. These are hosted step durations, not chart-performance benchmarks;
+the speedup of the revised setup still needs a fresh hosted run.
+
+Validation: `python3 scripts/verify_ci_workflow.py` and
+`pytest -q tests/test_ci_scope.py tests/test_verify_ci_workflow.py`. The selection
+tests cover docs, shim, shared code, mixed/unknown inputs, full manual selection,
+and moved/deleted source paths. The workflow tests check dependency wiring and
+blocking gates. Inspect `Select CI checks` outputs and `ci-linux-wheel` artifacts
+on an Actions run to reproduce the selection/reuse evidence. These changes reduce
+duplicate work by construction; elapsed-time improvement still requires a hosted
+before/after Actions run and is not claimed as a measured benchmark.
 
 ## Accessibility and Cross-Browser Conformance Status
 
@@ -63,22 +228,59 @@ leaf links and the mobile sidebar drawer remain available. The mobile drawer
 trigger is a named native button with visible keyboard focus. Footer navigation
 uses level-two section headings. Installation examples use subsections so code
 blocks cannot become invalid direct children of a list.
-The docs recolor consumes the reusable `reflex-site-shared` theme and components
-directly. XY keeps only its branding, navigation, and project-specific footer
-content; it must not vendor shared CSS, search/buttons, or the navbar frame and
-announcement. Unpublished shared changes are previewed with the editable-package
+The docs consume the reusable `reflex-site-shared` base theme and components
+directly. XY owns its branding, navigation, project-specific footer content,
+and the docs-only brand layer adapted from
+[Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549). It must not
+vendor shared base CSS, search/buttons, or the navbar frame and announcement.
+The local layer uses Inter body text, Geist headings, warm neutral light/dark
+tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
+the opal banner artwork without a white top-edge inset shadow. Fonts ship through
+pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
+Banner structure and the close event remain shared. Editorial selectors target `docs-*`
+hooks, avoiding live chart typography and data-series colors. Mobile navigation,
+the named closeable docs drawer, clipboard feedback, keyboard focus, and
+reduced-motion behavior remain required validation surfaces.
+XY's announcement matches `reflex-marketing`'s current main branch:
+"Build vs. Buy for Internal Software" links to
+`https://reflex.dev/blog/build-vs-buy-internal-software/`, with five mirrored
+opal panels with reduced-motion support, a black New
+badge, and a white text-only Read more pill hidden at 640px and below. Its visible
+contribution is 44px on desktop and 40px at 960px and below, above the fixed 64px
+docs header. A head script restores the same `reflex_announcement_dismissed_release`
+storage key and `build-vs-buy-internal-software-v1` release before paint; dismissal persists
+across reloads and same-origin marketing/docs navigation, with a working
+visit-local fallback when storage is unavailable. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native
+link and close event while adapting its destination, copy, decorative markup,
+and accessible name. The message wraps at narrow widths as it does in marketing.
+Below 1280px, opening the navigation menu removes both top header corners;
+closing it restores the announcement's rounded header. Announcement links open
+in a new tab with `noopener noreferrer`, matching their accessible name.
+Authored in-page links must
+resolve to rendered IDs, including the parentheses retained by the shared
+heading slug convention (lowercase text with spaces replaced by hyphens).
+Unpublished shared changes are previewed with the editable-package
 workflow in `docs/app/README.md`, followed by production compilation and the docs
-validators below. The Git lock remains portable; deployment of the neutral
-semantic styling requires updating that lock after the shared changes land.
+validators below. The portable Git lock includes the merged design's shared
+styling hooks and mobile drawer changes; update all Reflex monorepo packages
+together and validate the production app when refreshing it.
+`docs/app/tests/test_docs_layout.py` exercises the real shared layout for first,
+middle, and last pages, verifying the article styling hook, preserved content,
+adjacent link destinations, removal of empty placeholders, and Next's placement
+in the second grid column. These contracts must pass after shared-package updates.
+Long demo code disclosures fade to the same muted surface as their containing
+card in both color modes. The frontend lock must resolve the declared PostCSS
+version without an older override shadowing the framework's build dependency.
 The desktop XY docs navigation switches to a docs-specific disclosure below
 1280px, preserving Overview and Reflex Integration destinations. Desktop links
-expose the selected section through `aria-current="page"` without an active underline.
+expose the selected section through `aria-current="page"` and a neutral pill.
 Internal navbar destinations use client-side routing so page changes preserve
 announcement dismissal without a full document reload. Code blocks share
 Reflex docs' light/dark syntax themes and neutral surface tokens while retaining
-XY's accessible clipboard feedback. XY footer links and headings use the shared
-book-weight typography, actions use small shadows, and custom sidebar links use
-weight 475. Gallery previews, playground controls, API references, Markdown,
+XY's accessible clipboard feedback. XY footer links and headings use body
+typography and compact controls; sidebar links use normal weight, with medium
+weight for the active page. Gallery previews, playground controls, API references, Markdown,
 and demo UI text and borders use semantic theme tokens in both color modes.
 Chart canvases retain explicit white/black backgrounds to match their rendered
 plots; data-series colors remain chart-specific.
@@ -122,9 +324,9 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
-| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` and `reflex` extras with their supported ranges) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -628,16 +830,17 @@ Before merging a release pull request:
 - Confirm the sdist verifier passed and the build-input-only source archive
   contains `xy`, bundled `reflex_xy`, the JSX/render-client bundles, complete
   JS/Rust build sources, and the expected `PKG-INFO` package name, Python floor,
-  runtime dependencies, and Reflex extra. It must exclude repository-only
-  docs, tests, scripts, benchmarks, examples, native binaries, and generated
-  caches.
+  runtime dependencies, and Matplotlib/Reflex extras. It must exclude
+  repository-only docs, tests, gallery evidence, scripts, benchmarks, examples,
+  native binaries, generated caches, unsafe paths, and duplicate members.
 - Confirm each platform wheel passes `scripts/verify_wheel.py --expect-native`
   and its install smoke loads `xy.kernels.BACKEND == "native"`. Confirm the
   fallback `py3-none-any` wheel passes `--expect-pure` and fails compute with
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
-  `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel
+  `matplotlib>=3.11,<3.12` and `reflex>=0.9.6` guarded by their respective
+  `matplotlib` and `reflex` extras. The wheel
   must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
   archive file exactly once with matching `sha256` and size fields. Wheels
   and the sdist remain distribution/build-input-only: docs, tests, benchmarks,

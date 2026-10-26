@@ -28,13 +28,14 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     )
 
 
-def test_core_publishes_only_the_reflex_optional_dependency() -> None:
+def test_core_publishes_only_the_supported_optional_dependencies() -> None:
     data = tomllib.loads(ROOT.joinpath("pyproject.toml").read_text(encoding="utf-8"))
     project = data.get("project") or {}
     groups = data.get("dependency-groups") or {}
     extras = project.get("optional-dependencies") or {}
 
-    assert set(extras) == {"reflex"}
+    assert set(extras) == {"matplotlib", "reflex"}
+    assert extras["matplotlib"] == ["matplotlib>=3.11,<3.12"]
     assert any(
         _dependency_name(requirement) == "reflex" and ">=0.9.6" in requirement
         for requirement in extras["reflex"]

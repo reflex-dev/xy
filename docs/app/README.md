@@ -74,10 +74,28 @@ the sitemap, Markdown aliases, and internal documentation links.
 
 ## Working on the shared Reflex theme
 
-The theme, button and search assets, navbar frame, announcement, sidebar shell,
-and footer primitives come directly from `reflex-site-shared`. Do not copy them
-into XY. XY owns its wordmark, navigation destinations, page actions, and footer
-links.
+The base theme, button and search assets, navbar frame, announcement, sidebar
+shell, and footer primitives come directly from `reflex-site-shared`. Do not
+copy those implementations into XY. XY owns its wordmark, navigation
+destinations, page actions, footer links, and docs-specific brand layer.
+
+The three `assets/docs-*-theme.css` / `assets/docs-theme.css` stylesheets adapt
+the docs-only styling from [Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549):
+Inter body text, Geist headings, warm neutral light/dark palettes, compact
+controls, and the opal header artwork. They are loaded after the shared base
+theme. The header reuses the shared announcement body and close event, adapting
+its decorative markup and styling to `reflex-marketing`'s five opal panels,
+44px desktop / 40px mobile contribution, and text-only CTA. The head script in
+`xy_docs/announcement.py` uses marketing's release-scoped local-storage dismissal
+key so dismissal survives reloads and same-origin navigation without a flash
+or reserved gap. The artwork URL includes the `/docs/xy` mount prefix. Fonts are
+bundled from the pinned Fontsource frontend packages, without a font CDN.
+Announcement title, destination, and release in `xy_docs/announcement.py` follow
+marketing's main branch and must be updated together when its copy changes.
+Editorial styles use shared `docs-*` hooks and the hooks added by
+`xy_docs_layout`; keep them scoped so live chart examples retain their own
+typography and data colors. The shared Markdown layout still owns navigation
+destinations, while XY adds a two-column Back/Next treatment.
 
 To preview unpublished edits from a Reflex checkout, first install the locked
 XY docs environment, then install just the shared package editably (run from
@@ -94,5 +112,6 @@ avoids generating upstream stubs just to preview the site. Use `--no-sync` for
 subsequent commands, and restart after shared Python or theme asset changes.
 `uv sync --frozen --group dev` restores the published Git dependency. The local
 editable installation is intentionally not a machine-specific lockfile change.
-The neutral recolor requires the updated shared package; refresh the Git lock
-once those upstream changes are published before deploying this styling.
+The committed Git lock includes the shared docs styling hooks and named mobile
+drawer from the merged design PR. Refresh all Reflex monorepo packages together
+when updating that revision, then run the production checks above.

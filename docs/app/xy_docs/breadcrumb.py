@@ -142,7 +142,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
             ),
             class_name="flex flex-row items-center gap-2 p-[0.563rem] lg:p-0",
         ),
-        class_name="relative z-10 mb-10 flex w-full flex-row items-center justify-between gap-4 border-b border-border-subtle max-lg:py-2 lg:gap-0 lg:border-none lg:p-0",
+        class_name="docs-breadcrumb relative z-10 mb-10 flex w-full flex-row items-center justify-between gap-4 border-b border-border-subtle max-lg:py-2 lg:gap-0 lg:border-none lg:p-0",
     )
 
 
