@@ -61,6 +61,31 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
 | Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
 
+CI and CodSpeed bootstrapping use explicit tool versions, not moving channels:
+
+| Bootstrap input | Pinned value |
+| --- | --- |
+| Rust toolchain | `1.99.1` (`clippy` explicitly installed for the Rust check lane) |
+| Node.js | `22.23.3` |
+| uv | `0.13.5` |
+| Python floor / CodSpeed interpreter | `3.11.17` |
+| Linux wheel repair utility | `auditwheel==6.8.2`, including the execution command |
+
+These versions match the passing CI runs used to review this change. Every
+checkout in `ci.yml` and `codspeed.yml` explicitly sets
+`persist-credentials: false`; full history remains available for local version
+and gallery-baseline queries without retaining Git authentication for later
+build/test code. Action code remains SHA-pinned. CodSpeed points directly to
+commit `f99becdce5e5d51fd556489ebef684f4ecfd6286`, the verified target of its
+previous signed tag object `4bee4eada46987d4607fc208971a36367352b83d`, so this
+normalization preserves the action code and its bundled runner version.
+The workflow verifier structurally enforces credential isolation and the
+bootstrap inputs, rejecting missing, duplicated or comment-only values. Updating
+the toolchain requires updating the workflow inputs, verifier contract, tests
+and this table together, then exercising the hosted gates. These controls cover
+CI/CodSpeed bootstrapping; hosted OS images and dependency-range installation
+smokes retain their existing update/support-range contracts.
+
 The runtime selection runs four independent blocking jobs:
 
 | Job | Dependencies | Checks |

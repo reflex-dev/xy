@@ -75,6 +75,17 @@ CI_SUMMARY_COMMANDS = [
 ]
 
 
+# Versions observed in passing CI runs; update these inputs and their spec together.
+CI_BOOTSTRAP_INPUTS = {
+    "actions/checkout": ("persist-credentials", "false"),
+    "actions/setup-node": ("node-version", "22.23.3"),
+    "astral-sh/setup-uv": ("version", "0.13.5"),
+    "dtolnay/rust-toolchain": ("toolchain", "1.99.1"),
+    "actions/setup-python": ("python-version", "3.11.17"),
+}
+CODSPEED_ACTION_COMMIT = "f99becdce5e5d51fd556489ebef684f4ecfd6286"
+
+
 def _job_blocks(text: str) -> dict[str, str]:
     lines = text.splitlines()
     try:
@@ -713,6 +724,34 @@ def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: s
         errors.append(f"{workflow_label} workflow has no structurally recognized checkout step")
 
 
+def _require_ci_bootstrap_inputs(errors: list[str], text: str, label: str) -> None:
+    """Require explicit credential isolation and reviewed tool versions."""
+    for job in _job_blocks(text).values():
+        for step in _step_sequence_blocks(job):
+            uses_values, uses_unsafe = _step_direct_key_values(step, "uses")
+            if len(uses_values) != 1:
+                continue
+            uses, decode_unsafe = _decode_yaml_key(uses_values[0])
+            if uses_unsafe or decode_unsafe or uses is None:
+                errors.append(f"{label} bootstrap step has an ambiguous action reference")
+                continue
+            action = uses.split("@", 1)[0]
+            if action == "CodSpeedHQ/action" and uses != f"{action}@{CODSPEED_ACTION_COMMIT}":
+                errors.append(f"{label} must pin CodSpeed to the reviewed commit SHA")
+            if action not in CI_BOOTSTRAP_INPUTS:
+                continue
+            key, expected = CI_BOOTSTRAP_INPUTS[action]
+            with_block = _unique_mapping_block(step, "with", indent=8)
+            values, unsafe = _direct_yaml_key_values(with_block or "", key, indent=10)
+            decoded = [_decode_yaml_key(value) for value in values]
+            if (
+                unsafe
+                or any(ambiguous for _, ambiguous in decoded)
+                or [value for value, _ in decoded] != [expected]
+            ):
+                errors.append(f"{label} {action} must define a unique direct {key}: {expected}")
+
+
 def _workflow_trigger_block(text: str, trigger: str) -> Optional[str]:
     """Return one trigger mapping from the unique top-level ``on`` block."""
     on_block = _unique_mapping_block(text, "on", indent=0)
@@ -894,6 +933,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         '"pyyaml>=6"',
     )
     _require_unshallow_checkouts(errors, text, "CI")
+    _require_ci_bootstrap_inputs(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -1193,7 +1233,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "browser_conformance",
         "CI",
         "accessibility and three-engine conformance gate",
-        'node-version: "22"',
+        'node-version: "22.23.3"',
         "npm ci",
         "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
         "~/.cache/ms-playwright",
@@ -1208,7 +1248,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "python_floor",
         "CI",
         "Python 3.11 floor gate",
-        'python-version: "3.11"',
+        'python-version: "3.11.17"',
         "scripts/check_python_floor.py",
         "scripts/check_public_api.py",
     )
@@ -1505,6 +1545,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     if _workflow_trigger_block(text, "workflow_dispatch") is None:
         errors.append("CodSpeed workflow missing workflow_dispatch trigger")
     _require_unshallow_checkouts(errors, text, "CodSpeed")
+    _require_ci_bootstrap_inputs(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -1524,7 +1565,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         "native-only benchmark path",
         "dtolnay/rust-toolchain@",
         "actions/setup-python@",
-        'python-version: "3.11"',
+        'python-version: "3.11.17"',
         "astral-sh/setup-uv@",
         "cargo build --release",
         "XY_REQUIRE_CARGO",

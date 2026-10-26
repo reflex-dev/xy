@@ -1851,3 +1851,43 @@ def test_summary_requires_direct_step_results_input(tmp_path: Path) -> None:
         path.write_text(prefix + "  result:\n" + mutated)
         errors = verify_ci_workflow.validate_ci_workflow(path)
         assert any("summary" in error for error in errors), name
+
+
+def test_ci_bootstrap_security_rejects_missing_duplicate_or_floating_inputs(tmp_path: Path) -> None:
+    cases = [
+        ("persist-credentials: false", "persist-credentials: true"),
+        ("persist-credentials: false", "# persist-credentials: false"),
+        (
+            "persist-credentials: false",
+            "persist-credentials: false\n          persist-credentials: true",
+        ),
+        ('node-version: "22.23.3"', 'node-version: "22"'),
+        ('version: "0.13.5"', '# version: "0.13.5"'),
+        ('version: "0.13.5"', 'version: "0.13.5"\n          version: latest'),
+        ('toolchain: "1.99.1"', "toolchain: stable"),
+        ('python-version: "3.11.17"', 'python-version: "3.11"'),
+    ]
+    for filename, validate in (
+        ("ci.yml", verify_ci_workflow.validate_ci_workflow),
+        ("codspeed.yml", verify_ci_workflow.validate_codspeed_workflow),
+    ):
+        workflow = (Path(".github/workflows") / filename).read_text()
+        for index, (before, after) in enumerate(cases):
+            assert before in workflow
+            path = tmp_path / f"{filename}-{index}.yml"
+            path.write_text(workflow.replace(before, after))
+            assert any("unique direct" in error for error in validate(path)), (filename, index)
+
+
+def test_codspeed_verifier_requires_the_reviewed_commit(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text()
+    path = tmp_path / "tag-object-pin.yml"
+    path.write_text(
+        workflow.replace(
+            "f99becdce5e5d51fd556489ebef684f4ecfd6286", "4bee4eada46987d4607fc208971a36367352b83d"
+        )
+    )
+    assert any(
+        "reviewed commit SHA" in error
+        for error in verify_ci_workflow.validate_codspeed_workflow(path)
+    )

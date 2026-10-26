@@ -313,3 +313,59 @@ def test_parallel_runtime_browser_lanes_share_pinned_chromium_setup():
         )
         assert setup["uses"] == "./.github/actions/setup-ci-chromium"
         assert setup["timeout-minutes"] == 5
+
+
+@pytest.mark.parametrize("filename", ["ci.yml", "codspeed.yml"])
+def test_ci_checkouts_never_persist_credentials(filename):
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())["jobs"]
+    for job in jobs.values():
+        for step in job.get("steps", []):
+            if step.get("uses", "").startswith("actions/checkout@"):
+                assert step.get("with", {}).get("persist-credentials") is False
+
+
+@pytest.mark.parametrize("filename", ["ci.yml", "codspeed.yml"])
+def test_ci_bootstrap_tool_versions_are_exact(filename):
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())["jobs"]
+    tools = {
+        "actions/setup-node@": ("node-version", "22.23.3"),
+        "astral-sh/setup-uv@": ("version", "0.13.5"),
+        "dtolnay/rust-toolchain@": ("toolchain", "1.99.1"),
+        "actions/setup-python@": ("python-version", "3.11.17"),
+    }
+    for job in jobs.values():
+        for step in job.get("steps", []):
+            for action, (key, version) in tools.items():
+                if step.get("uses", "").startswith(action):
+                    assert step.get("with", {}).get(key) == version
+
+
+def test_codspeed_uses_verified_commit_instead_of_tag_object():
+    job = yaml.safe_load((ROOT / ".github/workflows/codspeed.yml").read_text())["jobs"][
+        "benchmarks"
+    ]
+    step = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("CodSpeedHQ/action@")
+    )
+    assert step["uses"] == "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286"
+
+
+def test_pinned_rust_toolchain_installs_clippy():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    setup = next(
+        step
+        for step in jobs["rust_checks"]["steps"]
+        if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+    )
+    assert "clippy" in setup["with"].get("components", "").split(",")
+
+
+def test_wheel_repair_installs_and_executes_the_pinned_auditwheel():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    repair = next(
+        step
+        for step in jobs["wheels"]["steps"]
+        if step.get("name") == "Repair Linux wheel to manylinux"
+    )
+    assert "uv tool install auditwheel==6.8.2" in repair["run"]
+    assert "uv tool run --from auditwheel==6.8.2 auditwheel repair" in repair["run"]
