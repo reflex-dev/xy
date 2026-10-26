@@ -72,8 +72,7 @@ The local layer uses Inter body text, Geist headings, warm neutral light/dark
 tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
 the opal banner artwork without a white top-edge inset shadow. Fonts ship through
 pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
-Banner structure and server
-dismissal state remain shared. Editorial selectors target `docs-*`
+Banner structure and the close event remain shared. Editorial selectors target `docs-*`
 hooks, avoiding live chart typography and data-series colors. Mobile navigation,
 the named closeable docs drawer, clipboard feedback, keyboard focus, and
 reduced-motion behavior remain required validation surfaces.
@@ -90,6 +89,9 @@ visit-local fallback when storage is unavailable. Header and sidebar offsets
 reserve only the visible announcement. The wrapper retains the shared native
 link and close event while adapting its destination, copy, decorative markup,
 and accessible name. The message wraps at narrow widths as it does in marketing.
+Below 1280px, opening the navigation menu removes both top header corners;
+closing it restores the announcement's rounded header. Announcement links open
+in a new tab with `noopener noreferrer`, matching their accessible name.
 Authored in-page links must
 resolve to rendered IDs, including the parentheses retained by the shared
 heading slug convention (lowercase text with spaces replaced by hyphens).

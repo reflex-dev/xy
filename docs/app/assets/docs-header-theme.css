@@ -184,7 +184,7 @@ html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { d
   to { transform: translate3d(5%, 0, 0) scale(1); }
 }
 @media (max-width: 1279px) {
-  .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
+  html .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
     border-radius: 0;
   }
 }

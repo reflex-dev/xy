@@ -23,18 +23,21 @@ def test_production_announcement_matches_marketing_and_persists_dismissal() -> N
             }"""
         )
         page = context.new_page()
-        for width in (1440, 960, 390, 320):
+        for width in (1440, 1280, 1279, 960, 390, 320):
             page.set_viewport_size({"width": width, "height": 900})
             page.goto(base_url, wait_until="networkidle")
             banner = page.locator("[data-announcement]")
             expect(banner).to_be_visible()
             expect(banner.locator(".docs-announcement-glass > span")).to_have_count(5)
-            expect(banner.locator("a")).to_have_accessible_name(
+            link = banner.locator("a")
+            expect(link).to_have_accessible_name(
                 "New: Build vs. Buy for Internal Software — Read more (opens in a new tab)"
             )
-            expect(banner.locator("a")).to_have_attribute(
+            expect(link).to_have_attribute(
                 "href", "https://reflex.dev/blog/build-vs-buy-internal-software/"
             )
+            expect(link).to_have_attribute("target", "_blank")
+            assert {"noopener", "noreferrer"} <= set((link.get_attribute("rel") or "").split())
             assert page.locator(".docs-nav-frame").bounding_box()["height"] == (
                 108 if width > 960 else 104
             )
@@ -43,6 +46,17 @@ def test_production_announcement_matches_marketing_and_persists_dismissal() -> N
             cta = banner.get_by_text("Read more", exact=True)
             assert cta.is_visible() == (width > 640)
             assert not banner.locator("a svg").is_visible()
+            header = page.locator(".docs-navbar-header")
+            expect(header).to_have_css("border-top-left-radius", "24px")
+            expect(header).to_have_css("border-top-right-radius", "24px")
+            if width < 1280:
+                menu = page.locator(".docs-navbar-menu > summary")
+                menu.click()
+                expect(header).to_have_css("border-top-left-radius", "0px")
+                expect(header).to_have_css("border-top-right-radius", "0px")
+                menu.click()
+                expect(header).to_have_css("border-top-left-radius", "24px")
+                expect(header).to_have_css("border-top-right-radius", "24px")
             for color_mode in ("light", "dark"):
                 page.emulate_media(color_scheme=color_mode, reduced_motion="reduce")
                 assert banner.evaluate("el => getComputedStyle(el).color") == "rgb(0, 0, 0)"
