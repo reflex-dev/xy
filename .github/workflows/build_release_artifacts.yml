@@ -1,38 +1,99 @@
-name: Release
+# Builds every artifact an `xy` release publishes: eleven cross-compiled platform
+# wheels, a runtime-verified PyEmscripten wheel and an sdist. No single runner can
+# produce that set, which is why this is a repository-supplied build workflow
+# rather than the `uv build` the release pipeline runs by default.
+#
+# reflex-release's publish.yml calls this in place of its own build job — see
+# `[[tool.reflex-release.custom-build]]` in pyproject.toml — and keeps everything
+# either side: `prepare` has already validated the request against CHANGELOG.md,
+# the branch rules and the existing tags, and `collect` verifies every file here
+# is `xy` at `version`, requires the full set (`expect-artifacts`), and writes the
+# checksum manifest the approver sees. So this workflow's whole job is to build
+# and upload; it never publishes, tags, or holds a credential.
+#
+# Four rules from the contract (reflex-release README § Custom builds), all
+# load-bearing:
+#   1. every artifact is named `<artifact-prefix><leg>` — anything else is not
+#      collected, and therefore not published;
+#   2. upload distribution files only, since every collected file goes to PyPI;
+#   3. tag the checkout with `tag` so the artifacts carry the released version;
+#   4. let failures fail — no `continue-on-error`, because a lost matrix leg must
+#      stop the release rather than ship an incomplete set.
+name: Build release artifacts
 
-# Publish prebuilt wheels + sdist to PyPI on a version tag. This is what makes
-# `pip install xy` a no-toolchain install: each platform wheel carries
-# the compiled Rust core, so end users never see Rust or Node.
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      package:
+        description: "Package being built"
+        required: true
+        type: string
+      version:
+        description: "Version being released (no v prefix)"
+        required: true
+        type: string
+      tag:
+        description: "Tag the checkout with this so the build derives that version"
+        required: true
+        type: string
+      build-dir:
+        description: "Repo-relative directory of the package"
+        required: true
+        type: string
+      artifact-prefix:
+        description: "Name every uploaded artifact <artifact-prefix><leg>"
+        required: true
+        type: string
+  # Dry run: build and verify the full matrix without a release. Use it to
+  # exercise the cross-compile legs (musllinux, win-arm64, wasm, ...) after
+  # touching the matrix, the toolchains or the wheel tags — a target added but
+  # never exercised is unverified, not working. Nothing here can publish: the
+  # upload path lives in publish.yml, which this workflow never calls.
   workflow_dispatch:
     inputs:
-      dry_run:
+      tag:
         description: >-
-          Dry run: build and verify every wheel/sdist/wasm artifact across the
-          full release matrix without publishing to PyPI. Use this to validate
-          the cross-compile matrix (musllinux, win-arm64, wasm, ...) before a
-          real version-tag release. Defaults to true so a manual dispatch
-          never accidentally publishes.
-        type: boolean
-        default: true
+          Optional release tag to build at (e.g. v0.1.0). Empty builds at the
+          derived <next>.devN+<commit> version, which PyPI rejects by design.
+        required: false
+        default: ""
+      artifact-prefix:
+        description: "Prefix for the uploaded artifact names"
+        required: false
+        default: "dry-run--"
 
-# Limit build jobs to repository reads. The publish job declares its separate
-# OIDC-only token permissions below.
+# Builds read the repository and nothing else. A called workflow cannot hold more
+# privilege than the calling job grants it, so this is inside the same
+# unprivileged boundary as the pipeline's own build job.
 permissions:
   contents: read
 
 jobs:
-  # One wheel per platform (the C-ABI core is CPython-version-independent, so
-  # each entry produces a single py3-none-<platform> wheel). Coverage matches
-  # what the native core can target: Linux glibc + musl across x86-64/aarch64/
-  # armv7, macOS x86-64/arm64, and Windows x86/x64/arm64. Linux targets are
-  # cross-compiled with cargo-zigbuild (musl support + a low manylinux_2_17
-  # glibc floor without QEMU); the hook then packs the prebuilt core and stamps
-  # the platform tag (XY_CARGO_TARGET / XY_WHEEL_PLATFORM).
+  # The changelog decides *which* version ships and `collect` proves the built
+  # artifacts carry it; this decides that the tag recording it is a shape
+  # uv-dynamic-versioning can derive that version from. It gates the matrix
+  # rather than following it, because the cross-compile legs are slow.
+  version-gate:
+    name: Release version gate (tag shape)
+    runs-on: ubuntu-latest
+    steps:
+      # Shallow on purpose: this reads one stdlib script, no git history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here needs git write access: `git tag` works on a
+          # credential-free checkout and publish.yml pushes the tag later. Not
+          # persisting the token keeps it out of a workspace that then runs
+          # third-party build code.
+          persist-credentials: false
+      - name: Check the tag is a shape the version derivation accepts
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: python3 scripts/check_release_version.py --tag "$TAG"
+
   wheels:
     name: Wheel ${{ matrix.plat }}
+    needs: version-gate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,9 +126,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history and tags: the distribution version is derived
-          # from the latest `v*` tag, and a shallow clone has none.
+          # Full history and tags: the distribution version is derived from the
+          # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
+      # Contract rule 3: the dynamic versioning backend derives the version
+      # from the newest reachable `v*` tag, so tagging HEAD locally is what makes
+      # these artifacts carry `inputs.version`. The tag itself is pushed only
+      # after a successful upload, by the publish workflow.
+      - name: Tag local checkout
+        if: inputs.tag != ''
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: git tag "$TAG"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
@@ -129,24 +201,32 @@ jobs:
             || ./smoke/Scripts/python.exe -c "import importlib.metadata as m, reflex_xy, xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; assert reflex_xy.__version__ == m.version('xy'); print('native')"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dist-${{ matrix.plat }}
+          name: ${{ inputs.artifact-prefix }}${{ matrix.plat }}
           path: dist/*.whl
 
   # PyEmscripten WASM wheel for in-browser CPython. The platform ABI is
   # compiler-sensitive, so keep Rust, Emscripten, cibuildwheel, the wheel tag,
   # and the runtime probe pinned as one tested set
   # (see spec/process/production-readiness.md).
+
   wasm:
     name: Wheel PyEmscripten (runtime verified)
+    needs: version-gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history and tags: the distribution version is derived
-          # from the latest `v*` tag, and a shallow clone has none.
+          # Full history and tags: the distribution version is derived from the
+          # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
+      - name: Tag local checkout
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: git tag "$TAG"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.97.0
@@ -191,18 +271,25 @@ jobs:
           # PEP 783 makes pyemscripten_* a standard PyPI platform tag. Keeping
           # this in the dist-* namespace includes it in the trusted-publishing
           # batch alongside the native wheels and sdist.
-          name: dist-pyemscripten
+          name: ${{ inputs.artifact-prefix }}pyemscripten
           path: wheelhouse/*.whl
 
   sdist:
     name: sdist
+    needs: version-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history and tags: the distribution version is derived
-          # from the latest `v*` tag, and a shallow clone has none.
+          # Full history and tags: the distribution version is derived from the
+          # latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          persist-credentials: false
+      - name: Tag local checkout
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: git tag "$TAG"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -273,54 +360,11 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: dist-sdist
+          name: ${{ inputs.artifact-prefix }}sdist
           path: dist/*.tar.gz
 
-  publish:
-    name: Publish to PyPI
-    # Publishing requires the runtime-verified PyEmscripten job to pass. Its
-    # PEP 783 wheel uses a standard PyPI platform tag and joins the same
-    # trusted-publishing batch as the native wheels and sdist.
-    needs: [wheels, sdist, wasm]
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write # PyPI trusted publishing (OIDC) — no API token stored
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Full history and tags: the distribution version is derived
-          # from the latest `v*` tag, and a shallow clone has none.
-          fetch-depth: 0
-      # The tag now *is* the version (pyproject derives it), so there is no
-      # second number left to disagree with it. What a tag can still get wrong
-      # is its shape: this gate refuses one the derivation cannot turn into the
-      # version these artifacts were built and published under. Writing up the
-      # release in CHANGELOG.md is a checklist item, not a gate — a doc edit
-      # should never cost a deleted and re-cut tag.
-      - name: Release version gate (tag shape)
-        if: github.event_name == 'push'
-        run: python3 scripts/check_release_version.py
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: dist
-          pattern: dist-*
-          merge-multiple: true
-      - name: List artifacts
-        run: ls -la dist/
-      # A manual workflow_dispatch defaults to dry_run=true: every wheel/sdist/
-      # wasm artifact is built and verified above, but nothing is uploaded to
-      # PyPI. Use this to validate the full cross-compile matrix before a real
-      # version-tag release. A tag push always publishes for real.
-      - name: Dry run summary (no PyPI publish)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
-        run: |
-          echo "::notice::Dry run — built and verified $(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ') artifacts across the full release matrix. Skipping PyPI publish."
-          echo "Re-run this workflow with dry_run=false, or push a v* tag, to publish for real."
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
-        with:
-          packages-dir: dist/
-          # A failed upload can leave a partial release on immutable PyPI.
-          # Retrying the same tag should skip files that were already accepted.
-          skip-existing: true
+  # Merge the matrix output into the single artifact the gated job uploads, and
+  # re-verify it as a batch: `verify-dist` fails unless *every* artifact — all
+  # eleven wheels, the wasm wheel and the sdist — declares the version being
+  # released, which is what catches a build that silently fell back to the
+  # derived development version.

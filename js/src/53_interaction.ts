@@ -70,7 +70,7 @@ Object.assign(ChartView.prototype, {
         lassoHandleDrag.moved = true;
         lassoHandleDrag.interactionId = ++this._interactionSeq;
       }
-      const rect = c.getBoundingClientRect();
+      const rect = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
       this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
@@ -159,11 +159,11 @@ Object.assign(ChartView.prototype, {
     }
 
     const dataAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       return this._dataFromCanvas(clientX - r.left, clientY - r.top);
     };
     const lassoPointAt = (clientX, clientY) => {
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
       const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
       return {
@@ -213,6 +213,10 @@ Object.assign(ChartView.prototype, {
         this._boxSelection = band.previousBox;
         this._renderBoxSelection();
       }
+      // A cancelled pan keeps the last view its update frames reached, but it
+      // intentionally emits no public end event. Close the private legend
+      // settle gate explicitly so automatic placement cannot remain frozen.
+      this._settleBestLegendInteraction();
       band = null;
       drag = null;
     };
@@ -410,7 +414,7 @@ Object.assign(ChartView.prototype, {
       if (!this._interactionFlag("wheel_zoom", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
-      const r = c.getBoundingClientRect();
+      const r = this.canvas.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
       this._queueWheelZoom(f, fx, fy);
@@ -440,6 +444,9 @@ Object.assign(ChartView.prototype, {
         drag?.capture.release();
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
+        // Escape has the same keep-the-current-pan-view semantics as
+        // pointercancel and likewise bypasses `_emitViewChange(..., end)`.
+        this._settleBestLegendInteraction();
         band = null;
         drag = null;
         e.preventDefault();
@@ -1966,9 +1973,14 @@ Object.assign(ChartView.prototype, {
   },
 
   _cancelViewAnimation() {
+    const wasActive = !!this._viewAnim;
     if (this._animRaf) cancelAnimationFrame(this._animRaf);
     this._animRaf = null;
     this._viewAnim = null;
+    // Pointerdown can interrupt navigation at its last rendered frame and then
+    // end without moving, so no public end event follows. Ensure that newly
+    // settled intermediate view gets the same one-shot automatic legend score.
+    if (wasActive && this._markBestLegendsDirty?.()) this.draw();
   },
 
   _setView(next, opts: any = {}) {

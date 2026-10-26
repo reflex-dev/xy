@@ -1018,7 +1018,7 @@ def funnel(
                 value_format=value_format,
                 percent_format=percent_format,
                 font_size=label_size,
-                plot_px=(plot_w * 0.85, plot_h * 0.85),
+                plot_px=_funnel.estimate_plot_px(plot_w, plot_h),
             )
             for spec in specs:
                 if spec.placement == "hidden":

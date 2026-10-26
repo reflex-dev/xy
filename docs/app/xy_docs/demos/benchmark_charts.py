@@ -25,7 +25,7 @@ SERIES = (
 
 _CHART_CLASS = benchmark_chart_class()
 _CARD_CLASS = (
-    "w-full overflow-hidden rounded-xl border border-secondary-4 bg-white "
+    "w-full overflow-hidden rounded-xl border border-border-subtle bg-white "
     "shadow-[0_12px_32px_#1c20240f] dark:bg-black"
 )
 
@@ -48,7 +48,7 @@ def _legend() -> rx.Component:
                 rx.el.span(label),
                 class_name=(
                     "inline-flex items-center gap-1 whitespace-nowrap text-[0.65625rem] "
-                    "font-semibold text-secondary-11"
+                    "font-semibold text-muted-foreground"
                 ),
             )
             for label, color in SERIES
@@ -182,11 +182,11 @@ def interactive_ux_demo() -> rx.Component:
             rx.el.div(
                 rx.el.h2(
                     "Live interactive render time",
-                    class_name="text-xl font-semibold tracking-[-0.02em] text-secondary-12",
+                    class_name="text-xl font-semibold tracking-[-0.02em] text-foreground",
                 ),
                 rx.el.p(
                     "Correct and stable canvas · Apple M5 Pro · lower is better",  # noqa: RUF001
-                    class_name="mt-1 text-sm font-medium text-secondary-10",
+                    class_name="mt-1 text-sm font-medium text-muted-foreground",
                 ),
                 class_name="min-w-0",
             ),

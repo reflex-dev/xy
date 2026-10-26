@@ -3138,7 +3138,9 @@ def legend(
     Args:
         *children: Optional opaque replacement content.
         show: Whether to display the legend.
-        loc: Legend placement within or around the plot.
+        loc: Legend placement within or around the plot. ``"best"`` selects
+            automatic least-overlap placement for an unanchored Cartesian
+            chart; concrete names and ``None`` remain fixed.
         anchor: Two- or four-value normalized plot-coordinate anchor.
         ncols: Number of legend columns.
         title: Optional legend title.

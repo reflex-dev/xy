@@ -139,7 +139,8 @@ which ctypes binds against, survives. `panic` must stay `unwind`: the C-ABI
 backstop in `lib.rs` converts kernel panics into sentinel returns via
 `catch_unwind`, and `panic = "abort"` would turn them into aborts of the
 embedding CPython process (the wasm target alone builds with
-`-C panic=abort` in `release.yml`, where unwinding is unsupported anyway).
+`-C panic=abort` in `build_release_artifacts.yml`, where unwinding is
+unsupported anyway).
 PGO is a known open lever, not adopted: it needs a per-target training
 workload and profdata plumbing in the release matrix; revisit when a
 benchmark shows a branch-bound kernel on the hot path.
@@ -228,11 +229,20 @@ formats only; the SVG and PDF export paths have their own text contracts.
   (`0`, `usize::MAX`, `-1`/`-2`) rather than one documented negative error
   enum; unifying them is a work item for the next ABI bump.
 - **E5 — threading stays inside**: parallel kernels use `std::thread::scope`
-  inside the call; the ABI stays synchronous. General row scans cross over at
-  512k values and scale to at most 18 workers. Zone maps cross earlier, at two
-  complete 65,536-row chunks, because chunks are independent and require no
-  merge; worker count is also capped by actual chunks. CodSpeed stays serial
-  because its simulator sums thread instructions rather than wall time.
+  inside the call; the ABI stays synchronous. Fan-out gates are per cost
+  class, with named constants in `kernels.rs` recording the measured
+  crossover rationale: compute-bound scans (M4, uniform histogram,
+  ~2.5–3 ns/row) cross at 128k rows; general scans (min/max, sortedness,
+  range/validity, f32 encode/normalize) keep the 512k gate. Where each worker
+  owns a private accumulator the row gate is only a floor: `bin_2d` caps
+  workers at points per cell and `histogram_uniform` at points per bin, so an
+  accumulator as large as the input stays serial. M4 caps workers at its
+  bucket count because splits fall only on bucket edges; it finds those edges
+  by binary search so clustered x values do not add repeated linear scans.
+  Zone maps cross earlier, at two complete 65,536-row chunks, because chunks
+  are independent and require no merge; worker count is also capped by actual
+  chunks. All gates scale to at most 18 workers. CodSpeed stays serial because
+  its simulator sums thread instructions rather than wall time.
   Incremental build = handle + `xy_pyramid_append`, which mutates a live
   pyramid in place under the registry lock. A polling entry point
   (`xy_pyramid_poll`) for genuinely async builds is not built; if one is ever

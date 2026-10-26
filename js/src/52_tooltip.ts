@@ -73,10 +73,16 @@ Object.assign(ChartView.prototype, {
       const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
       const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
       const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
+      // Center/value follows the mark's orientation, matching the kernel's
+      // conventional columns (§16): a horizontal bar reads its value from x1
+      // and its category center from y — never the x midpoint (half the value).
+      const horizontal = g.trace.style && g.trace.style.orientation === "horizontal";
       const [x, xKind] = this._sourceDisplayValue(
-        g, "x", x0 + (x1 - x0) / 2, r.x0Meta.kind,
+        g, "x", horizontal ? x1 : x0 + (x1 - x0) / 2, r.x0Meta.kind,
       );
-      const [y, yKind] = this._sourceDisplayValue(g, "y", y1, r.y1Meta.kind);
+      const [y, yKind] = this._sourceDisplayValue(
+        g, "y", horizontal ? y0 + (y1 - y0) / 2 : y1, r.y1Meta.kind,
+      );
       row.x = x;
       row.y = y;
       if (xKind !== undefined) row.x_kind = xKind;

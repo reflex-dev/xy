@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
-"""Release gate: the pushed tag must be a shape the version derivation accepts.
+"""Release gate: the release tag must be a shape the version derivation accepts.
 
-The tag *is* the version now — each pyproject derives it via
-uv-dynamic-versioning — so the old tag-vs-pyproject leg of this gate is gone
-along with the drift it existed to catch. What remains is the one thing a tag
-can still get wrong on its own: a shape the derivation cannot turn into the
-version the artifacts are published under. This runs first in the publish job
-on tag pushes.
-
-Writing up the release in `CHANGELOG.md` is a checklist item
-(`spec/process/production-readiness.md`), deliberately not a gate: a missing or
-undated entry is fixed with a commit, and blocking the publish on it only ever
-forced a tag to be deleted and re-cut for a documentation edit.
+`CHANGELOG.md` decides *which* version ships (its newest version heading with no
+matching git tag is the publish trigger), and the release pipeline proves the
+built artifacts carry it. This gate decides the one thing left for the tag
+recording that version to get wrong on its own: a shape uv-dynamic-versioning
+cannot turn back into the version the artifacts are published under. It runs in
+the `version-gate` job of `.github/workflows/build_release_artifacts.yml` — the
+build workflow this repository owns, gating the cross-compile matrix rather than
+following it — and its input is the tag `reflex-release prepare-publish`
+computed, not a tag a human pushed, which can no longer start a release at all.
 
 The ``xy`` distribution uses bare `vX.Y.Z` tags. Its bundled Reflex integration
 and `reflex` extra ship on the same version line.
 
-Tags accept an optional PEP 440 pre-release suffix in its canonical spelling
-(`a1`/`b2`/`rc3`). PyPI accepts pre-releases but does not serve them to default
-`pip install`. Only the canonical spelling passes: `-alpha1`-style tags would
-be normalized by the derivation (`0.0.1a1`) and could never match their own
-artifacts.
+Accepted suffixes are exactly what the release actions can produce, in their
+canonical PEP 440 spelling: a pre-release (`a1`/`b2`/`rc3`, from the
+`*-prerelease` actions) and/or a post-release (`.post1`, from `release-post`).
+PyPI accepts pre-releases but does not serve them to default `pip install`.
+Only the canonical spelling passes: `-alpha1`-style tags would be normalized by
+the derivation (`0.0.1a1`) and could never match their own artifacts.
 
 Docs-deploy CalVer tags (2026.WW.N) do not match the release shape.
-Dev/post/local shapes stay rejected: dev versions are the between-tags marker
+Dev and local shapes stay rejected: dev versions are the between-tags marker
 and must stay unpublishable.
 """
 
@@ -39,15 +38,18 @@ from typing import NamedTuple, Optional
 class _Package(NamedTuple):
     # The release tag shape uv-dynamic-versioning derives this package's
     # distribution version from: prefix + `v` + a PEP 440 release number,
-    # optionally a canonical pre-release suffix (aN/bN/rcN), nothing else.
+    # optionally a canonical pre-release suffix (aN/bN/rcN) and/or a post-release
+    # suffix (.postN), nothing else.
     tag_re: re.Pattern[str]
     tag_shape: str
 
 
 # Canonical PEP 440 spellings only: the derivation would normalize `alpha1`
 # to `a1`, so a non-canonical tag can never equal its own built version.
-_RELEASE = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
-_SHAPE = "vX.Y.Z with an optional aN/bN/rcN pre-release suffix"
+# `.postN` is accepted because `release-post` materializes it for a
+# packaging-only re-release of an already-published version.
+_RELEASE = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?"
+_SHAPE = "vX.Y.Z with an optional aN/bN/rcN pre-release and/or .postN post-release suffix"
 
 PACKAGES = {
     "xy": _Package(

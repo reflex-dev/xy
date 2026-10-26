@@ -7,6 +7,18 @@ on:
     paths-ignore:
       - "docs/**"
       - "spec/**"
+      - "news/**"
+      - "**.md"
+      - "LICENSE"
+      - "python/xy/backends/**"
+      - "tests/**"
+      - ".github/**"
+      - "scripts/ci_scope.py"
+      - "scripts/verify_ci_workflow.py"
+      - "gallery/**"
+      - "scripts/pyplot_gallery/**"
+      - "scripts/generate_pyplot_compat_inventory.py"
+      - "scripts/sync_matplotlib_compat.py"
   # `workflow_dispatch` allows CodSpeed to trigger backtest
   # performance analysis in order to generate initial data.
   workflow_dispatch:
@@ -26,22 +38,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.17"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       # The editable install below builds the render client from source via the
       # hatch hook (generated, not committed; §33). Pin Node so that build uses
       # a vite-compatible version rather than the runner's system Node.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
       # native kernels (BACKEND == "native"); without it, importing the compute
       # layer errors rather than running.
       - name: Build native core
@@ -62,7 +79,7 @@ jobs:
           PY
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@4bee4eada46987d4607fc208971a36367352b83d # v4
+        uses: CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286 # v4
         with:
           mode: simulation
           token: ${{ secrets.CODSPEED_TOKEN }}

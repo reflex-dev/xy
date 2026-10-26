@@ -365,6 +365,64 @@ def test_explicit_rects_and_set_position_still_win():
     assert ax.get_position().bounds == pytest.approx((0.1, 0.1, 0.5, 0.5))
 
 
+def test_inset_axes_are_independent_parent_relative_panels():
+    fig = plt.figure(figsize=(6.4, 4.8))
+    parent = fig.add_subplot()
+    parent.set_aspect("equal")
+
+    top = parent.inset_axes([0.0, 1.05, 1.0, 0.25], sharex=parent)
+    right = parent.inset_axes([1.05, 0.0, 0.25, 1.0], sharey=parent)
+    parent.scatter([0.0, 1.0], [1.0, 0.0])
+    top.hist([0.0, 0.5, 1.0])
+    right.hist([0.0, 0.5, 1.0], orientation="horizontal")
+    parent_rect = parent.get_position().bounds
+
+    assert fig.axes == [parent, top, right]
+    assert top._axis["x"] is parent._axis["x"]
+    assert right._axis["y"] is parent._axis["y"]
+    assert top.get_position().bounds == pytest.approx(
+        (
+            parent_rect[0],
+            parent_rect[1] + 1.05 * parent_rect[3],
+            parent_rect[2],
+            0.25 * parent_rect[3],
+        )
+    )
+    assert right.get_position().bounds == pytest.approx(
+        (
+            parent_rect[0] + 1.05 * parent_rect[2],
+            parent_rect[1],
+            0.25 * parent_rect[2],
+            parent_rect[3],
+        )
+    )
+    # Regression for #354: marginal artists must not be projected into and
+    # stacked on the central scatter axes.
+    assert [entry["kind"] for entry in parent._entries] == ["scatter"]
+    assert len(_plot_rects(fig)) == 3
+
+
+def test_inset_axes_follow_parent_through_constrained_layout():
+    fig = plt.figure(layout="constrained")
+    parent = fig.add_subplot()
+    parent.set_aspect("equal")
+    top = parent.inset_axes([0.0, 1.05, 1.0, 0.25], sharex=parent)
+    parent.scatter([0.0, 1.0], [1.0, 0.0])
+    top.hist([0.0, 0.5, 1.0])
+
+    _plot_rects(fig)  # force the constrained-layout solve
+    parent_rect = parent.get_position().bounds
+    assert parent_rect[1] + 1.30 * parent_rect[3] <= 1.0
+    assert top.get_position().bounds == pytest.approx(
+        (
+            parent_rect[0],
+            parent_rect[1] + 1.05 * parent_rect[3],
+            parent_rect[2],
+            0.25 * parent_rect[3],
+        )
+    )
+
+
 def test_dense_grid_composite_draws_every_panel(monkeypatch):
     """Panels are wider than their gridspec cell, so the compositor must
     alpha-blend them; an opaque paste left only the last column visible."""
