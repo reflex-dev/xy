@@ -1272,18 +1272,33 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     images, images_unsafe = _direct_yaml_key_values(conformance_container or "", "image", indent=6)
     if images_unsafe or images != [CONFORMANCE_IMAGE]:
         errors.append("CI browser_conformance must use the reviewed pinned browser image")
-    preflight = _named_step_blocks(jobs.get("browser_conformance", "")).get(
+    conformance_job = jobs.get("browser_conformance", "")
+    preflight = _named_step_blocks(conformance_job).get(
         "Verify preinstalled Playwright browsers", ""
     )
-    if _direct_yaml_key_count(preflight, "run", indent=8) != 1 or _step_run_lines(preflight) != [
-        "node --input-type=module - <<'JS'",
-        "import { accessSync } from 'node:fs';",
-        "import { chromium, firefox, webkit } from 'playwright';",
-        "for (const browser of [chromium, firefox, webkit]) {",
-        "accessSync(browser.executablePath());",
-        "}",
-        "JS",
-    ]:
+    # The text alone is not a gate: a skipped, non-blocking, or redirected
+    # step would pass it without ever probing a browser.
+    if (
+        _direct_yaml_key_count(preflight, "run", indent=8) != 1
+        or any(
+            _has_yaml_key(preflight, key, indent=8)
+            for key in ("if", "continue-on-error", "shell", "working-directory")
+        )
+        or any(
+            _has_yaml_key(conformance_job, key, indent=4)
+            for key in ("continue-on-error", "defaults")
+        )
+        or _step_run_lines(preflight)
+        != [
+            "node --input-type=module - <<'JS'",
+            "import { accessSync } from 'node:fs';",
+            "import { chromium, firefox, webkit } from 'playwright';",
+            "for (const browser of [chromium, firefox, webkit]) {",
+            "accessSync(browser.executablePath());",
+            "}",
+            "JS",
+        ]
+    ):
         errors.append("CI browser preflight must actively verify all three executable paths")
     _require_job_contains(
         errors,

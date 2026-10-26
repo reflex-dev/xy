@@ -5,6 +5,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 # Actions are pinned to full commit SHAs (`@<40-hex> # vX`) per the org policy,
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
 # must not silently turn these negative tests into no-ops.
@@ -1570,6 +1572,31 @@ def test_ci_workflow_rejects_inactive_browser_preflight(tmp_path: Path) -> None:
         path.write_text(mutated, encoding="utf-8")
         errors = verify_ci_workflow.validate_ci_workflow(path)
         assert any("browser preflight" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    ("anchor", "inserted"),
+    [
+        ("step", "        if: false\n"),
+        ("step", "        continue-on-error: true\n"),
+        ("step", "        shell: cat {0}\n"),
+        ("step", "        working-directory: /tmp\n"),
+        ("job", "    continue-on-error: true\n"),
+        ("job", "    defaults:\n      run:\n        shell: cat {0}\n"),
+    ],
+)
+def test_ci_workflow_rejects_bypassed_browser_preflight(
+    tmp_path: Path, anchor: str, inserted: str
+) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    step = "      - name: Verify preinstalled Playwright browsers\n"
+    job = "  browser_conformance:\n    name: Accessibility + cross-browser conformance\n"
+    original = step if anchor == "step" else job
+    assert text.count(original) == 1
+    path = tmp_path / "ci.yml"
+    path.write_text(text.replace(original, original + inserted), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("browser preflight" in error for error in errors), errors
 
 
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
