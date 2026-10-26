@@ -90,35 +90,41 @@ Rust tooling beyond the commands above.
 
 ## Optional tools and integrations
 
-- Install `pyarrow` separately when you want Arrow-backed input:
+### Arrow input
 
-  ~~~bash
-  uv add pyarrow
-  ~~~
+Install `pyarrow` separately when you want Arrow-backed input:
 
-- The bundled Reflex integration supports state-backed application charts and
-  remains experimental. Install the extra to select a compatible Reflex
-  version. With uv:
+~~~bash
+uv add pyarrow
+~~~
 
-  ~~~bash
-  uv add "xy[reflex]"
-  ~~~
+### Reflex integration
 
-  Or with pip:
+The bundled Reflex integration supports state-backed application charts and
+remains experimental. Install the extra to select a compatible Reflex
+version. With uv:
 
-  ~~~bash
-  python -m pip install "xy[reflex]"
-  ~~~
+~~~bash
+uv add "xy[reflex]"
+~~~
 
-  The `xy` wheel already carries the `reflex_xy` integration; the extra adds
-  only the supported Reflex dependency floor. Pin resolved versions for
-  production deployments. Continue with the
-  [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
-  limitations and setup.
+Or with pip:
 
-- Native PNG is the default static raster path and does not launch a browser.
-  Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
-  or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
-  path when automatic discovery is not appropriate.
+~~~bash
+python -m pip install "xy[reflex]"
+~~~
+
+The `xy` wheel already carries the `reflex_xy` integration; the extra adds
+only the supported Reflex dependency floor. Pin resolved versions for
+production deployments. Continue with the
+[Reflex integration guide](/docs/xy/integrations/reflex/) for its current
+limitations and setup.
+
+### Optional browser export
+
+Native PNG is the default static raster path and does not launch a browser.
+Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
+or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
+path when automatic discovery is not appropriate.
 
 Next, build [your first chart](/docs/xy/overview/first-chart/).

@@ -105,6 +105,20 @@ export function xyByteSpan(value, label = "buffer") {
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
+  // Databricks can construct comm buffers in its widget-manager realm before
+  // handing them to the realm that evaluates our anywidget module. An actual
+  // ArrayBuffer from another realm fails `instanceof ArrayBuffer`; use the
+  // intrinsic byteLength getter as a non-copying, non-spoofable brand check.
+  // Typed-array construction then creates a view over that same buffer.
+  try {
+    const byteLength = Object.getOwnPropertyDescriptor(
+      ArrayBuffer.prototype,
+      "byteLength"
+    )?.get?.call(value);
+    if (typeof byteLength === "number") return new Uint8Array(value);
+  } catch (_error) {
+    // Fall through to the existing public validation error below.
+  }
   throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }
 

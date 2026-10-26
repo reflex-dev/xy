@@ -56,6 +56,7 @@ from ._svg import (
     _physical_density_alpha,
     _PolarProjection,
     _px_size,
+    _resolve_auto_legend_locations,
     _resolve_static_css_vars,
     _Scale,
     _solid_paint,
@@ -3623,6 +3624,13 @@ def _export_payload(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
+    spec = _resolve_auto_legend_locations(
+        fig,
+        spec,
+        blob,
+        width=width,
+        height=height,
+    )
     apply_export_background(spec, background)
     return spec, blob, borrowed
 

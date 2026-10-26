@@ -20,13 +20,13 @@ from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
 _CHART_STYLE = {
-    "--chart-text": "var(--secondary-11)",
-    "--chart-grid": "var(--secondary-a5)",
-    "--chart-axis": "var(--secondary-a8)",
-    "--chart-legend-bg": "var(--secondary-2)",
-    "--chart-tooltip-bg": "var(--secondary-3)",
-    "--chart-tooltip-text": "var(--secondary-12)",
-    "--chart-focus": "var(--primary-9)",
+    "--chart-text": "var(--muted-foreground)",
+    "--chart-grid": "var(--border-subtle)",
+    "--chart-axis": "var(--border)",
+    "--chart-legend-bg": "var(--muted)",
+    "--chart-tooltip-bg": "var(--accent)",
+    "--chart-tooltip-text": "var(--foreground)",
+    "--chart-focus": "var(--ring)",
 }
 
 
@@ -47,17 +47,19 @@ def _llms_txt_directive() -> rx.Component:
 
 app = rx.App(
     style={**styles.BASE_STYLE, **_CHART_STYLE},
+    stylesheets=["/docs-theme.css", "/docs-header-theme.css", "/docs-overlays-theme.css"],
     app_wraps={},
     theme=rx.theme(
         has_background=True,
         radius="large",
-        accent_color="violet",
+        accent_color="gray",
     ),
     head_components=[
         *get_pixel_website_trackers(),
         rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),
-        rx.el.meta(name="theme-color", content="#6E56CF"),
+        rx.el.meta(name="theme-color", content="#fdfcfc", media="(prefers-color-scheme: light)"),
+        rx.el.meta(name="theme-color", content="#151413", media="(prefers-color-scheme: dark)"),
     ],
 )
 
@@ -89,14 +91,33 @@ def _without_faq_in_toc(page):
 
 def xy_docs_layout(page, content, navigation) -> rx.Component:
     """Render the shared docs layout with Reflex's TOC scroll highlighter."""
+    layout = docs_layout(
+        page_with_api_reference_toc(_without_faq_in_toc(page)),
+        content,
+        navigation,
+        config=_LAYOUT_CONFIG,
+    )
+    # The shared Markdown layout owns structure and routing; these consumer
+    # hooks opt it into the same docs-only brand layer as Reflex PR #7549.
+    main = layout.children[1]
+    main.class_name = "docs-reading-layout " + main.class_name
+    column = main.children[1]
+    column.class_name = "docs-reading-column " + column.class_name
+    article = column.children[1]
+    article.class_name = "docs-article " + article.class_name
+    pager = column.children[2]
+    pager.class_name = "docs-page-navigation grid grid-cols-2 gap-4"
+    # Keep Next in the second column even on the first page. Empty fragments
+    # and the shared flex spacer are unnecessary in a two-column grid.
+    pager.children = [
+        child for child in (pager.children[0], pager.children[-1]) if child.tag != "Fragment"
+    ]
+    for link in pager.children:
+        if "text-right" in str(link.class_name):
+            link.class_name = link.class_name + " col-start-2"
     return rx.box(
         _llms_txt_directive(),
-        docs_layout(
-            page_with_api_reference_toc(_without_faq_in_toc(page)),
-            content,
-            navigation,
-            config=_LAYOUT_CONFIG,
-        ),
+        layout,
         display="contents",
         on_mount=[
             rx.call_script(right_sidebar_item_highlight()),

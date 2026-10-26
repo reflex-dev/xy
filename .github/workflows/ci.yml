@@ -688,7 +688,7 @@ jobs:
           PY
 
   # Linux and Windows wheel smoke matrix (§33). macOS wheels are built only by
-  # release.yml so pull requests do not consume macOS runners; release coverage
+  # publish.yml so pull requests do not consume macOS runners; release coverage
   # still includes both Intel and Apple Silicon macOS wheels.
   wheels:
     name: Wheel ${{ matrix.os }}
