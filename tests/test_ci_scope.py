@@ -391,6 +391,12 @@ def test_conformance_reuses_pinned_browser_image_instead_of_installing_engines()
     assert "chromium, firefox, webkit" in commands
     assert "accessSync(browser.executablePath())" in commands
     assert "scripts/browser_conformance.mjs" in commands
+    conformance = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Run accessibility and cross-browser conformance"
+    )
+    assert conformance["env"]["HOME"] == "/root"
 
 
 def test_codspeed_skips_ci_only_prs_but_keeps_implementation_changes():

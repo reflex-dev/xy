@@ -167,6 +167,8 @@ The job budget covers the five-minute npm setup, one-minute preflight and
 five-minute conformance limits, plus four minutes for checkout and other setup.
 The verifier checks the preflight's exact active `run` body, so comments or an
 empty engine loop cannot satisfy the executable-path checks.
+The browser step sets `HOME=/root` to match the container's root user; Firefox
+rejects GitHub's mounted `/github/home` because it belongs to a different UID.
 It performs no apt or browser-engine installation. Its image pull is still a
 network operation; the workflow does not assume hosted runners retain Docker
 layers between runs. Other Chromium-only jobs keep their existing lockfile-keyed

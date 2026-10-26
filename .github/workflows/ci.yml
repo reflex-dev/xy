@@ -653,6 +653,9 @@ jobs:
         # virtual display installed by Playwright so every engine still runs
         # the real WebGL rendering and perceptual assertions.
         env:
+          # The container runs as root; Firefox rejects GitHub's mounted home
+          # owned by the runner's different UID.
+          HOME: /root
           MOZ_WEBRENDER: "1"
           XY_CONFORMANCE_HEADFUL: "1"
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
