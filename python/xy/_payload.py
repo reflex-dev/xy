@@ -36,6 +36,39 @@ else:
 _U32_MAX = (1 << 32) - 1
 
 
+_EMITTED_DTYPES = {
+    "u8": np.dtype(np.uint8),
+    "u32": np.dtype("<u4"),
+    "f64": np.dtype("<f8"),
+    "f32": np.dtype("<f4"),
+}
+
+
+def _emitted_column_dtype(meta: dict[str, Any]) -> np.dtype[Any]:
+    """NumPy dtype named by one emitted column's wire metadata."""
+    return _EMITTED_DTYPES.get(str(meta.get("dtype", "f32")), _EMITTED_DTYPES["f32"])
+
+
+def _decode_emitted_values(
+    values: np.ndarray,
+    meta: dict[str, Any],
+    budget: Optional[int] = None,
+) -> np.ndarray:
+    """Sample emitted rows, then undo their wire offset/scale encoding.
+
+    ``values`` may be a scalar column or a two-dimensional row table. Sampling
+    always selects axis-0 rows, so multi-component channels such as RGBA stay
+    aligned with the geometry sample that consumes them.
+    """
+    if budget is not None and len(values) > budget:
+        selected = np.linspace(0, len(values) - 1, budget, dtype=np.intp)
+        values = values[selected]
+    decoded = np.asarray(values, dtype=np.float64)
+    if "offset" in meta or "scale" in meta:
+        decoded = decoded / float(meta.get("scale", 1.0) or 1.0) + float(meta.get("offset", 0.0))
+    return decoded
+
+
 class _PayloadWriter:
     """Accumulates the binary blob + column table for `build_payload`.
 
@@ -60,6 +93,11 @@ class _PayloadWriter:
         # export, streaming-refresh reopen state).
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes | np.ndarray] = []
+        # One retained encoded array per column, aligned with ``columns``.
+        # Legend placement reads this bounded *emitted* geometry before blob
+        # assembly, so an M4-preserved spike cannot be missed by a second,
+        # unrelated sample of the canonical source.
+        self._column_arrays: list[np.ndarray] = []
         self._pos = 0
         self._split = split
         self.borrow_heatmaps = borrow_heatmaps
@@ -116,10 +154,12 @@ class _PayloadWriter:
             self.columns.append(
                 {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
             )
+            self._column_arrays.append(enc)
             self._chunks.append(padded)
             self._pos += padded.nbytes
             return index
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         padding = (-self._pos) % 4
@@ -148,6 +188,7 @@ class _PayloadWriter:
         self.borrowed.append(arr)
         index = len(self.columns)
         self.columns.append({"span": span, "byte_offset": 0, "len": int(len(arr)), "dtype": "f64"})
+        self._column_arrays.append(arr)
         return index
 
     def ship_values(
@@ -175,9 +216,29 @@ class _PayloadWriter:
             )
         else:
             self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        self._column_arrays.append(enc)
         self._chunks.append(enc)
         self._pos += enc.nbytes
         return idx
+
+    def decoded_column(self, index: int, budget: Optional[int] = None) -> np.ndarray:
+        """Decode one already-emitted column, optionally with a bounded sample."""
+        values = self._column_arrays[int(index)].reshape(-1)
+        meta = self.columns[int(index)]
+        return _decode_emitted_values(values, meta, budget)
+
+    def decoded_column_rows(
+        self,
+        index: int,
+        components: int,
+        budget: Optional[int] = None,
+    ) -> np.ndarray:
+        """Decode a bounded row sample from a multi-component emitted column."""
+        if components <= 0:
+            raise ValueError("column components must be positive")
+        values = self._column_arrays[int(index)].reshape(-1, components)
+        meta = self.columns[int(index)]
+        return _decode_emitted_values(values, meta, budget)
 
     def blob(self) -> bytes:
         return b"".join(
@@ -261,6 +322,7 @@ class PayloadMixin(_Host):
             return r
 
         self._validate_coords()
+        self._validate_funnel_axes()
         spec_traces = []
         for t in self.traces:
             xr = axis_range(t.x_axis)
@@ -314,17 +376,12 @@ class PayloadMixin(_Host):
             # `palette_cycle`, not `list(self.palette)`: a `{category: color}`
             # palette would otherwise ship its category NAMES as colors.
             spec["palette"] = self.palette_cycle
-        if self.legend_options:
-            legend = self.legend_options
-            if legend.get("loc") == "best":
-                # Settle `best` here, once, so the client and the two static
-                # writers all receive a concrete location and cannot disagree
-                # about it (§28: the decision ships, it is not re-made
-                # downstream three times).
-                from ._legendfit import resolve_for_figure
-
-                legend = {**legend, "loc": resolve_for_figure(self)}
-            spec["legend"] = legend
+        annotations = self._annotation_specs()
+        if annotations:
+            # Best-legend placement treats annotation geometry as first-class
+            # visible ink, so compile it before the initial location is
+            # resolved. The same list is then shipped unchanged below.
+            spec["annotations"] = annotations
         extra_legends = getattr(self, "extra_legends", None)
         if extra_legends:
             spec["extra_legends"] = extra_legends
@@ -352,11 +409,28 @@ class PayloadMixin(_Host):
         interaction = self._interaction_spec()
         if interaction:
             spec["interaction"] = interaction
-        annotations = self._annotation_specs()
-        if annotations:
-            spec["annotations"] = annotations
         if self.animation_options is not None:
             spec["animation"] = dict(self.animation_options)
+        if self.legend_options:
+            legend = dict(self.legend_options)
+            auto_loc = (
+                self.coords == "cartesian"
+                and legend.get("anchor") is None
+                and legend.get("loc") == "best"
+            )
+            if auto_loc or legend.get("loc") == "best":
+                # Resolve only after the complete layout spec exists: padding,
+                # colorbars, secondary axes, and merged DOM styles can all
+                # change the measured plot or legend footprint.
+                from ._legendfit import resolve_for_figure
+
+                legend["loc"] = resolve_for_figure(self, spec, legend, rendered_columns=pw)
+                if auto_loc:
+                    # Static writers and the first browser frame receive one
+                    # concrete decision. The live renderer retains the intent
+                    # separately and can reconsider it after settled changes.
+                    legend["auto_loc"] = "best"
+            spec["legend"] = legend
         return spec
 
     @staticmethod
@@ -870,6 +944,65 @@ class PayloadMixin(_Host):
             entry["tooltip_rows"] = [dict(t.tooltip_rows[i]) for i in indices]
         self._ship_trace_styles(entry, t, sel_arg, pw)
         return self._transition_entry(entry, t, pw, sel_arg)
+
+    def _emit_funnel(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        """Ship funnel segments: per-stage symmetric quads plus semantics.
+
+        Slot mapping (funnel geometry contract): the stage-axis edges ride the
+        stage dimension's edge pair, the leading cross edges ride the other
+        pair, and the generic x/y slots carry the TRAILING cross edges — both
+        on the CROSS axis scale. Orientation decides which axis is which, so
+        the wire re-labels the six columns semantically (`pos0`/`pos1`,
+        `lo0`/`hi0`, `lo1`/`hi1`) and renderers never see the slot trick.
+        """
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("funnel trace missing geometry columns")
+        orientation = str(t.style.get("orientation", "vertical"))
+        xs, ys = self._axis_scale(t.x_axis), self._axis_scale(t.y_axis)
+        if orientation == "vertical":
+            pos0, pos1, pos_scale = t.y0, t.y1, ys
+            lo0, hi0, cross_scale = t.x0, t.x1, xs
+        elif orientation == "horizontal":
+            pos0, pos1, pos_scale = t.x0, t.x1, xs
+            lo0, hi0, cross_scale = t.y0, t.y1, ys
+        else:
+            raise ValueError(f"unknown funnel orientation {orientation!r}")
+        lo1, hi1 = t.x, t.y
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            # Always direct: a funnel is small-N by nature — one quad per
+            # stage — and neither decimation nor a density tier means
+            # anything for it (§28).
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(pos0.values)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "orientation": orientation,
+            "pos0": pw.ship(pos0.values, pos0, scale=pos_scale),
+            "pos1": pw.ship(pos1.values, pos1, scale=pos_scale),
+            "lo0": pw.ship(lo0.values, lo0, scale=cross_scale),
+            "hi0": pw.ship(hi0.values, hi0, scale=cross_scale),
+            "lo1": pw.ship(lo1.values, lo1, scale=cross_scale),
+            "hi1": pw.ship(hi1.values, hi1, scale=cross_scale),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, None, pw.ship_scalar, pw.ship_u8)
+        if t.tooltip_rows is not None:
+            if len(t.tooltip_rows) != t.n_points:
+                raise ValueError(
+                    "funnel tooltip rows must match funnel geometry "
+                    f"({len(t.tooltip_rows)} != {t.n_points})"
+                )
+            entry["tooltip_rows"] = [dict(row) for row in t.tooltip_rows]
+        self._ship_trace_styles(entry, t, None, pw)
+        return self._transition_entry(entry, t, pw, None)
 
     def _emit_triangle_mesh(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

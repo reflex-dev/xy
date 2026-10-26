@@ -40,7 +40,10 @@ import warnings
 # v12 adds polar sector/grid-shape metadata on the angular axis and hole/origin
 # metadata on the radial axis. A v11 client would silently draw a full circular
 # grid with a centre-origin radius, so the new geometry must fail the handshake.
-PROTOCOL_VERSION = 12
+# v13 adds the `funnel` trace kind. `markOf()` falls back to scatter for
+# unknown kinds, so a v12 client would silently render funnel quads as a point
+# cloud.
+PROTOCOL_VERSION = 13
 
 # Mark kinds the polar transform renders correctly today. Everything else is
 # refused by Figure._validate_coords rather than approximated: the rect, area,

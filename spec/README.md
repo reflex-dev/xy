@@ -51,8 +51,8 @@ Internal architecture: how the engine is built and why.
 - [`pan-and-zoom-configuration.md`](design/pan-and-zoom-configuration.md) — the
   flat per-axis viewport-navigation contract: capability/action/axis/source
   switches, `zoom_limits`, reset, and the semantic `ranges` view events.
-- [`reflex-integration.md`](design/reflex-integration.md) — the `reflex-xy`
-  adapter design: figures as first-class Reflex components over a second
+- [`reflex-integration.md`](design/reflex-integration.md) — the bundled
+  `xy[reflex]` integration design: figures as first-class Reflex components over a second
   socket.io namespace.
 - [`reflex-shaped-api.md`](design/reflex-shaped-api.md) — how the core package
   feels Reflex-shaped while keeping no Reflex dependency.
@@ -107,6 +107,9 @@ Release bar, contribution rules, and audit trail.
 - [`tailwind-customizability-audit-2026-07-26.md`](process/tailwind-customizability-audit-2026-07-26.md)
   — Tailwind source discovery, cascade ownership, live updates, slot coverage,
   production-browser matrix, and remaining browser boundaries.
+- [`css-tailwind-surface-audit-2026-07-30.md`](process/css-tailwind-surface-audit-2026-07-30.md)
+  — component-by-component DOM/canvas audit, granular modebar/colorbar/axis
+  slots, matched browser evidence, and the CSS/Tailwind ownership boundary.
 
 ## assets/
 

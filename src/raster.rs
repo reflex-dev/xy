@@ -2612,7 +2612,9 @@ fn rasterize_with_spans<'a>(
                     let stop_count = r.u32()? as usize;
                     let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
                     let stops: Vec<[u8; 3]> = stop_bytes
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .map(|stop| [stop[0], stop[1], stop[2]])
                         .collect();
                     let encoded_len = iw.checked_mul(ih)?;
@@ -2645,7 +2647,9 @@ fn rasterize_with_spans<'a>(
                     }
                     let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
                     let stops: Vec<[u8; 3]> = stop_bytes
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .map(|stop| [stop[0], stop[1], stop[2]])
                         .collect();
                     let width = if encoding == 1 { 8 } else { 4 };
@@ -2865,7 +2869,9 @@ fn rasterize_with_spans<'a>(
                         }
                         let bytes = r.bytes(count.checked_mul(3)?)?;
                         palette = bytes
-                            .chunks_exact(3)
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
                             .map(|entry| [entry[0], entry[1], entry[2]])
                             .collect();
                     }
@@ -3820,7 +3826,7 @@ mod tests {
     fn banded_image_blit_matches_serial() {
         let (iw, ih) = (37usize, 23usize);
         let mut src = vec![0u8; iw * ih * 4];
-        for (i, pixel) in src.chunks_exact_mut(4).enumerate() {
+        for (i, pixel) in src.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[
                 (i * 37 % 256) as u8,
                 (i * 101 % 256) as u8,

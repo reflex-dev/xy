@@ -139,13 +139,20 @@ reported).
    and composed/layered `xy.chart(...)` payload prep;
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
    comparison.
-7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed
-   charts, checks every canvas initially and while scrolling, and records payload
-   prep, navigation readiness, JS heap, redraw-submission p95, per-chart context
-   loss/restoration events, and the stable loss-free chart-count ceiling. Partial
-   dashboards remain successful measurement rows rather than losing their metrics.
+7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50/60 mixed
+   charts in CI, checks every canvas initially and while scrolling, and records
+   payload prep, navigation readiness, per-chart setup/first-draw p50/p95/max, load and
+   first-pick shader compiles and program links, advisory startup long tasks, JS
+   heap, redraw-submission p95, per-chart context loss/restoration events, and the
+   stable loss-free chart-count ceiling. A complete, loss-free 60-chart CI row
+   pins the production shader inventory at 9 unique load compiles/60 links and
+   11/72 after the 12 scatter pick passes; steady redraw must add neither
+   compiles nor links. Partial dashboards remain successful measurement rows
+   rather than losing their metrics.
    CI hard-gates the 10-chart row as loss-free/nonblank and applies deliberately
-   loose catastrophic budgets to its render, scroll, and redraw timings.
+   loose catastrophic budgets to its render, scroll, and redraw timings;
+   setup/first-draw percentiles and long tasks remain telemetry rather than timing
+   gates.
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,

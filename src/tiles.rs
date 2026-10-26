@@ -218,7 +218,7 @@ pub fn append(p: &mut Pyramid, x: &[f64], y: &[f64]) -> bool {
 
 /// 4→1 exact reduction of one square level: each output cell is the u64 sum
 /// of its 2×2 source block, saturating to u32 (§5 — every level conserves the
-/// total exactly, up to saturation). Row slices + `chunks_exact(2)` keep the
+/// total exactly, up to saturation). Row slices + `as_chunks::<2>()` keep the
 /// inner loop free of bounds checks so it autovectorizes.
 fn reduce_level(prev: &[u32], dim: usize) -> Vec<u32> {
     let next = dim / 2;
@@ -228,8 +228,8 @@ fn reduce_level(prev: &[u32], dim: usize) -> Vec<u32> {
         let bot = &prev[(2 * cy + 1) * dim..(2 * cy + 1) * dim + dim];
         for ((o, t), b) in out_row
             .iter_mut()
-            .zip(top.chunks_exact(2))
-            .zip(bot.chunks_exact(2))
+            .zip(top.as_chunks::<2>().0.iter())
+            .zip(bot.as_chunks::<2>().0.iter())
         {
             let a = t[0] as u64 + t[1] as u64 + b[0] as u64 + b[1] as u64;
             *o = a.min(u32::MAX as u64) as u32;
@@ -631,7 +631,7 @@ pub fn compose_color(
                 continue;
             }
             let base = cy as usize * dim;
-            for (ox, quad) in quad_row.chunks_exact_mut(4).enumerate() {
+            for (ox, quad) in quad_row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let xdata = lo_x + (ox as f64 + 0.5) / sx;
                 let cx = ((xdata - p.x0) * inv_cell_x) as isize;
                 if cx < 0 || cx as usize >= dim {
@@ -701,7 +701,7 @@ pub fn compose_color(
             }
         }
     }
-    for (bin, quad) in out_rgba.chunks_exact_mut(4).enumerate() {
+    for (bin, quad) in out_rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let weight = weight_sum[bin];
         if !(count_sum[bin] > 0.0 && weight > 0.0) {
             continue;

@@ -19,6 +19,7 @@ primitive or structural descendant is a separate DOM element.
 | `title` | Chart title |
 | `chrome` | Canvas-painted plot chrome |
 | `canvas` | WebGL2 plot canvas |
+| `annotation_layer` | Canvas-painted annotation geometry above the marks |
 | `labels` | Axis and annotation label layer |
 | `legend` | Legend container |
 | `legend_title` | Legend title |
@@ -27,7 +28,10 @@ primitive or structural descendant is a separate DOM element.
 | `legend_label` | One legend text label |
 | `colorbar` | Colorbar container |
 | `colorbar_bar` | Colorbar gradient or bands |
+| `colorbar_extension` | Minimum/maximum extension triangle |
+| `colorbar_line` | Contour-level line across the colorbar |
 | `colorbar_tick` | One colorbar tick label |
+| `colorbar_minor_tick` | One unlabeled minor tick mark |
 | `colorbar_title` | Colorbar title |
 | `tooltip` | Hover tooltip container |
 | `tooltip_title` | Formatted tooltip title |
@@ -35,12 +39,27 @@ primitive or structural descendant is a separate DOM element.
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
+| `modebar_drag_handle` | Draggable grip revealed beside the toolbar |
+| `modebar_control_group` | Selection, pan, and export control group |
+| `modebar_separator` | Top-level toolbar separator |
 | `modebar_button` | One mode/tool button; `.xy-active` when active |
+| `modebar_icon` | Icon in a top-level action button |
+| `modebar_zoom_value` | Current zoom percentage |
+| `modebar_indicator` | Menu chevron/indicator |
+| `modebar_selection_icon` | Icon for the active selection mode |
+| `modebar_menu` | Zoom, selection, or export menu container |
+| `modebar_menu_separator` | Separator inside a menu |
+| `modebar_menu_icon` | Menu-item icon |
+| `modebar_menu_label` | Menu-item text |
+| `modebar_history_controls` | Back/Next history group |
 | `selection` | Box/x-range/y-range rectangle plus completed lasso path and editable handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |
 | `badge_item` | One reduction/density badge |
+| `axis_band` | Invisible axis gesture band and its cursor |
+| `axis_line` | One Cartesian axis spine |
+| `tick_mark` | One major or minor Cartesian tick mark |
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text, label, or callout DOM overlay |
@@ -55,18 +74,23 @@ that class can control.
 
 | Surface | Examples | Tailwind contract |
 | --- | --- | --- |
-| Visually overridable DOM | `root`, `title`, legend, colorbar, tooltip, badge, label, `selection`, `crosshair_*`, `modebar`, `modebar_button` | Normal utilities override XY's layered visual defaults: color, background, border, typography, padding, shadow, and cursor. An explicit `styles={...}` value is inline author intent and still outranks a normal utility. |
+| Visually overridable DOM | `root`, `title`, legend, colorbar, tooltip, badge, axis/label, `selection`, `crosshair_*`, and granular modebar slots | Normal utilities override XY's layered visual defaults: color, background, border, typography, padding, shadow, filter, opacity, and cursor. An explicit `styles={...}` value is inline author intent and still outranks a normal utility. |
 | Structural-owned DOM | Chart layers; legend/colorbar/modebar anchors; tooltip, selection, and crosshair geometry | XY keeps required position, size, display, z-index, pointer-event, and transform state inline. A normal utility does not necessarily override those declarations; changing them means taking responsibility for layout or interaction. |
-| Whole bitmap | `canvas` and `chrome` | A class styles the canvas element as one box, so cursor, opacity, filter, border, or transform affect the whole bitmap. It cannot select WebGL marks or canvas-painted grid, axes, and annotation shapes; use mark/axis/annotation props and `--chart-*` tokens for those pixels. |
-| Repeated or ephemeral DOM | `legend_item`, `legend_swatch`, `legend_label`, `colorbar_tick`, tooltip rows, `modebar_button`, `badge_item`, tick/annotation labels, selection/crosshair overlays | One slot class applies to every matching node whenever XY creates it. Counts and node identities can change with payloads, hover content, interaction state, and responsive layout, so target the slot or an exposed state attribute rather than retaining a particular node. |
+| Whole bitmap | `canvas`, `chrome`, and `annotation_layer` | A class styles the canvas element as one box, so opacity, filter, border, or transform affect the whole bitmap. It cannot select WebGL marks or canvas-painted grid, polar axes, and annotation shapes; use mark/axis/annotation props and `--chart-*` tokens for those pixels. |
+| Repeated or ephemeral DOM | Legend rows/swatches/labels, colorbar lines/ticks, tooltip rows, modebar parts/buttons, badges, axis rules/labels, selection/crosshair overlays | One slot class applies to every matching node whenever XY creates it. Counts and node identities can change with payloads, hover content, interaction state, and responsive layout, so target the slot or an exposed state attribute rather than retaining a particular node. |
 | State-owned / conditional inline | Legend hover/toggle, tooltip/selection/crosshair visibility and geometry, modebar active/open/fit state | The client writes the live property or exposes a state class/attribute. Durable visual utilities still apply, but replacing an inline state property requires `!important` and transfers responsibility for that behavior to the author. |
 
-`modebar` styles the toolbar surface. `modebar_button` reaches both its
-top-level controls and menu-item buttons. Tool groups, menus, separators,
-indicators, and the drag handle are modebar substructure rather than additional
-public slots; use `--chart-modebar-*` tokens or a descendant selector based on
-their `data-xy-modebar-*` attributes. XY continues to own toolbar/menu
-placement, fit visibility, opacity, and pointer-event state.
+`modebar` styles the toolbar surface, while the `modebar_*` subpart slots
+independently reach its drag handle, control group, separators, button icons,
+zoom value, indicators, selection icon, menus, menu icons/labels, and history
+group. `modebar_button` intentionally remains the common button hook for both
+top-level controls and menu items. XY continues to own toolbar/menu placement,
+fit visibility, opacity, open/closed display, and pointer-event state.
+
+Cartesian axes expose `axis_line`, `tick_mark`, `tick_label`, and `axis_title`.
+Use `data-xy-axis`, `data-xy-axis-side`, and `data-xy-tick-kind` when a selector
+must distinguish one axis, side, or major/minor tick. Grid lines and polar
+rings/spokes remain canvas pixels and use the validated axis `style` API.
 
 Some visible state is intentionally inline and conditional. Toggled or
 hover-deemphasized legend rows receive client-owned `opacity`/`filter`;
@@ -334,8 +358,8 @@ apply it with. Rather than leave that to be discovered, it is a contract:
 | --- | --- | --- | --- |
 | mark / axis `style=` | yes | yes | yes |
 | chart-level `style=` (design tokens) | yes | yes | yes |
-| `styles={slot: {...}}` | yes, all 29 slots | text subset, 9 slots | text subset, 9 slots |
-| `class_names={slot: "..."}` | yes, all 29 slots | dropped | dropped |
+| `styles={slot: {...}}` | yes, all 48 slots | text subset, 9 slots | text subset, 9 slots |
+| `class_names={slot: "..."}` | yes, all 48 slots | dropped | dropped |
 | `custom_css=` | yes | raises | raises |
 | `xy.legend(style=...)` | yes | 6 keys | 6 keys |
 | `xy.colorbar(style=...)` | yes | dropped | dropped |

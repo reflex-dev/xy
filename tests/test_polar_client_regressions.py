@@ -390,6 +390,11 @@ def test_polar_wheel_zoom_is_alive_and_keeps_r_lo_fixed(tmp_path: Path) -> None:
     made radial wheel zoom (polar's only navigation) dead on arrival. Second,
     the assertion is on the §8 contract itself — r_lo fixed, r_hi scaled —
     not just `after != before`.
+
+    Zoom is opted into explicitly because polar now defaults it OFF (§8); this
+    probe is about the shape of the gesture once it IS enabled, and
+    `test_polar_zoom_is_off_by_default_and_releases_page_scroll` covers the
+    default.
     """
     chromium = find_chromium()
     if chromium is None:
@@ -397,7 +402,12 @@ def test_polar_wheel_zoom_is_alive_and_keeps_r_lo_fixed(tmp_path: Path) -> None:
 
     theta = [i * 2.0 * math.pi / 40.0 for i in range(40)]
     r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
-    chart = xy.polar_chart(xy.line(theta, r, animation=False), width=420, height=420)
+    chart = xy.polar_chart(
+        xy.line(theta, r, animation=False),
+        xy.interaction_config(zoom=True),
+        width=420,
+        height=420,
+    )
     probe = """
 <script>
 setTimeout(() => {
@@ -452,6 +462,241 @@ setTimeout(() => {
     assert before[0] == 0.0
     assert after[0] == 0.0, f"radial zoom moved r_lo: {after}"
     assert after[1] < before[1] * 0.9, f"wheel did not zoom: {before} -> {after}"
+
+
+def test_polar_zoom_is_off_by_default_and_releases_page_scroll(tmp_path: Path) -> None:
+    """A default polar chart must ignore the wheel end to end (§8).
+
+    The Python default (`zoom=False` on the wire) only pays off if the client
+    honours it all the way down, so this asserts the three consequences a user
+    actually meets: the radial range does not move, the wheel event is left
+    UNCANCELLED so the page keeps scrolling under the cursor, and the modebar
+    grows no zoom menu — history alone used to build a "100%" trigger over two
+    permanently dead Back/Next items.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    theta = [i * 2.0 * math.pi / 40.0 for i in range(40)]
+    r = [1.0 + 0.4 * math.sin(3.0 * t) for t in theta]
+    chart = xy.polar_chart(xy.line(theta, r, animation=False), width=420, height=420)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    const before = view._axisRange("y").slice();
+    const canvas = view.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width * 0.62;
+    const cy = rect.top + rect.height * 0.42;
+
+    view._raf = null;
+    const realRaf = window.requestAnimationFrame;
+    let frames = [];
+    window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    const flush = () => {
+      for (let round = 0; round < 4 && frames.length; round++) {
+        const queued = frames;
+        frames = [];
+        for (const fn of queued) fn();
+      }
+    };
+
+    let cancelled = false;
+    for (let i = 0; i < 5; i++) {
+      const event = new WheelEvent("wheel", {
+        deltaY: -120, clientX: cx, clientY: cy, bubbles: true, cancelable: true,
+      });
+      canvas.dispatchEvent(event);
+      if (event.defaultPrevented) cancelled = true;
+    }
+    flush();
+    const after = view._axisRange("y").slice();
+    window.requestAnimationFrame = realRaf;
+    document.body.setAttribute("data-xy-polar-nozoom", JSON.stringify({
+      before,
+      after,
+      cancelled,
+      zoomMenu: !!view.root.querySelector('[data-xy-modebar-menu-trigger]'),
+      zoomIn: !!view.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      historyBack: !!view.root.querySelector('[data-xy-modebar-history="back"]'),
+      modebar: !!view.root.querySelector('[data-xy-slot="modebar"]'),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-polar-nozoom-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "polar_no_zoom.html",
+        "data-xy-polar-nozoom",
+        label="polar default zoom off",
+    )
+    assert result["after"] == pytest.approx(result["before"]), (
+        f"wheel moved the radial range with zoom off: {result['before']} -> {result['after']}"
+    )
+    assert result["cancelled"] is False, "wheel was cancelled, swallowing page scroll"
+    # The modebar itself still renders (export lives there); only the zoom
+    # controls are gone.
+    assert result["modebar"] is True
+    assert result["zoomIn"] is False
+    assert result["historyBack"] is False
+    assert result["zoomMenu"] is False
+
+
+@pytest.mark.parametrize(
+    ("label", "build"),
+    [
+        # Zoom off but reset authored: the menu is needed, the readout is not.
+        (
+            "polar",
+            lambda: xy.polar_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 1.5], animation=False),
+                xy.interaction_config(reset_axes=("y",)),
+                width=420,
+                height=420,
+            ),
+        ),
+        # Same wart off the polar path: pan/select keep the menu alive while the
+        # percentage can never move.
+        (
+            "cartesian",
+            lambda: xy.line_chart(
+                xy.line([0.0, 1.0, 2.0], [1.0, 2.0, 1.5], animation=False),
+                xy.interaction_config(zoom=False),
+                width=420,
+                height=300,
+            ),
+        ),
+    ],
+)
+def test_a_zoom_disabled_modebar_shows_no_zoom_percentage(label, build, tmp_path: Path) -> None:
+    """The "100%" trigger is a zoom READOUT and must not outlive zoom.
+
+    The menu legitimately survives `zoom=False` — reset (via an authored
+    `reset_axes`) and view history both live in it — but its trigger rendered a
+    permanent "100%" that advertises a control the chart does not have and that
+    no gesture can move. It falls back to the menu icon, and the accessible name
+    drops from "Zoom controls" to "View controls".
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const v = window.__fcProbeView;
+    v._drawNow();
+    const trigger = v.root.querySelector('[data-xy-modebar-menu-trigger]');
+    document.body.setAttribute("data-xy-nopct", JSON.stringify({
+      zoomFlag: v._interactionFlag("zoom", true),
+      trigger: !!trigger,
+      percent: trigger ? !!trigger.querySelector('[data-xy-modebar-zoom-percent]') : null,
+      icon: trigger ? !!trigger.querySelector('[data-xy-slot="modebar_icon"] svg') : null,
+      triggerLabel: trigger ? trigger.getAttribute("aria-label") : null,
+      menuLabel: (v.root.querySelector('[data-xy-modebar-menu]') || {
+        getAttribute: () => null,
+      }).getAttribute("aria-label"),
+      resetItem: !!v.root.querySelector('[data-xy-modebar-menu-item="reset"]'),
+      zoomIn: !!v.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      labelRef: !!v._zoomMenuLabel,
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-nopct-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(build(), probe),
+        tmp_path / f"no_percent_{label}.html",
+        "data-xy-nopct",
+        label=f"{label} zoom-off modebar",
+    )
+    assert result["zoomFlag"] is False
+    # The menu is still there and still useful...
+    assert result["trigger"] is True
+    assert result["resetItem"] is True
+    # ...but carries no zoom readout and offers no zoom action.
+    assert result["percent"] is False, "zoom percentage rendered on a chart that cannot zoom"
+    assert result["icon"] is True, "trigger lost its icon fallback"
+    assert result["zoomIn"] is False
+    assert result["triggerLabel"] == "View controls"
+    assert result["menuLabel"] == "View controls"
+    # No label element means `_updateZoomMenuLabel` has nothing to overwrite the
+    # accessible name with on the next view change.
+    assert result["labelRef"] is False
+
+
+def test_wind_rose_keeps_radial_zoom_without_restoring_box_zoom(tmp_path: Path) -> None:
+    """The wind-rose exception grants RADIAL zoom, not the rectangle gestures.
+
+    `zoom` is the generic capability, so enabling it on the one polar chart that
+    wants zoom raises the question of whether `box_zoom` (which defaults to true)
+    comes back with it. It does not: the client forces `box_zoom`, `select`,
+    `brush`, and `crosshair` off under `coords="polar"` regardless of the flags
+    (§8), so a default rose gets the wheel, the Zoom In/Out buttons, and reset —
+    and no Box Zoom item, no Pan button, and a resolved drag tool of `none`.
+    """
+    chromium = find_chromium()
+    if chromium is None:
+        pytest.skip("Chromium unavailable")
+
+    bearings = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0] * 4
+    speeds = [1.0, 4.0, 9.0, 3.0, 6.0, 2.0, 7.0, 5.0] * 4
+    chart = xy.wind_rose(bearings, speeds, width=420, height=420)
+    probe = """
+<script>
+setTimeout(() => {
+  try {
+    const view = window.__fcProbeView;
+    view._drawNow();
+    document.body.setAttribute("data-xy-rose-zoom", JSON.stringify({
+      zoomFlag: view._interactionFlag("zoom", true),
+      boxZoomFlag: view._interactionFlag("box_zoom", true),
+      dragMode: view.dragMode,
+      zoomAxes: view._axisPolicy("zoom_axes"),
+      resetAxes: view._resetAxisPolicy(),
+      zoomIn: !!view.root.querySelector('[data-xy-modebar-menu-item="zoomin"]'),
+      resetItem: !!view.root.querySelector('[data-xy-modebar-menu-item="reset"]'),
+      boxZoomItem: !!view.root.querySelector('[data-xy-modebar-menu-item="zoom"]'),
+      panButton: !!view.root.querySelector('[data-xy-modebar-action="pan"]'),
+      selectTrigger: !!view.root.querySelector('[data-xy-modebar-select-trigger]'),
+    }));
+  } catch (error) {
+    document.body.setAttribute("data-xy-rose-zoom-error", String(error));
+  }
+}, 220);
+</script>
+"""
+    result = run_browser_probe(
+        chromium,
+        probe_document(chart, probe),
+        tmp_path / "wind_rose_zoom.html",
+        "data-xy-rose-zoom",
+        label="wind rose zoom scope",
+    )
+    # Granted: radial zoom on the r axis only, plus its reset.
+    assert result["zoomFlag"] is True
+    assert result["zoomAxes"] == ["y"]
+    assert result["resetAxes"] == ["y"]
+    assert result["zoomIn"] is True
+    assert result["resetItem"] is True
+    # Withheld: every rectangle-shaped gesture, and any drag tool at all.
+    assert result["boxZoomFlag"] is False
+    assert result["boxZoomItem"] is False
+    assert result["panButton"] is False
+    assert result["selectTrigger"] is False
+    assert result["dragMode"] != "zoom"
 
 
 def test_polar_bar_hover_wraps_across_the_seam(tmp_path: Path) -> None:

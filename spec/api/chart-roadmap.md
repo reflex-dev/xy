@@ -60,7 +60,7 @@ Beyond the mark set, four capability layers now ship on `main`:
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
-- **Reflex-first reactive API (`python/reflex-xy/`):** xy figures as
+- **Reflex-first reactive API (`python/reflex_xy/`):** xy figures as
   first-class Reflex components (PR #55). Chart data multiplexes onto the
   app's existing websocket as a second socket.io namespace (`/_xy`) with
   binary column attachments (§29 — no JSON numbers, no sidecar HTTP
@@ -129,7 +129,7 @@ not fall out of sight.
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Implemented core | Bounded-resolution smoothed distribution bands through the rectangle renderer. |
 | 13 | Contour | contour, filled contour, isolines | Implemented core | Marching-squares isolines over regular grids, optionally layered on heatmap fill. |
 | 14 | Waterfall | waterfall, bridge chart | Planned | Business reporting and finance expectation; mostly categorical bars plus running baseline. |
-| 15 | Funnel | funnel, funnel area, conversion funnel | Planned | Product analytics and sales/ops dashboard expectation. |
+| 15 | Funnel | funnel, funnel area, conversion funnel | Implemented core | `xy.funnel_chart`/`xy.funnel` render per-stage quads through the `funnel` kind (protocol v13): declared-order categorical stages, explicit area/bar geometry, rect/taper neck, gaps and a drawn-width floor, conversion/drop-off arithmetic in labels, tooltips, events, and keyboard traversal. Follow-ups are multi-series comparison grouping and box/lasso selection. |
 | 16 | Treemap | treemap, squarified treemap | Planned | Common BI hierarchy chart; requires layout and label polish. |
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
 | 18 | Radar / polar | radar, spider, polar area, radial bar, polar heatmap/contour | Implemented core | `xy.polar_chart` renders the allowlisted line/scatter/area/bar/column/heatmap/contour/errorbar schemas through the polar coordinate system (spec/design/polar-axes.md); `xy.radar_chart`, `xy.polar_bar_chart` and `xy.wind_rose` are the compositions. Sector layout, hole/r-origin, categorical θ, log/symlog radius, and polygonal grids ship. Follow-ups are rule/band geometry, polar LOD, facets/animation, and angular navigation/selection. |
@@ -192,7 +192,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
-| 18 | Funnel / funnel area | Common sales/product analytics chart. | Mostly categorical geometry plus labels. |
+| 18 | Funnel / funnel area | Common sales/product analytics chart. | Shipped — see "Funnel" in the coverage-backlog table above (`xy.funnel_chart`, protocol v13): categorical quad geometry plus build-time labels, as predicted. |
 | 19 | Calendar/cohort heatmap | Common product analytics and retention surface. | Grid plus date semantics. |
 | 20 | Gantt/timeline/event charts | Product/project/ops domain chart. | High UI polish and interaction expectations. |
 
@@ -388,21 +388,21 @@ interaction-latency comparison, not assumed.
 The first breadth milestone — **histogram, bar/column, area, heatmap** — and
 the first statistical block — **box, violin, ECDF, error bars/bands, hexbin,
 contour, steps/stairs/stems, and facets** — are done. The first alpha
-(`v0.0.1`) is launched with a live docs site and the reflex-xy adapter on
+(`v0.0.1`) is launched with a live docs site and the bundled Reflex integration on
 `main`; the next sequence is therefore stabilization and compatibility depth,
 not re-implementing shipped primitives.
 
 1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released on PyPI;
    its Pyodide wheel is runtime-verified but is not yet publicly distributed
-   as a durable release asset (#97). The docs site is live, and the reflex-xy
+   as a durable release asset (#97). The docs site is live, and the Reflex
    adapter is on `main` — so release/distribution correctness and the
    post-launch bug backlog are the current gate, not shipping. The interaction
    correctness issues (box-zoom view collapse, double-click blanking a dense
-   Reflex scatter, reflex-xy static chart crash, FacetChart CSS leak) come
+   Reflex scatter, static integration chart crash, FacetChart CSS leak) come
    before any new chart family. The heatmap hover kernel crash is fixed
    (PR #106): the pick handler takes a dedicated grid-trace branch that returns
    row/col plus the cell value instead of indexing the edge-only x/y arrays.
-2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
+2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex_xy/`; see
    the capability-layer summary near the top of this doc). Linked facet
    interactions shipped in PR #105: `xy.facet_chart(...)` takes
    `link=True|"both"|"x"|"y"` for runtime-linked panel axes and
@@ -431,7 +431,7 @@ Parallel, non-chart-type tracks:
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
   `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
-- **Reflex-first reactive API** — **shipped** (PR #55): the reflex-xy adapter
+- **Reflex-first reactive API** — **shipped** (PR #55): the bundled integration
   described in step 2 above, with websocket-multiplexed binary transport and
   computed-var figure binding.
 
@@ -460,7 +460,7 @@ New chart kinds land as composition marks plus a family container
 
 The rectangle/polygon/grid-texture foundations, statistical breadth block,
 full mark styling, native PNG rasterizer, core polar/pie/donut composition, and
-the **Reflex-first reactive API** (reflex-xy adapter) are in place, and
+the **Reflex-first reactive API** (bundled `xy[reflex]` integration) are in place, and
 `v0.0.1` is launched with a live docs site. The next product track is
 **post-launch stabilization** (the open interaction/adapter bug backlog),
 followed by statistical compatibility depth and pie/donut depth (nesting and

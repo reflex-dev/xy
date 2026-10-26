@@ -65,15 +65,15 @@ control.
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
   `tests/pyplot/corpus/` + `spec/matplotlib/compat.md`.
-- `python/reflex-xy/` — the Reflex adapter, a separate distributable
-  package (`reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
+- `python/reflex_xy/` — the bundled Reflex integration (import namespace
+  `reflex_xy`; design: `spec/design/reflex-integration.md`). Chart
   data rides the app's own websocket as a second socket.io namespace;
   figures live in a per-process registry rebuilt from Reflex state on miss.
-  Depends on `xy` + `reflex`; `xy` itself must never import
-  reflex. The render client is linked out of the installed `xy`
-  package at app compile (no second copy to drift), and the adapter stays
-  out of the root `xy` sdist (`scripts/verify_sdist.py` enforces it).
-  Tests: `tests/reflex_adapter/` (skip unless reflex installed).
+  The source ships in every `xy` artifact; the `xy[reflex]` extra selects the
+  supported Reflex floor while plain `xy` keeps no Reflex runtime dependency.
+  The core `python/xy` package must never import Reflex. The render client is
+  linked out of that package at app compile (no second copy to drift).
+  Tests: `tests/reflex_adapter/` (skip unless Reflex is installed).
 - `js/src/*.ts` — the render client as TypeScript ES modules (one module per
   former concat part; `60_entries.ts` is the entry and the only public export
   surface). `node js/build.mjs` typechecks (`js/tsconfig.json`), lints the
@@ -98,14 +98,14 @@ node js/build.mjs                     # typecheck + regenerate minified static/ 
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 python3 scripts/append_stream_smoke.py   # streaming-append tail uploads + coalesced refines
-uv venv && uv pip install -e . --group dev
-uv pip install -e "python/reflex-xy[dev]"  # enables tests/reflex_adapter (installs reflex)
+uv sync --extra reflex --group dev
 uv run pytest                         # native core required (no fallback)
-python3 scripts/reflex_ws_smoke.py    # browser E2E vs a running reflex-xy demo app
+python3 scripts/reflex_ws_smoke.py    # browser E2E vs the running Reflex demo app
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
 uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
+make news NAME=1234.feature.md        # changelog news fragment (see Releases)
 ```
 
 Before every commit or push, run the repository hooks and Ruff checks across the
@@ -120,6 +120,25 @@ uv run ruff format --check .
 `abi_smoke`, `render_smoke_nonumpy`, and `append_stream_smoke` need neither
 numpy nor PyPI — they verify the Python↔Rust ABI and the render client
 directly, and run first in CI.
+
+## Releases
+
+`CHANGELOG.md` is **generated and is the release trigger** (reflex-release +
+towncrier; `spec/process/production-readiness.md` § Release Checklist). A version
+heading with no matching git tag is what publishes that version, and the tag is
+pushed only after PyPI accepts the artifacts — so never hand-edit a version
+heading, and never cut a release tag. Every change under `python/`, `src/` or
+`js/` adds a news fragment (`make news NAME=<pr>.<type>.md`); CI requires one
+unless the `skip-changelog` label says the change is not user-facing.
+The four release workflows come from `reflex-release`, which owns their
+invariants — don't re-assert their contents in this repo; regenerate with
+`reflex-release sync` (its `sync --check` runs on every PR). xy owns exactly two
+release workflows, both wired in through `[tool.reflex-release]`:
+`build_release_artifacts.yml`, the wheel/wasm/sdist matrix `publish.yml` calls
+(`custom-build`), and `deploy-docs-stg.yml`, dispatched per published tag
+(`post-release-workflow`). Their contracts are in
+`spec/process/production-readiness.md` §§ Upgrading the release tool, After a
+release.
 
 Never credit Claude in git history: no Claude author or committer identity,
 no `Co-Authored-By: Claude` trailers, no AI attribution in commit messages,

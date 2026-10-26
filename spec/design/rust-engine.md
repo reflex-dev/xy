@@ -139,7 +139,8 @@ which ctypes binds against, survives. `panic` must stay `unwind`: the C-ABI
 backstop in `lib.rs` converts kernel panics into sentinel returns via
 `catch_unwind`, and `panic = "abort"` would turn them into aborts of the
 embedding CPython process (the wasm target alone builds with
-`-C panic=abort` in `release.yml`, where unwinding is unsupported anyway).
+`-C panic=abort` in `build_release_artifacts.yml`, where unwinding is
+unsupported anyway).
 PGO is a known open lever, not adopted: it needs a per-target training
 workload and profdata plumbing in the release matrix; revisit when a
 benchmark shows a branch-bound kernel on the hot path.

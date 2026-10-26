@@ -19,6 +19,7 @@ MARK_FACTORIES = (
     "scatter",
     "ribbon",
     "sankey",
+    "funnel",
     "line",
     "area",
     "histogram",
@@ -84,6 +85,7 @@ CHART_FACTORIES = (
     "stem_chart",
     "segments_chart",
     "triangle_mesh_chart",
+    "funnel_chart",
 )
 CHROME_FACTORIES = (
     "legend",
@@ -195,6 +197,7 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "title",
         "chrome",
         "canvas",
+        "annotation_layer",
         "labels",
         "legend",
         "legend_title",
@@ -203,7 +206,10 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "legend_label",
         "colorbar",
         "colorbar_bar",
+        "colorbar_extension",
+        "colorbar_line",
         "colorbar_tick",
+        "colorbar_minor_tick",
         "colorbar_title",
         "tooltip",
         "tooltip_title",
@@ -211,12 +217,27 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "tooltip_label",
         "tooltip_value",
         "modebar",
+        "modebar_drag_handle",
+        "modebar_control_group",
+        "modebar_separator",
         "modebar_button",
+        "modebar_icon",
+        "modebar_zoom_value",
+        "modebar_indicator",
+        "modebar_selection_icon",
+        "modebar_menu",
+        "modebar_menu_separator",
+        "modebar_menu_icon",
+        "modebar_menu_label",
+        "modebar_history_controls",
         "selection",
         "crosshair_x",
         "crosshair_y",
         "badge",
         "badge_item",
+        "axis_band",
+        "axis_line",
+        "tick_mark",
         "tick_label",
         "axis_title",
         "annotation_label",
@@ -370,7 +391,7 @@ def test_chart_factories_construct_named_lazy_charts() -> None:
             chart = getattr(components, name)()
         assert isinstance(chart, components.Chart), name
         assert chart.kind == name
-        if name not in {"radar_chart", "wind_rose", "pie_chart"}:
+        if name not in {"radar_chart", "wind_rose", "pie_chart", "funnel_chart"}:
             assert chart.children == ()
         assert chart._figure is None
         assert chart._widget is None

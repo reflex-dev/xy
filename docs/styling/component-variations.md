@@ -36,14 +36,14 @@ styles it.
 | --- | --- | --- |
 | Built-in legend | `legend(loc=..., ncols=..., title=...)` | `legend(class_name=..., style=...)`; `legend`, `legend_title`, `legend_item`, `legend_swatch`, and `legend_label` slots |
 | Built-in tooltip | `tooltip(fields=..., labels=..., title=..., format=...)` | `tooltip(class_name=..., style=...)`; `tooltip`, `tooltip_title`, `tooltip_row`, `tooltip_label`, and `tooltip_value` slots |
-| Colorbar chrome | `colorbar(title=..., orientation=..., ticks=...)` on a supported continuous mark | `colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots |
-| X and Y axes | `x_axis(...)`, `y_axis(...)`, including named secondary axes | Validated axis `style`; `tick_label` and `axis_title` DOM slots |
+| Colorbar chrome | `colorbar(title=..., orientation=..., ticks=...)` on a supported continuous mark | `colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`, `colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick` slots |
+| X and Y axes | `x_axis(...)`, `y_axis(...)`, including named secondary axes | Validated axis `style`; `axis_line`, `tick_mark`, `tick_label`, `axis_title`, and `axis_band` DOM slots |
 | Reference lines | `vline(x)` and `hline(y)` | Geometry through `color`, `width`, and `opacity`; label through `class_name` and `style` |
 | Reference bands | `x_band(...)`, `y_band(...)`, and `threshold_zone(...)` | Geometry through `color` and `opacity`; label through `class_name` and `style` |
-| Labels and callouts | `text`, `label`, `marker`, `arrow`, and `callout` | Shape props plus the `annotation_label` slot or per-annotation class/style |
+| Labels and callouts | `text`, `label`, `marker`, `arrow`, and `callout` | Shape props plus `annotation_layer` for the whole bitmap and `annotation_label` or per-annotation class/style for text |
 | Crosshair and selection | `interaction_config(crosshair=True, select=True, brush=True)` | Theme tokens or `crosshair_x`, `crosshair_y`, and `selection` slots |
-| Modebar | `modebar(show=...)` | `modebar` and `modebar_button` slots or component-local class/style |
-| Chart frame | Chart `class_name`, `class_names`, `style`, and `styles` | `root`, `title`, `chrome`, `canvas`, and `labels` slots |
+| Modebar | `modebar(show=...)` | `modebar`, `modebar_button`, and the granular `modebar_*` slots or component-local class/style |
+| Chart frame | Chart `class_name`, `class_names`, `style`, and `styles` | `root`, `title`, `chrome`, `canvas`, `labels`, and `annotation_layer` slots |
 | Reduction badges | Emitted automatically when XY reduces, samples, or rasterizes data | `badge` and `badge_item` slots plus badge theme tokens |
 | Facets | `facet_chart(..., gap=...)` and the shared child chart styles | Per-panel chart slots; standalone grid selectors are `.xy-facet-grid`, `.xy-facet-panel`, and `.xy-facet-title` |
 | Data marks | Mark factories such as `line`, `scatter`, and `bar` | The validated mark `style` subset, not DOM classes |
@@ -500,7 +500,9 @@ def interaction_chrome_styling_preview():
 ~~~
 
 The component-local modebar props merge into the same `modebar` and
-`modebar_button` slots as chart-level `class_names` / `styles`. Open the
+`modebar_button` slots as chart-level `class_names` / `styles`. Granular
+`modebar_*` slots style the grip, groups, separators, icons, indicators,
+popovers, command labels, and history controls independently. Open the
 selection menu to choose box, lasso, X-range, or Y-range selection; Shift-drag
 remains a shortcut for box selection. The analysis panel turns the compact
 `on_select_end` summary into a selected count, dataset share, selection type,

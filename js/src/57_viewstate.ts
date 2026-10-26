@@ -296,9 +296,9 @@ Object.assign(ChartView.prototype, {
       const dim = this._axisDim(axisId);
       const band = document.createElement("div");
       band.dataset.xyAxisBand = axisId;
-      band.style.cssText =
-        "position:absolute;z-index:2;touch-action:none;" +
-        `cursor:${this._axisBandCursor(axisId, dim)};`;
+      band.style.cssText = "position:absolute;z-index:2;touch-action:none;";
+      band.style.setProperty("--xy-axis-band-cursor", this._axisBandCursor(axisId, dim));
+      this._applySlot(band, "axis_band");
       this.root.appendChild(band);
       this._axisBands[axisId] = band;
       this._bindAxisBand(band, axisId, dim);
@@ -354,6 +354,23 @@ Object.assign(ChartView.prototype, {
 
   _bindAxisBand(band, axisId, dim) {
     let drag = null;
+    // The authored inline `cursor`, read once here — after `_applySlot` has
+    // written `styles={"axis_band": ...}` and before any gesture can run. It is
+    // a property of the band, not of a drag: snapshotting it per-pointerdown
+    // let a second pointer landing mid-pan capture the controller's own
+    // transient `grabbing` and replay it back as author intent, latching the
+    // cursor for the life of the view and shadowing any authored slot style.
+    const authoredCursor = {
+      value: band.style.getPropertyValue("cursor"),
+      priority: band.style.getPropertyPriority("cursor"),
+    };
+    const restoreAuthoredCursor = () => {
+      if (authoredCursor.value) {
+        band.style.setProperty("cursor", authoredCursor.value, authoredCursor.priority);
+      } else {
+        band.style.removeProperty("cursor");
+      }
+    };
 
     this._listen(band, "wheel", (e) => {
       if (!this._interactionFlag("navigation", true)) return;
@@ -410,7 +427,7 @@ Object.assign(ChartView.prototype, {
         drag.mode = wantPan
           ? (canBandPan() ? "pan" : canBandSpanZoom() ? "span" : "none")
           : (canBandSpanZoom() ? "span" : canBandPan() ? "pan" : "none");
-        if (drag.mode === "pan") band.style.cursor = "grabbing";
+        if (drag.mode === "pan") band.style.setProperty("cursor", "grabbing");
       }
       if (drag.mode === "pan") {
         const ranges = Object.fromEntries(
@@ -470,7 +487,13 @@ Object.assign(ChartView.prototype, {
       const finished = drag;
       drag = null;
       finished.capture.release();
-      band.style.cursor = this._axisBandCursor(axisId, dim);
+      // `grabbing` is transient controller state. Restore the authored inline
+      // declaration so a slot style survives both completed and cancelled
+      // gestures; otherwise expose the CSS cascade. Unconditional on purpose:
+      // with interleaved pointers the gesture that wrote `grabbing` is not
+      // always the one that ends last, so gating this on `finished.mode` would
+      // leave the transient value behind.
+      restoreAuthoredCursor();
       if (finished.mode === "span") this.selRect.style.display = "none";
       // Only a real release commits a coordinate-dependent gesture; a pan keeps
       // the view it already reached however the gesture ended.

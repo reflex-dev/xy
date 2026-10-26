@@ -374,7 +374,8 @@ bring one property back — `xy.x_axis(show=False, style={"grid_color": "#eee",
 Set a continuous mark's `colormap=` and `domain=` together when colors must
 have a stable meaning across charts. Add `xy.colorbar(...)` to explain that
 scale, then style its container, gradient, ticks, and title through the
-`colorbar`, `colorbar_bar`, `colorbar_tick`, and `colorbar_title` slots.
+`colorbar`, `colorbar_bar`, `colorbar_tick`, `colorbar_title`,
+`colorbar_extension`, `colorbar_line`, and `colorbar_minor_tick` slots.
 
 ### Build a colormap from your own colors
 
@@ -878,7 +879,9 @@ geometry; only their labels respond to DOM slot styles.
 Crosshairs, selections, and the modebar are configured independently from data
 marks. Interaction colors belong in `xy.theme(...)`; DOM pieces can also use
 the `crosshair_x`, `crosshair_y`, `selection`, `modebar`, and `modebar_button`
-slots.
+slots. The remaining `modebar_*` slots reach the draggable grip, control group,
+separators, icons, zoom value, indicators, selection icon, menus, menu content,
+and history controls independently.
 
 ~~~python demo exec toggle preview-code id=customize-interaction-demo
 x = [0, 1, 2, 3, 4, 5, 6, 7]

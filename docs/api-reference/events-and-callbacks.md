@@ -68,9 +68,9 @@ The client dispatches bubbling custom events from the chart root:
 A live hover can emit an immediate resident readout followed by an exact update.
 Consumers that only need the canonical Python row should use `on_hover`.
 
-## Reflex Adapter Events
+## Reflex Integration Events
 
-The separate `reflex-xy` adapter intentionally uses semantic component props:
+The bundled `xy[reflex]` integration intentionally uses semantic component props:
 `on_point_hover`, `on_point_click`, `on_select_end`, and `on_view_change`.
 Those are adapter props, not aliases accepted by core `Chart`. See the
 [Reflex integration](/docs/xy/integrations/reflex/) for state-backed payloads.

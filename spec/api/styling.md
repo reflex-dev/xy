@@ -629,6 +629,15 @@ placeholder.
 named edge and kept inside the plot rectangle — static export clamps it there
 explicitly — so `loc` alone can never paint a legend outside the axes.
 
+For an **unanchored Cartesian** legend, `loc="best"` requests automatic
+placement. Payload build measures the static legend footprint, scores the nine
+standard in-plot locations against the emitted mark geometry, and records a
+concrete `loc` as the static decision and safe first-paint fallback. The payload
+also records `auto_loc: "best"`, allowing the live browser to refine that choice
+from the pixels it actually rendered on its first settled draw, after a
+responsive resize, or after a settled view change. A concrete named `loc` is
+exact and never moves automatically.
+
 `xy.legend(anchor=...)` replaces that bounded, name-only placement with explicit
 geometry, mirroring Matplotlib's `bbox_to_anchor`; the `pyplot` shim maps
 `legend(bbox_to_anchor=...)` — a sequence, or any object exposing `.bounds` —
@@ -662,6 +671,12 @@ job. The composition API performs no automatic padding reservation — only the
 `pyplot` shim widens its own chart padding when `bbox_to_anchor` pushes the
 legend past an edge.
 
+An `anchor` is authored geometry and always bypasses live best-location
+scoring. Polar legends likewise keep their polar gutter placement; automatic
+re-scoring is a Cartesian in-plot behavior only. Supplying either one therefore
+omits `auto_loc`, even if Python had to settle a `"best"` spelling to a concrete
+location for the initial render.
+
 In the browser the legend is a DOM overlay above the marks canvas, positioned
 through the private `--xy-legend-left` / `--xy-legend-top` custom properties and
 a matching `translate()`, with `--xy-legend-right` / `--xy-legend-bottom` set to
@@ -683,6 +698,7 @@ raises before it reaches the client.
 | `chrome` | Canvas-painted plot chrome |
 | `canvas` | WebGL2 plot canvas |
 | `labels` | Axis/annotation label layer |
+| `annotation_layer` | Whole canvas-painted annotation bitmap |
 | `legend` | Legend container |
 | `legend_title` | Legend title |
 | `legend_item` | One legend row |
@@ -692,13 +708,28 @@ raises before it reaches the client.
 | `colorbar_bar` | Colorbar gradient/bands |
 | `colorbar_tick` | Colorbar tick label |
 | `colorbar_title` | Colorbar label (rotated beside a vertical bar) |
+| `colorbar_extension` | One under/over-range extension |
+| `colorbar_line` | One contour boundary on a line-only colorbar |
+| `colorbar_minor_tick` | One unlabeled minor colorbar tick |
 | `tooltip` | Hover tooltip container |
 | `tooltip_title` | Formatted tooltip title |
 | `tooltip_row` | One tooltip field row |
 | `tooltip_label` | One tooltip field label |
 | `tooltip_value` | One formatted tooltip value |
 | `modebar` | Mode/tool bar container |
+| `modebar_drag_handle` | Draggable grip that reveals and moves the modebar |
+| `modebar_control_group` | Main top-level control group |
+| `modebar_separator` | Top-level toolbar separator |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
+| `modebar_icon` | Icon wrapper inside a top-level modebar button |
+| `modebar_zoom_value` | Current zoom percentage |
+| `modebar_indicator` | Zoom-limit or menu-open indicator |
+| `modebar_selection_icon` | Active selection-mode icon |
+| `modebar_menu` | Zoom, selection, or export popover |
+| `modebar_menu_separator` | Separator inside a modebar popover |
+| `modebar_menu_icon` | Icon inside a popover command |
+| `modebar_menu_label` | Text inside a popover command |
+| `modebar_history_controls` | Back/forward view-history group |
 | `selection` | Active box/range rectangle plus lasso path and editable handles |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
@@ -707,6 +738,9 @@ raises before it reaches the client.
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
+| `axis_band` | Invisible axis-only pan/zoom gesture band |
+| `axis_line` | One Cartesian axis baseline |
+| `tick_mark` | One Cartesian major or minor tick mark |
 
 ### Tailwind capability taxonomy
 
@@ -716,16 +750,16 @@ The slot contract has five surface classes:
 | --- | --- | --- |
 | Visually overridable DOM | Root/title; legend, colorbar, tooltip, badge, and label slots; the visual face of selection, crosshair, and modebar slots | Background, color, border, font, padding, shadow, and cursor defaults are layered and yield to normal utilities. `styles[slot]` is explicit inline author intent and wins over a normal utility. |
 | Structural-owned DOM | Layer geometry; legend/colorbar/modebar anchoring; tooltip, selection, crosshair, and popover placement | Position, dimensions, display, z-index, pointer events, and transforms required for layout/interaction are written inline. Utilities are not guaranteed to beat them and should not do so accidentally. |
-| Whole bitmap | `canvas` (WebGL marks) and `chrome` (canvas-painted plot chrome) | CSS affects the canvas element as one bitmap. It cannot select individual marks, grid lines, axes, or canvas annotation shapes; those use the typed renderer vocabulary and `--chart-*` paint tokens. |
+| Whole bitmap | `canvas` (WebGL marks), `chrome` (canvas-painted plot chrome), and `annotation_layer` (canvas-painted annotation geometry) | CSS affects each canvas element as one bitmap. It cannot select individual marks, grid lines, or annotation shapes; those use the typed renderer vocabulary and `--chart-*` paint tokens. |
 | Repeated or ephemeral DOM | Legend rows/swatches/labels, colorbar ticks, tooltip rows/fields, modebar buttons, badge items, tick labels, annotation labels, selection/crosshair overlays | `class_names[slot]` and `styles[slot]` apply to every node created for that slot. Node count, presence, and identity may change after a payload, hover, interaction, or responsive relayout. |
 | State-owned / conditional inline | Legend hover/toggle, tooltip/selection/crosshair visibility and geometry, modebar active/open/fit state | The controller writes the live property or exposes a state class/attribute. Replacing an inline state property requires `!important` and transfers responsibility for that behavior to the author. |
 
-The modebar exposes two public levels: `modebar` for the toolbar and
-`modebar_button` for both top-level controls and menu-item buttons. Its tool
-groups, menu wrappers, separators, indicators, and drag handle expose
-`data-xy-modebar-*` implementation attributes rather than additional slots.
-Theme them through `--chart-modebar-*` or explicit descendant selectors, while
-leaving toolbar/menu placement, fit visibility, opacity, and pointer events to
+The modebar exposes a public slot for every visible layer: its draggable grip,
+control group, separators, buttons and icons, zoom value, state indicators,
+active selection icon, popovers, popover separators/icons/labels, and history
+group. `modebar_button` covers both top-level controls and menu-item buttons;
+the more specific inner slots let a utility style their contents independently.
+Leave toolbar/menu placement, fit visibility, opacity, and pointer events to
 the interaction controller.
 
 Conditional inline state is also deliberate. Legend hover/toggle writes row
@@ -1216,6 +1250,7 @@ rendered mark family and its accepted `style=` properties.
 | `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ outline | ✅ |
 | `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ | ✅ `width` |
 | `ribbon` | per-end colours are **channels** (`color`/`color_target`), not style — `style.fill` gradients are rejected so the flow gradient cannot be half-overridden | — | — | ✅ outline, falls back to the band colour | ✅ bump cubic | — | ✅ `stroke_width` |
+| `funnel` | per-stage colours are a **channel** (categorical over the stage names, or `colors=`/`color=`), not style — `style.fill` is rejected for the same reason as `ribbon` | — | — | ✅ outline, falls back to each segment's own fill (1px implied when only `stroke` is set) | straight edges in transformed space | — | ✅ `stroke_width` |
 | `scatter` | ✅ + color/size channels | — | 17 `symbol` glyphs | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
 | `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | — | cell-driven |
 
@@ -1361,27 +1396,72 @@ an unrecognized string never failed; it landed somewhere. `"northeast"` and
 `"best"` came out dead center, on top of the data, and `"top left"` came out
 *center*-left — which is what the facets-and-layers docs page was rendering.
 
-`"best"` scores each candidate box by the fraction of sampled marks inside it
-and keeps the least occupied, preferring the earlier candidate on a near-tie —
-Matplotlib's rule. It resolves **once, at payload-build time**
-(`xy._legendfit`), so the client and the two static writers all receive a
-settled location and cannot disagree about it (§28).
+For an unanchored Cartesian legend, `loc="best"` means **automatic**. The
+compatible `loc=None` default remains fixed at upper right. Python first records
+a concrete static decision and first-paint fallback, then adds the separate
+`auto_loc="best"` intent for the live renderer. Concrete named locations,
+anchored legends, and polar legends omit that intent and are never moved by the
+browser.
 
-The sampling is normative, because a different stride would place the legend
-somewhere else (§28):
+The initial Python pass (`xy._legendfit`) scores the **measured** box returned by
+the same `_legend_layout` used for static export, including its title, columns,
+font-relative row metrics, and 6 px plot inset. It reads the geometry already
+emitted for rendering, projects it through the displayed axis scale and
+direction, and accounts for the shape that can actually overlap the box:
 
-| | |
-| --- | --- |
-| Series stride | a series longer than **4096** points is strided to 4096 *before* the finite scan, so the common path costs O(1) in the series length. That is a fast path, not a bound: if the 4096-point sample holds no finite pair, the full array is scanned instead, so a mostly-NaN series is still scored rather than silently dropped from placement. Worst case is therefore O(n), once, at build time. |
-| Finite cap | at most **512** finite points per series, evenly strided. |
-| Coordinate space | **display** space: the axis's `log`/`symlog` transform is applied first, so occupancy is measured where the marks are drawn. |
-| Off-plot marks | **dropped, not clamped.** Every renderer clips them, so folding them onto an edge would guard a corner the viewer sees as empty. |
-| Candidate order | the nine Matplotlib candidates, corners first, then mid-edges, then center. |
-| Near-tie band | boxes within **0.02** mean occupancy count as tied, and the earliest candidate wins — Matplotlib's integer badness ties on near-equal boxes, and a continuous metric would otherwise let sub-percent sampling noise override that order. |
+- lines contribute emitted vertices and segment crossings, including a visible
+  crossing whose endpoints lie outside the candidate;
+- areas contribute the covered area of their emitted top-and-baseline polygon,
+  so a thin sliver scores below a nearly full box;
+- scatter contributes marker extents rather than point centers alone;
+- density scatter contributes occupied cells from its bounded grid;
+- bar, column, and histogram marks contribute their full emitted rectangles;
+  and
+- rules, bands, arrows, text, labels, callouts, and other annotations contribute
+  their visible anchors, spans, paths, or estimated boxes.
 
-Density and heatmap tiers are not sampled: a trace with no `x`/`y` column pair
-contributes no occupancy, and a chart with no scorable series falls back to
+The production pass never performs a second scan of canonical mark rows. Direct
+scatter and rectangular marks use at most **4096** deterministically selected
+emitted entries; density uses its at-most **512 × 384** grid; and large
+line/area paths use their view-width-bounded M4 output, preserving extrema that
+an unrelated stride could miss. Direct line/area paths are already capped by
+the direct-tier threshold. Geometry is evaluated in display space (`linear`,
+`log`, or `symlog`) and clipped against the visible plot, while off-view line
+endpoints remain available to detect a segment crossing. A private raw-geometry
+fallback, used only when no emitted columns are available, caps paths at 1024
+entries. With no visible usable geometry the initial location is
 `"upper right"`.
+
+The nine candidates, in deterministic preference and tie-break order, are
+`"upper right"`, `"upper left"`, `"lower left"`, `"lower right"`,
+`"center right"`, `"center left"`, `"lower center"`, `"upper center"`, and
+`"center"`. The initial Python/static decision and the browser's first settled
+live decision choose the exact minimum score; only an exact tie reaches this
+canonical order. The order is therefore part of the placement contract: an
+empty or symmetric plot always chooses the same box.
+
+After layout, the browser measures the real DOM legend footprint and scores a
+fixed **96 × 72** occupancy raster made from the rendered marks and annotation
+overlay, plus visible annotation-label boxes and any fixed legend boxes. This
+is bounded by rendered pixels rather than canonical row count, so direct,
+decimated, and density tiers have the same fixed placement cost. A responsive
+resize remeasures and re-scores the box. Pan/zoom and programmatic view changes
+keep the last answer throughout update and transition frames, then re-score
+once the view has settled; a moving legend never chases the data during a
+gesture. Legend toggles and settled data/LOD replacements likewise dirty one
+bounded re-score. Once the browser has a settled live winner, these re-scores
+are hysteretic: the current location stays unless the best challenger lowers
+the normalized occupied fraction by at least **0.05** (5 percentage points).
+An empty challenger always beats an occupied current box, even when the
+improvement is smaller than that threshold. This prevents near-uniform rasters
+from making the legend hop after each settle while preserving clear-corner
+wins; exact-minimum and canonical-tie selection still govern the first live
+decision.
+
+Static export keeps the initial concrete choice when its dimensions are
+unchanged (including pyplot's more detailed compatibility scorer). When an
+export overrides width or height, SVG and raster remeasure the box and re-score
+the same emitted columns against the final layout before painting.
 
 ## Static export
 

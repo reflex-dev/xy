@@ -8,7 +8,7 @@ dependencies = [
     "matplotlib==3.11.0",
     "numpy==2.5.1",
     "pandas==3.0.3",
-    "pillow==12.3.0",
+    "pillow==13.0.0",
     "plotly==6.9.0",
     "psutil==7.2.2",
     "tornado==6.5.7",

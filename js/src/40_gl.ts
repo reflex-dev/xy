@@ -4,13 +4,23 @@
 
 function compile(gl, type, src) {
   const sh = gl.createShader(type);
-  gl.shaderSource(sh, src);
-  gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
+  if (!sh) throw new Error("shader allocation failed");
+  try {
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
+    }
+    return sh;
+  } catch (error) {
+    // A failed shader is never useful to a retry. Avoid leaking it on the
+    // native-per-chart path; context-loss invalidates every handle implicitly.
+    if (!gl.isContextLost()) gl.deleteShader(sh);
+    throw error;
   }
-  return sh;
 }
+
+export type ShaderResolver = (type: number, source: string) => WebGLShader;
 
 // Fixed vertex-attribute slots, bound before linking so every program sees the
 // same location for a given attribute name. This is what lets one VAO serve
@@ -42,25 +52,51 @@ export const ATTR_SLOTS = {
   a_rgba2: 13,
 };
 
-export function makeProgram(gl, vs, fs) {
+export function makeProgram(gl, vs, fs, resolveShader?: ShaderResolver) {
   const p = gl.createProgram();
-  const vsh = compile(gl, gl.VERTEX_SHADER, vs);
-  const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
-  gl.attachShader(p, vsh);
-  gl.attachShader(p, fsh);
-  for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
-    gl.bindAttribLocation(p, slot, name); // no-op for names a shader lacks
-  }
-  gl.linkProgram(p);
-  const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
-  const info = gl.getProgramInfoLog(p);
-  gl.detachShader(p, vsh);
-  gl.detachShader(p, fsh);
-  gl.deleteShader(vsh);
-  gl.deleteShader(fsh);
-  if (!ok) {
-    gl.deleteProgram(p);
-    throw new Error("program link: " + info);
+  if (!p) throw new Error("program allocation failed");
+  const borrowed = typeof resolveShader === "function";
+  let vsh = null;
+  let fsh = null;
+  let vertexAttached = false;
+  let fragmentAttached = false;
+  try {
+    vsh = borrowed ? resolveShader(gl.VERTEX_SHADER, vs) : compile(gl, gl.VERTEX_SHADER, vs);
+    fsh = borrowed ? resolveShader(gl.FRAGMENT_SHADER, fs) : compile(gl, gl.FRAGMENT_SHADER, fs);
+    if (!vsh || !fsh) throw new Error("shader allocation failed");
+    gl.attachShader(p, vsh);
+    vertexAttached = true;
+    gl.attachShader(p, fsh);
+    fragmentAttached = true;
+    for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
+      gl.bindAttribLocation(p, slot, name); // no-op for names a shader lacks
+    }
+    gl.linkProgram(p);
+    const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
+    const info = gl.getProgramInfoLog(p);
+    if (!ok) throw new Error("program link: " + info);
+
+    gl.detachShader(p, vsh);
+    vertexAttached = false;
+    gl.detachShader(p, fsh);
+    fragmentAttached = false;
+    // Host-resolved shaders are immutable shared objects retained for future
+    // client-owned links. The native path continues to release them eagerly.
+    if (!borrowed) {
+      gl.deleteShader(vsh);
+      gl.deleteShader(fsh);
+    }
+  } catch (error) {
+    if (!gl.isContextLost()) {
+      if (vertexAttached && vsh) gl.detachShader(p, vsh);
+      if (fragmentAttached && fsh) gl.detachShader(p, fsh);
+      if (!borrowed) {
+        if (vsh) gl.deleteShader(vsh);
+        if (fsh) gl.deleteShader(fsh);
+      }
+      gl.deleteProgram(p);
+    }
+    throw error;
   }
   // Uniform-location cache (renderer audit R1): draw paths look locations up
   // by name every frame; memoize per program so each name hits the driver once.
@@ -978,6 +1014,47 @@ void main() {
   // matches the band's own fill (the edgecolors="face" convention the point
   // and rect programs already follow), and both exporters stroke each band in
   // one flat colour, so the client must not ramp where they cannot.
+  v_rgba0 = a_rgba;
+  v_side = side;
+  v_t = t;
+}`;
+
+// One funnel segment per instance: a 4-vertex strip between two cross spans
+// at two stage-axis positions — a straight, transposable ribbon. It shares
+// RIBBON_FS (same v_side/v_t/v_rgba contract), which is where the slanted
+// edges get their fwidth coverage: the GL context is antialias:false, so
+// without it the funnel's long diagonals staircase. Each of the six columns
+// keeps its own meta uniform, so nothing is re-encoded client-side.
+export const FUNNEL_VS = `#version 300 es
+in float ax0; in float ax1; in float ay0; in float ay1; in float ax2; in float ay2;
+in vec4 a_rgba;
+uniform vec2 u_pmap; uniform vec2 u_cmap;
+uniform vec2 u_p0meta; uniform vec2 u_p1meta;
+uniform vec2 u_l0meta; uniform vec2 u_h0meta; uniform vec2 u_l1meta; uniform vec2 u_h1meta;
+uniform int u_pmode; uniform float u_pconstant; uniform int u_cmode; uniform float u_cconstant;
+uniform int u_horizontal;
+out vec4 v_rgba;
+flat out vec4 v_rgba0;
+out float v_side;
+out float v_t;
+${AXIS_GLSL}
+void main() {
+  float P0 = xyMap(ax0, u_pmap, u_p0meta, u_pmode, u_pconstant);
+  float P1 = xyMap(ax1, u_pmap, u_p1meta, u_pmode, u_pconstant);
+  float L0 = xyMap(ay0, u_cmap, u_l0meta, u_cmode, u_cconstant);
+  float H0 = xyMap(ay1, u_cmap, u_h0meta, u_cmode, u_cconstant);
+  float L1 = xyMap(ax2, u_cmap, u_l1meta, u_cmode, u_cconstant);
+  float H1 = xyMap(ay2, u_cmap, u_h1meta, u_cmode, u_cconstant);
+  float t = floor(float(gl_VertexID) * 0.5);
+  float side = float(gl_VertexID & 1);
+  float pos = mix(P0, P1, t);
+  // Straight edges in clip space — the affine image of transformed space,
+  // which is exactly the line the exporters draw after mapping the corners.
+  float cross = mix(mix(L0, L1, t), mix(H0, H1, t), side);
+  gl_Position = u_horizontal == 1
+    ? vec4(pos, cross, 0.0, 1.0)
+    : vec4(cross, pos, 0.0, 1.0);
+  v_rgba = a_rgba;
   v_rgba0 = a_rgba;
   v_side = side;
   v_t = t;

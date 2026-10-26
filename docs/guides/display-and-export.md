@@ -121,7 +121,8 @@ chart.to_html("chart.html")
 HTML export is self-contained: it includes the chart spec, binary data, and
 bundled render client. It keeps the interactions supported by that chart and
 coordinate system—zoom, pan, hover, and selection on ordinary Cartesian
-charts, with the narrower radial-zoom/hover/reset contract on polar charts—and
+charts, with the narrower hover contract on polar charts, whose radial zoom is
+opt-in except on a wind rose—and
 built-in chart chrome. It does not need a browser or network connection at
 export time.
 

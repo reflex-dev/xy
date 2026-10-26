@@ -131,6 +131,10 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="legend_swatch"] > svg){display:block;width:100%;height:100%}
 :where(.xy [data-xy-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
 :where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
+:where(.xy [data-xy-slot="colorbar_line"][data-xy-colorbar-orientation="horizontal"]){border-left:var(--xy-colorbar-line-width,1px) var(--xy-colorbar-line-style,solid) var(--xy-colorbar-line-color,currentColor)}
+:where(.xy [data-xy-slot="colorbar_line"][data-xy-colorbar-orientation="vertical"]){border-top:var(--xy-colorbar-line-width,1px) var(--xy-colorbar-line-style,solid) var(--xy-colorbar-line-color,currentColor)}
+:where(.xy [data-xy-slot="colorbar_minor_tick"][data-xy-colorbar-orientation="horizontal"]){height:3px;border-left:1px solid currentColor}
+:where(.xy [data-xy-slot="colorbar_minor_tick"][data-xy-colorbar-orientation="vertical"]){width:3px;border-top:1px solid currentColor}
 :where(.xy [data-xy-slot="colorbar_title"]){font-weight:400}
 :where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,var(--xy-badge-text));background:var(--chart-badge-bg,var(--xy-badge-bg));box-shadow:var(--xy-badge-shadow)}
@@ -160,8 +164,8 @@ export const XY_CHROME_CSS = `
 :where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-menu-trigger]{min-width:60px;gap:3px;padding:0 5px;color:var(--xy-modebar-text-strong);font-size:12px;font-variant-numeric:tabular-nums}
 :where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-select-trigger]{min-width:47px;gap:4px;padding:0 6px}
 :where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-action="pan"],:where(.xy) button[data-xy-slot="modebar_button"][data-xy-modebar-export-trigger]{min-width:28px;width:28px;padding:0}
-:where(.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
-:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
+:where(.xy [data-xy-slot="modebar_icon"],.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
+:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transform:var(--xy-modebar-indicator-flip,none);transition:transform .15s}
 :where(.xy) button[data-xy-slot="modebar_button"] [data-xy-modebar-menu-indicator] svg{width:10px;height:10px;color:var(--xy-modebar-text-subtle)}
 :where(.xy [data-xy-modebar-menu]){box-sizing:border-box;width:144px;gap:0;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-border);border-radius:8px;color:var(--xy-modebar-text);box-shadow:var(--xy-modebar-menu-shadow)}
 :where(.xy [data-xy-modebar-export-menu]){width:112px}
@@ -182,6 +186,8 @@ export const XY_CHROME_CSS = `
 :where(.xy [data-xy-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,var(--xy-selection));stroke-width:1.5;cursor:grab;pointer-events:all}
 :where(.xy [data-xy-selection-lasso-handle][data-xy-active]){cursor:grabbing;fill:var(--chart-selection,var(--xy-selection))}
 :where(.xy [data-xy-slot="crosshair_x"],.xy [data-xy-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.xy [data-xy-slot="axis_band"]){cursor:var(--xy-axis-band-cursor)}
+:where(.xy [data-xy-slot="axis_line"],.xy [data-xy-slot="tick_mark"]){width:var(--xy-axis-rule-width);height:var(--xy-axis-rule-height);background:var(--xy-axis-rule-paint)}
 :where(.xy [data-xy-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px;font-weight:400}
 :where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:400;color:var(--chart-annotation-text,var(--chart-text,inherit))}

@@ -15,7 +15,7 @@ Implementation: `python/xy/components.py` (`interaction_config`, `Chart`,
 `_interaction_spec`), `python/xy/channel.py` (kernel-side dispatch),
 `js/src/53_interaction.ts` (gestures, modebar, view state machine),
 `js/src/50_chartview.ts` (flag resolution, link channel),
-`python/reflex-xy/reflex_xy/` (Reflex event props).
+`python/reflex_xy/` (Reflex event props).
 
 ## 1. How a switch resolves
 
@@ -130,8 +130,13 @@ therefore means containment, not gesture removal.
 Polar radial zoom is the deliberate exception to cursor anchoring: it always
 uses anchor `0`, preserving `r_min` and scaling only `r_max`. An interior radial
 anchor would lift the minimum and turn an ordinary disc zoom into an annulus.
-Theta pan/zoom, box gestures, selection, brush, and crosshair are disabled for
-polar; see `spec/design/polar-axes.md` §8.
+It is also the exception to `zoom` defaulting on: because the centre is a fixed
+point, zooming a constant-rim composition (pie, radial bar, gauge, radar) crops
+it instead of navigating it, so `coords="polar"` resolves `zoom` to `False` and
+ships the flag explicitly. `wind_rose` — whose radius is a frequency count —
+ships `True`, and `interaction_config(zoom=…)` overrides either. Theta pan/zoom,
+box gestures, selection, brush, and crosshair are disabled for polar; see
+`spec/design/polar-axes.md` §8.
 
 An axis is **contained** when zoom navigation can change it but pan cannot:
 `navigation` and `zoom` are enabled, the axis is in `zoom_axes`, and either
@@ -220,7 +225,7 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
   `on_brush` always fires before `on_select` for the same gesture; that
   ordering is an invariant and is tested.
 
-Reflex props (`python/reflex-xy/reflex_xy/component.py`) are the live-mode
+Reflex props (`python/reflex_xy/component.py`) are the live-mode
 mirror: `on_point_hover(row)`, `on_point_click(row)`,
 `on_select_end({total, x0, x1, y0, y1, polygon, cleared})`, and
 `on_view_change(msg)`. `on_view_change` is resolved in the browser and never
@@ -513,6 +518,13 @@ non-bool hidden) are dropped without mutating state.
   compares that stamp against its current hidden set and drops
   stale-predicate replies; drills ship only visible rows with canonical
   `shipped_sel`.
+
+**Accessibility compatibility exception.** Legend-hidden ordinary point-series
+rows remain in keyboard traversal in their full retained CPU order, so a screen
+reader can still inspect them and the announced `Point N of total` denominator
+does not change under a visual toggle. Funnel `stageNav` is geometry-semantic:
+it follows the currently visible stage/category geometry, and a whole hidden
+funnel contributes no stages to that walk.
 
 **Deliberate limits (recorded, not silent — §28):** toggles never rescale
 axes (the view is the user's; Fit Data is the re-fit tool). Toggle state

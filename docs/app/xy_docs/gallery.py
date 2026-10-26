@@ -34,20 +34,12 @@ main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   max-width: 88rem;
 }
 #xy-chart-gallery {
-  --gallery-preview-surface: #fff;
-  --gallery-preview-fill: #efeaff;
-  --gallery-preview-soft: #dccfff;
-  --gallery-preview-bar: #dccfff;
-  --gallery-preview-stroke: #a790f0;
-  --gallery-preview-strong: #8067d7;
-}
-.dark #xy-chart-gallery {
-  --gallery-preview-surface: var(--secondary-2);
-  --gallery-preview-fill: var(--primary-3);
-  --gallery-preview-soft: var(--primary-5);
-  --gallery-preview-bar: var(--primary-5);
-  --gallery-preview-stroke: var(--primary-8);
-  --gallery-preview-strong: var(--primary-9);
+  --gallery-preview-surface: var(--muted);
+  --gallery-preview-fill: var(--accent);
+  --gallery-preview-soft: var(--border);
+  --gallery-preview-bar: var(--subtle-foreground);
+  --gallery-preview-stroke: var(--muted-foreground);
+  --gallery-preview-strong: var(--foreground);
 }
 #xy-chart-gallery .preview-fill { fill: var(--gallery-preview-fill); }
 #xy-chart-gallery .preview-fill-soft { fill: var(--gallery-preview-soft); }
@@ -177,6 +169,7 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
             GalleryItem("Stem", route="/charts/stem-plot/"),
             GalleryItem("Segments", route="/charts/segments/"),
             GalleryItem("Sankey", route="/charts/sankey/"),
+            GalleryItem("Funnel", route="/charts/funnel-chart/"),
             GalleryItem("Triangle Mesh", route="/components/triangle-mesh/"),
         ),
     ),
@@ -276,6 +269,9 @@ _GALLERY_PREVIEW_ART = {
     "Sankey": """
 <path d="M85 82C122 82 124 91 157 91V108C124 108 122 99 85 99Z" class="preview-fill"/><path d="M85 102C123 102 124 130 157 130V151C124 151 122 123 85 123Z" class="preview-fill-soft"/><path d="M174 92C207 92 208 76 239 76V97C208 97 207 113 174 113Z" class="preview-fill"/><path d="M174 118C207 118 208 125 239 125V148C208 148 207 141 174 141Z" class="preview-fill-soft"/><rect x="72" y="78" width="13" height="49" rx="3" class="preview-fill-strong"/><rect x="157" y="87" width="17" height="68" rx="3" class="preview-fill-strong"/><rect x="239" y="72" width="13" height="29" rx="3" class="preview-fill-strong"/><rect x="239" y="121" width="13" height="31" rx="3" class="preview-fill-strong"/>
 """,
+    "Funnel": """
+<path d="M76 74H244L216 98H104Z" class="preview-fill"/><path d="M106 102H214L192 126H128Z" class="preview-fill-strong"/><path d="M130 130H190L178 154H142Z" class="preview-fill-soft"/><path d="M148 158H172V174H148Z" class="preview-fill"/><path d="M138 86H182M144 112H176M150 140H170" class="preview-label-line"/>
+""",
     "Triangle Mesh": """
 <path d="M72 147L105 87L143 139L175 73L214 121L249 82L262 151H72Z" class="preview-fill"/><path d="M72 147L105 87L143 139L175 73L214 121L249 82L262 151M72 147L143 139L214 121L262 151M105 87L175 73L249 82M105 87L143 139L175 73L214 121L249 82" class="preview-line preview-line-soft"/>
 """,
@@ -373,12 +369,12 @@ def _gallery_card(item: GalleryItem, group_route: str | None) -> rx.Component:
             rx.box(
                 rx.text(
                     item.title,
-                    class_name="truncate font-base text-secondary-12",
+                    class_name="truncate font-base text-foreground",
                 ),
                 ui.icon(
                     "ArrowRight01Icon",
                     size=14,
-                    class_name="text-secondary-9",
+                    class_name="text-subtle-foreground",
                 ),
                 class_name=(
                     "absolute bottom-0 flex w-full flex-row items-center justify-between px-4 py-2"
@@ -386,8 +382,8 @@ def _gallery_card(item: GalleryItem, group_route: str | None) -> rx.Component:
             ),
             class_name=(
                 "relative aspect-[320/232] overflow-hidden rounded-xl border "
-                "box-border border-secondary-5 bg-secondary-2 shadow-large "
-                "transition-bg hover:bg-secondary-3"
+                "box-border border-border bg-muted shadow-small "
+                "transition-bg hover:bg-accent"
             ),
         ),
         href=destination,
@@ -401,7 +397,7 @@ def _gallery_group_heading(group: GalleryGroup) -> rx.Component:
     """Render a linked family heading or a plain mixed-family heading."""
     heading = rx.el.h2(
         group.title,
-        class_name="font-large text-secondary-12",
+        class_name="font-large text-foreground",
     )
     if group.route is None:
         return heading
@@ -409,7 +405,7 @@ def _gallery_group_heading(group: GalleryGroup) -> rx.Component:
         heading,
         href=group.route,
         underline="none",
-        class_name="!text-inherit hover:!text-primary-10",
+        class_name="!text-inherit hover:!text-foreground",
         aria_label=f"Open the {group.title} chart family guide",
     )
 

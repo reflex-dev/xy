@@ -21,7 +21,7 @@ COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends build-essential ca-certificates git && \
     rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir uv==0.11.15
+    pip install --no-cache-dir uv==0.13.4
 
 COPY . /app
 WORKDIR /app

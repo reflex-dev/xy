@@ -1504,7 +1504,8 @@ _AXIS_BAND_PROBE = """
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
     const bandsExist = !!bandX && !!bandY;
     const cursors = bandsExist
-      && bandX.style.cursor === "ew-resize" && bandY.style.cursor === "ns-resize";
+      && getComputedStyle(bandX).cursor === "ew-resize"
+      && getComputedStyle(bandY).cursor === "ns-resize";
 
     const realRaf = window.requestAnimationFrame;
     let frames = [];
@@ -1586,11 +1587,12 @@ _AXIS_BAND_POLICY_PROBE = """
     // pan-only y band shows a grab hand, grabbing while a drag is active.
     const bandX = view.root.querySelector('[data-xy-axis-band="x"]');
     const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
-    const zoomableShowsResize = !!bandX && bandX.style.cursor === "ew-resize";
-    const panOnlyShowsGrab = !!bandY && bandY.style.cursor === "grab";
+    const zoomableShowsResize = !!bandX && getComputedStyle(bandX).cursor === "ew-resize";
+    const panOnlyShowsGrab = !!bandY && getComputedStyle(bandY).cursor === "grab";
 
     let grabbingDuringDrag = false;
     let grabRestoredAfterDrag = false;
+    let cursorRestoredWithoutInline = false;
     if (bandY) {
       const yRect = bandY.getBoundingClientRect();
       const sx = yRect.left + yRect.width / 2;
@@ -1599,14 +1601,15 @@ _AXIS_BAND_POLICY_PROBE = """
         { pointerId: 9, clientX: x, clientY: y, bubbles: true, cancelable: true });
       bandY.dispatchEvent(new PointerEvent("pointerdown", opts(sx, sy)));
       bandY.dispatchEvent(new PointerEvent("pointermove", opts(sx, sy + 40)));
-      grabbingDuringDrag = bandY.style.cursor === "grabbing";
+      grabbingDuringDrag = getComputedStyle(bandY).cursor === "grabbing";
       bandY.dispatchEvent(new PointerEvent("pointerup", opts(sx, sy + 40)));
-      grabRestoredAfterDrag = bandY.style.cursor === "grab";
+      grabRestoredAfterDrag = getComputedStyle(bandY).cursor === "grab";
+      cursorRestoredWithoutInline = bandY.style.cursor === "";
     }
 
     document.body.setAttribute("data-xy-axisband-policy-probe", JSON.stringify({
       zoomableShowsResize, panOnlyShowsGrab,
-      grabbingDuringDrag, grabRestoredAfterDrag,
+      grabbingDuringDrag, grabRestoredAfterDrag, cursorRestoredWithoutInline,
     }));
   } catch (err) {
     document.body.setAttribute(
@@ -1623,6 +1626,92 @@ def test_axis_band_respects_axis_policies(tmp_path: Path) -> None:
         tmp_path, document, "data-xy-axisband-policy-probe", label="axis-band policy probe"
     )
     assert result == {key: True for key in result}
+
+
+_AXIS_BAND_AUTHORED_CURSOR_PROBE = """
+  const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
+  try {
+    view._drawNow();
+    const bandY = view.root.querySelector('[data-xy-axis-band="y"]');
+    if (!bandY) throw new Error("missing y axis band");
+    const authoredInitially = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+    const rect = bandY.getBoundingClientRect();
+    const sx = rect.left + rect.width / 2;
+    const sy = rect.top + rect.height / 2;
+    const dispatch = (type, pointerId, y) => bandY.dispatchEvent(new PointerEvent(type, {
+      pointerId, clientX: sx, clientY: y, bubbles: true, cancelable: true,
+    }));
+
+    dispatch("pointerdown", 21, sy);
+    dispatch("pointermove", 21, sy + 40);
+    const grabbingDuringCancelledDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointercancel", 21, sy + 40);
+    const authoredAfterCancel = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 22, sy);
+    dispatch("pointermove", 22, sy + 40);
+    const grabbingDuringCompletedDrag = getComputedStyle(bandY).cursor === "grabbing";
+    dispatch("pointerup", 22, sy + 40);
+    const authoredAfterPointerUp = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    // Overlapping pointers: a second finger lands mid-pan and lifts first.
+    // Snapshotting the authored cursor per-gesture captured the controller's
+    // own `grabbing` here and replayed it back as author intent, latching the
+    // cursor permanently — a later well-formed drag did not heal it either.
+    dispatch("pointerdown", 31, sy);
+    dispatch("pointermove", 31, sy + 40);
+    dispatch("pointerdown", 32, sy);
+    dispatch("pointerup", 32, sy + 40);
+    dispatch("pointerup", 31, sy + 40);
+    const authoredAfterOverlappingPointers =
+      bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    dispatch("pointerdown", 33, sy);
+    dispatch("pointermove", 33, sy + 40);
+    dispatch("pointerup", 33, sy + 40);
+    const authoredAfterRecoveryDrag = bandY.style.getPropertyValue("cursor") === "crosshair"
+      && getComputedStyle(bandY).cursor === "crosshair";
+
+    document.body.setAttribute("data-xy-axisband-authored-cursor-probe", JSON.stringify({
+      authoredInitially,
+      grabbingDuringCancelledDrag,
+      authoredAfterCancel,
+      grabbingDuringCompletedDrag,
+      authoredAfterPointerUp,
+      authoredAfterOverlappingPointers,
+      authoredAfterRecoveryDrag,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-axisband-authored-cursor-probe-error", String((err && err.stack) || err));
+  }
+"""
+
+
+def test_axis_band_restores_authored_cursor_after_drag(tmp_path: Path) -> None:
+    document = _chart_html(
+        xy.interaction_config(pan_axes=("x", "y"), zoom_axes=("x",)),
+        styles={"axis_band": {"cursor": "crosshair"}},
+    ).replace(_RENDER_CALL, _AXIS_BAND_AUTHORED_CURSOR_PROBE)
+    result = _run(
+        tmp_path,
+        document,
+        "data-xy-axisband-authored-cursor-probe",
+        label="axis-band authored cursor restore probe",
+    )
+    assert result == {
+        "authoredInitially": True,
+        "grabbingDuringCancelledDrag": True,
+        "authoredAfterCancel": True,
+        "grabbingDuringCompletedDrag": True,
+        "authoredAfterPointerUp": True,
+        "authoredAfterOverlappingPointers": True,
+        "authoredAfterRecoveryDrag": True,
+    }
 
 
 _AXIS_BAND_EXCLUDED_PROBE = """

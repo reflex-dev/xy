@@ -23,20 +23,24 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     runtime_names = {_dependency_name(requirement) for requirement in dependencies}
 
     assert not any(name == "reflex" or name.startswith("reflex-") for name in runtime_names), (
-        "xy core must stay Reflex-free; put Reflex support in the example app "
-        "or a separate optional adapter package"
+        "plain xy must stay Reflex-free; publish the supported framework floor "
+        "through the reflex extra"
     )
 
 
-def test_core_publishes_no_optional_dependencies() -> None:
+def test_core_publishes_only_the_reflex_optional_dependency() -> None:
     data = tomllib.loads(ROOT.joinpath("pyproject.toml").read_text(encoding="utf-8"))
     project = data.get("project") or {}
     groups = data.get("dependency-groups") or {}
+    extras = project.get("optional-dependencies") or {}
 
-    assert "optional-dependencies" not in project, (
-        "contributor tools and benchmark baselines must not be published as xy extras; "
-        "put local-only tools in dependency-groups and external baselines in the pinned "
-        "benchmark environment"
+    assert set(extras) == {"reflex"}
+    assert any(
+        _dependency_name(requirement) == "reflex" and ">=0.9.6" in requirement
+        for requirement in extras["reflex"]
+    ), (
+        "xy[reflex] must select the supported Reflex floor while the adapter "
+        "source remains bundled in the xy distribution"
     )
     assert {"dev", "codspeed"} <= groups.keys()
     group_names = {
@@ -68,6 +72,6 @@ def test_core_package_does_not_import_reflex() -> None:
                     violations.append(f"{path.relative_to(ROOT)} imports from {node.module}")
 
     assert violations == [], (
-        "xy core must stay framework-free; Reflex imports belong in the "
-        f"example apps or the reflex-xy adapter package: {violations}"
+        "python/xy must stay framework-free; Reflex imports belong in the "
+        f"bundled python/reflex_xy integration: {violations}"
     )

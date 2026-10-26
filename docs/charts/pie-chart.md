@@ -1,18 +1,23 @@
 ---
 title: Pie and Donut Charts in Python
-description: Build polished pie, donut, progress-ring, and gauge blocks in Python with xy and Reflex.
+description: Create pie charts and donut charts in Python with xy. Build pie plots, progress rings, and gauge blocks with values, percentages, and custom colors.
 components:
   - xy.pie_chart
 ---
 
 # Pie and Donut Charts in Python
 
-A pie chart maps each share to an angular span. A donut uses the same sectors
+A **pie chart** (also called a pie plot or pie graph) maps each share to an
+angular span. A donut uses the same sectors
 with a positive inner radius, leaving room for a total, status, or supporting
 label. In XY, both are compositions of unequal-width bars inside
 `polar_bar_chart()`. For the standard composition, use
 `xy.pie_chart(labels, values, hole=...)`; the examples below use the lower-level
 bars directly to demonstrate custom sector geometry and dashboard layouts.
+
+Jump to [a basic pie chart](#basic-pie-chart),
+[progress rings](#progress-rings), or
+[build your own pie block](#build-your-own-pie-block).
 
 The first example keeps the chart intentionally small. The examples after it
 combine XY's exportable sector geometry with ordinary Reflex layout for center
@@ -669,10 +674,22 @@ bar mark per category.
 
 Pie blocks use the shared polar renderer. These examples set
 `xy.modebar(show=False)` to keep the presentation clean. The underlying
-interactions and APIs remain intact: sector hover, radial wheel zoom,
-double-click reset, and browser/static exports remain available. A hovered slice
-reads its own label and value; the layout angle and the constant rim radius stay
-out of the readout.
+interactions and APIs remain intact: sector hover works, and
+browser/static exports remain available. A hovered slice reads its own label and
+value; the layout angle and the constant rim radius stay out of the readout.
+
+Zoom is off by default here, as on every polar chart except the wind rose. A pie
+carries its value in the *angle* and uses the radius as a constant rim, so
+zooming would crop that rim around a fixed center rather than reveal anything —
+and leaving the wheel free means a page scrolls normally over the chart. With
+nothing to move the view, there is nothing to restore either: unless `reset_axes`
+is authored, double-click reset does nothing and the reset controls drop out of the
+modebar. An authored `reset_axes` grants both back on its own, whatever the zoom
+switch says. Add `xy.interaction_config(zoom=True)` to restore the wheel and
+double-click reset; these examples also hide the modebar with
+`xy.modebar(show=False)`, so drop that child too if you want the visible zoom and
+reset buttons. See
+[why zoom is off by default](/docs/xy/charts/polar-chart/#why-zoom-is-off-by-default).
 Center labels and legends composed in Reflex are browser UI; annotations placed
 with `xy.text()` are part of the chart and are preserved in SVG and native
 raster exports.
@@ -695,9 +712,9 @@ corner-radius, clipping, and partial-sector details.
 
 ### Does XY have a dedicated pie mark?
 
-No. Pie and donut geometry is composed from `xy.bar()` marks inside
-`xy.polar_bar_chart()`. This keeps sector styling and export behavior on the
-same renderer as radial bars.
+No. Every pie plot and donut plot on this page is composed from `xy.bar()`
+marks inside `xy.polar_bar_chart()`. This keeps sector styling and export
+behavior on the same renderer as radial bars.
 
 ### How do I add space between slices?
 

@@ -226,7 +226,10 @@ CSS subset.
 
 Annotation labels are browser DOM elements. Their `class_name` and `style`
 values can customize the label, and chart-level styling can target the stable
-`annotation_label` slot. Geometry `opacity` is independent from label text;
+`annotation_label` slot. The `annotation_layer` slot targets the entire
+canvas-painted annotation bitmap, for example to apply opacity or a filter to
+all geometry at once; CSS cannot select an individual rule, band, shaft, or
+marker inside that bitmap. Geometry `opacity` is independent from label text;
 use annotation-style `label_opacity` only when the label should also fade.
 Keep geometry in the component props when output must agree across HTML, SVG,
 and native PNG.

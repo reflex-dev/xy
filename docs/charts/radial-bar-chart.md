@@ -1,15 +1,20 @@
 ---
 title: Radial Bar Charts in Python
-description: Build polished radial bar, progress-ring, and semicircular capacity blocks in Python with xy and Reflex.
+description: Create radial bar charts in Python with xy. Build radial bar plots, progress rings, gauge charts, and semicircular capacity blocks.
 components:
   - xy.polar_bar_chart
 ---
 
 # Radial Bar Charts in Python
 
-A **radial bar chart** encodes each value as an annular sector. The bar's first
+A **radial bar chart** (also called a radial bar plot or radial bar graph)
+encodes each value as an annular sector. The bar's first
 channel is its center angle, its second is its radial height, `width` controls
 the angular span, and `base` controls the inner radius.
+
+Jump to [a basic radial bar chart](#basic-radial-bar-chart),
+[inner radius and sector geometry](#inner-radius-and-sector-geometry), or
+[partial gauges](#partial-gauges).
 
 The first example keeps that geometry intentionally small. The blocks after it
 combine XY's exportable sectors with ordinary Reflex layout for center values,
@@ -622,8 +627,8 @@ used by the progress-ring blocks above.
 
 ## Partial Gauges
 
-Use `sector=(start, end)` for a gauge whose visible arc should expand to fill
-the plot box. Rounded sectors, background-colored strokes, gradients, and
+Use `sector=(start, end)` for a gauge chart whose visible arc should expand to
+fill the plot box. Rounded sectors, background-colored strokes, gradients, and
 explicit padding work the same way on a partial layout:
 
 ~~~python
@@ -677,8 +682,18 @@ own bounding box.
 ## Interaction and Export
 
 All live blocks on this page set `xy.modebar(show=False)` to keep the
-presentation quiet. Sector hover, radial wheel zoom, double-click reset, and
-browser/static exports remain available through the shared polar renderer.
+presentation quiet. Sector hover and browser/static exports remain available
+through the shared polar renderer.
+
+Zoom is off by default, as on every polar chart except the wind rose: these
+compositions are laid out against a fixed center and a fixed outer ring, so
+zooming crops the sectors rather than revealing detail. With no gesture able to
+move the view, reset has nothing to restore either: unless `reset_axes` is
+authored, double-click is inert and the reset controls drop out of the modebar. An
+authored `reset_axes` grants both back on its own, whatever the zoom switch says.
+Add `xy.interaction_config(zoom=True)` to turn radial zoom (and reset) on when the
+sector lengths are worth magnifying — see
+[why zoom is off by default](/docs/xy/charts/polar-chart/#why-zoom-is-off-by-default).
 
 Reflex-composed center values, rails, statistics, and custom legends are browser
 UI. The radial sectors themselves remain part of the XY chart and are preserved

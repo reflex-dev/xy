@@ -11,8 +11,8 @@ Every styling question about XY has the same two halves: *can I change this*,
 and *does the change survive where I need it*. This page answers both from the
 registry the implementation is checked against.
 
-- **11** mark style properties across **21** mark kinds, drawn by all three renderers.
-- **29** stable chrome slots for CSS and Tailwind in the browser.
+- **11** mark style properties across **22** mark kinds, drawn by all three renderers.
+- **48** stable chrome slots for CSS and Tailwind in the browser.
 - **1** way to add a mark kind XY does not ship, without forking it.
 
 ## Mark style properties
@@ -22,12 +22,12 @@ built — one renderer never silently ignores what another draws.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|
-| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
 | `fill` | svg | `area`, `bar`, `box`, `column`, `error_band`, `hist`, `histogram`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
@@ -60,6 +60,7 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `title` | full | partial | partial |
 | `chrome` | full | none | none |
 | `canvas` | full | none | none |
+| `annotation_layer` | full | none | none |
 | `labels` | full | none | none |
 | `legend` | full | partial | partial |
 | `legend_title` | full | partial | partial |
@@ -68,7 +69,10 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `legend_label` | full | partial | partial |
 | `colorbar` | full | partial | partial |
 | `colorbar_bar` | full | none | none |
+| `colorbar_extension` | full | none | none |
+| `colorbar_line` | full | none | none |
 | `colorbar_tick` | full | partial | partial |
+| `colorbar_minor_tick` | full | none | none |
 | `colorbar_title` | full | partial | partial |
 | `tooltip` | full | none | none |
 | `tooltip_title` | full | none | none |
@@ -76,12 +80,27 @@ token bag or in mark and axis `style=`, which every renderer reads.
 | `tooltip_label` | full | none | none |
 | `tooltip_value` | full | none | none |
 | `modebar` | full | none | none |
+| `modebar_drag_handle` | full | none | none |
+| `modebar_control_group` | full | none | none |
+| `modebar_separator` | full | none | none |
 | `modebar_button` | full | none | none |
+| `modebar_icon` | full | none | none |
+| `modebar_zoom_value` | full | none | none |
+| `modebar_indicator` | full | none | none |
+| `modebar_selection_icon` | full | none | none |
+| `modebar_menu` | full | none | none |
+| `modebar_menu_separator` | full | none | none |
+| `modebar_menu_icon` | full | none | none |
+| `modebar_menu_label` | full | none | none |
+| `modebar_history_controls` | full | none | none |
 | `selection` | full | none | none |
 | `crosshair_x` | full | none | none |
 | `crosshair_y` | full | none | none |
 | `badge` | full | none | none |
 | `badge_item` | full | none | none |
+| `axis_band` | full | none | none |
+| `axis_line` | full | none | none |
+| `tick_mark` | full | none | none |
 | `tick_label` | full | partial | partial |
 | `axis_title` | full | partial | partial |
 | `annotation_label` | full | none | none |
