@@ -460,6 +460,9 @@ def test_print_png_preserves_text_metadata_and_rejects_unsupported_pil_kwargs() 
         canvas.print_png(io.BytesIO(), pil_kwargs={"compress_level": 1})
     with pytest.raises(ValueError, match="null characters"):
         canvas.print_png(io.BytesIO(), metadata={"Title": "bad\0value"})
+    for key in (" bad", "bad ", "bad  key", "bad\x01key", "bad\x80key"):
+        with pytest.raises(ValueError, match="metadata keys"):
+            canvas.print_png(io.BytesIO(), metadata={key: "value"})
 
 
 def test_timer_callback_may_flush_events_without_recursive_redispatch() -> None:

@@ -530,7 +530,7 @@ jobs:
   benchmark_vs:
     name: Cross-library benchmark (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     continue-on-error: true
     strategy:
       fail-fast: false

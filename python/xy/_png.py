@@ -60,8 +60,19 @@ def with_metadata(data: bytes, metadata: Mapping[Any, Any]) -> bytes:
             encoded_key = key.encode("latin-1", "strict")
         except UnicodeEncodeError:
             encoded_key = b""
-        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
-            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
+        invalid_keyword = (
+            not encoded_key
+            or len(encoded_key) > 79
+            or encoded_key.startswith(b" ")
+            or encoded_key.endswith(b" ")
+            or b"  " in encoded_key
+            or any(byte < 32 or 127 <= byte <= 160 for byte in encoded_key)
+        )
+        if invalid_keyword:
+            raise ValueError(
+                "PNG metadata keys must be 1-79 printable Latin-1 characters "
+                "with single interior spaces"
+            )
         try:
             payload = encoded_key + b"\0" + value.encode("latin-1")
             chunks.append(_chunk(b"tEXt", payload))
