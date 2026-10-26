@@ -162,7 +162,11 @@ bundle. Its version must match the exact Playwright devDependency in
 `package.json` and `package-lock.json`; update the image digest and verifier
 contract together when upgrading Playwright. The job verifies the binary paths
 and runs the same Chromium/Firefox/WebKit WebGL and accessibility checks under
-Xvfb, with a ten-minute total timeout and a five-minute conformance-step timeout.
+Xvfb, with a fifteen-minute total timeout and a five-minute conformance-step timeout.
+The job budget covers the five-minute npm setup, one-minute preflight and
+five-minute conformance limits, plus four minutes for checkout and other setup.
+The verifier checks the preflight's exact active `run` body, so comments or an
+empty engine loop cannot satisfy the executable-path checks.
 It performs no apt or browser-engine installation. Its image pull is still a
 network operation; the workflow does not assume hosted runners retain Docker
 layers between runs. Other Chromium-only jobs keep their existing lockfile-keyed
@@ -319,7 +323,7 @@ These must pass before publishing.
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
 | sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` and `reflex` extras with their supported ranges) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info` (numeric local versions compare without leading zeros), complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |

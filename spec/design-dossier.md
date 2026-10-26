@@ -1256,6 +1256,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
+- **Artifact version identity.** Wheel filename and `.dist-info` versions must
+  agree; `METADATA` also agrees after stripping leading zeros from an all-digit
+  local version. An all-numeric Git hash such as `06589443` can appear in
+  metadata while Hatchling writes `6589443` in the artifact name. Different
+  public versions or numeric values still fail verification (§33).
 - **Comm-protocol versioning.** The native core and JS client ship together but can
   drift (cached notebook outputs, pinned server assets). The first-paint spec carries
   a protocol version; mismatch fails **loudly with an upgrade hint**, never silently

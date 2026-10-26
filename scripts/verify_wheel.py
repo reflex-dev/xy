@@ -189,13 +189,22 @@ def _require_filename_tag(path: Path, tags: list[str]) -> None:
         )
 
 
+def _normalize_numeric_local_version(version: str) -> str:
+    # Hatchling normalizes an all-digit commit hash in the filename/dist-info,
+    # while uv-dynamic-versioning can preserve its leading zeros in METADATA.
+    # Numeric local versions compare as integers under PEP 440 (§33).
+    return re.sub(r"(?<=\+)0+(?=[0-9]+$)", "", version)
+
+
 def _require_metadata(names: set[str], data: bytes, expected_version: str) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
     if metadata.get("Name", "").strip() != "xy":
         missing.append("Name: xy")
-    if metadata.get("Version", "").strip() != expected_version:
+    if _normalize_numeric_local_version(
+        metadata.get("Version", "").strip()
+    ) != _normalize_numeric_local_version(expected_version):
         missing.append(f"Version: {expected_version}")
     if metadata.get("Requires-Python", "").strip() != ">=3.11":
         missing.append("Requires-Python: >=3.11")

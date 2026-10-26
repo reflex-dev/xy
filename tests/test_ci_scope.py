@@ -382,7 +382,8 @@ def test_conformance_reuses_pinned_browser_image_instead_of_installing_engines()
         r"mcr\.microsoft\.com/playwright:v" + re.escape(version) + r"-noble@sha256:[0-9a-f]{64}",
         job["container"]["image"],
     )
-    assert job["timeout-minutes"] == 10
+    step_budget = sum(step.get("timeout-minutes", 0) for step in job["steps"])
+    assert job["timeout-minutes"] >= step_budget + 4
     assert job["env"]["PLAYWRIGHT_BROWSERS_PATH"] == "/ms-playwright"
     commands = "\n".join(step.get("run", "") for step in job["steps"])
     assert "playwright install" not in commands

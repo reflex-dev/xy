@@ -212,6 +212,27 @@ def test_verify_native_wheel_accepts_required_artifact_shape(tmp_path: Path) -> 
     verify_wheel.verify_wheel(whl, expect_native=True)
 
 
+@pytest.mark.parametrize("metadata_local", ["06589443", "006589443", "6589443"])
+def test_metadata_accepts_normalized_numeric_commit(metadata_local: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: 0.0.9.dev24+{metadata_local}")
+    verify_wheel._require_metadata(
+        {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+        metadata.encode(),
+        "0.0.9.dev24+6589443",
+    )
+
+
+@pytest.mark.parametrize("metadata_version", ["0.0.9.dev24+06589444", "0.0.9.dev25+06589443"])
+def test_metadata_rejects_different_numeric_commit_version(metadata_version: str) -> None:
+    metadata = DEFAULT_METADATA.replace("Version: 0.0.1", f"Version: {metadata_version}")
+    with pytest.raises(AssertionError, match="Version:"):
+        verify_wheel._require_metadata(
+            {"xy-0.0.9.dev24+6589443.dist-info/METADATA"},
+            metadata.encode(),
+            "0.0.9.dev24+6589443",
+        )
+
+
 def test_verify_pure_wheel_accepts_required_artifact_shape(tmp_path: Path) -> None:
     whl = tmp_path / "xy-0.0.1-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-any", root_is_purelib=True, native=False)

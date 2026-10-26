@@ -610,7 +610,7 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.conformance == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     container:
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
       options: --ipc=host

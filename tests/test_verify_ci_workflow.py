@@ -1556,6 +1556,22 @@ def test_ci_workflow_rejects_unpinned_browser_image(tmp_path: Path) -> None:
     )
 
 
+def test_ci_workflow_rejects_inactive_browser_preflight(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    mutations = [
+        ("accessSync(browser.executablePath());", "// accessSync(browser.executablePath());"),
+        ("accessSync(browser.executablePath());", "/* accessSync(browser.executablePath()); */"),
+        ("[chromium, firefox, webkit]", "[]"),
+    ]
+    for original, replacement in mutations:
+        mutated = text.replace(original, replacement)
+        assert mutated != text
+        path = tmp_path / "ci.yml"
+        path.write_text(mutated, encoding="utf-8")
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any("browser preflight" in error for error in errors), errors
+
+
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
