@@ -42,9 +42,11 @@ gh workflow run build_release_artifacts.yml \
   -f artifact-prefix=dry-run--
 ```
 
-The optional `tag` input can test a specific valid release-version shape. The
-manual workflow builds and verifies artifacts only; it has no PyPI upload, tag,
-or GitHub release step.
+Leaving `tag` empty is the normal dry-run path. To test version derivation,
+supply a valid **unused** tag: every matrix checkout fetches existing tags and
+then creates the requested tag locally, so an existing release tag fails by
+design. The local tag is never pushed. The manual workflow builds and verifies
+artifacts only; it has no PyPI upload, tag-push, or GitHub release step.
 
 ## 2. Materialize the changelog
 
@@ -163,10 +165,31 @@ Do not call the release complete until all of these pass:
   manifest; and
 - the post-release docs deployment dispatch.
 
-Confirm PyPI exposes the version and expected files:
+Confirm PyPI exposes the version and at least one file matching every artifact
+pattern required by `[tool.reflex-release]`:
 
 ```bash
-curl --fail https://pypi.org/pypi/xy/X.Y.Z/json
+VERSION=X.Y.Z python3 - <<'PY'
+import fnmatch
+import json
+import os
+import tomllib
+import urllib.request
+
+version = os.environ["VERSION"]
+request = urllib.request.Request(
+    f"https://pypi.org/pypi/xy/{version}/json",
+    headers={"User-Agent": "xy-release-checklist"},
+)
+with urllib.request.urlopen(request) as response:
+    filenames = {item["filename"] for item in json.load(response)["urls"]}
+with open("pyproject.toml", "rb") as pyproject:
+    builds = tomllib.load(pyproject)["tool"]["reflex-release"]["custom-build"]
+patterns = next(build["expect-artifacts"] for build in builds if "xy" in build["packages"])
+missing = [pattern for pattern in patterns if not any(fnmatch.fnmatch(name, pattern) for name in filenames)]
+assert not missing, f"PyPI is missing expected xy artifacts: {missing}"
+print("\n".join(sorted(filenames)))
+PY
 ```
 
 Create a new environment outside the repository so the checkout cannot shadow
@@ -276,13 +299,35 @@ causes `release_from_changelog.yml` to retry the same untagged version. A manual
 dispatch of that workflow on the branch can also re-check it. Do not create a
 tag or release to recover the run.
 
-### PyPI accepted only some files, or tagging failed after upload
+### PyPI accepted only some files, or the tag push failed
 
 Leave every accepted PyPI file unchanged. Re-run the same release pipeline for
 the same changelog version and commit. `uv publish --check-url
 https://pypi.org/simple/` skips files already present and uploads any missing
-ones; after a successful upload, `tag-and-release` can safely finish the tag and
-GitHub release. Never force-move a resulting tag.
+ones. If no tag exists, `tag-and-release` can safely retry the tag push and
+GitHub release. Never create or force-move the tag manually.
+
+### The tag exists but GitHub release creation failed
+
+The publish is complete and the tag is immutable. Do not rerun the changelog
+pipeline: detection may no-op once it sees the tag. Download the failed run's
+`publish-xy` artifact, which contains the exact `release_notes.md` and
+`SHA256SUMS` produced before approval, then create the missing release from the
+existing tag:
+
+```bash
+gh run download RUN_ID --repo reflex-dev/xy --name publish-xy
+gh release create vX.Y.Z \
+  --repo reflex-dev/xy \
+  --verify-tag \
+  --title vX.Y.Z \
+  --notes-file release_notes.md \
+  SHA256SUMS
+```
+
+Add `--prerelease` for a prerelease. Confirm the release targets the immutable
+tag and contains the saved checksum manifest before manually dispatching the
+post-release docs workflow if it did not run.
 
 ### The Python floor fails because Reflex is missing
 
