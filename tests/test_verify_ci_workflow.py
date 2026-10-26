@@ -1740,3 +1740,58 @@ def test_workflows_reject_fetch_depth_hidden_in_scalar_input(tmp_path: Path) -> 
         errors = validate(path)
 
         assert any("fetch-depth: 0" in error for error in errors)
+
+
+def test_summary_requires_every_blocking_dependency(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    dependencies = [
+        "changes",
+        "build",
+        "test",
+        "python_floor",
+        "matplotlib_reference",
+        "matplotlib_patch_smoke",
+        "pyplot_gallery",
+        "pyplot_gallery_extended",
+        "browser_conformance",
+        "sdist",
+        "wheels",
+        "install_without_rust",
+    ]
+    for removed in dependencies:
+        remaining = [job for job in dependencies if job != removed]
+        mutated = re.sub(r"    needs: \[.*\]", f"    needs: [{', '.join(remaining)}]", summary)
+        path = tmp_path / f"missing-{removed}.yml"
+        path.write_text(prefix + "  result:\n" + mutated)
+        assert any("summary" in error for error in verify_ci_workflow.validate_ci_workflow(path))
+
+
+def test_summary_requires_failure_and_selection_assertions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    mutations = [
+        ("assert not failed,", "assert True,"),
+        ("assert results['changes']['result'] == 'success',", "assert True,"),
+        ("('success', 'skipped')", "('success', 'skipped', 'failure')"),
+        ("    if: always()", "    if: false"),
+        ("    name: CI result", "    name: CI result\n    continue-on-error: true"),
+    ]
+    for index, (before, after) in enumerate(mutations):
+        assert before in summary
+        path = tmp_path / f"weakened-summary-{index}.yml"
+        path.write_text(prefix + "  result:\n" + summary.replace(before, after))
+        assert any("summary" in error for error in verify_ci_workflow.validate_ci_workflow(path))
+
+
+def test_python_floor_installs_yaml_for_workflow_tests(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    floor = jobs["python_floor"]
+    # Only mutate the floor lane: a dependency in another job cannot satisfy it.
+    path = tmp_path / "floor-without-yaml.yml"
+    path.write_text(workflow.replace(floor, floor.replace('            "pyyaml>=6" \\\n', "")))
+    assert any(
+        "floor" in error and "pyyaml" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )

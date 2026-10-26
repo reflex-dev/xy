@@ -139,8 +139,26 @@ def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
     assert environment.read_text() == "XY_SKIP_CARGO=1\n"
 
 
-@pytest.mark.parametrize("failed_job", ["build", "test", "pyplot_gallery", None])
-def test_ci_summary_rejects_selected_failures(tmp_path, failed_job):
+@pytest.mark.parametrize(
+    "failed_job",
+    [
+        "changes",
+        "build",
+        "test",
+        "python_floor",
+        "matplotlib_reference",
+        "matplotlib_patch_smoke",
+        "pyplot_gallery",
+        "pyplot_gallery_extended",
+        "browser_conformance",
+        "sdist",
+        "wheels",
+        "install_without_rust",
+        None,
+    ],
+)
+@pytest.mark.parametrize("status", ["failure", "cancelled"])
+def test_ci_summary_rejects_selected_failures(tmp_path, failed_job, status):
     import json
 
     workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
@@ -148,7 +166,7 @@ def test_ci_summary_rejects_selected_failures(tmp_path, failed_job):
     results = {name: {"result": "skipped"} for name in result["needs"]}
     results["changes"]["result"] = "success"
     if failed_job:
-        results[failed_job]["result"] = "failure"
+        results[failed_job]["result"] = status
     completed = subprocess.run(
         ["bash", "-e", "-c", result["steps"][0]["run"]],
         cwd=tmp_path,
@@ -176,3 +194,19 @@ def test_ci_pr_skips_pyplot_unless_compatibility_also_changes(reverse):
     if reverse:
         paths.reverse()
     assert select_checks(paths)["pyplot"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "benchmarks/bench_scatter_native.py",
+        "benchmarks/bench_transport.py",
+        "scripts/bench_native.py",
+        "scripts/bench.py",
+    ],
+)
+def test_benchmark_inputs_select_blocking_runtime_checks(path):
+    selected = select_checks([path])
+    assert selected["runtime"]
+    assert selected["benchmarks"]
+    assert not selected["pyplot"]

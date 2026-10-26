@@ -35,7 +35,7 @@ def select_checks(paths: list[str], *, full: bool = False) -> dict[str, bool]:
         }:
             selected["runtime"] = selected["pyplot"] = True
         elif path.startswith(("benchmarks/", "scripts/bench")):
-            selected["benchmarks"] = True
+            selected["runtime"] = selected["benchmarks"] = True
         elif path.startswith(("tests/", "examples/")) or path.startswith(".binder/"):
             selected["runtime"] = True
         else:

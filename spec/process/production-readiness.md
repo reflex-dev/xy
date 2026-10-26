@@ -57,7 +57,7 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | Only `docs/`, `spec/`, `news/`, README, changelog, contributor instructions or license | Selector and summary; the separate Docs workflow handles its matching paths |
 | `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
 | Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
-| `benchmarks/` or `scripts/bench*` | Cross-library and methodology benchmarks, plus their report merge |
+| `benchmarks/` or `scripts/bench*` | Blocking runtime/Python-floor regression checks plus advisory cross-library/methodology benchmarks and their report merge |
 | Shared Python, Rust, JS, dependency/build configuration, CI, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
 
 Mixed PRs take the union. On pull requests, the reference/patch jobs, both gallery
@@ -71,7 +71,10 @@ step follows the same compatibility output. Benchmarks remain advisory; selected
 correctness, gallery, browser and packaging lanes remain blocking. `CI result`
 rejects failed/cancelled hard dependencies and accepts intentionally skipped
 lanes, so it also completes on docs-only PRs. Repositories can require this
-stable status instead of individually selected jobs. Workflow changes do not
+stable status instead of individually selected jobs. The verifier protects every
+blocking summary dependency and its exact failure/selection assertions, including
+packaging failures. The Python-floor environment explicitly installs PyYAML for
+the workflow tests. Workflow changes do not
 change repository branch-protection settings automatically.
 
 One `ubuntu-24.04` producer builds and verifies a native Linux x64 wheel at the

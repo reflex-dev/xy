@@ -44,6 +44,30 @@ REQUIRED_CI_JOBS = {
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 
+CI_SUMMARY_DEPENDENCIES = (
+    "changes",
+    "build",
+    "test",
+    "python_floor",
+    "matplotlib_reference",
+    "matplotlib_patch_smoke",
+    "pyplot_gallery",
+    "pyplot_gallery_extended",
+    "browser_conformance",
+    "sdist",
+    "wheels",
+    "install_without_rust",
+)
+CI_SUMMARY_COMMANDS = [
+    "python3 - <<'PY'",
+    "import json, os",
+    "results = json.loads(os.environ['RESULTS'])",
+    "failed = [name for name, job in results.items() if job['result'] not in ('success', 'skipped')]",
+    'assert not failed, f"CI jobs failed or cancelled: {failed}"',
+    "assert results['changes']['result'] == 'success', 'CI selection must succeed'",
+    "PY",
+]
+
 
 def _job_blocks(text: str) -> dict[str, str]:
     lines = text.splitlines()
@@ -732,6 +756,36 @@ def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_l
         )
 
 
+def _require_ci_summary(errors: list[str], jobs: dict[str, str]) -> None:
+    """Protect the aggregate required check from omitted or weakened gates."""
+    summary = jobs.get("result", "")
+    for key, expected in (
+        ("needs", f"[{', '.join(CI_SUMMARY_DEPENDENCIES)}]"),
+        ("if", "always()"),
+    ):
+        values, ambiguous = _direct_yaml_key_values(summary, key, indent=4)
+        if ambiguous or values != [expected]:
+            errors.append(f"CI summary must define {key}: {expected}")
+    if _has_yaml_key(summary, "continue-on-error", indent=4):
+        errors.append("CI summary must be blocking")
+    step = _named_step_blocks(summary).get("Require selected checks to succeed", "")
+    if (
+        _direct_yaml_key_count(step, "run", indent=8) != 1
+        or _step_run_lines(step) != CI_SUMMARY_COMMANDS
+        or any(
+            _has_yaml_key(step, key, indent=8)
+            for key in (
+                "if",
+                "continue-on-error",
+                "shell",
+                "working-directory",
+            )
+        )
+        or "RESULTS: ${{ toJSON(needs) }}" not in step
+    ):
+        errors.append("CI summary must run the reviewed failure and selection assertions")
+
+
 def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -806,6 +860,14 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/verify_wheel.py dist/*.whl --expect-native",
         "name: ci-linux-wheel",
         "actions/upload-artifact@",
+    )
+    _require_ci_summary(errors, jobs)
+    _require_step_contains(
+        errors,
+        jobs.get("python_floor", ""),
+        "Install package and compatibility test dependencies for Python 3.11",
+        "Python floor pyyaml workflow-test dependency",
+        '"pyyaml>=6"',
     )
     _require_unshallow_checkouts(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))

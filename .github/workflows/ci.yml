@@ -599,6 +599,7 @@ jobs:
             dist/*.whl \
             "pytest>=8,<9" \
             "pillow>=10" \
+            "pyyaml>=6" \
             "matplotlib==3.11.0"
 
       - name: Public API coherence
