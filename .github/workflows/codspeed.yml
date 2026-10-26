@@ -9,7 +9,6 @@ on:
       - "spec/**"
       - "news/**"
       - "*.md"
-      - "python/xy/pyplot/**"
       - "python/xy/backends/**"
       - "tests/**"
       - "gallery/**"

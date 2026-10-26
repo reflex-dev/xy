@@ -18,6 +18,7 @@ def select_checks(paths: list[str], *, full: bool = False) -> dict[str, bool]:
             "LICENSE",
             "CONTRIBUTING.md",
             "AGENTS.md",
+            "CLAUDE.md",
         }:
             continue
         if path.startswith(

@@ -89,7 +89,8 @@ test/debug targets. The Linux x64 packaging smoke repairs and installs the same
 wheel without waiting for the whole runtime suite. ARM64 and Windows builds,
 sdist source-build probes, and the deliberately coreless build remain independent.
 CodSpeed and Docs retain independent environments/builds across workflows;
-CodSpeed PR filters omit compatibility-only changes, tests, docs and news.
+CodSpeed PR filters omit backend/gallery-only changes, tests, docs and news.
+Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
 Published release build workflows and their full platform coverage are unchanged.
 
 Validation: `python3 scripts/verify_ci_workflow.py` and

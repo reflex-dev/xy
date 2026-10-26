@@ -109,9 +109,12 @@ def test_shared_build_dependencies_and_summary():
             assert restore["if"] == "matrix.xy"
         else:
             assert "if" not in restore
-        assert name in jobs["result"]["needs"] or name.startswith("benchmark")
+        if name.startswith("benchmark"):
+            assert job.get("continue-on-error") is True
+        else:
+            assert name in jobs["result"]["needs"]
     assert jobs["result"]["if"] == "always()"
-    assert "needs: test" not in Path(".github/workflows/ci.yml").read_text()
+    assert "test" not in jobs["wheels"]["needs"]
 
 
 def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
@@ -210,3 +213,16 @@ def test_benchmark_inputs_select_blocking_runtime_checks(path):
     assert selected["runtime"]
     assert selected["benchmarks"]
     assert not selected["pyplot"]
+
+
+def test_codspeed_keeps_pyplot_performance_checks_selected():
+    from fnmatch import fnmatchcase
+
+    workflow = yaml.safe_load(Path(".github/workflows/codspeed.yml").read_text())
+    # PyYAML's YAML 1.1 loader interprets the unquoted Actions `on` key as True.
+    ignored = workflow[True]["pull_request"]["paths-ignore"]
+    assert not any(fnmatchcase("python/xy/pyplot/_axes.py", pattern) for pattern in ignored)
+
+
+def test_actual_contributor_instructions_are_docs_only():
+    assert not any(select_checks(["CLAUDE.md"]).values())
