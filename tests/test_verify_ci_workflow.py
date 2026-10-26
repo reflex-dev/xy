@@ -1544,24 +1544,16 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
 
 
-def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
+def test_ci_workflow_rejects_unpinned_browser_image(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    mutated = re.sub(r"@sha256:[0-9a-f]{64}", "", text)
+    assert mutated != text
     path = tmp_path / "ci.yml"
-    path.write_text(
-        text.replace(
-            "      - name: Cache Playwright browsers\n"
-            "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n"
-            "        with:\n"
-            "          path: ~/.cache/ms-playwright\n"
-            "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
-            "",
-        ),
-        encoding="utf-8",
-    )
-
+    path.write_text(mutated, encoding="utf-8")
     errors = verify_ci_workflow.validate_ci_workflow(path)
-
-    assert any("browser_conformance" in error and "actions/cache" in error for error in errors)
+    assert any(
+        "browser_conformance" in error and "pinned browser image" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:

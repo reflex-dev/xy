@@ -149,10 +149,28 @@ test/debug targets. The Linux x64 packaging smoke repairs and installs the same
 wheel without waiting for the whole runtime suite. ARM64 and Windows builds,
 sdist source-build probes, and the deliberately coreless build remain independent.
 CodSpeed and Docs retain independent environments/builds across workflows;
-CodSpeed PR filters omit backend/gallery-only changes, tests, Markdown at any
-depth, license-only changes, docs and news.
+CodSpeed PR filters omit backend/gallery-only changes, CI workflows/actions and
+selector/verifier scripts, tests, Markdown at any depth, license-only changes,
+docs and news. CI-only PRs do not download CodSpeed tooling or run its benchmarks.
 Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
 Published release build workflows and their full platform coverage are unchanged.
+
+The three-engine conformance job uses the official Playwright image
+`mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48`.
+The image supplies browsers and their OS libraries in one prebuilt, digest-pinned
+bundle. Its version must match the exact Playwright devDependency in
+`package.json` and `package-lock.json`; update the image digest and verifier
+contract together when upgrading Playwright. The job verifies the binary paths
+and runs the same Chromium/Firefox/WebKit WebGL and accessibility checks under
+Xvfb, with a ten-minute total timeout and a five-minute conformance-step timeout.
+It performs no apt or browser-engine installation. Its image pull is still a
+network operation; the workflow does not assume hosted runners retain Docker
+layers between runs. Other Chromium-only jobs keep their existing lockfile-keyed
+browser caches. Reproduce the image metadata/digest through
+`https://mcr.microsoft.com/v2/playwright/manifests/v1.61.1-noble` with a Docker
+manifest-list Accept header, and verify the manifest body's SHA-256 before
+updating the pin. [Playwright documents the preinstalled browser/dependency
+contract](https://playwright.dev/docs/docker).
 
 The advisory methodology job keeps the standard workload sizes and repetition
 counts. CI-only PRs skip it and the cross-library benchmark/report jobs; mixed

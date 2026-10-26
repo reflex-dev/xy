@@ -369,3 +369,49 @@ def test_wheel_repair_installs_and_executes_the_pinned_auditwheel():
     )
     assert "uv tool install auditwheel==6.8.2" in repair["run"]
     assert "uv tool run --from auditwheel==6.8.2 auditwheel repair" in repair["run"]
+
+
+def test_conformance_reuses_pinned_browser_image_instead_of_installing_engines():
+    import json
+    import re
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["browser_conformance"]
+    version = json.loads((ROOT / "package.json").read_text())["devDependencies"]["playwright"]
+    assert re.fullmatch(
+        r"mcr\.microsoft\.com/playwright:v" + re.escape(version) + r"-noble@sha256:[0-9a-f]{64}",
+        job["container"]["image"],
+    )
+    assert job["timeout-minutes"] == 10
+    assert job["env"]["PLAYWRIGHT_BROWSERS_PATH"] == "/ms-playwright"
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "playwright install" not in commands
+    assert "apt-get" not in commands
+    assert "chromium, firefox, webkit" in commands
+    assert "accessSync(browser.executablePath())" in commands
+    assert "scripts/browser_conformance.mjs" in commands
+
+
+def test_codspeed_skips_ci_only_prs_but_keeps_implementation_changes():
+    from fnmatch import fnmatchcase
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/codspeed.yml").read_text())
+    ignored = workflow[True]["pull_request"]["paths-ignore"]
+    ci_paths = [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codspeed.yml",
+        ".github/actions/setup-ci-chromium/action.yml",
+        "scripts/ci_scope.py",
+        "scripts/verify_ci_workflow.py",
+        "tests/test_ci_scope.py",
+        "spec/process/production-readiness.md",
+        "news/539.misc.md",
+    ]
+    assert all(any(fnmatchcase(path, pattern) for pattern in ignored) for path in ci_paths)
+    for path in (
+        "src/lib.rs",
+        "js/src/60_entries.ts",
+        "python/xy/pyplot/_axes.py",
+        "benchmarks/test_codspeed_kernels.py",
+    ):
+        assert not any(fnmatchcase(path, pattern) for pattern in ignored), path

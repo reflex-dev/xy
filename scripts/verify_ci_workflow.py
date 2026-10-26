@@ -84,6 +84,7 @@ CI_BOOTSTRAP_INPUTS = {
     "actions/setup-python": ("python-version", "3.11.17"),
 }
 CODSPEED_ACTION_COMMIT = "f99becdce5e5d51fd556489ebef684f4ecfd6286"
+CONFORMANCE_IMAGE = "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -1258,13 +1259,19 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "accessibility and three-engine conformance gate",
         'node-version: "22.23.3"',
         "npm ci",
-        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
-        "~/.cache/ms-playwright",
-        "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
-        "npx playwright install --with-deps chromium firefox webkit",
+        "PLAYWRIGHT_BROWSERS_PATH: /ms-playwright",
+        "Verify preinstalled Playwright browsers",
+        "accessSync(browser.executablePath())",
+        "chromium, firefox, webkit",
         "test -f python/xy/static/standalone.js",
         "node scripts/browser_conformance.mjs",
     )
+    conformance_container = _unique_mapping_block(
+        jobs.get("browser_conformance", ""), "container", indent=4
+    )
+    images, images_unsafe = _direct_yaml_key_values(conformance_container or "", "image", indent=6)
+    if images_unsafe or images != [CONFORMANCE_IMAGE]:
+        errors.append("CI browser_conformance must use the reviewed pinned browser image")
     _require_job_contains(
         errors,
         jobs,
