@@ -79,9 +79,11 @@ build/test code. Action code remains SHA-pinned. CodSpeed points directly to
 commit `f99becdce5e5d51fd556489ebef684f4ecfd6286`, the verified target of its
 previous signed tag object `4bee4eada46987d4607fc208971a36367352b83d`, so this
 normalization preserves the action code and its bundled runner version.
-The workflow verifier structurally enforces credential isolation, full-SHA
-bootstrap action references and action inputs, rejecting missing, duplicated,
-ambiguous or comment-only values. The auditwheel installation and execution pins
+For bootstrap actions present in the workflow, the verifier structurally requires
+credential isolation, full-SHA references and reviewed action inputs, rejecting
+missing, duplicated, ambiguous or comment-only input values. This check validates
+existing action steps; it does not require every job to declare a setup action
+for every tool it uses. The auditwheel installation and execution pins
 are enforced by
 `tests/test_ci_scope.py::test_wheel_repair_installs_and_executes_the_pinned_auditwheel`.
 Updating the toolchain requires updating the workflow inputs, verifier contract, tests
