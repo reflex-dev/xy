@@ -729,10 +729,13 @@ def _require_ci_bootstrap_inputs(errors: list[str], text: str, label: str) -> No
     for job in _job_blocks(text).values():
         for step in _step_sequence_blocks(job):
             uses_values, uses_unsafe = _step_direct_key_values(step, "uses")
-            if len(uses_values) != 1:
+            if uses_unsafe or len(uses_values) > 1:
+                errors.append(f"{label} bootstrap step has an ambiguous action reference")
+                continue
+            if not uses_values:
                 continue
             uses, decode_unsafe = _decode_yaml_key(uses_values[0])
-            if uses_unsafe or decode_unsafe or uses is None:
+            if decode_unsafe or uses is None:
                 errors.append(f"{label} bootstrap step has an ambiguous action reference")
                 continue
             action = uses.split("@", 1)[0]
@@ -740,6 +743,8 @@ def _require_ci_bootstrap_inputs(errors: list[str], text: str, label: str) -> No
                 errors.append(f"{label} must pin CodSpeed to the reviewed commit SHA")
             if action not in CI_BOOTSTRAP_INPUTS:
                 continue
+            if not re.fullmatch(r"[^@]+@[0-9a-fA-F]{40}", uses):
+                errors.append(f"{label} {action} must use a full 40-hex commit SHA")
             key, expected = CI_BOOTSTRAP_INPUTS[action]
             with_block = _unique_mapping_block(step, "with", indent=8)
             values, unsafe = _direct_yaml_key_values(with_block or "", key, indent=10)
@@ -1171,9 +1176,27 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     test_job = jobs.get("test", "")
+    allowed_step_conditions = {
+        (
+            "browser_smokes",
+            "Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)",
+        ): ["needs.changes.outputs.pyplot == 'true'"],
+        ("regression_checks", "Upload regression benchmark report"): ["always()"],
+    }
     for job in ("test", "rust_checks", "browser_smokes", "regression_checks"):
-        if "continue-on-error:" in jobs.get(job, ""):
+        if _has_yaml_key(jobs.get(job, ""), "continue-on-error"):
             errors.append(f"CI {job} job and its required steps must be blocking")
+        for step in _step_sequence_blocks(jobs.get(job, "")):
+            names, names_unsafe = _step_direct_key_values(step, "name")
+            name = _decode_yaml_key(names[0])[0] if len(names) == 1 else ""
+            conditions, conditions_unsafe = _step_direct_key_values(step, "if")
+            if (
+                names_unsafe
+                or len(names) > 1
+                or conditions_unsafe
+                or conditions != allowed_step_conditions.get((job, name), [])
+            ):
+                errors.append(f"CI {job} has an unreviewed step condition on {name or 'setup'}")
     rust_job = jobs.get("rust_checks", "")
     values, ambiguous = _direct_yaml_key_values(rust_job, "needs", indent=4)
     if ambiguous or values != ["changes"]:

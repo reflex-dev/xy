@@ -1891,3 +1891,86 @@ def test_codspeed_verifier_requires_the_reviewed_commit(tmp_path: Path) -> None:
         "reviewed commit SHA" in error
         for error in verify_ci_workflow.validate_codspeed_workflow(path)
     )
+
+
+def test_parallel_runtime_gates_reject_equivalent_continue_on_error_keys(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    for job, step_name in (
+        ("browser_smokes", "Real-Figure render smoke (numpy + Chromium)"),
+        (
+            "regression_checks",
+            "Regression gate (deterministic payloads = hard fail; timing = advisory)",
+        ),
+    ):
+        for key in (
+            "continue-on-error",
+            '"continue-on-error"',
+            "'continue-on-error'",
+            '"continue\\u002don-error"',
+        ):
+            for scope in ("job", "step"):
+                original = jobs[job]
+                needle = f"  {job}:\n" if scope == "job" else f"      - name: {step_name}\n"
+                indent = "    " if scope == "job" else "        "
+                mutated = original.replace(needle, needle + f"{indent}{key}: true\n", 1)
+                assert mutated != original
+                path = tmp_path / "nonblocking-runtime.yml"
+                path.write_text(workflow.replace(original, mutated))
+                assert any(
+                    "must be blocking" in error
+                    for error in verify_ci_workflow.validate_ci_workflow(path)
+                ), (job, key, scope)
+
+
+def test_runtime_gates_reject_disabled_step_conditions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    for job in ("browser_smokes", "regression_checks"):
+        original = jobs[job]
+        for index, step in enumerate(verify_ci_workflow._step_sequence_blocks(original)):
+            for key in ("if", '"if"'):
+                lines = step.splitlines()
+                # Remove the existing allowed pyplot/upload condition before disabling it.
+                lines = [line for line in lines if not line.startswith("        if:")]
+                lines.insert(1, f"        {key}: false")
+                mutated = original.replace(step, "\n".join(lines), 1)
+                path = tmp_path / f"disabled-{job}-{index}.yml"
+                path.write_text(workflow.replace(original, mutated))
+                assert any(
+                    "step condition" in error
+                    for error in verify_ci_workflow.validate_ci_workflow(path)
+                ), (job, index, key)
+
+
+def test_bootstrap_rejects_duplicate_and_unsafe_action_references(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text()
+    pin = "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286"
+    needle = f"        uses: {pin} # v4\n"
+    assert needle in workflow
+    for replacement in (
+        needle + "        uses: CodSpeedHQ/action@v4\n",
+        needle + '        "uses": CodSpeedHQ/action@v4\n',
+        '        "u\\x73es": CodSpeedHQ/action@v4\n',
+    ):
+        path = tmp_path / "ambiguous-action.yml"
+        path.write_text(workflow.replace(needle, replacement))
+        assert any(
+            "ambiguous action reference" in error
+            for error in verify_ci_workflow.validate_codspeed_workflow(path)
+        )
+
+
+def test_bootstrap_rejects_floating_action_refs(tmp_path: Path) -> None:
+    for filename, validate in (
+        ("ci.yml", verify_ci_workflow.validate_ci_workflow),
+        ("codspeed.yml", verify_ci_workflow.validate_codspeed_workflow),
+    ):
+        workflow = (Path(".github/workflows") / filename).read_text()
+        for action in verify_ci_workflow.CI_BOOTSTRAP_INPUTS:
+            mutated = re.sub(re.escape(action) + r"@[0-9a-f]{40}", action + "@latest", workflow)
+            if mutated == workflow:
+                continue
+            path = tmp_path / "floating-action.yml"
+            path.write_text(mutated)
+            assert any("commit SHA" in error for error in validate(path)), (filename, action)

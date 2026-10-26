@@ -79,9 +79,12 @@ build/test code. Action code remains SHA-pinned. CodSpeed points directly to
 commit `f99becdce5e5d51fd556489ebef684f4ecfd6286`, the verified target of its
 previous signed tag object `4bee4eada46987d4607fc208971a36367352b83d`, so this
 normalization preserves the action code and its bundled runner version.
-The workflow verifier structurally enforces credential isolation and the
-bootstrap inputs, rejecting missing, duplicated or comment-only values. Updating
-the toolchain requires updating the workflow inputs, verifier contract, tests
+The workflow verifier structurally enforces credential isolation, full-SHA
+bootstrap action references and action inputs, rejecting missing, duplicated,
+ambiguous or comment-only values. The auditwheel installation and execution pins
+are enforced by
+`tests/test_ci_scope.py::test_wheel_repair_installs_and_executes_the_pinned_auditwheel`.
+Updating the toolchain requires updating the workflow inputs, verifier contract, tests
 and this table together, then exercising the hosted gates. These controls cover
 CI/CodSpeed bootstrapping; hosted OS images and dependency-range installation
 smokes retain their existing update/support-range contracts.
@@ -95,6 +98,10 @@ The runtime selection runs four independent blocking jobs:
 | `browser_smokes` — Browser rendering + integration | Selector and shared wheel | JS parsing, native ABI, stdlib render/append/export probes, real-chart rendering, lifecycle, visuals, stress and dashboard reliability; focused pyplot gate when selected |
 | `regression_checks` — Blocking regression checks | Selector and shared wheel | Native/scatter/transport regression reports, deterministic payload gates, report upload and the benchmark smoke harness |
 
+Runtime job and step mappings reject `continue-on-error` structurally, including
+quoted and escaped key spellings.
+Step conditions are structurally forbidden except the exact pyplot-selection
+condition on its focused gate and `always()` on regression-report upload.
 These jobs never depend on one another. Python, browser and regression jobs each
 restore the same native/client artifacts and run in parallel once the wheel is
 ready. Python tests retain their real-browser coverage rather than deferring it
