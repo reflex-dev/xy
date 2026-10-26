@@ -72,11 +72,27 @@ The local layer uses Inter body text, Geist headings, warm neutral light/dark
 tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
 the opal banner artwork without a white top-edge inset shadow. Fonts ship through
 pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
-Banner content, dismissal state,
-and header-height tracking remain shared. Editorial selectors target `docs-*`
+Banner structure and server
+dismissal state remain shared. Editorial selectors target `docs-*`
 hooks, avoiding live chart typography and data-series colors. Mobile navigation,
 the named closeable docs drawer, clipboard feedback, keyboard focus, and
 reduced-motion behavior remain required validation surfaces.
+XY's announcement matches `reflex-marketing`'s current main branch:
+"Build vs. Buy for Internal Software" links to
+`https://reflex.dev/blog/build-vs-buy-internal-software/`, with five mirrored
+opal panels with reduced-motion support, a black New
+badge, and a white text-only Read more pill hidden at 640px and below. Its visible
+contribution is 44px on desktop and 40px at 960px and below, above the fixed 64px
+docs header. A head script restores the same `reflex_announcement_dismissed_release`
+storage key and `build-vs-buy-internal-software-v1` release before paint; dismissal persists
+across reloads and same-origin marketing/docs navigation, with a working
+visit-local fallback when storage is unavailable. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native
+link and close event while adapting its destination, copy, decorative markup,
+and accessible name. The message wraps at narrow widths as it does in marketing.
+Authored in-page links must
+resolve to rendered IDs, including the parentheses retained by the shared
+heading slug convention (lowercase text with spaces replaced by hyphens).
 Unpublished shared changes are previewed with the editable-package
 workflow in `docs/app/README.md`, followed by production compilation and the docs
 validators below. The portable Git lock includes the merged design's shared

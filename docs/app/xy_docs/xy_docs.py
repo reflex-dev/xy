@@ -10,6 +10,7 @@ from reflex_site_shared.telemetry import get_pixel_website_trackers
 from reflex_site_shared.templates.docs import docs_layout
 from reflex_site_shared.utils.docpage import right_sidebar_item_highlight
 
+from xy_docs.announcement import announcement_visibility_script
 from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.code import CODE_COPY_STYLE, code_copy_feedback_script
 from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
@@ -55,6 +56,7 @@ app = rx.App(
         accent_color="gray",
     ),
     head_components=[
+        rx.el.script(announcement_visibility_script()),
         *get_pixel_website_trackers(),
         rx.el.style(CODE_COPY_STYLE),
         rx.el.meta(name="application-name", content="XY"),

@@ -7,6 +7,8 @@ from reflex_site_shared.components.docs_shell import docs_navbar_frame
 from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.components.marketing_button import button
 
+from xy_docs.announcement import match_marketing_announcement
+
 XY_REPOSITORY_URL = "https://github.com/reflex-dev/xy"
 
 _XY_NAV_LINKS = (
@@ -211,6 +213,7 @@ def xy_docs_navbar() -> rx.Component:
         ),
         _navigation_menu(),
     )
+    match_marketing_announcement(frame.children[0])
     header = frame.children[1]
     header.class_name = "docs-navbar-header " + header.class_name
     header.children[0].class_name = "docs-navbar-inner " + header.children[0].class_name

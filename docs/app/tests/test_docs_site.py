@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import pytest
 from reflex_base.components.memo import MemoComponent
@@ -147,6 +147,17 @@ def _walk_blocks(blocks: tuple[Block, ...]) -> Iterator[LinkSpan]:
             for row in (block.header, *block.rows):
                 for cell in row.cells:
                     yield from _walk_spans(cell.children)
+
+
+def _rendered_ids(component: object) -> Iterator[str]:
+    """Collect literal IDs from the rendered component tree."""
+    value = getattr(component, "id", None)
+    if not isinstance(value, str):
+        value = getattr(value, "_var_value", None)
+    if isinstance(value, str):
+        yield value
+    for child in getattr(component, "children", ()):
+        yield from _rendered_ids(child)
 
 
 def _normalize_xy_docs_path(url: str) -> str | None:
@@ -643,6 +654,24 @@ def test_markdown_heading_links_are_route_local_after_client_navigation() -> Non
         rendered = str(render_xy_markdown_page(pages[route]))
         assert 'to:"#' in rendered
         assert "router_rx_state_" not in rendered
+
+
+def test_authored_in_page_links_resolve_to_rendered_ids() -> None:
+    """Check actual fragment targets, including punctuation kept in heading IDs."""
+    failures = []
+    for page in discover_docs(DOCS_CONFIG):
+        links = [
+            link
+            for link in _walk_blocks(parse_document(page.content).blocks)
+            if link.target.startswith("#")
+        ]
+        if not links:
+            continue
+        targets = set(_rendered_ids(render_xy_markdown_page(page)))
+        failures.extend(
+            (page.route, link.target) for link in links if unquote(link.target[1:]) not in targets
+        )
+    assert not failures, failures
 
 
 def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
@@ -2453,9 +2482,19 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert "<details" not in rendered
     assert "<summary" not in rendered
     assert XY_REPOSITORY_URL in rendered
-    from reflex_site_shared.views.hosting_banner import hosting_banner
-
-    assert str(hosting_banner()) in rendered
+    assert "Build vs. Buy for Internal Software" in rendered
+    assert "xy is now in Reflex Build" not in rendered
+    assert '"data-shimmer-text":"Build vs. Buy for Internal Software"' in rendered
+    assert (
+        json.dumps("New: Build vs. Buy for Internal Software — Read more (opens in a new tab)")
+        in rendered
+    )
+    assert 'className:"docs-announcement-glass"' in rendered
+    assert '"data-announcement-dismiss":""' in rendered
+    assert 'href:"https://reflex.dev/blog/build-vs-buy-internal-software/"' in rendered
+    assert "https://reflex.dev/blog/xy-in-reflex-build/" not in rendered
+    assert "Dismiss announcement" in rendered
+    assert "hide_banner" in rendered
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
