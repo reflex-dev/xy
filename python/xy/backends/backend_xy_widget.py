@@ -304,15 +304,21 @@ class FigureCanvasXYWidget(anywidget.AnyWidget):
         canvas.figure.set_size_inches(width / dpi, height / dpi, forward=False)
         event = ResizeEvent("resize_event", canvas)
         axes = list(canvas.figure.axes)
-        event.inaxes = axes[0] if axes else None
-        bbox = event.inaxes.bbox if event.inaxes is not None else canvas.figure.bbox
-        event.x = float(bbox.x0 + bbox.x1) / 2.0
-        event.y = float(bbox.y0 + bbox.y1) / 2.0
-        event.xdata = event.ydata = None
-        if event.inaxes is not None:
-            event.xdata, event.ydata = event.inaxes.transData.inverted().transform(
-                (event.x, event.y)
-            )
+        inaxes = axes[0] if axes else None
+        bbox = inaxes.bbox if inaxes is not None else canvas.figure.bbox
+        event_x = float(bbox.x0 + bbox.x1) / 2.0
+        event_y = float(bbox.y0 + bbox.y1) / 2.0
+        event_xdata = event_ydata = None
+        if inaxes is not None:
+            event_xdata, event_ydata = inaxes.transData.inverted().transform((event_x, event_y))
+        # Matplotlib's runtime event objects permit the location attributes
+        # used by callback consumers, while ResizeEvent's stubs omit them.
+        event_with_location: Any = event
+        event_with_location.inaxes = inaxes
+        event_with_location.x = event_x
+        event_with_location.y = event_y
+        event_with_location.xdata = event_xdata
+        event_with_location.ydata = event_ydata
         _process(event)
         canvas.draw_idle()
         # Directly constructed widgets are not cached on the canvas and thus

@@ -3161,6 +3161,7 @@ def test_installation_options_render_as_subsections_with_commands() -> None:
     blocks = parse_document(source.read_text(encoding="utf-8")).blocks
     headings = [block for block in blocks if isinstance(block, HeadingBlock) and block.level == 3]
     assert [heading.children[0].text for heading in headings] == [
+        "Matplotlib compatibility",
         "Arrow input",
         "Reflex integration",
         "Optional browser export",
@@ -3170,5 +3171,11 @@ def test_installation_options_render_as_subsections_with_commands() -> None:
         if node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}:
             assert all(child.tag in item_tags for child in node.children)
     rendered = str(component)
-    for command in ("uv add pyarrow", 'uv add "xy[reflex]"', 'python -m pip install "xy[reflex]"'):
+    for command in (
+        'uv add "xy[matplotlib]"',
+        'python -m pip install "xy[matplotlib]"',
+        "uv add pyarrow",
+        'uv add "xy[reflex]"',
+        'python -m pip install "xy[reflex]"',
+    ):
         assert f"code:{json.dumps(command)}" in rendered
