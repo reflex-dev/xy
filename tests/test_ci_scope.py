@@ -226,3 +226,10 @@ def test_codspeed_keeps_pyplot_performance_checks_selected():
 
 def test_actual_contributor_instructions_are_docs_only():
     assert not any(select_checks(["CLAUDE.md"]).values())
+
+
+def test_codspeed_excludes_nested_markdown_and_license_changes():
+    workflow = yaml.safe_load(Path(".github/workflows/codspeed.yml").read_text())
+    ignored = workflow[True]["pull_request"]["paths-ignore"]
+    assert "**.md" in ignored
+    assert "LICENSE" in ignored
