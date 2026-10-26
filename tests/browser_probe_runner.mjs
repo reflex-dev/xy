@@ -5,6 +5,10 @@ const executablePath = arguments_.shift();
 const resultAttribute = arguments_.pop();
 const pageUrl = arguments_.pop();
 const extraArgs = arguments_;
+const forcedScaleArgument = extraArgs.find((argument) =>
+  argument.startsWith("--force-device-scale-factor="),
+);
+const forcedScale = Number(forcedScaleArgument?.split("=", 2)[1]);
 if (!executablePath || !pageUrl || !resultAttribute) {
   throw new Error(
     "usage: node browser_probe_runner.mjs CHROMIUM PAGE_URL RESULT_ATTRIBUTE",
@@ -25,7 +29,13 @@ const browser = await chromium.launch({
 });
 
 try {
-  const page = await browser.newPage({ viewport: { width: 640, height: 480 } });
+  const pageOptions = { viewport: { width: 640, height: 480 } };
+  if (Number.isFinite(forcedScale) && forcedScale > 0) {
+    // Playwright's context emulation otherwise pins devicePixelRatio to 1,
+    // overriding Chromium's --force-device-scale-factor launch argument.
+    pageOptions.deviceScaleFactor = forcedScale;
+  }
+  const page = await browser.newPage(pageOptions);
   await page.goto(pageUrl, { waitUntil: "load", timeout: 30_000 });
   const errorAttribute = `${resultAttribute}-error`;
   try {
