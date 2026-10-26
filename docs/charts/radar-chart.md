@@ -185,10 +185,17 @@ def radar_scaled_demo():
 
 ## Interaction and Export
 
-Radar charts use the shared polar interaction model: hover, radial-only zoom,
-and reset are available; rotation, box zoom, selection, brushing, and
-crosshairs are disabled. Browser, SVG, PDF, and native raster exports share the
-same radar geometry.
+Radar charts use the shared polar interaction model: hover is available; zoom is
+off by default, and rotation, box zoom, selection, brushing, and crosshairs are
+disabled. Browser, SVG, PDF, and native raster exports share the same radar
+geometry.
+
+A radar profile is read against a fixed frame of spokes, and zoom scales the
+outer ring about a fixed center, so it crops that frame instead of magnifying the
+comparison. Add `xy.interaction_config(zoom=True)` (or `zoom=True` on the chart)
+to enable radial-only zoom when the shared scale is worth magnifying; reset comes
+with it, since only then does a gesture exist to undo. An explicit `reset_axes`
+grants reset by itself for a chart driven from application state.
 
 See [Polar chart interaction and limits](/docs/xy/charts/polar-chart/#hover-and-zoom)
 for the complete coordinate-system contract.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scripts.js_exports import missing_esm_exports
+
 from xy.components import CHART_DOM_SLOTS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,6 +147,9 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         assert inner_html_lines == [
             'dragPeek.innerHTML = this._icon("drag");',
             "icon.innerHTML = this._icon(name);",
+            # The zoom-menu trigger's icon fallback, used when zoom is disabled
+            # and the percentage readout would be inert.
+            'zoomIcon.innerHTML = this._icon("zoommenu");',
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
             'selectModeIcon.innerHTML = this._icon("select");',
             'selectIndicator.innerHTML = this._icon("chevrondown");',
@@ -793,16 +798,19 @@ def test_widget_bundle_is_valid_esm_and_standalone_is_a_window_global() -> None:
     as a classic <script> by `Figure.to_html()`: it must be export-free and
     define a top-level `var xy` namespace (window.xy) with the same surface."""
     index_text = _read(_STATIC / "index.js")
-    for alias in (
-        "as render",
-        "as renderStandalone",
-        "as decodeFrame",
-        "as ChartView",
-        "as MARK_KINDS",
-        "as markOf",
-        "as default",
-    ):
-        assert alias in index_text, f"index.js no longer exports {alias.split()[-1]!r}"
+    missing = missing_esm_exports(
+        index_text,
+        (
+            "render",
+            "renderStandalone",
+            "decodeFrame",
+            "ChartView",
+            "MARK_KINDS",
+            "markOf",
+            "default",
+        ),
+    )
+    assert not missing, f"index.js no longer exports {missing}"
 
     standalone_text = _read(_STATIC / "standalone.js")
     assert "export {" not in standalone_text and "export{" not in standalone_text, (

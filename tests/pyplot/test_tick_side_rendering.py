@@ -120,7 +120,7 @@ def test_tick_sides_bump_wire_protocol_and_client_in_lockstep() -> None:
     client = (ROOT / "js" / "src" / "50_chartview.ts").read_text(encoding="utf-8")
 
     assert spec["x_axis"]["tick_sides"] == ["bottom", "top"]
-    assert spec["protocol"] == PROTOCOL_VERSION == 12
+    assert spec["protocol"] == PROTOCOL_VERSION == 13
     assert f"PROTOCOL = {PROTOCOL_VERSION};" in header
     # The point is that the client reads PROTOCOL from the header, not the exact
     # spelling of the import list — which grows whenever the header gains another

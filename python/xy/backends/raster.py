@@ -392,6 +392,10 @@ class _DisplayListRasterizer:
         ] = {}
         self._array_cache: dict[str, np.ndarray] = {}
         self._text_path_cache: dict[str, list[list[Any]]] = {}
+        self._collection_path_cache: dict[
+            int,
+            tuple[list[list[Any]], list[tuple[list[tuple[float, float]], bool]]],
+        ] = {}
 
     def _array_resource(self, resource_id: str) -> np.ndarray:
         cached = self._array_cache.get(resource_id)
@@ -753,8 +757,24 @@ class _DisplayListRasterizer:
                 scale=self.scale,
                 offset=offset,
             )
-        contours = _flatten_path(segments, canvas_height=self.height, offset=offset)
+        # Collection commands reuse the same path object for every instance.
+        # Flatten curves once, then let the native command stream apply each
+        # device-space translation. This keeps collection rasterization in one
+        # native call without repeating Python curve subdivision per marker.
+        cache_key = id(segments)
+        cached = self._collection_path_cache.get(cache_key)
+        if cached is None or cached[0] is not segments:
+            contours = _flatten_path(segments, canvas_height=self.height)
+            self._collection_path_cache[cache_key] = (segments, contours)
+        else:
+            contours = cached[1]
+        raster_offset = (float(offset[0]), -float(offset[1]))
         if style.get("hatch") or (clip is not None and clip.get("type") == "path"):
+            if raster_offset != (0.0, 0.0):
+                dx, dy = raster_offset
+                contours = [
+                    ([(x + dx, y + dy) for x, y in points], closed) for points, closed in contours
+                ]
             self._path_layer(contours, style, clip)
             return
 
@@ -764,8 +784,14 @@ class _DisplayListRasterizer:
         if fill[3]:
             fillable = [(points, closed) for points, closed in contours if len(points) >= 3]
             if len(fillable) == 1:
-                self.cmd.fill(fillable[0][0], fill)
+                self.cmd.fill(fillable[0][0], fill, offset=raster_offset)
             elif fillable:
+                if raster_offset != (0.0, 0.0):
+                    dx, dy = raster_offset
+                    fillable = [
+                        ([(x + dx, y + dy) for x, y in points], closed)
+                        for points, closed in fillable
+                    ]
                 self._compound_fill(fillable, fill)
         stroke = _rgba8(style.get("stroke"), opacity)
         width = float(style.get("linewidth", 0))
@@ -784,6 +810,7 @@ class _DisplayListRasterizer:
                         closed=closed,
                         dash=sequence,
                         cap=cap,
+                        offset=raster_offset,
                     )
 
     def _paint_affine_image(

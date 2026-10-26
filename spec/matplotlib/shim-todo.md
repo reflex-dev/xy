@@ -10,9 +10,9 @@ explicitly says otherwise.
 
 | Mode | Responsibility |
 |---|---|
-| `native` | Dependency-free XY-owned Figure/Axes/Artist-shaped objects and high-performance 2-D rendering. Select it explicitly to pin the lightweight implementation. |
+| `native` | Dependency-free XY-owned Figure/Axes/Artist-shaped objects and high-performance 2-D rendering. This is the configured default. |
 | `compat` | Genuine Matplotlib 3.11 Figure/Axes/Artist, units, transforms, layout, toolkits, widgets, and animation semantics rendered through `module://xy.backends.backend_xy`. Install with `pip install "xy[matplotlib]"`. |
-| `auto` | The configured default. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
+| `auto` | An explicit environment-sensitive choice. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
 
 Compat mode does not reproduce Matplotlib's semantic systems inside the native
 shim. Matplotlib performs its normal Artist traversal; `RendererXY` emits one

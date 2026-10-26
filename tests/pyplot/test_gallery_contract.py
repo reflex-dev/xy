@@ -161,6 +161,27 @@ def test_schema_one_summary_is_independently_pinned(tmp_path: Path) -> None:
     )
 
 
+def test_schema_one_builder_uses_the_independent_historical_summary() -> None:
+    manifest = {"examples": [{"path": "example.py", "pyplot_eligible": True}]}
+    baseline_examples = {
+        "example.py": {
+            "xy_execution": True,
+            "capture_parity": True,
+            "dimension_parity": True,
+            "visual_gate_passed": True,
+            "temporary_waivers": [],
+        }
+    }
+
+    baseline = gallery_contract._schema_one_baseline(
+        manifest=manifest,
+        baseline_examples=baseline_examples,
+    )
+
+    assert baseline["audit_commit"] == gallery_contract.LEGACY_SCHEMA_ONE_AUDIT_COMMIT
+    assert baseline["summary"] == gallery_contract.LEGACY_SCHEMA_ONE_SUMMARY
+
+
 def test_contract_verifier_accumulates_provenance_errors_after_path_mismatch(
     tmp_path: Path,
 ) -> None:

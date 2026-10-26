@@ -201,8 +201,14 @@ class AnnotationsMixin(_Host):
         anchor: str = "start",
         class_name: Optional[str] = None,
         style: Optional[dict[str, Any]] = None,
+        owner: Optional[dict[str, int]] = None,
     ) -> "Figure":
-        """Add a text annotation anchored at a data coordinate."""
+        """Add a text annotation anchored at a data coordinate.
+
+        `owner` is an internal tag for labels a mark draws about its own
+        geometry (`{"trace": id, "category": code}`) so a legend toggle can
+        hide them together; author-written annotations leave it None.
+        """
         text = self._required_text(text, "text annotation text")
         dx = self._finite_scalar(dx, "text annotation dx")
         dy = self._finite_scalar(dy, "text annotation dy")
@@ -222,6 +228,7 @@ class AnnotationsMixin(_Host):
                     **self._style_mapping(style or {}, "text annotation style"),
                 },
                 "class_name": self._optional_text(class_name, "text annotation class_name"),
+                "owner": owner,
             }
         )
         return self
@@ -552,6 +559,14 @@ class AnnotationsMixin(_Host):
             )
         if style:
             out["style"] = style
+        # Optional ownership tag: a mark that draws its own labels as
+        # annotations (funnel value/drop-off labels) records which trace and
+        # categorical code they belong to, so a legend toggle hides a label
+        # with the geometry it describes instead of leaving it ghosting over
+        # an empty slot. Absent for author-written annotations.
+        owner = annotation.get("owner")
+        if owner is not None:
+            out["owner"] = {"trace": int(owner["trace"]), "category": int(owner["category"])}
         return out
 
     @staticmethod

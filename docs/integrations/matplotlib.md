@@ -11,7 +11,7 @@ description: Migrate common Matplotlib workflows through XY's pyplot compatibili
 | --- | --- | --- |
 | `native` | Fast, dependency-free 2-D charts and gradual migration to XY's declarative API | XY-owned Figure, Axes, and Artist-shaped objects; explicitly select it to pin the lightweight implementation |
 | `compat` | Broad Matplotlib 3.11 script compatibility | Genuine Matplotlib Figure, Axes, and Artist objects with XY's canvas and display-list renderer |
-| `auto` | Dependency-aware default policy | Resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise |
+| `auto` | Explicit dependency-aware policy | Resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise |
 
 The base `xy` package contains native mode and does not require Matplotlib.
 Install the optional extra for compat mode:
@@ -25,8 +25,8 @@ contract is pinned to Matplotlib 3.11.0 behavior.
 
 ## Select a Mode
 
-The configured default is `auto`. With a base install, changing only the import
-resolves to native mode:
+The configured default is `native`, including when Matplotlib is already
+installed. Changing only the import therefore resolves to native mode:
 
 ~~~python
 import numpy as np

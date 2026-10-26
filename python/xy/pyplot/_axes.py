@@ -10,6 +10,7 @@ test in tests/pyplot/.
 
 from __future__ import annotations
 
+import builtins
 import copy
 import importlib
 import math
@@ -1528,6 +1529,7 @@ class Axes(PlotTypeMixin):
         # whose chart is the panel and not the whole figure; otherwise the
         # chart *is* the figure and the rectangle comes from get_position().
         self._plot_box_px: Optional[tuple[float, float, float, float]] = None
+        self._shared_render_domains: dict[str, tuple[float, float]] = {}
         self._padding: Optional[list[float]] = None
         # "cartesian" or "polar" — matplotlib's `projection=` argument. Polar
         # reinterprets the same two axes (x carries theta, y carries r), which
@@ -2038,12 +2040,12 @@ class Axes(PlotTypeMixin):
             masked_x = np.ma.asarray(x)
             if masked_x.dtype.kind in "iub":
                 masked_x = masked_x.astype(np.float64)
-            x = masked_x.filled(np.nan)
+            x = np.ma.filled(masked_x, np.nan)
         if np.ma.isMaskedArray(y):
             masked_y = np.ma.asarray(y)
             if masked_y.dtype.kind in "iub":
                 masked_y = masked_y.astype(np.float64)
-            y = masked_y.filled(np.nan)
+            y = np.ma.filled(masked_y, np.nan)
         per = dict(base)
         this_marker = marker
         if fmt:
@@ -4374,7 +4376,7 @@ class Axes(PlotTypeMixin):
         spec = host._scale_specs[key]
         values = np.asarray(bounds, dtype=np.float64)
         if spec["name"] != "log":
-            return tuple(map(float, values))
+            return float(values[0]), float(values[1])
         base = float(spec.get("base", 10.0))
         if inverse:
             transformed = np.power(base, values)
@@ -4390,7 +4392,7 @@ class Axes(PlotTypeMixin):
                 transformed = np.log(fallback) / np.log(base)
             if not np.isfinite(transformed).all():
                 raise ValueError("log aspect limits must be positive and finite")
-        return tuple(map(float, transformed))
+        return float(transformed[0]), float(transformed[1])
 
     def get_position(self, original: bool = False) -> Bbox:
         """The axes rectangle in figure fractions, as a `Bbox`.
@@ -7938,8 +7940,8 @@ class Axes(PlotTypeMixin):
     def _apply_legend_handle_styles(
         self,
         core_figure: Any,
-        claimed_trace_ids: Optional[set[int]] = None,
-    ) -> set[int]:
+        claimed_trace_ids: Optional[builtins.set[int]] = None,
+    ) -> builtins.set[int]:
         """Attach Matplotlib-only handle paint to automatic legend traces.
 
         Plot markers and dash gap colors are separate XY marks so the data
@@ -8269,7 +8271,7 @@ class Axes(PlotTypeMixin):
 
             x_values, y_values = entry.get("x"), entry.get("y")
             if kind == "@arrow":
-                args = entry.get("args") or ()
+                args: tuple[Any, ...] = tuple(entry.get("args") or ())
                 if len(args) >= 4:
                     x_values, y_values = (args[0], args[2]), (args[1], args[3])
             elif kind == "@mark" and entry.get("factory") == "stairs":
@@ -8278,7 +8280,7 @@ class Axes(PlotTypeMixin):
                 # Legend._auto_legend_data(). Feeding the compact arguments to
                 # the generic (x, y) path reverses the axes and makes the
                 # histogram effectively invisible to ``loc="best"``.
-                args = entry.get("args") or ()
+                args = tuple(entry.get("args") or ())
                 if len(args) >= 2:
                     try:
                         values = axis_values(args[0], "y")
@@ -8383,7 +8385,7 @@ class Axes(PlotTypeMixin):
                 unresolved_hits = _path_intersects_boxes(
                     path_xn,
                     path_yn,
-                    (
+                    [
                         (
                             candidates[index][1],
                             candidates[index][2],
@@ -8391,7 +8393,7 @@ class Axes(PlotTypeMixin):
                             candidates[index][4],
                         )
                         for index in unresolved
-                    ),
+                    ],
                 )
                 for index, hit in zip(unresolved, unresolved_hits, strict=True):
                     path_hits[index] = hit
@@ -8975,6 +8977,12 @@ class Axes(PlotTypeMixin):
                 legend_options=self._legend_options,
                 plot_size=best_plot_size,
             )
+            if self._projection == "cartesian" and self._legend_options.get("anchor") is None:
+                # Preserve the Matplotlib scorer's richer initial decision, but
+                # also tell the live renderer that an unanchored ``best``
+                # legend may be reconsidered after resize or settled view
+                # changes. Explicit, anchored, and polar locations stay exact.
+                core_figure.legend_options["auto_loc"] = "best"
         if "handleheight" in self._legend_options:
             core_figure.legend_options["handleheight"] = self._legend_options["handleheight"]
         for key in ("handlelength", "handletextpad"):
@@ -9008,13 +9016,16 @@ class Axes(PlotTypeMixin):
             extras = []
             for leg in legends:
                 spec = leg.spec()
-                if spec.get("loc") in (None, "best"):
+                automatic = spec.get("loc") in (None, "best")
+                if automatic:
                     spec["loc"] = self._best_legend_loc(
                         *best_ranges,
                         legend_options=spec,
                         items=list(spec.get("items") or []) or None,
                         plot_size=best_plot_size,
                     )
+                    if self._projection == "cartesian" and spec.get("anchor") is None:
+                        spec["auto_loc"] = "best"
                 extras.append(spec)
             core_figure.extra_legends = extras
         return self._chart
@@ -9672,10 +9683,6 @@ def _pow_label(value: float, base: float = 10.0) -> str:
     if not np.isfinite(exponent) or abs(exponent - round(exponent)) > 1e-9:
         return f"{value:g}"
     return f"{base:g}" + str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
-
-
-def _pow10_label(value: float) -> str:
-    return _pow_label(value, 10.0)
 
 
 def _plain_text(value: Any) -> str:

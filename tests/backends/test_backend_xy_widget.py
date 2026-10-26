@@ -16,6 +16,7 @@ backend_bases = pytest.importorskip("matplotlib.backend_bases")
 backend_tools = pytest.importorskip("matplotlib.backend_tools")
 Figure = pytest.importorskip("matplotlib.figure").Figure
 backend_xy = pytest.importorskip("xy.backends.backend_xy")
+backend_xy_host = pytest.importorskip("xy.backends.backend_xy_host")
 backend_xy_widget = pytest.importorskip("xy.backends.backend_xy_widget")
 
 CloseEvent = backend_bases.CloseEvent
@@ -32,6 +33,15 @@ widget_esm = backend_xy_widget.widget_esm
 
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_TOOLBAR_PROBE = Path(__file__).with_name("backend_xy_live_toolbar_probe.mjs")
+
+
+def test_loopback_host_stops_polling_after_repeated_connection_failures() -> None:
+    source = backend_xy_host._host_javascript()
+
+    assert "MAX_POLL_FAILURES" in source
+    assert "consecutiveFailures += 1" in source
+    assert "consecutiveFailures >= MAX_POLL_FAILURES" in source
+    assert "stop();" in source
 
 
 def _event_figure() -> tuple[object, FigureCanvasXY, object]:

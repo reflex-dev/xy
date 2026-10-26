@@ -575,6 +575,29 @@ def _legacy_summary(
     }
 
 
+def _schema_one_baseline(
+    *,
+    manifest: dict[str, Any],
+    baseline_examples: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the one historical schema-1 record accepted by the verifier.
+
+    Schema 1 is the pinned initial audit, not a general-purpose format for a
+    newly improved audit. Promotion is the only supported way to record new
+    results, so a build/verify round trip emits the independent historical
+    oracle instead of deriving a self-inconsistent summary from live inputs.
+    """
+
+    del manifest
+    return {
+        "schema_version": 1,
+        "audit_commit": LEGACY_SCHEMA_ONE_AUDIT_COMMIT,
+        "matplotlib_version": COMPATIBILITY_ORACLE_VERSION,
+        "summary": dict(LEGACY_SCHEMA_ONE_SUMMARY),
+        "examples": baseline_examples,
+    }
+
+
 def build_contract(
     *,
     python_archive: Path,
@@ -723,16 +746,10 @@ def build_contract(
         "examples": entries,
     }
 
-    baseline = {
-        "schema_version": 1,
-        "audit_commit": LEGACY_SCHEMA_ONE_AUDIT_COMMIT,
-        "matplotlib_version": "3.11.0",
-        "summary": _legacy_summary(
-            manifest=manifest,
-            baseline_examples=baseline_entries,
-        ),
-        "examples": baseline_entries,
-    }
+    baseline = _schema_one_baseline(
+        manifest=manifest,
+        baseline_examples=baseline_entries,
+    )
 
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "manifest.json").write_bytes(_json_bytes(manifest))

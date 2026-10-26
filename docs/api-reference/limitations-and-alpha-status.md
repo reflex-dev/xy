@@ -50,10 +50,13 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
 - Linked views synchronize viewport axes, not selections or cross-filtering.
 - Facets support display/export and shared domains but not `Chart` append,
   pick, or Python-side range-selection methods.
-- Polar interaction currently consists of hover, radial zoom about a fixed
-  radial minimum, and reset. Authored sectors are supported; theta pan/rotation,
-  interactive sector zoom, box zoom, selection, brushing, and crosshairs are
-  disabled.
+- Polar interaction currently consists of hover plus opt-in radial zoom about a
+  fixed radial minimum. Zoom defaults to off (`xy.wind_rose()` excepted) and is
+  enabled per chart with `xy.interaction_config(zoom=True)` or a `zoom=True` chart
+  prop; reset is hidden unless zoom or an explicit `reset_axes` gives it axes to
+  restore. `default_drag_action` accepts only `"auto"`/`"none"` on a polar chart.
+  Authored sectors are supported; theta pan/rotation, interactive sector zoom, box
+  zoom, selection, brushing, and crosshairs are disabled.
 - Point-anchored `text`, `label`, `marker`, `arrow`, and `callout` annotations
   use the joint `(theta, r)` projection consistently on polar charts in the
   browser, SVG, and native raster output. Polar rules and bands remain deferred

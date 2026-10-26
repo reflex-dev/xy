@@ -78,7 +78,7 @@ def _parse_mode(value: object, *, source: str) -> PyplotMode:
 
 
 _requested_mode: PyplotMode = _parse_mode(
-    os.environ.get(_ENVIRONMENT_VARIABLE, "auto"),
+    os.environ.get(_ENVIRONMENT_VARIABLE, "native"),
     source=_ENVIRONMENT_VARIABLE,
 )
 

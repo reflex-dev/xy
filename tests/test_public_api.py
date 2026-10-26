@@ -405,3 +405,56 @@ def test_public_api_checker_rejects_partial_pep561_marker(tmp_path: Path) -> Non
     errors = check_public_api.validate_pep561_marker(marker)
 
     assert any("full-package PEP 561 marker" in error for error in errors)
+
+
+def test_static_typing_surface_rejects_lazy_only_export(tmp_path: Path) -> None:
+    init_path = tmp_path / "__init__.py"
+    init_path.write_text(
+        """\
+from typing import TYPE_CHECKING
+
+__version__: str
+
+if TYPE_CHECKING:
+    from .components import Typed
+""",
+        encoding="utf-8",
+    )
+    fake = ModuleType("xy")
+    fake.__all__ = ["__version__", "Typed", "LazyOnly"]
+
+    errors = check_public_api.validate_static_typing_surface(fake, init_path)
+
+    assert errors == [
+        "xy public names have no static TYPE_CHECKING import or annotation: ['LazyOnly']"
+    ]
+
+
+def test_static_typing_surface_ignores_nested_and_else_imports(tmp_path: Path) -> None:
+    init_path = tmp_path / "__init__.py"
+    init_path.write_text(
+        """\
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .components import Typed
+
+    def helper():
+        from .components import FunctionOnly
+
+    class Namespace:
+        from .components import ClassOnly
+else:
+    from .components import ElseOnly
+""",
+        encoding="utf-8",
+    )
+    fake = ModuleType("xy")
+    fake.__all__ = ["Typed", "FunctionOnly", "ClassOnly", "ElseOnly"]
+
+    errors = check_public_api.validate_static_typing_surface(fake, init_path)
+
+    assert errors == [
+        "xy public names have no static TYPE_CHECKING import or annotation: "
+        "['ClassOnly', 'ElseOnly', 'FunctionOnly']"
+    ]

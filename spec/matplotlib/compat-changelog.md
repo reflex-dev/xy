@@ -8,9 +8,10 @@ which covers user-visible releases across the whole package.
 
 - `xy.pyplot` now separates the existing dependency-free, high-performance
   2-D implementation (`native`) from the optional real-Matplotlib frontend
-  (`compat`). The configured default is `auto`: it resolves to compat when the
-  supported Matplotlib 3.11 series is installed and to native otherwise.
-  Explicit native pins the lightweight implementation.
+  (`compat`). The configured default is `native`, including when Matplotlib is
+  installed. `auto` remains an explicit environment-sensitive choice that
+  resolves to compat for the supported Matplotlib 3.11 series and native
+  otherwise.
 - `pip install "xy[matplotlib]"` installs the supported Matplotlib 3.11
   series. `plt.set_mode(...)` and `XY_PYPLOT_MODE` select a process before
   figures are created; switching with an open native or Matplotlib figure is

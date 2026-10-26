@@ -114,11 +114,9 @@ chart
 
 ### Coming from Matplotlib
 
-`xy.pyplot` has two implementations. The configured default is `auto`: a base
-install resolves it to the dependency-free, high-performance 2-D `native`
-shim, while an install with the supported Matplotlib 3.11 extra resolves it to
-`compat`. With a base install, common pyplot workflows can change only the
-import:
+`xy.pyplot` has two implementations. The configured default is the
+dependency-free, high-performance 2-D `native` shim, even when Matplotlib is
+already installed. Common pyplot workflows can change only the import:
 
 ```python
 import numpy as np
@@ -152,11 +150,10 @@ and fail explicitly.
 
 `plt.set_mode("native")`, `plt.set_mode("compat")`, and `plt.set_mode("auto")`
 are the valid calls. `XY_PYPLOT_MODE` provides the corresponding process-wide
-configuration. `auto` selects `compat` when supported Matplotlib 3.11 is
-installed and `native` otherwise. Use explicit `native` to pin the lightweight
-implementation. Explicit `compat` fails with an installation hint when the
-supported extra is unavailable. Switching modes requires all figures to be
-closed.
+configuration. `auto` remains available as an explicit choice: it selects
+`compat` when supported Matplotlib 3.11 is installed and `native` otherwise.
+Explicit `compat` fails with an installation hint when the supported extra is
+unavailable. Switching modes requires all figures to be closed.
 
 The permanent contract records the exact 507-source Matplotlib stable-gallery
 archive and excludes its 48 three-dimensional examples from XY's runnable
@@ -210,7 +207,10 @@ stable (10 byte-identical frames), so progressive renderers are charged until
 their last chunk lands.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time-dark.png">
+    <img src="https://raw.githubusercontent.com/reflex-dev/xy/main/spec/assets/ux-render-time.png" alt="Time until every point is on screen, 10k to 100M points, for XY, Matplotlib, and Plotly. Lower is better." width="1200">
+  </picture>
 </p>
 
 XY holds **0.071 s at 10k and 0.081 s at 100M**, flat across four orders of
@@ -303,6 +303,44 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index)
+```
+
+For state-driven charts, declare the chart in the page and supply columns from
+a `@reflex_xy.data` state method — the structure (channels, colormaps, axes)
+is validated when `reflex run` compiles the app, while the columns ride the
+app's own websocket as binary buffers, never through Reflex state:
+
+```python
+from typing import TypedDict
+
+import numpy as np
+import reflex as rx
+import reflex_xy
+
+
+class CloudData(TypedDict):
+    x: np.ndarray
+    y: np.ndarray
+    mag: np.ndarray
+
+
+class Dash(rx.State):
+    points: int = 200_000
+
+    @reflex_xy.data
+    def cloud(self) -> CloudData:
+        rng = np.random.default_rng(7)
+        x = rng.normal(size=self.points)
+        y = x * 0.6 + rng.normal(scale=0.6, size=self.points)
+        return {"x": x, "y": y, "mag": np.hypot(x, y)}
+
+
+def dashboard() -> rx.Component:
+    return reflex_xy.scatter_chart(
+        data=Dash.cloud,
+        x="x", y="y", color="mag", colormap="viridis",
+        height="460px",
+    )
 ```
 
 Hover, pan, and zoom keep working. For charts driven by Reflex state, events, or

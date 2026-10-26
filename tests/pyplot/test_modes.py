@@ -56,15 +56,15 @@ def _reset_mode() -> Any:
     _mode._compat_pyplot = None
 
 
-def test_default_auto_selection_stays_matplotlib_free_until_first_routed_call() -> None:
+def test_default_native_selection_stays_matplotlib_free() -> None:
     default = _run_fresh(
         """
         import os
         import sys
         import xy.pyplot as plt
 
-        assert plt.get_mode() == "auto"
-        assert os.environ["MPLBACKEND"] == "module://xy.backends.backend_xy"
+        assert plt.get_mode() == "native"
+        assert os.environ.get("MPLBACKEND") != "module://xy.backends.backend_xy"
         assert not any(
             name == "matplotlib" or name.startswith("matplotlib.")
             for name in sys.modules
@@ -285,6 +285,7 @@ def test_auto_falls_back_to_native_when_supported_matplotlib_cannot_import() -> 
         assert type(axes).__module__ == "xy.pyplot._axes"
         assert os.environ.get("MPLBACKEND") != "module://xy.backends.backend_xy"
         """,
+        mode="auto",
     )
 
     assert result.returncode == 0, result.stderr

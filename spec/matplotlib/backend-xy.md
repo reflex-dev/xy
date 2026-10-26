@@ -38,6 +38,9 @@ and PNG encoder. It does not instantiate Agg, Cairo, another Matplotlib
 renderer, or a browser. Paths and outlined text are curve-flattened, compound
 fills retain nonzero-winding holes, collections remain ordered, and image
 resources are decoded directly from XY's content-addressed PNG representation.
+Repeated collection instances flatten each distinct source path once in Python;
+their translations enter the single native raster command stream, so marker
+count does not multiply curve-subdivision work.
 The consumer also covers rectangular and arbitrary path clips, tiled hatches,
 quad meshes, and barycentrically interpolated Gouraud batches.
 Repeated shaped clips share one exact supersampled mask within a raster pass.

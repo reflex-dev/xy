@@ -25,6 +25,11 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+# ``__getattr__`` materializes this lazily at runtime.  The declaration keeps
+# the PEP 561 surface concrete for static consumers without paying the
+# ``importlib.metadata`` lookup during ``import xy``.
+__version__: str
+
 _EXPORTS = {
     "Annotation": ".components",
     "Animation": ".components",
@@ -82,6 +87,8 @@ _EXPORTS = {
     "histogram": ".components",
     "histogram_chart": ".components",
     "interaction_config": ".components",
+    "funnel": ".components",
+    "funnel_chart": ".components",
     "label": ".components",
     "legend": ".components",
     "register_mark": ".plugins",
@@ -104,6 +111,7 @@ _EXPORTS = {
     "segments_chart": ".components",
     "step": ".components",
     "step_chart": ".components",
+    "structural_probe": ".components",
     "stairs": ".components",
     "stairs_chart": ".components",
     "stem": ".components",
@@ -177,6 +185,8 @@ __all__ = [
     "errorbar_chart",
     "export_config",
     "facet_chart",
+    "funnel",
+    "funnel_chart",
     "heatmap",
     "heatmap_chart",
     "hexbin",
@@ -214,6 +224,7 @@ __all__ = [
     "stem_chart",
     "step",
     "step_chart",
+    "structural_probe",
     "text",
     "theme",
     "theta_axis",
@@ -283,18 +294,22 @@ if TYPE_CHECKING:
     from ._figure import Selection
     from .columns import Column, ColumnStore, ZoneMaps
     from .components import (
+        Animation,
         Annotation,
         Axis,
         Chart,
         Colorbar,
         Component,
+        ExportConfig,
         FacetChart,
         Interaction,
         Legend,
         Mark,
         Modebar,
+        Spring,
         Theme,
         Tooltip,
+        animation,
         area,
         area_chart,
         arrow,
@@ -317,6 +332,8 @@ if TYPE_CHECKING:
         errorbar_chart,
         export_config,
         facet_chart,
+        funnel,
+        funnel_chart,
         heatmap,
         heatmap_chart,
         hexbin,
@@ -330,6 +347,7 @@ if TYPE_CHECKING:
         legend,
         line,
         line_chart,
+        mark,
         marker,
         modebar,
         pie_chart,
@@ -342,18 +360,24 @@ if TYPE_CHECKING:
         sankey_chart,
         scatter,
         scatter_chart,
+        segments,
+        segments_chart,
+        spring,
         stairs,
         stairs_chart,
         stem,
         stem_chart,
         step,
         step_chart,
+        structural_probe,
         text,
         theme,
         theta_axis,
         threshold,
         threshold_zone,
         tooltip,
+        triangle_mesh,
+        triangle_mesh_chart,
         violin,
         violin_chart,
         vline,
@@ -365,3 +389,10 @@ if TYPE_CHECKING:
     )
     from .dom import CHART_DOM_SLOTS
     from .export import Engine, write_images
+    from .plugins import (
+        MarkContext,
+        MarkPlugin,
+        register_mark,
+        registered_marks,
+        unregister_mark,
+    )

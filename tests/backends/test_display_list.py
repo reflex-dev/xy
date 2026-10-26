@@ -288,6 +288,63 @@ def test_packed_collections_match_legacy_geometry_across_consumers() -> None:
     assert "quads" not in restored.commands[2]
 
 
+def test_native_raster_flattens_each_collection_path_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xy.backends import raster
+
+    display_list = DisplayList(80, 40, 72)
+    path = [["M", -2, -2], ["L", 2, -2], ["L", 2, 2], ["L", -2, 2], ["Z"]]
+    style = {
+        "fill": [0, 0, 1, 1],
+        "stroke": None,
+        "linewidth": 0,
+        "opacity": 1,
+        "antialiased": True,
+    }
+    display_list.add(
+        "marker_collection",
+        path=path,
+        positions=[[float(x), 10.0] for x in range(4, 76, 4)],
+        style=style,
+        clip=None,
+        url=None,
+        gid=None,
+    )
+    display_list.add(
+        "path_collection",
+        paths=[path],
+        items=[
+            {
+                "path": 0,
+                "offset": [float(x), 30.0],
+                "style": style,
+                "clip": None,
+                "url": None,
+                "gid": None,
+            }
+            for x in range(4, 76, 4)
+        ],
+        gid=None,
+    )
+    calls = 0
+    original = raster._flatten_path
+
+    def tracked(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(raster, "_flatten_path", tracked)
+
+    rgba = display_list.to_rgba()
+
+    assert np.count_nonzero(rgba[:, :, 3]) > 0
+    # The two commands store independent path objects; every repeated instance
+    # within each collection reuses that command's one flattened contour.
+    assert calls == 2
+
+
 def test_svg_serializer_preserves_order_clips_and_metadata() -> None:
     display_list = DisplayList(
         100,

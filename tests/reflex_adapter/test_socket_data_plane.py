@@ -17,18 +17,24 @@ import json
 import socket
 import threading
 from types import SimpleNamespace
+from typing import TypedDict
 
 import numpy as np
 import pytest
+import reflex as rx
 import socketio
 import uvicorn
+from reflex.istate.manager.memory import StateManagerMemory
 from reflex_base.utils import format as reflex_format
 
+import reflex_xy
 import xy
 from reflex_xy.app import wire
 from reflex_xy.namespace import XYNamespace
+from reflex_xy.plan import build_plan
 from reflex_xy.registry import registry
-from reflex_xy.tokens import build_state_token
+from reflex_xy.state_bridge import make_rebuild_hook
+from reflex_xy.tokens import build_data_token, build_plan_token, build_state_token
 
 CLIENT_TOKEN = "11111111-2222-4333-8444-555566667777"
 OTHER_TOKEN = "99999999-8888-4777-8666-555544443333"
@@ -758,7 +764,7 @@ def test_failed_rebuild_attempt_is_shared_then_later_request_retries(_fresh_regi
     async def get_session(sid):
         return {"client_token": CLIENT_TOKEN}
 
-    async def send_error(sid, token, error):
+    async def send_error(sid, token, error, resync=False):
         errors.append((sid, token, error))
 
     async def broadcast(token, entry):
@@ -835,7 +841,7 @@ def test_rebuild_broadcast_failure_removes_generation_and_later_sub_retries(
         if len(broadcasts) == 1:
             raise RuntimeError("transport failed")
 
-    async def send_error(sid, token, error):
+    async def send_error(sid, token, error, resync=False):
         errors.append((sid, token, error))
 
     async def enter_room(sid, room):
@@ -908,7 +914,7 @@ def test_rebuild_failure_cleanup_does_not_remove_a_concurrent_replacement(
         replacement = registry.publish(token, replacement_figure, broadcast=False)
         raise RuntimeError("old generation transport failed")
 
-    async def send_error(sid, token, error):
+    async def send_error(sid, token, error, resync=False):
         errors.append((sid, token, error))
 
     monkeypatch.setattr(namespace, "get_session", get_session)
@@ -971,7 +977,7 @@ def test_rebuild_failure_cleanup_preserves_same_object_authoritative_publish(
         assert registry._rebuildable_subscribers[state_token] == {"sid-existing"}
         delivered.set()
 
-    async def send_error(sid, token, error):
+    async def send_error(sid, token, error, resync=False):
         errors.append((sid, token, error))
 
     monkeypatch.setattr(namespace, "get_session", get_session)
@@ -1176,7 +1182,7 @@ def test_rebuild_completion_does_not_resurrect_after_a_newer_release(_fresh_regi
     async def get_session(sid):
         return {"client_token": CLIENT_TOKEN}
 
-    async def send_error(sid, token, error):
+    async def send_error(sid, token, error, resync=False):
         errors.append((sid, token, error))
 
     async def broadcast(token, entry):
@@ -1646,5 +1652,240 @@ def test_subscription_departure_releases_evicted_version(_fresh_registry, depart
             if client.connected:
                 await client.disconnect()
         assert replacement.version == 1
+
+    run(main())
+
+
+# -- the data-bound (plan) tier over the same wire ---------------------------
+#
+# Composite figure identity xyp1|<digest>|<xyd1 token>: rooms, versioning,
+# mid addressing, and the attachment-cap logic are reused unchanged — the
+# composite token is just another `fig` string to everything below the
+# subscribe path.
+
+
+class PlaneSchema(TypedDict):
+    x: np.ndarray
+    y: np.ndarray
+
+
+class PlaneData(rx.State):
+    n: int = 24
+
+    @reflex_xy.data
+    def table(self) -> PlaneSchema:
+        xs = np.linspace(0.0, 1.0, self.n)
+        return {"x": xs, "y": xs * 2.0}
+
+
+def make_plane_app():
+    return SimpleNamespace(state_manager=StateManagerMemory())
+
+
+def plane_plan():
+    return build_plan("scatter_chart", (xy.scatter("x", "y"),), {})
+
+
+def plane_data_token(client_token: str = CLIENT_TOKEN) -> str:
+    return build_data_token(client_token, PlaneData.get_full_name(), "table")
+
+
+def test_composite_sub_serves_bound_payload_and_interactions(_fresh_registry):
+    """sub/msg on a composite token: plan lookup + column resolve + bind,
+    then the ordinary payload/pick machinery."""
+    app = make_plane_app()
+
+    async def main():
+        plan = plane_plan()
+        data_token = plane_data_token()
+        composite = build_plan_token(plan.digest, data_token)
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            payload = await collector.next(collector.payloads)
+            assert payload["fig"] == composite
+            assert payload["spec"]["traces"][0]["n_points"] == 24
+            # interactions round-trip against the bound figure
+            await client.emit(
+                "msg",
+                {
+                    "fig": composite,
+                    "v": payload["version"],
+                    "mid": "m1",
+                    "m": {"type": "pick", "trace": 0, "index": 3, "seq": "pick:1"},
+                },
+                namespace="/_xy",
+            )
+            reply = await collector.next(collector.messages)
+            assert reply["message"]["type"] == "pick_result"
+            await client.disconnect()
+        # both halves are cached now: columns and the bound figure
+        assert registry.get_columns(data_token) is not None
+        assert registry.get(composite) is not None
+
+    run(main())
+
+
+def test_composite_rebuild_reads_session_state(_fresh_registry):
+    """The data half is rebuilt through the state bridge (mutated session
+    state, not defaults) when neither half is cached."""
+    app = make_plane_app()
+    token_obj = rx.BaseStateToken(ident=CLIENT_TOKEN, cls=rx.State)
+
+    async def main():
+        async with app.state_manager.modify_state(token_obj) as root:
+            sub = await root.get_state(PlaneData)
+            sub.n = 7
+        plan = plane_plan()
+        composite = build_plan_token(plan.digest, plane_data_token())
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            payload = await collector.next(collector.payloads)
+            assert payload["spec"]["traces"][0]["n_points"] == 7
+            await client.disconnect()
+
+    run(main())
+
+
+def test_column_republish_fans_out_to_every_dependent_plan(_fresh_registry):
+    """One data var, two mounted plans: a republish rebuilds and broadcasts
+    both composite figures."""
+    app = make_plane_app()
+
+    async def main():
+        scatter_plan = plane_plan()
+        line_plan = build_plan("line_chart", (xy.line("x", "y"),), {})
+        data_token = plane_data_token()
+        scatter_fig = build_plan_token(scatter_plan.digest, data_token)
+        line_fig = build_plan_token(line_plan.digest, data_token)
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": scatter_fig, "mid": "m1"}, namespace="/_xy")
+            first = await collector.next(collector.payloads)
+            await client.emit("sub", {"fig": line_fig, "mid": "m2"}, namespace="/_xy")
+            second = await collector.next(collector.payloads)
+            assert {first["fig"], second["fig"]} == {scatter_fig, line_fig}
+
+            # the data var recomputes (as a state delta evaluation would)
+            registry.publish_columns(
+                data_token,
+                {"x": np.linspace(0.0, 1.0, 5), "y": np.linspace(0.0, 1.0, 5)},
+            )
+            refreshed = {}
+            for _ in range(2):
+                payload = await collector.next(collector.payloads)
+                refreshed[payload["fig"]] = payload["spec"]["traces"][0]["n_points"]
+            assert refreshed == {scatter_fig: 5, line_fig: 5}
+            await client.disconnect()
+
+    run(main())
+
+
+def test_composite_affinity_uses_the_embedded_data_client(_fresh_registry):
+    app = make_plane_app()
+
+    async def main():
+        plan = plane_plan()
+        composite = build_plan_token(plan.digest, plane_data_token(CLIENT_TOKEN))
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            thief = await connect_client(url, client_token=OTHER_TOKEN)
+            thief_collector = Collector(thief)
+            await thief.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            error = await thief_collector.next(thief_collector.errors)
+            assert "another session" in error["error"]
+            await thief.disconnect()
+
+    run(main())
+
+
+def test_plan_miss_answers_err_resync_naming_the_digest(_fresh_registry):
+    """Hot-reload drift: a subscriber holding a stale digest is asked to
+    resync (the recompiled page carries the new digest)."""
+    app = make_plane_app()
+
+    async def main():
+        composite = build_plan_token("feedfacefeedfacefeed", plane_data_token())
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            error = await collector.next(collector.errors)
+            assert "feedfacefeedfacefeed" in error["error"]
+            assert error["resync"] is True
+            await client.disconnect()
+
+    run(main())
+
+
+def test_bind_mismatch_answers_err_without_resync(_fresh_registry):
+    """An untyped data var producing the wrong columns: the err frame names
+    both sides and does not ask for a pointless resync."""
+
+    class MismatchData(rx.State):
+        @reflex_xy.data
+        def rows(self):
+            return {"only": [1.0, 2.0]}
+
+    app = make_plane_app()
+
+    async def main():
+        plan = plane_plan()
+        data_token = build_data_token(CLIENT_TOKEN, MismatchData.get_full_name(), "rows")
+        composite = build_plan_token(plan.digest, data_token)
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            error = await collector.next(collector.errors)
+            assert "plan binds" in error["error"]
+            assert "'x'" in error["error"]
+            assert error.get("resync") is None
+            await client.disconnect()
+
+    run(main())
+
+
+def test_republish_bind_failure_broadcasts_err_and_releases(_fresh_registry):
+    """A republish whose columns stop satisfying a mounted plan must not
+    freeze subscribers silently: the composite entry is released and the
+    room gets an err frame asking for a bounded resync."""
+    app = make_plane_app()
+
+    async def main():
+        plan = plane_plan()
+        data_token = plane_data_token()
+        composite = build_plan_token(plan.digest, data_token)
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": composite, "mid": "m1"}, namespace="/_xy")
+            await collector.next(collector.payloads)
+
+            registry.publish_columns(data_token, {"wrong": [1.0]})
+            error = await collector.next(collector.errors)
+            assert "plan binds" in error["error"]
+            assert error["resync"] is True
+            assert registry.get(composite) is None
+            await client.disconnect()
+
+    run(main())
+
+
+def test_bare_data_token_is_not_a_figure(_fresh_registry):
+    """A raw xyd1 token names columns, never a figure: closed, no rebuild."""
+    app = make_plane_app()
+
+    async def main():
+        async with data_plane_server(rebuild=make_rebuild_hook(app)) as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": plane_data_token(), "mid": "m1"}, namespace="/_xy")
+            error = await collector.next(collector.errors)
+            assert error["error"] == "unknown figure token"
+            await client.disconnect()
 
     run(main())

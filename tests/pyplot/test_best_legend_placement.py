@@ -374,14 +374,101 @@ def test_datetime_text_and_annotations_participate_in_best_placement():
     assert resolved_loc(ax) == "lower left"
 
 
-def test_best_is_resolved_before_the_wire():
-    """`"best"` is a shim concept; the wire only ever carries a real location."""
+@pytest.mark.parametrize("legend_kwargs", [{}, {"loc": "best"}], ids=["default", "best"])
+def test_best_is_concrete_on_the_wire_and_retains_live_intent(legend_kwargs):
+    """The shim's first choice is concrete while its automatic intent survives."""
     _, ax = plt.subplots()
     ax.plot([0, 1], [0, 1], label="a")
-    ax.legend(loc="best")
+    ax.legend(**legend_kwargs)
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
     assert spec["legend"]["loc"] != "best"
     assert spec["legend"]["loc"] in xy.pyplot._axes._LEGEND_LOC_ANCHORS
+    assert spec["legend"]["auto_loc"] == "best"
+
+
+def test_explicit_anchored_and_polar_pyplot_legends_stay_exact():
+    _, explicit = plt.subplots()
+    explicit.plot([0, 1], [0, 1], label="a")
+    explicit.legend(loc="lower left")
+
+    _, anchored = plt.subplots()
+    anchored.plot([0, 1], [0, 1], label="a")
+    anchored.legend(loc="best", bbox_to_anchor=(0.0, 1.0))
+
+    _, polar = plt.subplots(subplot_kw={"projection": "polar"})
+    polar.plot([0.0, 1.0], [0.2, 0.8], label="a")
+    polar.legend(loc="best")
+
+    for ax in (explicit, anchored, polar):
+        spec, _ = ax._build_chart(640, 480).figure().build_payload()
+        assert "auto_loc" not in spec["legend"]
+
+
+def test_automatic_extra_legend_retains_live_intent():
+    from xy.pyplot import Legend
+
+    _, ax = plt.subplots()
+    line = ax.plot([0, 1], [0, 1])[0]
+    ax.add_artist(Legend(ax, [line], ["extra"]))
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    extra = spec["extra_legends"][0]
+    assert extra["loc"] in xy.pyplot._axes._LEGEND_LOC_ANCHORS
+    assert extra["auto_loc"] == "best"
+
+
+def test_static_export_at_the_same_size_keeps_pyplots_richer_decision(monkeypatch):
+    # This deterministic fixture separates pyplot's annotation-aware scorer
+    # from the core fallback scorer. Re-resolving at unchanged dimensions
+    # would silently move the payload's lower-left choice to upper-left.
+    rng = np.random.default_rng(10)
+    ax = None
+    for index in range(7):
+        fixture, candidate_ax = plt.subplots()
+        count = int(rng.integers(1, 40))
+        candidate_ax.plot(rng.random(count), rng.random(count), label="a")
+        if index % 3 == 0:
+            candidate_ax.text(
+                float(rng.random()),
+                float(rng.random()),
+                "W" * int(rng.integers(1, 30)),
+            )
+        candidate_ax.set_xlim(0, 1)
+        candidate_ax.set_ylim(0, 1)
+        candidate_ax.legend(loc="best")
+        if index < 6:
+            # The seventh seeded case is the minimal scorer-separating
+            # regression. Earlier cases only advance that deterministic RNG
+            # sequence; release their pyplot state as soon as it is consumed.
+            plt.close(fixture)
+        else:
+            ax = candidate_ax
+
+    assert ax is not None
+    core = ax._build_chart(640, 480).figure()
+    spec, _ = core.build_payload()
+    assert spec["legend"]["loc"] == "lower left"
+
+    from xy import _raster, _svg
+
+    rendered = []
+    original = _svg.render_svg
+
+    def capture(spec, blob, **kwargs):
+        rendered.append(spec["legend"]["loc"])
+        return original(spec, blob, **kwargs)
+
+    monkeypatch.setattr(_svg, "render_svg", capture)
+    core.to_svg()
+    core.to_svg(width=640, height=480)
+    assert rendered == ["lower left", "lower left"]
+
+    raster_locs = [
+        _raster._export_payload(core, None, None, None)[0]["legend"]["loc"],
+        _raster._export_payload(core, 640, 480, None)[0]["legend"]["loc"],
+    ]
+    assert raster_locs == ["lower left", "lower left"]
+    plt.close(fixture)
 
 
 def test_unlabeled_entries_do_not_crash_measurement():

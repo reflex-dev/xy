@@ -1,6 +1,10 @@
 import { chromium } from "playwright";
 
-const [executablePath, pageUrl, resultAttribute] = process.argv.slice(2);
+const arguments_ = process.argv.slice(2);
+const executablePath = arguments_.shift();
+const resultAttribute = arguments_.pop();
+const pageUrl = arguments_.pop();
+const extraArgs = arguments_;
 if (!executablePath || !pageUrl || !resultAttribute) {
   throw new Error(
     "usage: node browser_probe_runner.mjs CHROMIUM PAGE_URL RESULT_ATTRIBUTE",
@@ -16,6 +20,7 @@ const browser = await chromium.launch({
     "--allow-file-access-from-files",
     "--use-angle=swiftshader",
     "--enable-unsafe-swiftshader",
+    ...extraArgs,
   ],
 });
 

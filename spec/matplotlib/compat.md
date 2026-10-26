@@ -6,9 +6,9 @@
 
 | Mode | Contract |
 |---|---|
-| `native` | Dependency-free, high-performance XY 2-D implementation with XY-owned Figure, Axes, and Artist-shaped types. Select it explicitly to pin the lightweight implementation. |
+| `native` | Dependency-free, high-performance XY 2-D implementation with XY-owned Figure, Axes, and Artist-shaped types. This is the configured default. |
 | `compat` | Matplotlib 3.11 supplies genuine Figure, Axes, Artist, units, transform, layout, toolkit, widget, animation, and projection semantics. `module://xy.backends.backend_xy` supplies the canvas and renderer. Install with `pip install "xy[matplotlib]"`. |
-| `auto` | The configured default. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
+| `auto` | An explicit environment-sensitive choice. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
 
 Select a mode before creating a figure:
 

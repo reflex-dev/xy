@@ -26,11 +26,22 @@ IPython it starts a stdlib-only server on an ephemeral `127.0.0.1` port and
 opens the default browser at a per-figure URL containing a random 256-bit
 token. The server accepts only exact same-token paths, caps JSON event bodies,
 serves no remote assets, and applies a restrictive CSP. Closing the figure
-stops the server and releases its thread and port.
+stops the server and releases its thread and port. A browser that loses the
+loopback host keeps its last frame but stops polling after eight consecutive
+failures, preventing an unbounded stream of refused requests.
 
 The view refreshes its SVG from the shared, fallback-free XY display list after
 every `draw()` or `draw_idle()`. Resizing the view changes the Matplotlib figure
 size and causes a fresh draw.
+
+This compat-only live path is the explicit bounded exception recorded in
+design dossier §29: Jupyter syncs the complete SVG through a Unicode trait, and
+the loopback host returns the same SVG as a JSON string. A measured three-point
+scatter is about 38 KiB per frame. Refresh therefore pays SVG construction,
+text serialization/transport copies, and browser DOM parsing; it does not make
+the binary, zero-number-parse claim of native XY's Jupyter data plane. The
+exception does not apply to `xy.FigureWidget`, server-app binary transport, or
+numeric display-list resources.
 
 The browser maps pointer or mouse movement, press, release, double-click,
 wheel, enter, leave, keyboard, resize, and close input to Matplotlib's

@@ -532,7 +532,7 @@ def _interaction_browser_report() -> dict:
     }
 
 
-def _dashboard_browser_report() -> dict:
+def _dashboard_browser_report(counts: tuple[int, ...] = (10, 20, 50, 60)) -> dict:
     categories, tracked = _category_registry(
         "many_chart_dashboards",
         "small_data_startup",
@@ -541,6 +541,7 @@ def _dashboard_browser_report() -> dict:
 
     def row(count: int) -> dict:
         chart_ids = [f"chart-{i}" for i in range(count)]
+        pick_ids = [f"chart-{i}" for i in range(count) if i % 5 == 1]
         return {
             "scenario": f"dashboard_{count}",
             "chart_count": count,
@@ -558,6 +559,27 @@ def _dashboard_browser_report() -> dict:
             "ms_per_chart": 7.0,
             "payload_prep_ms": 3.0 * count,
             "navigation_ready_ms": 12.0 * count,
+            "chart_setup_first_draw_p50_ms": 5.0,
+            "chart_setup_first_draw_p95_ms": 8.0,
+            "chart_setup_first_draw_max_ms": 9.0,
+            "startup_shader_compile_calls": 9,
+            "startup_unique_shader_sources": 9,
+            "startup_program_create_calls": count,
+            "startup_program_link_calls": count,
+            "pick_probe_charts": len(pick_ids),
+            "pick_probe_chart_ids": pick_ids,
+            "post_pick_shader_compile_calls": 11,
+            "post_pick_unique_shader_sources": 11,
+            "post_pick_program_create_calls": count + len(pick_ids),
+            "post_pick_program_link_calls": count + len(pick_ids),
+            "shader_compile_calls": 11,
+            "unique_shader_sources": 11,
+            "program_create_calls": count + len(pick_ids),
+            "program_link_calls": count + len(pick_ids),
+            "startup_long_task_observer_supported": True,
+            "startup_long_task_count": 1,
+            "startup_long_task_total_ms": 55.0,
+            "startup_long_task_max_ms": 55.0,
             "scroll_pass_ms": 5.0 * count,
             "steady_redraw_p95_ms": 16.7,
             "steady_redraw_active_charts": count,
@@ -591,10 +613,10 @@ def _dashboard_browser_report() -> dict:
         "kind": "dashboard-browser",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
-        "attempted_chart_counts": [10, 20, 50],
-        "chart_count_ceiling": 50,
-        "visible_stable_chart_ceiling": 50,
-        "rows": [row(count) for count in (10, 20, 50)],
+        "attempted_chart_counts": list(counts),
+        "chart_count_ceiling": max(counts),
+        "visible_stable_chart_ceiling": max(counts),
+        "rows": [row(count) for count in counts],
     }
 
 
@@ -871,8 +893,8 @@ def test_dashboard_report_rejects_overstated_ceiling(tmp_path: Path) -> None:
 
 def test_dashboard_report_accepts_partial_rows_with_context_telemetry(tmp_path: Path) -> None:
     payload = _dashboard_browser_report()
-    _set_dashboard_partial(payload["rows"][1])
-    _set_dashboard_partial(payload["rows"][2])
+    for row in payload["rows"][1:]:
+        _set_dashboard_partial(row)
     payload["chart_count_ceiling"] = 10
     payload["visible_stable_chart_ceiling"] = 10
     path = _write_report(tmp_path, payload)
@@ -882,17 +904,114 @@ def test_dashboard_report_accepts_partial_rows_with_context_telemetry(tmp_path: 
     assert errors == []
 
 
-def test_dashboard_report_accepts_governed_rows(tmp_path: Path) -> None:
+def test_dashboard_report_accepts_zero_shader_counters_when_no_charts_created(
+    tmp_path: Path,
+) -> None:
     payload = _dashboard_browser_report()
-    _set_dashboard_governed(payload["rows"][1])
-    _set_dashboard_governed(payload["rows"][2])
-    payload["chart_count_ceiling"] = 10
+    row = payload["rows"][-1]
+    chart_ids = [f"chart-{i}" for i in range(row["chart_count"])]
+    shader_counter_keys = (
+        "startup_shader_compile_calls",
+        "startup_unique_shader_sources",
+        "startup_program_create_calls",
+        "startup_program_link_calls",
+        "post_pick_shader_compile_calls",
+        "post_pick_unique_shader_sources",
+        "post_pick_program_create_calls",
+        "post_pick_program_link_calls",
+        "shader_compile_calls",
+        "unique_shader_sources",
+        "program_create_calls",
+        "program_link_calls",
+    )
+    row.update(
+        {
+            **{key: 0 for key in shader_counter_keys},
+            "render_status": "partial",
+            "fully_nonblank": False,
+            "chart_setup_first_draw_p50_ms": 0.0,
+            "chart_setup_first_draw_p95_ms": 0.0,
+            "chart_setup_first_draw_max_ms": 0.0,
+            "pick_probe_charts": 0,
+            "pick_probe_chart_ids": [],
+            "steady_redraw_active_charts": 0,
+            "created_charts": 0,
+            "creation_failed_charts": row["chart_count"],
+            "creation_failure_ids": chart_ids,
+            "nonblank_charts": 0,
+            "initial_nonblank_charts": 0,
+            "initial_nonblank_chart_ids": [],
+            "initial_blank_chart_ids": chart_ids,
+            "scroll_nonblank_charts": 0,
+            "scroll_nonblank_chart_ids": [],
+            "scroll_blank_chart_ids": chart_ids,
+        }
+    )
+    payload["chart_count_ceiling"] = 50
     payload["visible_stable_chart_ceiling"] = 50
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
 
     assert errors == []
+
+
+def test_dashboard_report_skips_mixed_sixty_oracle_for_partial_loss_row(
+    tmp_path: Path,
+) -> None:
+    payload = _dashboard_browser_report()
+    row = payload["rows"][-1]
+    _set_dashboard_partial(row)
+    row.update(
+        {
+            "startup_shader_compile_calls": 3,
+            "startup_unique_shader_sources": 2,
+            "startup_program_create_calls": 2,
+            "startup_program_link_calls": 2,
+            "post_pick_shader_compile_calls": 5,
+            "post_pick_unique_shader_sources": 3,
+            "post_pick_program_create_calls": 4,
+            "post_pick_program_link_calls": 4,
+            "shader_compile_calls": 5,
+            "unique_shader_sources": 3,
+            "program_create_calls": 4,
+            "program_link_calls": 4,
+            "pick_probe_chart_ids": list(reversed(row["pick_probe_chart_ids"])),
+        }
+    )
+    payload["chart_count_ceiling"] = 50
+    payload["visible_stable_chart_ceiling"] = 50
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert errors == []
+
+
+def test_dashboard_report_accepts_governed_rows(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    for row in payload["rows"][1:]:
+        _set_dashboard_governed(row)
+    payload["chart_count_ceiling"] = 10
+    payload["visible_stable_chart_ceiling"] = 60
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert errors == []
+
+
+def test_dashboard_report_requires_sixty_chart_attempt(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["rows"] = payload["rows"][:-1]
+    payload["attempted_chart_counts"] = payload["attempted_chart_counts"][:-1]
+    payload["chart_count_ceiling"] = 50
+    payload["visible_stable_chart_ceiling"] = 50
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("missing required attempted chart counts: [60]" in error for error in errors)
 
 
 def test_dashboard_report_accepts_pending_release_event(tmp_path: Path) -> None:
@@ -907,8 +1026,8 @@ def test_dashboard_report_accepts_pending_release_event(tmp_path: Path) -> None:
     row["context_lost_chart_ids"] = []
     row["context_restored_chart_ids"] = []
     row["context_events"] = []
-    payload["chart_count_ceiling"] = 50
-    payload["visible_stable_chart_ceiling"] = 50
+    payload["chart_count_ceiling"] = 60
+    payload["visible_stable_chart_ceiling"] = 60
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
@@ -933,8 +1052,8 @@ def test_dashboard_report_rejects_mislabeled_governed_row(tmp_path: Path) -> Non
     row = payload["rows"][2]
     row["context_events"][0]["governed"] = False
     row["governed_context_lost_events"] -= 1
-    payload["chart_count_ceiling"] = 10
-    payload["visible_stable_chart_ceiling"] = 50
+    payload["chart_count_ceiling"] = 60
+    payload["visible_stable_chart_ceiling"] = 60
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
@@ -950,6 +1069,86 @@ def test_dashboard_report_rejects_catastrophic_smoke_timing(tmp_path: Path) -> N
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
 
     assert any("steady_redraw_p95_ms" in error and "hard smoke budget" in error for error in errors)
+
+
+def test_dashboard_report_requires_shader_and_startup_telemetry(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    del payload["rows"][0]["shader_compile_calls"]
+    del payload["rows"][0]["startup_shader_compile_calls"]
+    del payload["rows"][0]["post_pick_shader_compile_calls"]
+    del payload["rows"][0]["pick_probe_chart_ids"]
+    del payload["rows"][0]["chart_setup_first_draw_p95_ms"]
+    del payload["rows"][0]["startup_long_task_count"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("shader_compile_calls" in error for error in errors)
+    assert any("startup_shader_compile_calls" in error for error in errors)
+    assert any("post_pick_shader_compile_calls" in error for error in errors)
+    assert any("pick_probe_chart_ids" in error for error in errors)
+    assert any("chart_setup_first_draw_p95_ms" in error for error in errors)
+    assert any("startup_long_task_count" in error for error in errors)
+
+
+def test_dashboard_report_rejects_inconsistent_shader_telemetry(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    row = payload["rows"][1]
+    row["unique_shader_sources"] = row["shader_compile_calls"] + 1
+    row["program_link_calls"] = row["program_create_calls"] + 1
+    row["chart_setup_first_draw_p50_ms"] = row["chart_setup_first_draw_max_ms"] + 1
+    payload["rows"][2]["shader_compile_calls"] += 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("unique_shader_sources" in error for error in errors)
+    assert any("compile each unique shader source exactly once" in error for error in errors)
+    assert any("program_link_calls" in error for error in errors)
+    assert any("p50 <= p95 <= max" in error for error in errors)
+
+
+def test_dashboard_report_requires_positive_shader_counters_after_chart_creation(
+    tmp_path: Path,
+) -> None:
+    payload = _dashboard_browser_report()
+    row = payload["rows"][1]
+    for key in (
+        "startup_shader_compile_calls",
+        "startup_unique_shader_sources",
+        "startup_program_create_calls",
+        "startup_program_link_calls",
+        "post_pick_shader_compile_calls",
+        "post_pick_unique_shader_sources",
+        "post_pick_program_create_calls",
+        "post_pick_program_link_calls",
+        "shader_compile_calls",
+        "unique_shader_sources",
+        "program_create_calls",
+        "program_link_calls",
+    ):
+        row[key] = 0
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("shader_compile_calls must be > 0" in error for error in errors)
+    assert any("program_link_calls must be > 0" in error for error in errors)
+
+
+def test_dashboard_report_pins_mixed_sixty_chart_shader_oracle(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    path = _write_report(tmp_path, payload)
+
+    assert verify_benchmark_report.validate_report(path, kind="dashboard-browser") == []
+
+    payload["rows"][-1]["post_pick_shader_compile_calls"] = 12
+    payload["rows"][-1]["pick_probe_chart_ids"].reverse()
+    path = _write_report(tmp_path, payload)
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("mixed 60-chart shader oracle" in error for error in errors)
+    assert any("deterministic order" in error for error in errors)
 
 
 def test_workflow_report_rejects_missing_required_scenario(tmp_path: Path) -> None:

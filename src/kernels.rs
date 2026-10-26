@@ -1898,7 +1898,7 @@ pub fn triangle_edges_into(
     }
     let mut seen = std::collections::HashSet::with_capacity(capacity);
     let mut written = 0;
-    for face in triangles.chunks_exact(3) {
+    for face in triangles.as_chunks::<3>().0 {
         if face
             .iter()
             .any(|index| *index < 0 || *index as usize >= x.len())
@@ -2194,7 +2194,7 @@ pub fn marching_triangles_into(
         && out_y1.is_empty()
         && out_levels.is_empty();
     let mut written = 0;
-    for face in triangles.chunks_exact(3) {
+    for face in triangles.as_chunks::<3>().0 {
         if face
             .iter()
             .any(|index| *index < 0 || *index as usize >= x.len())
@@ -3629,7 +3629,7 @@ pub fn bin_2d_mean_color(
         BinColorSource::Rgba(rgba) => assert_eq!(rgba.len(), x.len() * 4),
     }
     let grid = bin_2d_mean_color_cells(x, y, colors, x0, x1, y0, y1, w, h);
-    for (cell, quad) in grid.iter().zip(out.chunks_exact_mut(4)) {
+    for (cell, quad) in grid.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
         quad.copy_from_slice(&cell.rgba8());
     }
 }

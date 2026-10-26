@@ -116,6 +116,7 @@ def _dump_dom(
     chromium: str,
     page: Path,
     result_attribute: str,
+    extra_args: tuple[str, ...] = (),
 ) -> tuple[str | None, str | None]:
     """One headless render pass.
 
@@ -137,6 +138,7 @@ def _dump_dom(
                 node,
                 str(_BROWSER_PROBE_RUNNER),
                 chromium,
+                *extra_args,
                 page.as_uri(),
                 result_attribute,
             ],
@@ -161,6 +163,7 @@ def run_browser_probe(
     result_attribute: str,
     *,
     label: str,
+    extra_args: tuple[str, ...] = (),
 ) -> dict:
     """Render `document` headless and scrape one JSON probe result, with retries.
 
@@ -182,7 +185,7 @@ def run_browser_probe(
     last: str | None = None
     for _ in range(3):
         try:
-            dom, failure = _dump_dom(chromium, page, result_attribute)
+            dom, failure = _dump_dom(chromium, page, result_attribute, extra_args)
         except _BrowserUnavailable as exc:
             if os.environ.get("XY_REQUIRE_BROWSER"):
                 pytest.fail(

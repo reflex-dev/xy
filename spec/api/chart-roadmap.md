@@ -129,7 +129,7 @@ not fall out of sight.
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Implemented core | Bounded-resolution smoothed distribution bands through the rectangle renderer. |
 | 13 | Contour | contour, filled contour, isolines | Implemented core | Marching-squares isolines over regular grids, optionally layered on heatmap fill. |
 | 14 | Waterfall | waterfall, bridge chart | Planned | Business reporting and finance expectation; mostly categorical bars plus running baseline. |
-| 15 | Funnel | funnel, funnel area, conversion funnel | Planned | Product analytics and sales/ops dashboard expectation. |
+| 15 | Funnel | funnel, funnel area, conversion funnel | Implemented core | `xy.funnel_chart`/`xy.funnel` render per-stage quads through the `funnel` kind (protocol v13): declared-order categorical stages, explicit area/bar geometry, rect/taper neck, gaps and a drawn-width floor, conversion/drop-off arithmetic in labels, tooltips, events, and keyboard traversal. Follow-ups are multi-series comparison grouping and box/lasso selection. |
 | 16 | Treemap | treemap, squarified treemap | Planned | Common BI hierarchy chart; requires layout and label polish. |
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
 | 18 | Radar / polar | radar, spider, polar area, radial bar, polar heatmap/contour | Implemented core | `xy.polar_chart` renders the allowlisted line/scatter/area/bar/column/heatmap/contour/errorbar schemas through the polar coordinate system (spec/design/polar-axes.md); `xy.radar_chart`, `xy.polar_bar_chart` and `xy.wind_rose` are the compositions. Sector layout, hole/r-origin, categorical θ, log/symlog radius, and polygonal grids ship. Follow-ups are rule/band geometry, polar LOD, facets/animation, and angular navigation/selection. |
@@ -192,7 +192,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
-| 18 | Funnel / funnel area | Common sales/product analytics chart. | Mostly categorical geometry plus labels. |
+| 18 | Funnel / funnel area | Common sales/product analytics chart. | Shipped — see "Funnel" in the coverage-backlog table above (`xy.funnel_chart`, protocol v13): categorical quad geometry plus build-time labels, as predicted. |
 | 19 | Calendar/cohort heatmap | Common product analytics and retention surface. | Grid plus date semantics. |
 | 20 | Gantt/timeline/event charts | Product/project/ops domain chart. | High UI polish and interaction expectations. |
 

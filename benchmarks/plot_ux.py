@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import xy
+from xy._benchmark_theme import BENCHMARK_DARK_THEME, BENCHMARK_LIGHT_THEME
 
 GIB = 2**30
 
@@ -68,6 +69,7 @@ def build(
     sizes: list[int],
     arms: list[str],
     metric: str,
+    color_scheme: str = "light",
 ) -> xy.Chart:
     marks: list[Any] = []
     notes: list[Any] = []
@@ -149,9 +151,11 @@ def build(
         domain = (0.0, 5.8)
 
     decades = [1e4, 1e5, 1e6, 1e7, 1e8]
+    theme = BENCHMARK_DARK_THEME if color_scheme == "dark" else BENCHMARK_LIGHT_THEME
     return xy.line_chart(
         *marks,
         *notes,
+        xy.theme(**theme),
         xy.legend(show=True, loc="upper left"),
         xy.modebar(show=False),
         xy.tooltip(format={"y": ".3f"}),
@@ -183,6 +187,7 @@ def main() -> None:
     parser.add_argument("--arms", default="", help="comma-separated subset")
     parser.add_argument("--suffix", default="")
     parser.add_argument("--scale", type=int, default=2)
+    parser.add_argument("--color-scheme", choices=("light", "dark"), default="light")
     args = parser.parse_args()
 
     rows: dict[tuple[str, int], dict[str, Any]] = {}
@@ -198,7 +203,7 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     for metric, stem in (("time", "render-time"), ("memory", "python-memory")):
-        chart = build(rows, sizes, arms, metric)
+        chart = build(rows, sizes, arms, metric, color_scheme=args.color_scheme)
         path = args.out_dir / f"ux-{stem}{args.suffix}.png"
         chart.to_png(str(path), scale=args.scale)
         print(f"wrote {path}")

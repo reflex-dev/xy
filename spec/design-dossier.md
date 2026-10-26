@@ -729,7 +729,8 @@ Plotly's real-world habitat is dashboards with 10–50 figures. Browsers cap liv
 WebGL contexts per page (~16 in Chrome) and LRU-evict the oldest on overflow, which
 permanently blanks the earliest charts of a big dashboard.
 
-**Shipped: one context per chart, governed.** `XY_CONTEXT_GOVERNOR`
+**Fallback path: one context per chart, governed.** When shared hosting is explicitly
+disabled or unavailable, and by default inside child frames, `XY_CONTEXT_GOVERNOR`
 (`js/src/50_chartview.ts`) keeps the page inside a budget — default **12**, overridable
 via `window.XY_CONTEXT_BUDGET` — leaving headroom under Chrome's cap for host-page GL.
 When a view is about to acquire a context at budget, the least-recently-visible
@@ -743,7 +744,7 @@ including the destroy+rebuild a full-payload republish performs — frees its sl
 immediately rather than leaving a destroyed context to linger until GC and count
 against the browser cap.
 
-**The budget is shared across same-origin frames.** Chrome's cap is *process-wide* —
+**The fallback budget is shared across same-origin frames.** Chrome's cap is *process-wide* —
 one budget for every iframe in the tab — but a per-document governor sees only its own
 charts. A page that renders each chart in its own iframe (docs sites, SaaS dashboards,
 and the `examples/fastapi` gallery, which needs iframes to host each standalone
@@ -759,14 +760,21 @@ already reports an off-screen iframe's chart as not-intersecting (it clips to th
 top-level viewport), so the visibility signal is correct across the frame boundary; the
 budget accounting was the only gap.
 
-Two subtleties the implementation must get right. **(1) Restore ordering.** A governed
-release is `WEBGL_lose_context.loseContext()`; re-acquire is `restoreContext()`. Chromium
-*silently drops* a `restoreContext()` issued before that context's `webglcontextlost`
-event has dispatched (or synchronously inside the dispatch), stranding the canvas lost
-forever — and a chart scrolled back into view in the same task it was shed hits exactly
-that window. Recovery therefore defers until the loss event lands (`_ctxLostPending`)
-and retries on a fresh task; a released chart that never re-acquired on scroll-in was the
-first symptom. **(2) Incremental shedding.** Frames over budget release *one* off-screen
+Two subtleties the implementation must get right. **(1) Re-acquire on a fresh canvas,
+after the loss event.** A governed release is `WEBGL_lose_context.loseContext()`; re-acquire
+is *never* `restoreContext()` on that canvas. Chromium (observed in 151) can restore the
+context fully healthy — draws, `readPixels` and picking all succeed, the stamp reads
+`live` — while the compositor presents that canvas element's frames as empty for good: a
+chart released by a peer tab while its own tab sat hidden came back blank, and no redraw
+(hover, resize, backing-store reset, a second lose/restore cycle) could show it. Only a
+fresh canvas element presents again, so a governed release re-acquires exactly like a real
+eviction: cloned canvas plus the §18/§27 rebuild (`_rebuildEvictedContext`), reserving
+with the governor first so an off-screen peer is shed before the replacement context is
+created. The rebuild still waits for the release's `webglcontextlost` event to land
+(`_ctxLostPending`, retried on a fresh task): the loss bookkeeping is bound to the canvas
+being replaced, and a chart scrolled back into view in the same task it was shed would
+otherwise strand that event. Either path answers a loss with exactly one
+`context_restored`. **(2) Incremental shedding.** Frames over budget release *one* off-screen
 view per event-loop turn, not the whole computed excess: several frames observing the
 same over-budget snapshot would each drop the full deficit and collectively over-release,
 so each sheds one, announces, and re-evaluates against the fresher count — converging on
@@ -791,18 +799,62 @@ the loss and re-requested on restore, so a backgrounded tab or a scrolled-away c
 back where the user left it, not at home (#156). The governor depends on this — a governed
 release is a deliberate context loss put through the same restore path.
 
-*Unimplemented design option — shared-context compositing:*
+**Production design: one document-scoped `GLHost`.** A top-level document creates one
+`GLHost` backed by a detached WebGL2 canvas and context. Participating `ChartView`
+instances are clients of that host, while each chart keeps a Canvas2D plot surface in
+its own DOM subtree. The host renders one chart into its detached target and
+synchronously blits the completed pixels into that chart's Canvas2D surface. Scrolling,
+clipping, z-index, and DOM interleaving therefore remain per-chart behavior.
 
-- **One renderer, one GPU context per page.** Each chart becomes a *client* of the
-  shared renderer: it owns a scene subgraph and a target rectangle.
-- Two compositing modes, chosen per environment: (a) a single full-page canvas behind
-  the DOM, charts drawn into scissored viewports — cheapest, works everywhere; or
-  (b) per-chart canvases fed by `transferControlToOffscreen` /
-  `drawImage`-from-shared-framebuffer where layout demands real DOM interleaving.
-- Shared context would also mean **shared caches**: two charts of the same DataFrame
-  reference the same columns and the same GPU buffers — a dashboard of 20 views of
-  one 10M-row table holds the data **once**, which is a memory win Plotly cannot
-  express at all.
+The `GLHost` owns the WebGL context, immutable fullscreen quad, and a generation-scoped
+cache of compiled shaders keyed by shader stage plus exact source. Each `ChartView`
+retains its own linked programs, scene state, and render and pick resources, including
+target dimensions and lazily created pick attachments. Reusing immutable compiled
+shaders avoids repeating the driver compilation work for every chart; the cache is
+discarded whenever the host context is lost or replaced. Linked programs stay
+client-owned because uniforms are mutable WebGL state; they can move into a host cache
+only after every pass is independently state-complete. Before rendering a client, the
+host binds that client's target and establishes the viewport, scissor, and WebGL state
+required by the chart; client switches cannot rely on state left by the previous chart.
+
+A loss of the shared context is host-wide. The `GLHost` restores or replaces its
+detached context, fullscreen quad, and empty shader cache, then directs every client to
+rebuild its programs and per-chart render and pick resources from CPU-backed scene
+state. Each client preserves its settled pan/zoom and re-requests that same view after
+reconstruction, matching the existing context-loss contract rather than resetting
+charts to home.
+
+A client rebuild can itself fail transiently — under process-wide GPU pressure Chromium
+loses just-created resources mid-setup (the characteristic `shader compile: null`) — and
+the client then retries with backoff (50 ms doubling to a 1 s cap; off-screen and
+hidden-document retries defer to the visibility/intersection wake-ups). Throughout those
+retries the chart's Canvas2D presentation surface must keep showing the last
+successfully presented frame: surface backing stores are resized only when their
+dimensions actually change, because a canvas width/height write clears the canvas even
+at the same value, and an unguarded resize in the rebuild path turned every failed retry
+into a visible blank — a chart under sustained pressure flickered between drawn and
+empty until a retry finally succeeded. Recovery is seamless-or-stale, never blank; only
+`data-xy-ctx` reports the difference.
+
+Retries must also be as powerful as a page reload. A wedged driver can leave a context
+reporting itself live (`isContextLost()` false) while every rebuild against it fails;
+plain retries then never succeed, and the only user escape was refreshing the page.
+After three consecutive rebuild failures a client therefore calls
+`GLHost.recycleSurface()` — retire the current surface and rebuild every client on a
+fresh context, which is exactly what a reload buys — riding the existing loss/replace
+machinery and its backoff. The counter counts consecutive failures within one recovery
+cycle only: it resets on the first successful rebuild and on every loss notification —
+including one reaching a client still lost from a failed rebuild, since the host fans
+out losses only on a live→lost transition and a loss therefore always heralds a fresh
+context. Ordinary transient pressure thus recovers through cheap same-context retries,
+and a stale count can never escalate a host-wide recycle off a single post-loss failure.
+
+The governed per-chart path remains the compatibility fallback. It is used when shared
+hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document
+cannot create or use the shared host, and by default inside child frames. Setting
+`window.XY_SHARED_WEBGL = true` opts a child frame into shared hosting. Fallback
+contexts continue to participate in the existing governor and same-origin frame budget
+described above.
 
 ## 19. Nulls, NaN, and gaps
 
@@ -1084,6 +1136,20 @@ bounded/versioned envelope; (b) the copies that do happen are `memcpy`-shaped, n
 number-parse-shaped; (c) every binding reports its actual copy count at ingest in debug
 mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
 live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
+
+**Bounded Matplotlib-compat exception.** The optional
+`module://xy.backends.backend_xy` live canvas is not the native XY data plane in
+the Jupyter row above. Its first implementation sends the rendered SVG document
+as one synced Unicode trait in Jupyter and as one JSON string from the
+authenticated loopback `/state` endpoint. The exception is bounded to compat
+figures and their live preview; native XY figures, numeric resources, server
+apps, and static-export contracts do not inherit it. A measured three-point
+scatter produces about 38 KiB of SVG per frame. Each refresh therefore incurs
+SVG construction, UTF-8/text serialization and transport copies, then browser
+DOM parsing on the main thread; no zero-copy or binary-transport performance
+claim applies to this compat live surface. Replacing it with binary display-list
+resources is tracked as compatibility-backend work, not silently treated as
+conforming to the native Jupyter transport row.
 
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 

@@ -26,6 +26,7 @@ class FigureHost(Protocol):
     axis_options: dict[str, dict[str, Any]]
     _axis_categories: dict[str, list[str]]
     title: Optional[str]
+    title_options: list[dict[str, Any]]
     width: Any
     height: Any
     padding: Any
@@ -46,6 +47,7 @@ class FigureHost(Protocol):
     def palette_color(self, index: int, *, stacklevel: int = 3) -> str: ...
 
     def _validate_coords(self) -> None: ...
+    def _validate_funnel_axes(self) -> None: ...
 
     # -- shared validators (static on `Figure`, aliases of `_validate`) --
     @staticmethod

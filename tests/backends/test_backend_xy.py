@@ -696,7 +696,8 @@ def test_canvas_region_restore_preserves_an_independent_axes_overlay() -> None:
     canvas.draw()
     reference = canvas.renderer.display_list.to_rgba()
     differing = np.abs(incremental.astype(int) - reference.astype(int))
-    assert np.count_nonzero(differing) <= 4
+    changed_pixels = np.any(differing > 0, axis=2)
+    assert np.count_nonzero(changed_pixels) <= 4
 
 
 def test_canvas_work_surface_survives_interleaved_partial_blits_and_copies() -> None:

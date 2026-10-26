@@ -85,13 +85,22 @@ const model = new LoopbackModel(await state());
 const cleanup = render({ model, el: document.getElementById("mount") });
 let stopped = false;
 let pollHandle = null;
+let consecutiveFailures = 0;
+const MAX_POLL_FAILURES = 8;
 
 async function poll() {
   if (stopped) return;
   try {
     model.apply(await state(model.get("generation")));
+    consecutiveFailures = 0;
   } catch {
-    // The Python process or figure may have closed. Keep the last frame visible.
+    // Keep the last frame visible, but do not hammer a closed figure or Python
+    // process forever. Transient failures recover on the next successful poll.
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= MAX_POLL_FAILURES) {
+      stop();
+      return;
+    }
   }
   if (!stopped) pollHandle = setTimeout(poll, 50);
 }

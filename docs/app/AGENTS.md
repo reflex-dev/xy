@@ -116,7 +116,7 @@ repository root.
 - Preserve `/docs/xy` in internal links, canonical URLs, generated Markdown
   aliases, and sitemap entries.
 - Reuse `reflex-site-shared` for the docs shell, Markdown renderer, styles,
-  Inkeep search, breadcrumbs, footer, and responsive drawers. Keep XY branding,
+  Algolia search, breadcrumbs, footer, and responsive drawers. Keep XY branding,
   navigation data, `rxconfig.py`, and small consumer-specific wrappers local.
 - Preserve `rx.memo` boundaries on the shared and XY sidebar components so
   large navigation trees compile once.
@@ -124,6 +124,11 @@ repository root.
   build output and must not be committed.
 - Prefer a little consumer-side duplication when a shared API would otherwise
   become complex or couple unrelated sites.
+- Keep the docs-only marketing brand layer in `assets/docs-theme.css`,
+  `assets/docs-header-theme.css`, and `assets/docs-overlays-theme.css`, following
+  Reflex PR #7549. These opt into the shared `docs-*` hooks without copying the
+  shared base theme or component implementations. Preserve live chart styles,
+  reduced-motion handling, and both color modes when updating this layer.
 
 ## Verification
 

@@ -23,13 +23,24 @@ Back and Next view-history controls live at the top of the zoom menu. They
 disable automatically at the ends of the history, remain open while stepping
 through views, and a new navigation after going Back clears the forward stack.
 
-Polar charts use a narrower control contract: hover, radial wheel/button zoom,
-reset, and export remain available. Radial zoom scales `r_max` about a fixed
-`r_min` while preserving an authored `hole` or `origin`. Authored angular
-sectors render normally, but Pan/theta rotation, interactive sector zoom, box
-zoom, selection, brushing, and crosshairs do not yet have polar semantics and
-stay disabled even when a general interaction flag is enabled. The polar
-modebar therefore omits the Pan button.
+Polar charts use a narrower control contract: hover and export remain available,
+and zoom is off by default — `xy.wind_rose()` is the one polar chart that ships
+with it on. By default a polar chart without zoom shows no zoom menu at all: no
+zoom percentage, no Zoom In/Out, no Fit Data or Reset View, and no Back/Next
+history, because no local viewport control is enabled. An explicit `reset_axes`
+still exposes Fit Data and Reset View on their own. When reset, history, or
+another view control keeps this menu available while `zoom=False`, its trigger
+shows a view-controls icon instead of a zoom percentage because local zoom
+cannot change that number. Add
+`xy.interaction_config(zoom=True)` and the whole menu returns, including radial
+wheel/button zoom, which scales `r_max` about
+a fixed `r_min` while preserving an authored `hole` or `origin`. Authored angular sectors render
+normally, but Pan/theta rotation, interactive sector zoom, box zoom, selection,
+brushing, and crosshairs do not yet have polar semantics and stay disabled even
+when a general interaction flag is enabled. The polar modebar therefore omits the
+Pan button, and `default_drag_action` accepts only `"auto"` or `"none"` on a polar
+chart — the other values name drag tools a disc does not have, so they raise
+instead of resolving to nothing.
 
 ## The default toolbar
 

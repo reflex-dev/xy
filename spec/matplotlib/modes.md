@@ -4,9 +4,9 @@
 
 | Mode | Behavior |
 |---|---|
-| `native` | The existing dependency-free XY 2-D pyplot shim. Select it explicitly to pin the lightweight implementation. |
+| `native` | The existing dependency-free XY 2-D pyplot shim and the configured default. |
 | `compat` | Matplotlib 3.11 supplies Figure, Axes, Artist, layout, units, toolkit, and projection semantics; `module://xy.backends.backend_xy` supplies the canvas and renderer. Install it with `pip install "xy[matplotlib]"`. |
-| `auto` | The configured default. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
+| `auto` | An explicit environment-sensitive choice. It resolves to `compat` when supported Matplotlib 3.11 is installed and to `native` otherwise. |
 
 Configure a process before creating figures:
 
@@ -31,7 +31,8 @@ classes in native mode and construct genuine Matplotlib classes in compat
 mode. They also support attribute lookup, `isinstance`/`issubclass`, and use as
 a class base.
 
-`plt.get_mode()` reports the configured value, including `auto`. Importing
+`plt.get_mode()` reports the configured value, including explicitly selected
+`auto`. Importing
 `xy.pyplot`, reading the mode, and explicitly selecting a mode do not import
 Matplotlib. The first compat-routed pyplot call validates Matplotlib
 `>=3.11,<3.12`, activates the XY backend, and then imports
