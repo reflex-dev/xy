@@ -863,7 +863,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "parallel cross-library benchmark matrix",
         "continue-on-error: true",
-        "timeout-minutes: 10",
+        "timeout-minutes: 20",
         "fail-fast: false",
         "matrix:",
         "xy: false",

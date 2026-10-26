@@ -323,7 +323,10 @@ jobs:
   benchmark_vs:
     name: Cross-library benchmark (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Browser provisioning occasionally takes more than ten minutes on the
+    # shared runner mirror. Keep enough room for installation plus the bounded
+    # benchmark so a slow mirror cannot suppress a matrix artifact.
+    timeout-minutes: 20
     continue-on-error: true
     strategy:
       fail-fast: false

@@ -924,13 +924,13 @@ def test_ci_workflow_rejects_missing_cross_library_job_timeout(tmp_path: Path) -
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("    timeout-minutes: 10\n", "", 1),
+        workflow.replace("    timeout-minutes: 20\n", "", 1),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("benchmark_vs" in error and "timeout-minutes: 10" in error for error in errors)
+    assert any("benchmark_vs" in error and "timeout-minutes: 20" in error for error in errors)
 
 
 def test_ci_workflow_rejects_unlocked_competitor_install(tmp_path: Path) -> None:
