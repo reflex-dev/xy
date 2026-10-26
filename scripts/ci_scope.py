@@ -1,4 +1,4 @@
-"""Select PR checks from the complete git diff; unknown paths fail open to all checks."""
+"""Select PR checks from the complete diff; pyplot requires an explicit matching path."""
 
 from __future__ import annotations
 
@@ -39,9 +39,12 @@ def select_checks(paths: list[str], *, full: bool = False) -> dict[str, bool]:
         elif path.startswith(("tests/", "examples/")) or path.startswith(".binder/"):
             selected["runtime"] = True
         else:
-            # Shared Python/Rust/JS, build configuration, CI and unfamiliar
-            # paths can affect every consumer. Never silently omit their gates.
-            selected = dict.fromkeys(GROUPS, True)
+            # Broad changes select the general lanes, but compatibility has
+            # its own explicit path list. Never turn on the gallery merely
+            # because CI, shared code, or an unfamiliar file changed.
+            for group in GROUPS:
+                if group != "pyplot":
+                    selected[group] = True
     return selected
 
 

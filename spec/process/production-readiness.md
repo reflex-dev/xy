@@ -49,8 +49,8 @@ integration are still experimental and may change before a 1.0 release.
 The selector uses the complete local Git three-dot PR diff, with rename detection
 disabled so a move out of a source directory still checks the removed source.
 It does not rely on GitHub's path-filter file limit. Selection failures fail CI;
-unknown paths conservatively select all lanes. Pushes and manual dispatches run
-all lanes, including documentation-only pushes to main.
+unknown paths conservatively select the general lanes, excluding pyplot. Pushes
+and manual dispatches run all lanes, including documentation-only pushes to main.
 
 | PR changes | Selected main CI lanes |
 | --- | --- |
@@ -58,9 +58,14 @@ all lanes, including documentation-only pushes to main.
 | `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
 | Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
 | `benchmarks/` or `scripts/bench*` | Cross-library and methodology benchmarks, plus their report merge |
-| Shared Python, Rust, JS, dependency/build configuration, CI, or unfamiliar paths | All lanes |
+| Shared Python, Rust, JS, dependency/build configuration, CI, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
 
-Mixed PRs take the union. Runtime and floor tests omit `tests/pyplot` and
+Mixed PRs take the union. On pull requests, the reference/patch jobs, both gallery
+profiles and the focused pyplot test step require an explicit change under the
+compatibility paths above. CI workflow/helper changes, shared implementation
+changes, and unknown paths do not enable them by themselves. A mixed PR that
+also edits compatibility still runs those gates regardless of file order.
+Runtime and floor tests omit `tests/pyplot` and
 `tests/backends` when compatibility is unselected; the explicit Chromium pyplot
 step follows the same compatibility output. Benchmarks remain advisory; selected
 correctness, gallery, browser and packaging lanes remain blocking. `CI result`

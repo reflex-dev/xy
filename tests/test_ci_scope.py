@@ -43,8 +43,10 @@ def test_pyplot_selects_compatibility_without_platform_builds(path):
         "new-build-input",
     ],
 )
-def test_shared_and_unknown_changes_keep_full_coverage(path):
-    assert all(select_checks([path]).values())
+def test_shared_and_unknown_changes_do_not_select_pyplot(path):
+    selected = select_checks([path])
+    assert not selected["pyplot"]
+    assert all(selected[group] for group in GROUPS if group != "pyplot")
 
 
 def test_mixed_changes_and_manual_runs():
@@ -77,7 +79,8 @@ def test_deleted_and_renamed_inputs_are_in_complete_diff(tmp_path):
         env={**os.environ, "GITHUB_OUTPUT": str(output)},
         check=True,
     )
-    assert all(f"{key}=true" in output.read_text() for key in (*GROUPS, "build"))
+    assert "pyplot=false" in output.read_text()
+    assert all(f"{key}=true" in output.read_text() for key in (*GROUPS, "build") if key != "pyplot")
 
 
 def test_shared_build_dependencies_and_summary():
@@ -153,3 +156,23 @@ def test_ci_summary_rejects_selected_failures(tmp_path, failed_job):
         capture_output=True,
     )
     assert (completed.returncode == 0) == (failed_job is None)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_ci_pr_skips_pyplot_unless_compatibility_also_changes(reverse):
+    paths = [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codspeed.yml",
+        ".github/actions/restore-ci-build/action.yml",
+        "scripts/ci_scope.py",
+        "scripts/verify_ci_workflow.py",
+        "tests/test_ci_scope.py",
+        "tests/test_verify_ci_workflow.py",
+        "spec/process/production-readiness.md",
+        "news/ci-selection.misc.md",
+    ]
+    assert not select_checks(paths)["pyplot"]
+    paths.append("python/xy/pyplot/_axes.py")
+    if reverse:
+        paths.reverse()
+    assert select_checks(paths)["pyplot"]
