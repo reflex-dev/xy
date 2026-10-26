@@ -8,7 +8,7 @@ from xy_docs.config import DOCS_CONFIG
 from xy_docs.constants import PUBLIC_DOCS_URL
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
+SITEMAP_NAMESPACE = {"sitemap": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
 
 def expected_locations() -> list[str]:
