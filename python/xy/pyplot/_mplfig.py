@@ -329,28 +329,7 @@ def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
     from xy import _png
 
-    chunks = []
-    for raw_key, raw_value in metadata.items():
-        key = str(raw_key)
-        value = str(raw_value)
-        try:
-            encoded_key = key.encode("latin-1", "strict")
-        except UnicodeEncodeError:
-            encoded_key = b""
-        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
-            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
-        try:
-            payload = key.encode("latin-1") + b"\0" + value.encode("latin-1")
-            chunks.append(_png._chunk(b"tEXt", payload))
-        except UnicodeEncodeError:
-            # iTXt: keyword, compression flag/method, language, translated
-            # keyword, then UTF-8 text.
-            payload = key.encode("latin-1") + b"\0\0\0\0\0" + value.encode("utf-8")
-            chunks.append(_png._chunk(b"iTXt", payload))
-    marker = data.rfind(b"\x00\x00\x00\x00IEND")
-    if marker < 0:
-        raise ValueError("invalid PNG output")
-    return data[:marker] + b"".join(chunks) + data[marker:]
+    return _png.with_metadata(data, metadata)
 
 
 class Figure:
@@ -2938,6 +2917,15 @@ class SubFigure:
             self._local_axes.remove(ax)
 
     def clear(self) -> None:
+        owned_text: list[_FigureText] = []
+        pending = list(self._tree_node.children)
+        while pending:
+            child = pending.pop()
+            pending.extend(child.children)
+            if child.kind == "figure_text" and isinstance(child.owner, _FigureText):
+                owned_text.append(child.owner)
+        for text in owned_text:
+            text.remove()
         owned_axes = [
             ax
             for ax in self.figure._axes

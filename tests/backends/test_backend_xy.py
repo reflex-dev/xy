@@ -448,6 +448,18 @@ def test_draw_callbacks_and_headless_timer_protocol() -> None:
     assert timer.running is False
 
 
+def test_print_png_preserves_text_metadata_and_rejects_unsupported_pil_kwargs() -> None:
+    _figure, canvas = _mixed_figure()
+    output = io.BytesIO()
+
+    canvas.print_png(output, metadata={"Title": "Report", "Author": "xy"})
+
+    assert b"Title\x00Report" in output.getvalue()
+    assert b"Author\x00xy" in output.getvalue()
+    with pytest.raises(NotImplementedError, match="pil_kwargs"):
+        canvas.print_png(io.BytesIO(), pil_kwargs={"compress_level": 1})
+
+
 def test_timer_callback_may_flush_events_without_recursive_redispatch() -> None:
     figure = Figure()
     canvas = FigureCanvasXY(figure)

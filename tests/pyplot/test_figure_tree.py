@@ -39,6 +39,24 @@ def test_figure_text_is_tree_owned_without_creating_axes() -> None:
     assert b"figure-owned" in output.getvalue()
 
 
+def test_clearing_subfigure_removes_only_its_owned_text_tree() -> None:
+    fig = Figure(1, figsize=(4, 2), dpi=100)
+    left, right = fig.subfigures(1, 2)
+    nested = left.subfigures(1, 1)
+    left.text(0.5, 0.5, "left")
+    nested.suptitle("nested")
+    right.text(0.5, 0.5, "right")
+
+    left.clear()
+
+    assert [text.get_text() for text in fig.texts] == ["right"]
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    assert b"left" not in output.getvalue()
+    assert b"nested" not in output.getvalue()
+    assert b"right" in output.getvalue()
+
+
 def test_inset_uses_parent_coordinates_but_owns_its_viewport_and_clip() -> None:
     fig = Figure(1)
     parent = fig.add_axes((0.1, 0.2, 0.4, 0.5))

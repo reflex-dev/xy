@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import struct
 import zlib
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 
@@ -44,6 +46,30 @@ def _chunk_parts(tag: bytes, data: bytes) -> tuple[bytes, bytes, bytes, bytes]:
 
 def _chunk(tag: bytes, data: bytes) -> bytes:
     return b"".join(_chunk_parts(tag, data))
+
+
+def with_metadata(data: bytes, metadata: Mapping[Any, Any]) -> bytes:
+    """Insert standards-compliant PNG text chunks before IEND."""
+    chunks = []
+    for raw_key, raw_value in metadata.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        try:
+            encoded_key = key.encode("latin-1", "strict")
+        except UnicodeEncodeError:
+            encoded_key = b""
+        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
+            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
+        try:
+            payload = encoded_key + b"\0" + value.encode("latin-1")
+            chunks.append(_chunk(b"tEXt", payload))
+        except UnicodeEncodeError:
+            payload = encoded_key + b"\0\0\0\0\0" + value.encode("utf-8")
+            chunks.append(_chunk(b"iTXt", payload))
+    marker = data.rfind(b"\x00\x00\x00\x00IEND")
+    if marker < 0:
+        raise ValueError("invalid PNG output")
+    return data[:marker] + b"".join(chunks) + data[marker:]
 
 
 _SIG = b"\x89PNG\r\n\x1a\n"

@@ -718,6 +718,7 @@ class _DisplayListRasterizer:
             command.clip(0, 0, pixel_width / self.scale, pixel_height / self.scale)
             dash = style.get("dash")
             sequence = dash.get("sequence") if isinstance(dash, dict) else None
+            dash_offset = float(dash.get("offset", 0)) if isinstance(dash, dict) else 0.0
             cap = str(style.get("cap", "round"))
             if cap not in {"butt", "round", "square"}:
                 cap = "round"
@@ -729,6 +730,7 @@ class _DisplayListRasterizer:
                         stroke,
                         closed=closed,
                         dash=sequence,
+                        dash_offset=dash_offset,
                         cap=cap,
                     )
             image = _source_over(
@@ -798,6 +800,7 @@ class _DisplayListRasterizer:
         if stroke[3] and width > 0:
             dash = style.get("dash")
             sequence = dash.get("sequence") if isinstance(dash, dict) else None
+            dash_offset = float(dash.get("offset", 0)) if isinstance(dash, dict) else 0.0
             cap = str(style.get("cap", "round"))
             if cap not in {"butt", "round", "square"}:
                 cap = "round"
@@ -809,6 +812,7 @@ class _DisplayListRasterizer:
                         stroke,
                         closed=closed,
                         dash=sequence,
+                        dash_offset=dash_offset,
                         cap=cap,
                         offset=raster_offset,
                     )

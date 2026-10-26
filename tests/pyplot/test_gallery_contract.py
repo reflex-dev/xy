@@ -268,6 +268,8 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
         "extended_requirements": None,
         "requested_matplotlib_backend": "Agg",
         "captures": [],
+        "implementation_commit": "a" * 40,
+        "implementation_dirty": False,
     }
     (artifact_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
 
@@ -277,6 +279,8 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
             entry=entry,
             engine="xy",
             python_interpreter=PYTHON_INTERPRETER,
+            implementation_commit="a" * 40,
+            implementation_dirty=False,
         )
         is None
     )
@@ -289,6 +293,8 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
             entry=entry,
             engine="xy",
             python_interpreter=PYTHON_INTERPRETER,
+            implementation_commit="a" * 40,
+            implementation_dirty=False,
         )
         == result
     )
@@ -297,7 +303,31 @@ def test_resume_rejects_reports_from_before_the_current_visual_gate(tmp_path: Pa
             output_root=tmp_path,
             entry=entry,
             engine="xy",
+            python_interpreter=PYTHON_INTERPRETER,
+            implementation_commit="b" * 40,
+            implementation_dirty=False,
+        )
+        is None
+    )
+    assert (
+        _resumable_result(
+            output_root=tmp_path,
+            entry=entry,
+            engine="xy",
+            python_interpreter=PYTHON_INTERPRETER,
+            implementation_commit="a" * 40,
+            implementation_dirty=True,
+        )
+        is None
+    )
+    assert (
+        _resumable_result(
+            output_root=tmp_path,
+            entry=entry,
+            engine="xy",
             python_interpreter={"implementation": "cpython", "version": "0.0.0"},
+            implementation_commit="a" * 40,
+            implementation_dirty=False,
         )
         is None
     )

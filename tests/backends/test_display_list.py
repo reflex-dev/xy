@@ -392,6 +392,63 @@ def test_svg_serializer_preserves_order_clips_and_metadata() -> None:
     assert np.count_nonzero(rgba[:, :, 3]) > 0
 
 
+def test_svg_default_css_does_not_override_explicit_caps_and_joins() -> None:
+    display_list = DisplayList(40, 20, 72)
+    display_list.add(
+        "path",
+        path=[["M", 2, 10], ["L", 38, 10]],
+        style={
+            "fill": None,
+            "stroke": [0, 0, 0, 1],
+            "linewidth": 4,
+            "cap": "square",
+            "join": "bevel",
+        },
+        clip=None,
+        url=None,
+        gid="styled-line",
+    )
+
+    root = ET.fromstring(display_list.to_svg())
+    style = root.find(".//{http://www.w3.org/2000/svg}style")
+    path = root.find(".//{http://www.w3.org/2000/svg}path")
+
+    assert style is not None
+    assert style.text == (
+        "*:not([stroke-linejoin]){stroke-linejoin:round}"
+        "*:not([stroke-linecap]){stroke-linecap:butt}"
+    )
+    assert path is not None
+    assert path.get("stroke-linecap") == "square"
+    assert path.get("stroke-linejoin") == "bevel"
+
+
+def test_native_raster_honors_dash_offset() -> None:
+    def render(offset: float) -> np.ndarray:
+        display_list = DisplayList(48, 12, 72)
+        display_list.add(
+            "path",
+            path=[["M", 2, 6], ["L", 46, 6]],
+            style={
+                "fill": None,
+                "stroke": [0, 0, 0, 1],
+                "linewidth": 2,
+                "dash": {"offset": offset, "sequence": [8, 4]},
+                "cap": "butt",
+            },
+            clip=None,
+            url=None,
+            gid=None,
+        )
+        return display_list.to_rgba()
+
+    zero = render(0)
+    shifted = render(6)
+
+    assert not np.array_equal(zero, shifted)
+    assert np.count_nonzero(zero[:, :8, 3]) != np.count_nonzero(shifted[:, :8, 3])
+
+
 def test_html_is_standalone_and_script_safe() -> None:
     display_list = DisplayList(20, 10, 72, metadata={"unsafe": "</script><script>"})
 
@@ -690,7 +747,10 @@ def test_svg_exposes_mutable_namespaced_default_style() -> None:
     style = root.find("{http://www.w3.org/2000/svg}defs/{http://www.w3.org/2000/svg}style")
 
     assert style is not None
-    assert style.text == "*{stroke-linejoin: round; stroke-linecap: butt}"
+    assert style.text == (
+        "*:not([stroke-linejoin]){stroke-linejoin:round}"
+        "*:not([stroke-linecap]){stroke-linecap:butt}"
+    )
     style.text += "\n.histogram { stroke-width: 2; }"
     assert ".histogram" in style.text
 

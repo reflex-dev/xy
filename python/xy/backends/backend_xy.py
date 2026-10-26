@@ -22,6 +22,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, Literal, SupportsIndex, TextIO, cast
 
+from xy import _png
+
 if TYPE_CHECKING:
     from .backend_xy_host import LoopbackHost
     from .backend_xy_widget import FigureCanvasXYWidget
@@ -1565,7 +1567,12 @@ class FigureCanvasXY(FigureCanvasBase):
         **kwargs: Any,
     ) -> None:
         """Render PNG through the XY display-list consumer, never Agg."""
-        _write_bytes(filename, self._render().to_png())
+        if pil_kwargs:
+            raise NotImplementedError("XY PNG export does not support pil_kwargs")
+        data = self._render().to_png()
+        if metadata:
+            data = _png.with_metadata(data, metadata)
+        _write_bytes(filename, data)
 
 
 class ToolbarXY(ToolContainerBase):

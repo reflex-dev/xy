@@ -44,6 +44,36 @@ def test_loopback_host_stops_polling_after_repeated_connection_failures() -> Non
     assert "stop();" in source
 
 
+def test_loopback_host_drains_queued_heartbeats_without_nested_pumps(monkeypatch) -> None:
+    figure = Figure(figsize=(2, 1), dpi=100)
+    canvas = FigureCanvasXY(figure)
+    manager = FigureManagerXY(canvas, 91)
+    host = manager._refresh_browser_host()
+    widget = canvas.widget
+    original = type(widget)._on_custom_msg
+    depth = 0
+    maximum_depth = 0
+
+    def observed(self, *args, **kwargs):
+        nonlocal depth, maximum_depth
+        depth += 1
+        maximum_depth = max(maximum_depth, depth)
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            depth -= 1
+
+    monkeypatch.setattr(type(widget), "_on_custom_msg", observed)
+    for _ in range(8):
+        host._events.put_nowait({"type": "event_loop"})
+
+    try:
+        assert host.pump() == 8
+        assert maximum_depth == 1
+    finally:
+        manager.destroy()
+
+
 def _event_figure() -> tuple[object, FigureCanvasXY, object]:
     figure = Figure(figsize=(2, 1), dpi=100)
     canvas = FigureCanvasXY(figure)

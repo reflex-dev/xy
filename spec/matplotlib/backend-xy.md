@@ -20,6 +20,8 @@ The initial canvas supports:
 - Matplotlib callback registration and explicit event dispatch;
 - live IPython anywidget and token-authenticated loopback `show()` hosts, both
   using the shared browser event adapter;
+- non-reentrant loopback queue pumping: heartbeat callbacks may flush events,
+  while the outer pump continues draining queued messages iteratively;
 - timers driven by browser heartbeats, the blocking main loop, or
   `flush_events`, including a deterministic `fire` method for tests;
 - a `NavigationToolbar2`-compatible controller for keyboard and pointer
@@ -44,6 +46,9 @@ count does not multiply curve-subdivision work.
 The consumer also covers rectangular and arbitrary path clips, tiled hatches,
 quad meshes, and barycentrically interpolated Gouraud batches.
 Repeated shaped clips share one exact supersampled mask within a raster pass.
+Raster strokes preserve the display list's dash phase as well as its dash
+sequence. PNG text metadata is emitted as PNG text chunks; unsupported
+`pil_kwargs` fail explicitly instead of being silently ignored.
 Rectilinear Gouraud meshes use a vectorized four-triangle interpolation that is
 equivalent to Matplotlib's center-subdivided QuadMesh geometry; arbitrary
 triangle batches retain the general barycentric path.
@@ -52,6 +57,8 @@ SVG expands hatches to reusable patterns and Gouraud triangles to composited
 vertex gradients. Artist groups remain nested `<g>` elements with stable,
 XML-safe IDs, and the root includes a mutable namespaced default style so
 examples that post-process Matplotlib SVG output retain their expected hooks.
+Those CSS defaults apply only when an element has no explicit line-cap or
+line-join presentation attribute.
 
 ## Display-list IR
 

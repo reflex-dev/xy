@@ -208,6 +208,8 @@ def _resumable_result(
     entry: dict[str, Any],
     engine: str,
     python_interpreter: dict[str, str],
+    implementation_commit: str | None,
+    implementation_dirty: bool | None,
     extended_requirements: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     artifact_dir = _artifact_dir(output_root, entry["path"], engine)
@@ -221,6 +223,9 @@ def _resumable_result(
     if (
         result.get("engine") != engine
         or result.get("harness_version") != HARNESS_VERSION
+        or implementation_dirty is not False
+        or result.get("implementation_commit") != implementation_commit
+        or result.get("implementation_dirty") is not False
         or result.get("source_sha256") != entry["sha256"]
         or result.get("status") not in {"passed", "error", "timeout", "harness_error"}
         or (engine == "xy" and result.get("requested_pyplot_mode") != "compat")
@@ -504,6 +509,7 @@ def run_gallery(
     extended_spec_path: Path = EXTENDED_SPEC_PATH,
 ) -> dict[str, Any]:
     repository_start = _repository_snapshot(output_root)
+    start_commit, start_dirty = _implementation_provenance(repository_start, repository_start)
     python_interpreter = query_python_interpreter(python)
     manifest = _load(manifest_path)
     baseline = _load(baseline_path)
@@ -543,6 +549,8 @@ def run_gallery(
                     engine=engine,
                     extended_requirements=extended_by_path.get(entry["path"]),
                     python_interpreter=python_interpreter,
+                    implementation_commit=start_commit,
+                    implementation_dirty=start_dirty,
                 )
                 if resume
                 else None
@@ -575,9 +583,9 @@ def run_gallery(
         for completed, future in enumerate(as_completed(futures), start=1):
             entry, engine = futures[future]
             try:
-                result = future.result()
+                completed_result: dict[str, Any] = future.result()
             except BaseException as exc:
-                result = {
+                completed_result = {
                     "engine": engine,
                     "status": "harness_error",
                     "exception_type": type(exc).__name__,
@@ -585,10 +593,17 @@ def run_gallery(
                     "capture_count": 0,
                     "captures": [],
                 }
-            by_path[entry["path"]][engine] = result
+            completed_result["implementation_commit"] = start_commit
+            completed_result["implementation_dirty"] = start_dirty
+            result_path = _artifact_dir(output_root, entry["path"], engine) / "result.json"
+            result_path.write_text(
+                json.dumps(completed_result, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            by_path[entry["path"]][engine] = completed_result
             print(
                 f"[{completed}/{len(jobs)}] {engine} {entry['path']}: "
-                f"{result.get('status', 'harness_error')}",
+                f"{completed_result.get('status', 'harness_error')}",
                 flush=True,
             )
 

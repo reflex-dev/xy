@@ -1305,7 +1305,8 @@ class _SVGSerializer:
         # Clip definitions are discovered while commands are serialized.
         definitions = (
             '<defs><style type="text/css">'
-            "*{stroke-linejoin: round; stroke-linecap: butt}"
+            "*:not([stroke-linejoin]){stroke-linejoin:round}"
+            "*:not([stroke-linecap]){stroke-linecap:butt}"
             "</style></defs>"
             + self._clip_definitions()
             + self._hatch_definitions()

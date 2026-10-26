@@ -39,7 +39,7 @@ help:
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-pyplot-gallery-contract verify the immutable 507-example gallery manifest' \
-		'  make check-pyplot-gallery-extended verify the 13-example extended environment metadata' \
+		'  make check-pyplot-gallery-extended verify the 12-example extended environment metadata' \
 		'  make check-pyplot-gallery-shard run a differential shard (GALLERY_SHARD=0/8)' \
 		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires matplotlib)' \
 		'  make check-sdist      build and verify the source distribution' \
