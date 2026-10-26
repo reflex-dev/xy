@@ -71,7 +71,12 @@ def _run_engine(path: pathlib.Path, engine: str, artifact: pathlib.Path) -> None
         source = source.replace("import xy.pyplot as plt", "import matplotlib.pyplot as plt")
         source = _adapt_reference_source(path, source)
     bootstrap = ""
-    if engine == "matplotlib":
+    if engine == "xy":
+        # This corpus is the dependency-free native-mode contract. An
+        # environment with the optional Matplotlib extra resolves ``auto`` to
+        # compat, so pin native before executing the unchanged snippets.
+        bootstrap = "import xy.pyplot as _xy_pyplot\n_xy_pyplot.set_mode('native')\n"
+    else:
         # HTML is an xy exporter, not part of Matplotlib's renderer contract.
         # Keep those corpus cases exercising all chart construction while making
         # their final exporter call an explicit reference-side no-op.

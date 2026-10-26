@@ -114,7 +114,7 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
     controls = rx.box(
         rx.box(dark_mode_toggle(), class_name="[&>div]:!ml-0"),
         _footer_link("View XY on GitHub ↗", REPOSITORY_URL),
-        class_name="flex w-full flex-row items-end justify-between gap-6",
+        class_name="flex w-full flex-row flex-wrap items-end justify-between gap-6",
     )
     channel_label = "main-branch preview" if DOCS_CHANNEL == "preview" else "stable docs"
     copyright_status = rx.el.div(

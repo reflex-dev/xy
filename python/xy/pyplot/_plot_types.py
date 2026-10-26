@@ -1258,6 +1258,8 @@ class PlotTypeMixin:
 
         def _categorical_position(self, axis: str, label: Any) -> float: ...
 
+        def get_figure(self, root: bool | None = None) -> Any: ...
+
         def _transform_points(
             self, x: Any, y: Any, transform: Any
         ) -> tuple[np.ndarray, np.ndarray]: ...
@@ -5439,7 +5441,7 @@ class PlotTypeMixin:
         extent = float(radius) * (1.25 + float(np.max(offsets)))
         data_units_per_point = 0.0
         if shadow_options is not None and self.figure is not None:
-            figure_width, figure_height = self.figure.get_size_inches()
+            figure_width, figure_height = self.get_figure(root=True).get_size_inches()
             _left, _bottom, axes_width, axes_height = self.get_position(original=True).bounds
             active_points = min(axes_width * figure_width, axes_height * figure_height) * 72.0
             data_units_per_point = 2.0 * extent / max(active_points, np.finfo(float).eps)

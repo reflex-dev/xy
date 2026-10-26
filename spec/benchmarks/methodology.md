@@ -396,6 +396,9 @@ unexplained engine slowdown.
 no `continue-on-error` are `matplotlib_reference`, `test`, `browser_conformance`,
 `python_floor`, `sdist`, `wheels`, and `install_without_rust`; only
 `benchmark_vs`, `benchmark_methodology`, and `benchmark` are non-blocking.
+Each cross-library matrix job has a 20-minute total timeout, including
+dependency and Playwright installation; the benchmark command retains its
+independent 45-second per-library/per-size deadline.
 `matplotlib_reference` is **not** absent from the Release-Blocking Gates table in
 `spec/process/production-readiness.md`: it is the "Matplotlib reference" row, whose
 evidence column names exactly the job's two halves,

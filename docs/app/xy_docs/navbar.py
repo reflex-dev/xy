@@ -7,6 +7,8 @@ from reflex_site_shared.components.docs_shell import docs_navbar_frame
 from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.components.marketing_button import button
 
+from xy_docs.announcement import match_marketing_announcement
+
 XY_REPOSITORY_URL = "https://github.com/reflex-dev/xy"
 
 _XY_NAV_LINKS = (
@@ -85,11 +87,16 @@ def _menu_item(label: str, href: str) -> rx.Component:
             label,
             href=href.removeprefix("/docs/xy") or "/",
             aria_current=rx.cond(active, "page", None),
-            class_name=(
-                "inline-flex h-9 items-center justify-center whitespace-nowrap px-4 "
-                "text-sm font-medium leading-none text-foreground no-underline "
-                "transition-colors hover:text-muted-foreground focus-visible:outline-2 "
-                "focus-visible:outline-offset-2 focus-visible:outline-ring"
+            class_name=ui.cn(
+                "docs-navbar-link inline-flex h-9 items-center justify-center whitespace-nowrap rounded-full px-3 "
+                "text-sm font-normal leading-none no-underline transition-colors duration-150 "
+                "motion-reduce:transition-none focus-visible:outline-2 "
+                "focus-visible:outline-offset-2 focus-visible:outline-ring",
+                rx.cond(
+                    active,
+                    "bg-accent text-foreground",
+                    "text-muted-foreground hover:bg-muted hover:text-foreground",
+                ),
             ),
         ),
         class_name="flex h-full items-center justify-center",
@@ -108,12 +115,13 @@ def _github_button() -> rx.Component:
             size="sm",
             variant="primary",
             native_button=False,
-            class_name="whitespace-nowrap",
+            class_name="rounded-full whitespace-nowrap px-4 text-sm font-normal",
         ),
         href=XY_REPOSITORY_URL,
         target="_blank",
         rel="noopener noreferrer",
         aria_label=label,
+        class_name="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
     )
 
 
@@ -139,16 +147,16 @@ def _mobile_navigation() -> rx.Component:
                     on_click=rx.call_script(
                         "document.querySelector('header details[open]')?.removeAttribute('open')"
                     ),
-                    class_name="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-4 text-base font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring",
+                    class_name="docs-navbar-mobile-link flex w-full items-center justify-between gap-3 border-b border-border px-4 py-4 text-base font-normal text-foreground transition-colors motion-reduce:transition-none hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring",
                 )
                 for label, href in _XY_NAV_LINKS
             ],
             rx.el.div(_github_button(), class_name="mt-4"),
             aria_label="XY documentation navigation",
             role="navigation",
-            class_name="fixed inset-x-0 top-[var(--docs-header-height)] max-h-[calc(100dvh-var(--docs-header-height))] overflow-y-auto border-b border-border-subtle bg-background px-6 py-4 shadow-small",
+            class_name="docs-navbar-mobile-panel fixed inset-x-0 top-[var(--docs-header-height)] max-h-[calc(100dvh-var(--docs-header-height))] overflow-y-auto border-b border-border-subtle bg-background px-6 py-4 shadow-small",
         ),
-        class_name="group/xy-menu",
+        class_name="docs-navbar-menu group/xy-menu",
     )
 
 
@@ -161,7 +169,7 @@ def _navigation_menu() -> rx.Component:
     return ui.navigation_menu.root(
         ui.navigation_menu.list(
             *(_menu_item(label, href) for label, href in _XY_NAV_LINKS),
-            class_name="m-0 hidden xl:flex h-full list-none flex-row items-center gap-2",
+            class_name="m-0 hidden xl:flex h-full list-none flex-row items-center gap-1",
             custom_attrs={"role": "menubar"},
         ),
         ui.navigation_menu.list(
@@ -182,11 +190,11 @@ def _navigation_menu() -> rx.Component:
                 class_name="flex xl:hidden",
                 custom_attrs={"role": "menuitem"},
             ),
-            class_name="m-0 flex h-full list-none flex-row items-center gap-2 lg:gap-4",
+            class_name="m-0 flex h-full shrink-0 list-none flex-row items-center gap-2 lg:gap-3",
             custom_attrs={"role": "menubar"},
         ),
         unstyled=True,
-        class_name="relative mx-auto flex h-full w-full flex-row items-center justify-end xl:justify-between gap-6",
+        class_name="relative mx-auto flex h-full min-w-0 w-full flex-row items-center justify-end xl:justify-between gap-4 font-sans",
     )
 
 
@@ -197,14 +205,19 @@ def xy_docs_navbar() -> rx.Component:
     Returns:
         Official documentation navbar with an active XY section.
     """
-    return docs_navbar_frame(
+    frame = docs_navbar_frame(
         rx.el.elements.a(
             xy_docs_logo(),
             href="/docs/",
-            class_name="mr-10 flex shrink-0 items-center gap-2.5 no-underline",
+            class_name="docs-navbar-brand mr-6 flex shrink-0 items-center gap-3 rounded-sm no-underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring",
         ),
         _navigation_menu(),
     )
+    match_marketing_announcement(frame.children[0])
+    header = frame.children[1]
+    header.class_name = "docs-navbar-header " + header.class_name
+    header.children[0].class_name = "docs-navbar-inner " + header.children[0].class_name
+    return frame
 
 
 __all__ = [

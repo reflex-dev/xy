@@ -17,6 +17,8 @@ config = rx.Config(
         "es-toolkit@1.46.1",
         "@fontsource-variable/instrument-sans@5.2.8",
         "@fontsource-variable/jetbrains-mono@5.2.8",
+        "@fontsource-variable/inter@5.3.0",
+        "@fontsource-variable/geist@5.3.0",
     ],
     telemetry_enabled=False,
     show_built_with_reflex=False,

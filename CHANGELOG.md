@@ -14,6 +14,13 @@ workflow materializes the pending fragments into a new section with
 
 <!-- towncrier release notes start -->
 
+## v0.0.8 (2026-10-13)
+
+### Bug Fixes
+
+- Connect the XY chart namespace explicitly when Reflex 0.10 pre-creates the shared Socket.IO manager with auto-connect disabled, restoring live chart rendering. ([#526](https://github.com/reflex-dev/xy/issues/526))
+
+
 ## v0.0.7 (2026-08-26)
 
 ### Features
