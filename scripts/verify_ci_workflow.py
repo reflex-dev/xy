@@ -26,6 +26,9 @@ DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "result",
+    "changes",
+    "build",
     "browser_conformance",
     "matplotlib_reference",
     "pyplot_gallery",
@@ -555,16 +558,23 @@ def _require_step_runs_exactly(
     forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
     has_forbidden_step_key = any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
     forbidden_job_keys = (
-        "if",
         "continue-on-error",
         "defaults",
         "container",
-        "needs",
         "strategy",
     )
     has_forbidden_job_key = any(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
+    # Scope/dependency controls are allowed only in their reviewed form.
+    group = "pyplot" if job_text.startswith("  matplotlib_reference:") else "runtime"
+    for key, expected in (
+        ("if", f"needs.changes.outputs.{group} == 'true'"),
+        ("needs", "[changes, build]"),
+    ):
+        values, ambiguous = _direct_yaml_key_values(job_text, key, indent=4)
+        if ambiguous or values != [expected]:
+            has_forbidden_job_key = True
     has_exactly_one_run_key = _direct_yaml_key_count(block, "run", indent=8) == 1
     if (
         not has_exactly_one_run_key
@@ -735,7 +745,68 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         errors.append("CI workflow must not override the shell for hard-gate run steps")
     if _has_shell_init_environment(text):
         errors.append("CI workflow must not set shell-init environment variables")
-    _require_docs_spec_pr_paths_ignored(errors, text, "CI")
+    if _workflow_trigger_block(text, "pull_request") is None:
+        errors.append("CI workflow missing pull_request trigger")
+    _require_job_contains(
+        errors,
+        jobs,
+        "changes",
+        "CI",
+        "complete diff scope selection",
+        'scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA"',
+        "scripts/ci_scope.py --full",
+        "steps.scope.outputs.pyplot",
+    )
+    scopes = {
+        "matplotlib_reference": "pyplot",
+        "matplotlib_patch_smoke": "pyplot",
+        "pyplot_gallery": "pyplot",
+        "pyplot_gallery_extended": "pyplot",
+        "test": "runtime",
+        "python_floor": "runtime",
+        "benchmark_vs": "benchmarks",
+        "benchmark_methodology": "benchmarks",
+        "browser_conformance": "conformance",
+        "sdist": "packaging",
+        "wheels": "packaging",
+        "install_without_rust": "packaging",
+    }
+    for job, group in scopes.items():
+        values, ambiguous = _direct_yaml_key_values(jobs.get(job, ""), "if", indent=4)
+        if ambiguous or values != [f"needs.changes.outputs.{group} == 'true'"]:
+            errors.append(f"CI {job} must use the reviewed {group} scope")
+    for job in (
+        "test",
+        "python_floor",
+        "matplotlib_reference",
+        "matplotlib_patch_smoke",
+        "pyplot_gallery",
+        "pyplot_gallery_extended",
+        "browser_conformance",
+        "benchmark_vs",
+        "benchmark_methodology",
+    ):
+        _require_job_contains(
+            errors,
+            jobs,
+            job,
+            "CI",
+            "same-run native/client reuse",
+            "needs: [changes, build]",
+            "uses: ./.github/actions/restore-ci-build",
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "build",
+        "CI",
+        "verified shared wheel producer",
+        "uv build --wheel",
+        'XY_REQUIRE_CARGO: "1"',
+        "scripts/verify_wheel.py dist/*.whl --expect-native",
+        "name: ci-linux-wheel",
+        "actions/upload-artifact@",
+    )
     _require_unshallow_checkouts(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
@@ -766,7 +837,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Install xy and released reference wheel",
         "released reference installation",
         "uv venv .venv",
-        "uv pip install -p .venv/bin/python -e . --group dev",
+        "uv pip install -p .venv/bin/python dist/*.whl --group dev",
         'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
     )
     _require_step_runs_exactly(
@@ -1000,7 +1071,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "~/.cache/ms-playwright",
         "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
         "npx playwright install --with-deps chromium firefox webkit",
-        "node js/build.mjs",
+        "test -f python/xy/static/standalone.js",
         "node scripts/browser_conformance.mjs",
     )
     _require_job_contains(

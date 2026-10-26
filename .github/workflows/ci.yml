@@ -4,9 +4,6 @@ on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "spec/**"
   workflow_dispatch:
 
 # Limit every job to the only repository permission needed by this workflow.
@@ -21,29 +18,87 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select CI checks
+    runs-on: ubuntu-24.04
+    outputs:
+      runtime: ${{ steps.scope.outputs.runtime }}
+      pyplot: ${{ steps.scope.outputs.pyplot }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      benchmarks: ${{ steps.scope.outputs.benchmarks }}
+      conformance: ${{ steps.scope.outputs.conformance }}
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select checks from complete PR diff
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          else
+            python3 scripts/ci_scope.py --full
+          fi
+
+  build:
+    name: Shared Linux wheel
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Build native wheel and render client once
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: uv build --wheel
+      - name: Verify shared wheel
+        run: python3 scripts/verify_wheel.py dist/*.whl --expect-native
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-linux-wheel
+          path: dist/*.whl
+          retention-days: 3
+
   matplotlib_reference:
     name: Matplotlib 3.11 reference compatibility
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
-      # The editable install below builds the render client from source via the
-      # hatch hook (generated, not committed; §33) — the pyplot corpus exports
-      # HTML, which inlines the client bundle. Pin Node so the build uses a
-      # vite-compatible version rather than the runner's system Node.
+      # Install the shared wheel and the development dependencies.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       - name: Install xy and released reference wheel
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.0"
       - name: Verify released reference and reviewed snapshot
         run: |
@@ -76,11 +131,16 @@ jobs:
 
   matplotlib_patch_smoke:
     name: Matplotlib 3.11.1 declared-range smoke
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -90,7 +150,7 @@ jobs:
       - name: Install the newest documented 3.11 patch
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.1"
       - name: Exercise modes and protocols through the XY renderer
         env:
@@ -104,7 +164,9 @@ jobs:
   # makes every accepted execution/render/behavior a required gate.
   pyplot_gallery:
     name: Pyplot gallery ratchet (${{ matrix.shard }}/8)
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -117,6 +179,8 @@ jobs:
           # Gallery reports are promoted against the implementation commit,
           # never GitHub's synthetic pull-request merge commit.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -133,7 +197,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.0"
       - name: Run standard differential gallery shard
         run: |
@@ -163,6 +227,8 @@ jobs:
   # empty ratchet.
   pyplot_gallery_extended:
     name: Pyplot gallery extended environment (12/12)
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -170,6 +236,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -205,7 +273,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv --python /usr/bin/python3 --system-site-packages
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
           uv pip install -p .venv/bin/python \
             "colorspacious==1.1.2" \
             "matplotlib==3.11.0"
@@ -239,16 +307,22 @@ jobs:
             gallery-extended-artifacts/failures
             gallery-extended-artifacts/runs/**/stdout.txt
             gallery-extended-artifacts/runs/**/stderr.txt
-
   test:
     name: Test (Rust + Python + JS)
-    runs-on: ubuntu-latest
+    env:
+      PYTEST_ADDOPTS: ${{ needs.changes.outputs.pyplot != 'true' && '--ignore=tests/pyplot --ignore=tests/backends' || '' }}
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -267,10 +341,10 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Build native core
-        run: cargo build --release
+        run: test -f target/release/libxy_core.so
 
       - name: Build JS client
-        run: node js/build.mjs
+        run: test -f python/xy/static/standalone.js
 
       - name: JS parses (ESM + IIFE)
         run: |
@@ -294,7 +368,6 @@ jobs:
       # reasons, not code. Playwright ships an unconfined build.
       - name: Install Chromium (Playwright)
         run: |
-          npm ci
           npx playwright install --with-deps chromium
       - name: Headless render smoke (stdlib + Chromium)
         run: |
@@ -382,6 +455,7 @@ jobs:
       # focused pass makes import-skips and browser/widget regressions obvious
       # in the Actions UI and binds the live widget test to real Chromium.
       - name: Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)
+        if: needs.changes.outputs.pyplot == 'true'
         env:
           XY_REQUIRE_BROWSER: "1"
         run: |
@@ -440,16 +514,20 @@ jobs:
 
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
-
   browser_conformance:
     name: Accessibility + cross-browser conformance
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.conformance == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
@@ -463,7 +541,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium firefox webkit
       - name: Build render client
-        run: node js/build.mjs
+        run: test -f python/xy/static/standalone.js
       - name: Run accessibility and cross-browser conformance
         # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
         # virtual display installed by Playwright so every engine still runs
@@ -472,16 +550,22 @@ jobs:
           MOZ_WEBRENDER: "1"
           XY_CONFORMANCE_HEADFUL: "1"
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
-
   python_floor:
     name: Python 3.11 floor
-    runs-on: ubuntu-latest
+    env:
+      PYTEST_ADDOPTS: ${{ needs.changes.outputs.pyplot != 'true' && '--ignore=tests/pyplot --ignore=tests/backends' || '' }}
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -497,14 +581,13 @@ jobs:
         run: python scripts/check_python_floor.py
 
       - name: Build native core
-        run: cargo build --release
+        run: test -f target/release/libxy_core.so
 
-      # The render client is a generated artifact (§33): build it so the full
-      # test suite (which reads python/xy/static/*.js) has it on disk.
+      # Verify the shared render client is available to source-path tests.
       - name: Build render client
         run: |
           npm ci
-          node js/build.mjs
+          test -f python/xy/static/standalone.js
 
       - name: Install package and compatibility test dependencies for Python 3.11
         run: |
@@ -513,7 +596,7 @@ jobs:
           # the interpreter setup-python put on PATH.
           uv venv .venv --python "$(command -v python)"
           uv pip install -p .venv/bin/python \
-            -e . \
+            dist/*.whl \
             "pytest>=8,<9" \
             "pillow>=10" \
             "matplotlib==3.11.0"
@@ -529,7 +612,9 @@ jobs:
   # parallel. The report job below merges the partial results.
   benchmark_vs:
     name: Cross-library benchmark (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.benchmarks == 'true'
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     continue-on-error: true
     strategy:
@@ -590,6 +675,10 @@ jobs:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+        if: matrix.xy
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         if: matrix.xy
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
@@ -600,14 +689,14 @@ jobs:
         with:
           node-version: "22"
       - name: Install JS build toolchain
-        if: matrix.build_js
+        if: matrix.browser || matrix.build_js
         run: npm ci
       - name: Build native core
         if: matrix.xy
-        run: cargo build --release
+        run: test -f target/release/libxy_core.so
       - name: Build JS client
         if: matrix.build_js
-        run: node js/build.mjs
+        run: test -f python/xy/static/standalone.js
       - name: Create benchmark environment
         run: uv venv .venv
       - name: Install xy
@@ -616,7 +705,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv pip install -p .venv/bin/python \
-            --constraint benchmarks/requirements-ci.lock -e .
+            --constraint benchmarks/requirements-ci.lock dist/*.whl
       - name: Install selected competitors
         run: |
           uv pip install -p .venv/bin/python \
@@ -631,7 +720,6 @@ jobs:
       - name: Install Chromium (Playwright)
         if: matrix.browser
         run: |
-          npm ci
           npx playwright install --with-deps chromium
       - name: Run cross-library benchmark group
         run: |
@@ -659,7 +747,9 @@ jobs:
   # Other benchmark suites run concurrently with the cross-library matrix.
   benchmark_methodology:
     name: Benchmark methodology suites
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.benchmarks == 'true'
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -667,6 +757,9 @@ jobs:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -678,15 +771,15 @@ jobs:
         run: npm ci
       - name: Build core + JS client
         run: |
-          node js/build.mjs
-          cargo build --release
+          test -f python/xy/static/standalone.js
+          test -f target/release/libxy_core.so
       - name: Install xy + competitors
         env:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python \
-            --constraint benchmarks/requirements-ci.lock -e .
+            --constraint benchmarks/requirements-ci.lock dist/*.whl
           uv pip install -p .venv/bin/python \
             --constraint benchmarks/requirements-ci.lock \
             matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
@@ -700,7 +793,6 @@ jobs:
       # Playwright Chromium for the time-to-first-render (browser paint) pass.
       - name: Install Chromium (Playwright)
         run: |
-          npm ci
           npx playwright install --with-deps chromium
       - name: Line decimation vs plotly-resampler (methodology line_10M)
         run: |
@@ -755,12 +847,11 @@ jobs:
             workflows.json
             interaction.json
             dashboard.json
-
   benchmark:
     name: Merge and verify benchmark reports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [benchmark_vs, benchmark_methodology]
-    if: always()
+    if: always() && !cancelled() && needs.benchmark_vs.result != 'skipped' && needs.benchmark_methodology.result != 'skipped'
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -813,10 +904,11 @@ jobs:
             benchmark-methodology/workflows.json
             benchmark-methodology/interaction.json
             benchmark-methodology/dashboard.json
-
   sdist:
     name: Source distribution
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -899,30 +991,43 @@ jobs:
   # still includes both Intel and Apple Silicon macOS wheels.
   wheels:
     name: Wheel ${{ matrix.os }}
-    needs: test
+    needs: [changes, build]
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        if: matrix.os != 'ubuntu-24.04'
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.os != 'ubuntu-24.04'
         with:
           node-version: "22"
 
       - name: Install JS build toolchain
+        if: matrix.os != 'ubuntu-24.04'
         run: npm ci
 
+      - name: Download shared Linux wheel
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-linux-wheel
+          path: dist
+
       - name: Build wheel
+        if: matrix.os != 'ubuntu-24.04'
         # The hatch build hook builds both artifacts. The render client is
         # required by default; REQUIRE_CARGO additionally forbids the native core
         # from silently falling back to a pure-Python wheel here.
@@ -992,7 +1097,9 @@ jobs:
   # fallback and never an opaque crash.
   install_without_rust:
     name: Install without Rust (clear error)
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1050,4 +1157,23 @@ jobs:
               print("no-Rust install errors clearly on import; OK")
           else:
               raise SystemExit("expected ImportError without the native core")
+          PY
+
+
+  result:
+    name: CI result
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [changes, build, test, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
+    steps:
+      - name: Require selected checks to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failed = [name for name, job in results.items() if job['result'] not in ('success', 'skipped')]
+          assert not failed, f"CI jobs failed or cancelled: {failed}"
+          assert results['changes']['result'] == 'success', 'CI selection must succeed'
           PY

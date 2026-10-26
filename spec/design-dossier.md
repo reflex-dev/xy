@@ -940,8 +940,10 @@ modules. It is a **generated artifact, not committed to git** (§33): the hatch 
 hook runs `node js/build.mjs` at packaging time and force-includes the result into the
 wheel and sdist, so a published distribution carries it prebuilt. The one size gate CI
 enforces is on the **wheel**: `.github/workflows/ci.yml` asserts the built wheel is
-≤ 15 MB (§33). CI builds the client fresh from source in every relevant job but does not
-measure its bytes.
+≤ 15 MB (§33). CI builds the client once in its shared Linux wheel producer and reuses the
+wheel and extracted native/client assets in compatible same-run jobs. Independent
+platform and source-install packaging probes still build their own artifacts.
+CI does not measure the client bundle bytes separately.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's

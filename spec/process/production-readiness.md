@@ -43,6 +43,56 @@ screen-bounded performance core, but the stable commitments today are narrower:
 The composition API, chart-type set, visual styling surface, and Reflex
 integration are still experimental and may change before a 1.0 release.
 
+## Pull-request CI selection and build reuse
+
+`ci.yml` always runs a lightweight selector and the stable `CI result` summary.
+The selector uses the complete local Git three-dot PR diff, with rename detection
+disabled so a move out of a source directory still checks the removed source.
+It does not rely on GitHub's path-filter file limit. Selection failures fail CI;
+unknown paths conservatively select all lanes. Pushes and manual dispatches run
+all lanes, including documentation-only pushes to main.
+
+| PR changes | Selected main CI lanes |
+| --- | --- |
+| Only `docs/`, `spec/`, `news/`, README, changelog, contributor instructions or license | Selector and summary; the separate Docs workflow handles its matching paths |
+| `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
+| Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
+| `benchmarks/` or `scripts/bench*` | Cross-library and methodology benchmarks, plus their report merge |
+| Shared Python, Rust, JS, dependency/build configuration, CI, or unfamiliar paths | All lanes |
+
+Mixed PRs take the union. Runtime and floor tests omit `tests/pyplot` and
+`tests/backends` when compatibility is unselected; the explicit Chromium pyplot
+step follows the same compatibility output. Benchmarks remain advisory; selected
+correctness, gallery, browser and packaging lanes remain blocking. `CI result`
+rejects failed/cancelled hard dependencies and accepts intentionally skipped
+lanes, so it also completes on docs-only PRs. Repositories can require this
+stable status instead of individually selected jobs. Workflow changes do not
+change repository branch-protection settings automatically.
+
+One `ubuntu-24.04` producer builds and verifies a native Linux x64 wheel at the
+implementation SHA. Compatible consumers check out that same SHA and download
+only this run's artifact. The gallery, reference, Python-floor and benchmark
+consumers install that wheel. A local composite action also extracts its native
+library and JS bundles into source paths for repository tests and stdlib smokes.
+The locked runtime development environment retains its editable install with
+`XY_SKIP_CARGO=1`, reusing the verified native library; no consuming lane recompiles
+the release core or rebundles JS. Rust unit tests and Clippy still compile their
+test/debug targets. The Linux x64 packaging smoke repairs and installs the same
+wheel without waiting for the whole runtime suite. ARM64 and Windows builds,
+sdist source-build probes, and the deliberately coreless build remain independent.
+CodSpeed and Docs retain independent environments/builds across workflows;
+CodSpeed PR filters omit compatibility-only changes, tests, docs and news.
+Published release build workflows and their full platform coverage are unchanged.
+
+Validation: `python3 scripts/verify_ci_workflow.py` and
+`pytest -q tests/test_ci_scope.py tests/test_verify_ci_workflow.py`. The selection
+tests cover docs, shim, shared code, mixed/unknown inputs, full manual selection,
+and moved/deleted source paths. The workflow tests check dependency wiring and
+blocking gates. Inspect `Select CI checks` outputs and `ci-linux-wheel` artifacts
+on an Actions run to reproduce the selection/reuse evidence. These changes reduce
+duplicate work by construction; elapsed-time improvement still requires a hosted
+before/after Actions run and is not claimed as a measured benchmark.
+
 ## Accessibility and Cross-Browser Conformance Status
 
 The current conformance tier covers a parallel semantic chart region and

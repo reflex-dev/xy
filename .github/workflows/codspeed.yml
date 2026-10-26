@@ -7,6 +7,15 @@ on:
     paths-ignore:
       - "docs/**"
       - "spec/**"
+      - "news/**"
+      - "*.md"
+      - "python/xy/pyplot/**"
+      - "python/xy/backends/**"
+      - "tests/**"
+      - "gallery/**"
+      - "scripts/pyplot_gallery/**"
+      - "scripts/generate_pyplot_compat_inventory.py"
+      - "scripts/sync_matplotlib_compat.py"
   # `workflow_dispatch` allows CodSpeed to trigger backtest
   # performance analysis in order to generate initial data.
   workflow_dispatch:

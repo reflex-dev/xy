@@ -675,7 +675,7 @@ def test_gallery_jobs_must_build_the_linux_native_core(tmp_path: Path) -> None:
         workflow.replace(
             '          XY_REQUIRE_CARGO: "1"\n',
             '          XY_SKIP_CARGO: "1"\n',
-            2,
+            3,
         ),
         encoding="utf-8",
     )
@@ -1357,10 +1357,10 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
             '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
             "          uv pip install -p .venv/bin/python \\\n"
-            "            --constraint benchmarks/requirements-ci.lock -e .\n",
+            "            --constraint benchmarks/requirements-ci.lock dist/*.whl\n",
             "        run: |\n          uv venv .venv\n"
             "          uv pip install -p .venv/bin/python \\\n"
-            "            --constraint benchmarks/requirements-ci.lock -e .\n",
+            "            --constraint benchmarks/requirements-ci.lock dist/*.whl\n",
         ),
         encoding="utf-8",
     )
