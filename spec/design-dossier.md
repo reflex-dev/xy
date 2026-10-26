@@ -940,8 +940,10 @@ modules. It is a **generated artifact, not committed to git** (§33): the hatch 
 hook runs `node js/build.mjs` at packaging time and force-includes the result into the
 wheel and sdist, so a published distribution carries it prebuilt. The one size gate CI
 enforces is on the **wheel**: `.github/workflows/ci.yml` asserts the built wheel is
-≤ 15 MB (§33). CI builds the client fresh from source in every relevant job but does not
-measure its bytes.
+≤ 15 MB (§33). CI builds the client once in its shared Linux wheel producer and reuses the
+wheel and extracted native/client assets in compatible same-run jobs. Independent
+platform and source-install packaging probes still build their own artifacts.
+CI does not measure the client bundle bytes separately.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
@@ -1254,6 +1256,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
+- **Artifact version identity.** Wheel filename and `.dist-info` versions must
+  agree; `METADATA` also agrees after stripping leading zeros from an all-digit
+  local version. An all-numeric Git hash such as `06589443` can appear in
+  metadata while Hatchling writes `6589443` in the artifact name. Different
+  public versions or numeric values still fail verification (§33).
 - **Comm-protocol versioning.** The native core and JS client ship together but can
   drift (cached notebook outputs, pinned server assets). The first-paint spec carries
   a protocol version; mismatch fails **loudly with an upgrade hint**, never silently
