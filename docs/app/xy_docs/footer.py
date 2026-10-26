@@ -8,6 +8,7 @@ from reflex_site_shared.components.docs_shell import (
     docs_feedback_button,
     docs_footer_shell,
 )
+from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.docs import DocsPage
 from reflex_site_shared.views.footer import dark_mode_toggle
 
@@ -113,7 +114,21 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
     )
     controls = rx.box(
         rx.box(dark_mode_toggle(), class_name="[&>div]:!ml-0"),
-        _footer_link("View XY on GitHub ↗", REPOSITORY_URL),
+        rx.box(
+            rx.el.a(
+                get_icon("twitter_footer", class_name="size-5 shrink-0"),
+                href="https://x.com/getreflex",
+                aria_label="Reflex on X",
+                target="_blank",
+                rel="noreferrer",
+                class_name=(
+                    "flex size-8 items-center justify-center text-foreground "
+                    "transition-colors hover:text-muted-foreground"
+                ),
+            ),
+            _footer_link("View XY on GitHub ↗", REPOSITORY_URL),
+            class_name="flex flex-row items-center gap-4",
+        ),
         class_name="flex w-full flex-row flex-wrap items-end justify-between gap-6",
     )
     channel_label = "main-branch preview" if DOCS_CHANNEL == "preview" else "stable docs"

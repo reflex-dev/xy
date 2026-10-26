@@ -63,6 +63,7 @@ leaf links and the mobile sidebar drawer remain available. The mobile drawer
 trigger is a named native button with visible keyboard focus. Footer navigation
 uses level-two section headings. Installation examples use subsections so code
 blocks cannot become invalid direct children of a list.
+The footer's named X icon links to `https://x.com/getreflex`.
 The docs consume the reusable `reflex-site-shared` base theme and components
 directly. XY owns its branding, navigation, project-specific footer content,
 and the docs-only brand layer adapted from
