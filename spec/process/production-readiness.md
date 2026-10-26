@@ -23,8 +23,8 @@ screen-bounded performance core, but the stable commitments today are narrower:
   Rust, Node, npm, or a CDN.**
 - Source distributions contain only install and build inputs: the `xy` package,
   bundled `reflex_xy` integration, Rust/JS sources, and the prebuilt render
-  client. Repository-only docs, tests, benchmarks, scripts, and examples are
-  excluded. Installing from an sdist therefore needs no Node.
+  client. Repository-only docs, tests, gallery evidence, benchmarks, scripts,
+  and examples are excluded. Installing from an sdist therefore needs no Node.
 - Building from a raw source checkout (`pip install` from a clone, or the dev
   workflow) requires a Rust toolchain for the native core and Node/npm for the
   render client — the same two toolchains CI uses. The two differ in strictness:
@@ -72,11 +72,29 @@ The local layer uses Inter body text, Geist headings, warm neutral light/dark
 tokens, pill navigation and demo tabs, compact two-column Back/Next links, and
 the opal banner artwork without a white top-edge inset shadow. Fonts ship through
 pinned Fontsource packages; the artwork URL preserves the `/docs/xy` mount prefix.
-Banner content, dismissal state,
-and header-height tracking remain shared. Editorial selectors target `docs-*`
+Banner structure and the close event remain shared. Editorial selectors target `docs-*`
 hooks, avoiding live chart typography and data-series colors. Mobile navigation,
 the named closeable docs drawer, clipboard feedback, keyboard focus, and
 reduced-motion behavior remain required validation surfaces.
+XY's announcement matches `reflex-marketing`'s current main branch:
+"Build vs. Buy for Internal Software" links to
+`https://reflex.dev/blog/build-vs-buy-internal-software/`, with five mirrored
+opal panels with reduced-motion support, a black New
+badge, and a white text-only Read more pill hidden at 640px and below. Its visible
+contribution is 44px on desktop and 40px at 960px and below, above the fixed 64px
+docs header. A head script restores the same `reflex_announcement_dismissed_release`
+storage key and `build-vs-buy-internal-software-v1` release before paint; dismissal persists
+across reloads and same-origin marketing/docs navigation, with a working
+visit-local fallback when storage is unavailable. Header and sidebar offsets
+reserve only the visible announcement. The wrapper retains the shared native
+link and close event while adapting its destination, copy, decorative markup,
+and accessible name. The message wraps at narrow widths as it does in marketing.
+Below 1280px, opening the navigation menu removes both top header corners;
+closing it restores the announcement's rounded header. Announcement links open
+in a new tab with `noopener noreferrer`, matching their accessible name.
+Authored in-page links must
+resolve to rendered IDs, including the parentheses retained by the shared
+heading slug convention (lowercase text with spaces replaced by hyphens).
 Unpublished shared changes are previewed with the editable-package
 workflow in `docs/app/README.md`, followed by production compilation and the docs
 validators below. The portable Git lock includes the merged design's shared
@@ -141,9 +159,9 @@ These must pass before publishing.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | Attempts 10/20/50/60 charts, hard-gates the 10-chart row as loss-free and nonblank, retains partial larger rows, and applies the production shader-cache oracle to a complete, fully nonblank, loss-free 60-chart row | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50,60 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including `Provides-Extra: reflex` and `reflex>=0.9.6` under that marker) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
-| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
-| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies/`reflex` extra matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
+| sdist | Build-input-only source archive contains the `xy` and bundled `reflex_xy` packages, JSX/render-client bundles, complete JS/Rust build sources, and `PKG-INFO` version/dependencies (including the `matplotlib` and `reflex` extras with their supported ranges) matching the archive's own `xy-<version>` root; repository-only material, duplicate/unsafe members, native binaries, and generated junk are absent | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| Native wheel | Platform wheel contains package-only `xy` and `reflex_xy` files, exactly one native library, the JSX wrapper but no duplicate render client, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
+| Fallback wheel | No-toolchain wheel contains package-only `xy` and `reflex_xy` files, `METADATA` version/base dependencies and `matplotlib`/`reflex` extras matching the wheel's own filename and `.dist-info`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
 | Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, pyplot-vs-matplotlib, native, interaction, dashboard, and workflow artifacts |
 
@@ -652,16 +670,17 @@ Before merging a release pull request:
 - Confirm the sdist verifier passed and the build-input-only source archive
   contains `xy`, bundled `reflex_xy`, the JSX/render-client bundles, complete
   JS/Rust build sources, and the expected `PKG-INFO` package name, Python floor,
-  runtime dependencies, and Reflex extra. It must exclude repository-only
-  docs, tests, scripts, benchmarks, examples, native binaries, and generated
-  caches.
+  runtime dependencies, and Matplotlib/Reflex extras. It must exclude
+  repository-only docs, tests, gallery evidence, scripts, benchmarks, examples,
+  native binaries, generated caches, unsafe paths, and duplicate members.
 - Confirm each platform wheel passes `scripts/verify_wheel.py --expect-native`
   and its install smoke loads `xy.kernels.BACKEND == "native"`. Confirm the
   fallback `py3-none-any` wheel passes `--expect-pure` and fails compute with
   the documented native-core error. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24` as base requirements, plus
-  `Provides-Extra: reflex` and `reflex>=0.9.6` guarded by that extra. The wheel
+  `matplotlib>=3.11,<3.12` and `reflex>=0.9.6` guarded by their respective
+  `matplotlib` and `reflex` extras. The wheel
   must contain `reflex_xy` and `XYChart.jsx`, and `RECORD` must list every
   archive file exactly once with matching `sha256` and size fields. Wheels
   and the sdist remain distribution/build-input-only: docs, tests, benchmarks,

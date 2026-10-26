@@ -14,11 +14,11 @@ Python bar chart that is interactive by default — pan, zoom, and hover all wor
 without configuration — and horizontal bars keep long category labels readable
 where a vertical layout would crowd them. Layer several series to make grouped
 or stacked bar charts from the same simple API. The vertical form of the same
-mark is a **column chart** — see [Column Charts](#column-charts-vertical-bars)
+mark is a **column chart** — see [Column Charts](#column-charts-(vertical-bars))
 below.
 
 Jump to [grouped and stacked bars](#grouped-and-stacked-bars),
-[column charts](#column-charts-vertical-bars), or
+[column charts](#column-charts-(vertical-bars)), or
 [options](#bar-chart-options).
 
 ## Create a Bar Chart

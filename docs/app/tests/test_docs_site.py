@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import pytest
 from reflex_base.components.memo import MemoComponent
@@ -147,6 +147,17 @@ def _walk_blocks(blocks: tuple[Block, ...]) -> Iterator[LinkSpan]:
             for row in (block.header, *block.rows):
                 for cell in row.cells:
                     yield from _walk_spans(cell.children)
+
+
+def _rendered_ids(component: object) -> Iterator[str]:
+    """Collect literal IDs from the rendered component tree."""
+    value = getattr(component, "id", None)
+    if not isinstance(value, str):
+        value = getattr(value, "_var_value", None)
+    if isinstance(value, str):
+        yield value
+    for child in getattr(component, "children", ()):
+        yield from _rendered_ids(child)
 
 
 def _normalize_xy_docs_path(url: str) -> str | None:
@@ -643,6 +654,24 @@ def test_markdown_heading_links_are_route_local_after_client_navigation() -> Non
         rendered = str(render_xy_markdown_page(pages[route]))
         assert 'to:"#' in rendered
         assert "router_rx_state_" not in rendered
+
+
+def test_authored_in_page_links_resolve_to_rendered_ids() -> None:
+    """Check actual fragment targets, including punctuation kept in heading IDs."""
+    failures = []
+    for page in discover_docs(DOCS_CONFIG):
+        links = [
+            link
+            for link in _walk_blocks(parse_document(page.content).blocks)
+            if link.target.startswith("#")
+        ]
+        if not links:
+            continue
+        targets = set(_rendered_ids(render_xy_markdown_page(page)))
+        failures.extend(
+            (page.route, link.target) for link in links if unquote(link.target[1:]) not in targets
+        )
+    assert not failures, failures
 
 
 def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
@@ -1554,7 +1583,7 @@ def test_first_chart_shows_clean_code_with_hidden_live_previews(
 
 
 def test_installation_uses_uv_first_package_manager_tabs() -> None:
-    """Present install commands as tabs with uv selected by default."""
+    """Present base and Matplotlib-extra installs with uv selected first."""
     source_path = DOCS_ROOT / "overview" / "installation.md"
     rendered = str(
         render_markdown(
@@ -1564,11 +1593,14 @@ def test_installation_uses_uv_first_package_manager_tabs() -> None:
         )
     )
 
-    assert 'defaultValue:"tab1"' in rendered
-    assert rendered.count('className:"pill-tab"') == 2
-    assert rendered.index('value:"tab1"},"uv"') < rendered.index('value:"tab2"},"pip"')
+    assert rendered.count('defaultValue:"tab1"') == 2
+    assert rendered.count('className:"pill-tab"') == 4
+    assert rendered.count('value:"tab1"},"uv"') == 2
+    assert rendered.count('value:"tab2"},"pip"') == 2
     assert 'code:"uv add xy"' in rendered
     assert 'code:"python -m pip install xy"' in rendered
+    assert 'code:"uv add \\"xy[matplotlib]\\""' in rendered
+    assert 'code:"python -m pip install \\"xy[matplotlib]\\""' in rendered
 
 
 def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> None:
@@ -2453,9 +2485,19 @@ def test_xy_navbar_uses_xy_links_github_and_the_official_drawer() -> None:
     assert "<details" not in rendered
     assert "<summary" not in rendered
     assert XY_REPOSITORY_URL in rendered
-    from reflex_site_shared.views.hosting_banner import hosting_banner
-
-    assert str(hosting_banner()) in rendered
+    assert "Build vs. Buy for Internal Software" in rendered
+    assert "xy is now in Reflex Build" not in rendered
+    assert '"data-shimmer-text":"Build vs. Buy for Internal Software"' in rendered
+    assert (
+        json.dumps("New: Build vs. Buy for Internal Software — Read more (opens in a new tab)")
+        in rendered
+    )
+    assert 'className:"docs-announcement-glass"' in rendered
+    assert '"data-announcement-dismiss":""' in rendered
+    assert 'href:"https://reflex.dev/blog/build-vs-buy-internal-software/"' in rendered
+    assert "https://reflex.dev/blog/xy-in-reflex-build/" not in rendered
+    assert "Dismiss announcement" in rendered
+    assert "hide_banner" in rendered
     assert "Reserve your spot" not in rendered
     assert "https://luma.com/a1ty77bt" not in rendered
     assert "Reflex Agent Toolkit is launching" not in rendered
@@ -3158,6 +3200,7 @@ def test_installation_options_render_as_subsections_with_commands() -> None:
     blocks = parse_document(source.read_text(encoding="utf-8")).blocks
     headings = [block for block in blocks if isinstance(block, HeadingBlock) and block.level == 3]
     assert [heading.children[0].text for heading in headings] == [
+        "Matplotlib compatibility",
         "Arrow input",
         "Reflex integration",
         "Optional browser export",
@@ -3167,5 +3210,11 @@ def test_installation_options_render_as_subsections_with_commands() -> None:
         if node.tag in {"ul", "ol", "RadixThemesUnorderedList", "RadixThemesOrderedList"}:
             assert all(child.tag in item_tags for child in node.children)
     rendered = str(component)
-    for command in ("uv add pyarrow", 'uv add "xy[reflex]"', 'python -m pip install "xy[reflex]"'):
+    for command in (
+        'uv add "xy[matplotlib]"',
+        'python -m pip install "xy[matplotlib]"',
+        "uv add pyarrow",
+        'uv add "xy[reflex]"',
+        'python -m pip install "xy[reflex]"',
+    ):
         assert f"code:{json.dumps(command)}" in rendered

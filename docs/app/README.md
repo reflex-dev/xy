@@ -83,9 +83,15 @@ The three `assets/docs-*-theme.css` / `assets/docs-theme.css` stylesheets adapt
 the docs-only styling from [Reflex PR #7549](https://github.com/reflex-dev/reflex/pull/7549):
 Inter body text, Geist headings, warm neutral light/dark palettes, compact
 controls, and the opal header artwork. They are loaded after the shared base
-theme. The header styles reuse the shared announcement markup and dismissal
-state; the artwork URL includes the `/docs/xy` mount prefix. Fonts are
+theme. The header reuses the shared announcement body and close event, adapting
+its decorative markup and styling to `reflex-marketing`'s five opal panels,
+44px desktop / 40px mobile contribution, and text-only CTA. The head script in
+`xy_docs/announcement.py` uses marketing's release-scoped local-storage dismissal
+key so dismissal survives reloads and same-origin navigation without a flash
+or reserved gap. The artwork URL includes the `/docs/xy` mount prefix. Fonts are
 bundled from the pinned Fontsource frontend packages, without a font CDN.
+Announcement title, destination, and release in `xy_docs/announcement.py` follow
+marketing's main branch and must be updated together when its copy changes.
 Editorial styles use shared `docs-*` hooks and the hooks added by
 `xy_docs_layout`; keep them scoped so live chart examples retain their own
 typography and data colors. The shared Markdown layout still owns navigation

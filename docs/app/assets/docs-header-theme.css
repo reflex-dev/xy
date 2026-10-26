@@ -1,6 +1,8 @@
 /* XY docs header brand layer, adapted from reflex-dev/reflex#7549. */
-/* Docs keep a 64px fixed header and a 40px announcement contribution.
-   The banner artwork and glass treatment match the marketing site. */
+/* Keep the 64px docs header; match reflex-marketing's 44px desktop / 40px
+   mobile announcement, layered opal artwork, and persisted dismissal. */
+html:has(.docs-nav-frame) { --docs-header-height: 64px; }
+html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announcement]) { --docs-header-height: 108px; }
 .docs-nav-frame {
   left: 0;
   --docs-control-shadow: 0 0 0 .5px rgb(0 0 0 / 12.5%), 0 1px 1px rgb(0 0 0 / 4%), 0 2px 4px rgb(0 0 0 / 4%);
@@ -14,8 +16,8 @@
   box-shadow: none;
   transition: border-radius 200ms ease, background-color 200ms ease;
 }
-.docs-nav-frame:has([data-announcement]) > .docs-navbar-header {
-  margin-top: -24px;
+html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announcement]) > .docs-navbar-header {
+  margin-top: -28px;
   border-radius: 24px 24px 0 0;
 }
 .docs-nav-frame > .docs-navbar-header > .docs-navbar-inner {
@@ -71,8 +73,8 @@
 .docs-nav-frame [data-announcement] {
   position: relative;
   isolation: isolate;
-  height: 64px;
-  padding-bottom: 24px;
+  height: 72px;
+  padding-bottom: 28px;
   width: 100%;
   overflow: hidden;
   background: #e8e7f1;
@@ -80,17 +82,26 @@
   border: 0;
   font-family: Inter, Arial, sans-serif;
 }
-/* Shared banner content, links, and state stay in reflex-site-shared. */
-.docs-nav-frame [data-announcement]::before {
-  content: '';
+html[data-announcement-dismissed='true'] .docs-nav-frame [data-announcement] { display: none; }
+/* Five mirrored artwork panels match reflex-marketing/assets/marketing.css. */
+.docs-nav-frame .docs-announcement-glass {
+  display: flex;
   position: absolute;
   z-index: -2;
   inset: -48px -12%;
   pointer-events: none;
-  background: url('/docs/xy/header/opal.avif') center 38% / cover no-repeat;
   filter: blur(6px);
+  will-change: transform;
   animation: docs-announcement-glass-drift 26s ease-in-out infinite alternate;
 }
+.docs-announcement-glass > span {
+  flex: 1;
+  background: url('/docs/xy/header/opal.avif') center 22% / cover no-repeat;
+}
+.docs-announcement-glass > span:nth-child(2) { background-position: center 62%; transform: scaleX(-1); }
+.docs-announcement-glass > span:nth-child(3) { background-position: center 38%; }
+.docs-announcement-glass > span:nth-child(4) { background-position: center 78%; transform: scaleX(-1); }
+.docs-announcement-glass > span:nth-child(5) { background-position: center 50%; }
 .docs-nav-frame [data-announcement]::after {
   content: '';
   position: absolute;
@@ -146,10 +157,11 @@
   box-shadow: var(--docs-control-shadow);
   white-space: nowrap;
 }
+.docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) svg { display: none; }
 .docs-nav-frame [data-announcement] > button {
   position: absolute;
-  /* The shared button's -translate-y-1/2 centers its 28px box at y=20. */
-  top: 20px;
+  /* Center in marketing's visible 44px announcement contribution. */
+  top: 22px;
   right: 16px;
   display: inline-flex;
   align-items: center;
@@ -172,26 +184,35 @@
   to { transform: translate3d(5%, 0, 0) scale(1); }
 }
 @media (max-width: 1279px) {
-  .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
+  html .docs-nav-frame:has(.docs-navbar-menu[open]) > .docs-navbar-header {
     border-radius: 0;
   }
 }
+@media (max-width: 960px) {
+  html:not([data-announcement-dismissed='true']):has(.docs-nav-frame [data-announcement]) { --docs-header-height: 104px; }
+  .docs-nav-frame [data-announcement] { height: 64px; padding-bottom: 24px; }
+  html:not([data-announcement-dismissed='true']) .docs-nav-frame:has([data-announcement]) > .docs-navbar-header { margin-top: -24px; }
+  .docs-nav-frame [data-announcement] > button { top: 20px; }
+}
 @media (max-width: 640px) {
   .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(3) { display: none; }
+  .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(2) {
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+    line-height: 18px;
+  }
 }
 @media (max-width: 639px) {
   .docs-nav-frame > .docs-navbar-header { padding-inline: 16px; }
   .docs-navbar-inner { gap: 16px; }
   .docs-navbar-brand { gap: 10px; }
   .docs-navbar-mobile-panel { padding-inline: 16px; }
-  .docs-nav-frame [data-announcement] > a > span:first-child { padding-inline: 40px; gap: 8px; }
+  .docs-nav-frame [data-announcement] > a > span:first-child { padding-inline: 40px; }
   .docs-nav-frame [data-announcement] > button { right: 8px; }
 }
-@media (max-width: 379px) {
-  .docs-nav-frame [data-announcement] > a > span:first-child > span:nth-child(2) { font-size: 13px; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .docs-nav-frame [data-announcement]::before { animation: none; }
+  .docs-nav-frame .docs-announcement-glass { animation: none; will-change: auto; }
   .docs-nav-frame > .docs-navbar-header,
   .docs-navbar-mobile-link { transition: none; }
 }

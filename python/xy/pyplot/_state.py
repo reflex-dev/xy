@@ -92,7 +92,7 @@ def gca() -> Axes:
 def sca(ax: Axes) -> None:
     """Make ``ax`` (and its figure) current."""
     global _current
-    fig = ax.figure if ax.figure is not None else gcf()
+    fig = ax.get_figure(root=True) if ax.figure is not None else gcf()
     _figures.setdefault(fig.number, fig)
     _current = fig.number
     fig._current_ax = ax

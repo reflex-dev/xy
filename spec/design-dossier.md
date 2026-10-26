@@ -1137,6 +1137,20 @@ number-parse-shaped; (c) every binding reports its actual copy count at ingest i
 mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
 live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
 
+**Bounded Matplotlib-compat exception.** The optional
+`module://xy.backends.backend_xy` live canvas is not the native XY data plane in
+the Jupyter row above. Its first implementation sends the rendered SVG document
+as one synced Unicode trait in Jupyter and as one JSON string from the
+authenticated loopback `/state` endpoint. The exception is bounded to compat
+figures and their live preview; native XY figures, numeric resources, server
+apps, and static-export contracts do not inherit it. A measured three-point
+scatter produces about 38 KiB of SVG per frame. Each refresh therefore incurs
+SVG construction, UTF-8/text serialization and transport copies, then browser
+DOM parsing on the main thread; no zero-copy or binary-transport performance
+claim applies to this compat live surface. Replacing it with binary display-list
+resources is tracked as compatibility-backend work, not silently treated as
+conforming to the native Jupyter transport row.
+
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 
 Full Plotly semantics (~40 trace types × transforms × axis quirks × hover rules) is a
