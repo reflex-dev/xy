@@ -34,6 +34,9 @@ REQUIRED_CI_JOBS = {
     "pyplot_gallery",
     "pyplot_gallery_extended",
     "test",
+    "rust_checks",
+    "browser_smokes",
+    "regression_checks",
     "python_floor",
     "benchmark_vs",
     "benchmark_methodology",
@@ -48,6 +51,9 @@ CI_SUMMARY_DEPENDENCIES = (
     "changes",
     "build",
     "test",
+    "rust_checks",
+    "browser_smokes",
+    "regression_checks",
     "python_floor",
     "matplotlib_reference",
     "matplotlib_patch_smoke",
@@ -350,7 +356,14 @@ def _has_shell_init_environment(text: str) -> bool:
     lines = _yaml_code_lines(text)
     protected_jobs = _job_blocks(text)
     protected_job_text = "\n".join(
-        protected_jobs.get(job, "") for job in ("matplotlib_reference", "test")
+        protected_jobs.get(job, "")
+        for job in (
+            "matplotlib_reference",
+            "test",
+            "rust_checks",
+            "browser_smokes",
+            "regression_checks",
+        )
     )
     if any(
         re.search(r"\bGITHUB_(?:ENV|PATH)\b", line)
@@ -594,7 +607,7 @@ def _require_step_runs_exactly(
     group = "pyplot" if job_text.startswith("  matplotlib_reference:") else "runtime"
     for key, expected in (
         ("if", f"needs.changes.outputs.{group} == 'true'"),
-        ("needs", "[changes, build]"),
+        ("needs", "changes" if job_text.startswith("  rust_checks:") else "[changes, build]"),
     ):
         values, ambiguous = _direct_yaml_key_values(job_text, key, indent=4)
         if ambiguous or values != [expected]:
@@ -823,6 +836,9 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "pyplot_gallery": "pyplot",
         "pyplot_gallery_extended": "pyplot",
         "test": "runtime",
+        "rust_checks": "runtime",
+        "browser_smokes": "runtime",
+        "regression_checks": "runtime",
         "python_floor": "runtime",
         "benchmark_vs": "benchmarks",
         "benchmark_methodology": "benchmarks",
@@ -837,6 +853,8 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
             errors.append(f"CI {job} must use the reviewed {group} scope")
     for job in (
         "test",
+        "browser_smokes",
+        "regression_checks",
         "python_floor",
         "matplotlib_reference",
         "matplotlib_patch_smoke",
@@ -1059,6 +1077,20 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "ruff check .",
+        "scripts/check_typing.py",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "browser_smokes",
+        "CI",
+        "hard browser production gates",
+        "scripts/abi_smoke.py",
+        "scripts/render_smoke_nonumpy.py",
+        "scripts/polar_parity_smoke.py",
+        "scripts/append_stream_smoke.py",
+        "scripts/png_export_smoke.py",
+        "JS parses (ESM + IIFE)",
         "scripts/smoke_render.py",
         "Polar phase 6/7 live examples",
         "scripts/polar_phase7_smoke.py",
@@ -1072,6 +1104,15 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50,60",
         "dashboard-smoke.json --kind dashboard-browser",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "regression_checks",
+        "CI",
+        "hard benchmark regression gates",
+        "scripts/bench_native.py --sizes 1e5,1e6",
+        "scripts/bench.py --sizes 1e5,1e6",
         "--sizes 1e5,1e6,1e7 --production --json scatter.json",
         "scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json",
         "scripts/verify_benchmark_report.py scatter.json --kind scatter-native",
@@ -1090,16 +1131,35 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     test_job = jobs.get("test", "")
-    if "continue-on-error:" in test_job:
-        errors.append("CI test job and its required pytest/browser steps must be blocking")
-    _require_step_runs_exactly(
-        errors,
-        test_job,
-        "Install package + dev deps",
-        "locked Reflex and Matplotlib development environment",
-        "uv sync --locked --extra reflex --group dev",
-        'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
-    )
+    for job in ("test", "rust_checks", "browser_smokes", "regression_checks"):
+        if "continue-on-error:" in jobs.get(job, ""):
+            errors.append(f"CI {job} job and its required steps must be blocking")
+    rust_job = jobs.get("rust_checks", "")
+    values, ambiguous = _direct_yaml_key_values(rust_job, "needs", indent=4)
+    if ambiguous or values != ["changes"]:
+        errors.append("CI rust_checks must depend only on changes, independent of the wheel")
+    for name, command in (
+        ("Rust unit tests", "cargo test"),
+        ("Rust lint", "cargo clippy --all-targets -- -D warnings"),
+    ):
+        _require_step_runs_exactly(errors, rust_job, name, "blocking Rust checks", command)
+    for job in ("test", "browser_smokes", "regression_checks"):
+        _require_job_contains(
+            errors,
+            jobs,
+            job,
+            "CI",
+            "shared Chromium setup",
+            "uses: ./.github/actions/setup-ci-chromium",
+        )
+        _require_step_runs_exactly(
+            errors,
+            jobs.get(job, ""),
+            "Install package + dev deps",
+            "locked runtime development environment",
+            "uv sync --locked --extra reflex --group dev",
+            'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
+        )
     _require_step_contains(
         errors,
         test_job,
@@ -1112,7 +1172,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     )
     _require_step_contains(
         errors,
-        test_job,
+        jobs.get("browser_smokes", ""),
         "Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)",
         "pinned Matplotlib browser compatibility suites",
         'XY_REQUIRE_BROWSER: "1"',

@@ -61,6 +61,28 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
 | Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
 
+The runtime selection runs four independent blocking jobs:
+
+| Job | Dependencies | Checks |
+| --- | --- | --- |
+| `rust_checks` — Rust tests + Clippy | Selector only | Rust unit tests and Clippy; starts alongside the shared-wheel build |
+| `test` — Python tests + quality | Selector and shared wheel | Locked Reflex dev environment, API, Ruff, types and full selected pytest coverage with required Chromium |
+| `browser_smokes` — Browser rendering + integration | Selector and shared wheel | JS parsing, native ABI, stdlib render/append/export probes, real-chart rendering, lifecycle, visuals, stress and dashboard reliability; focused pyplot gate when selected |
+| `regression_checks` — Blocking regression checks | Selector and shared wheel | Native/scatter/transport regression reports, deterministic payload gates, report upload and the benchmark smoke harness |
+
+These jobs never depend on one another. Python, browser and regression jobs each
+restore the same native/client artifacts and run in parallel once the wheel is
+ready. Python tests retain their real-browser coverage rather than deferring it
+to another job. The shared `setup-ci-chromium` composite restores a browser cache
+keyed by OS/architecture/frontend lockfile, installs full Chromium without apt
+on the fixed Ubuntu image, and verifies that it launches. Each caller bounds
+this setup to five minutes. The `CI result` summary requires all four jobs and
+rejects failures/cancellations from each, alongside the existing Python-floor,
+conformance and packaging gates. Validation covers their independent dependency
+graph, unchanged mandatory checks and failure propagation. Hosted start/end
+metadata (`gh run view <run> --json jobs`) supplies evidence of actual overlap;
+no elapsed-time improvement is claimed before a fresh hosted run.
+
 Mixed PRs take the union. On pull requests, the reference/patch jobs, both gallery
 profiles and the focused pyplot test step require an explicit change under the
 compatibility paths above. CI workflow/helper changes, shared implementation
@@ -86,7 +108,7 @@ only this run's artifact. The gallery, reference, Python-floor and benchmark
 consumers that exercise XY install that wheel. Competitor-only benchmark shards
 (`matrix.xy: false`) skip both restoration and XY installation. A local composite action also extracts its native
 library and JS bundles into source paths for repository tests and stdlib smokes.
-The locked runtime development environment retains its editable install with
+The three locked runtime development environments retain editable installs with
 `XY_SKIP_CARGO=1`, reusing the verified native library; no consuming lane recompiles
 the release core or rebundles JS. Rust unit tests and Clippy still compile their
 test/debug targets. The Linux x64 packaging smoke repairs and installs the same

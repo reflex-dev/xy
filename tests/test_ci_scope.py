@@ -89,6 +89,8 @@ def test_shared_build_dependencies_and_summary():
     jobs = workflow["jobs"]
     consumers = [
         "test",
+        "browser_smokes",
+        "regression_checks",
         "python_floor",
         "matplotlib_reference",
         "matplotlib_patch_smoke",
@@ -149,6 +151,9 @@ def test_restore_action_unpacks_only_shared_native_and_client(tmp_path):
         "changes",
         "build",
         "test",
+        "rust_checks",
+        "browser_smokes",
+        "regression_checks",
         "python_floor",
         "matplotlib_reference",
         "matplotlib_patch_smoke",
@@ -276,3 +281,35 @@ def test_methodology_browser_setup_avoids_system_package_downloads():
     cache = steps["Cache methodology Chromium"]
     assert cache["with"]["path"] == "~/.cache/ms-playwright"
     assert "hashFiles('package-lock.json')" in cache["with"]["key"]
+
+
+def test_runtime_checks_run_in_independent_blocking_jobs():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    lanes = {
+        "rust_checks": "Rust unit tests",
+        "test": "Python tests (native core)",
+        "browser_smokes": "Real-Figure render smoke (numpy + Chromium)",
+        "regression_checks": "Regression gate (deterministic payloads = hard fail; timing = advisory)",
+    }
+    for name, required_step in lanes.items():
+        job = jobs[name]
+        dependencies = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+        assert set(dependencies) == ({"changes"} if name == "rust_checks" else {"changes", "build"})
+        assert not set(lanes).intersection(dependencies)
+        assert job["if"] == "needs.changes.outputs.runtime == 'true'"
+        assert not job.get("continue-on-error", False)
+        assert name in jobs["result"]["needs"]
+        assert required_step in {step.get("name") for step in job["steps"]}
+    assert "Rust unit tests" not in {step.get("name") for step in jobs["test"]["steps"]}
+
+
+def test_parallel_runtime_browser_lanes_share_pinned_chromium_setup():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
+    for name in ("test", "browser_smokes", "regression_checks"):
+        setup = next(
+            step
+            for step in jobs[name]["steps"]
+            if step.get("name") == "Install Chromium (Playwright)"
+        )
+        assert setup["uses"] == "./.github/actions/setup-ci-chromium"
+        assert setup["timeout-minutes"] == 5

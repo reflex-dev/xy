@@ -307,8 +307,28 @@ jobs:
             gallery-extended-artifacts/failures
             gallery-extended-artifacts/runs/**/stdout.txt
             gallery-extended-artifacts/runs/**/stderr.txt
+  rust_checks:
+    name: Rust tests + Clippy
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Rust unit tests
+        run: cargo test
+
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+
   test:
-    name: Test (Rust + Python + JS)
+    name: Python tests + quality
     env:
       PYTEST_ADDOPTS: ${{ needs.changes.outputs.pyplot != 'true' && '--ignore=tests/pyplot --ignore=tests/backends' || '' }}
     needs: [changes, build]
@@ -321,9 +341,9 @@ jobs:
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
       - name: Restore shared native core and client
         uses: ./.github/actions/restore-ci-build
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -334,41 +354,84 @@ jobs:
       - name: Install JS build toolchain
         run: npm ci
 
-      - name: Rust unit tests
-        run: cargo test
-
-      - name: Rust lint
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build native core
-        run: test -f target/release/libxy_core.so
-
-      - name: Build JS client
-        run: test -f python/xy/static/standalone.js
-
-      - name: JS parses (ESM + IIFE)
-        run: |
-          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
-          node --check python/xy/static/standalone.js
-
       - name: Python 3.11 floor syntax check
         run: python3 scripts/check_python_floor.py
 
       - name: Workflow gate wiring
         run: python3 scripts/verify_ci_workflow.py
 
-      # Dependency-free gates — verify the two seams cargo can't (the C ABI and
-      # the WebGL2 render path) and run even if PyPI is unreachable.
+      - name: Install package + dev deps
+        run: |
+          uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+
+      - name: Verify bundled Reflex integration import
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
+
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
+      - name: Lint (ruff)
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck (ty)
+        run: .venv/bin/python scripts/check_typing.py
+
+      - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
+      - name: Python tests (native core)
+        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
+        # full Figure.to_png path runs here rather than skipping.
+        run: |
+          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          # Chromium is installed here, so a probe that cannot launch it is a
+          # defect: fail rather than skip, so the browser layer cannot pass by
+          # absence. (A crash or non-zero exit already fails unconditionally.)
+          export XY_REQUIRE_BROWSER=1
+          .venv/bin/pytest -q
+
+  browser_smokes:
+    name: Browser rendering + integration
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: JS parses (ESM + IIFE)
+        run: |
+          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
+          node --check python/xy/static/standalone.js
+
       - name: Native ABI smoke (stdlib only)
         run: python3 scripts/abi_smoke.py
 
-      # Playwright's Chromium, not the apt/snap one: Ubuntu's chromium-browser is
-      # a confined snap that can't read the temp HTML under /tmp and whose GPU
-      # process crashes headless — it fails the render probe for environment
-      # reasons, not code. Playwright ships an unconfined build.
       - name: Install Chromium (Playwright)
-        run: |
-          npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
       - name: Headless render smoke (stdlib + Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -388,72 +451,11 @@ jobs:
       - name: Static PNG export smoke (stdlib + Chromium)
         run: XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
 
-      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
-        run: python3 scripts/bench_native.py --sizes 1e5,1e6
-
       - name: Install package + dev deps
         run: |
           uv sync --locked --extra reflex --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.0"
 
-      - name: Verify bundled Reflex integration import
-        run: |
-          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
-
-      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
-        run: |
-          .venv/bin/python benchmarks/bench_scatter_native.py \
-            --sizes 1e5,1e6,1e7 --production --json scatter.json
-          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
-          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
-          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
-            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
-          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
-          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
-          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
-          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
-            --transport transport.json --emit-md spec/benchmarks/metrics.md
-
-      - name: Upload regression benchmark report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: regression-benchmark-report
-          if-no-files-found: warn
-          path: |
-            spec/benchmarks/metrics.md
-            scatter.json
-            kernel.json
-            transport.json
-
-      - name: Public API coherence
-        run: .venv/bin/python scripts/check_public_api.py
-
-      - name: Lint (ruff)
-        run: |
-          .venv/bin/ruff check .
-          .venv/bin/ruff format --check .
-
-      # Include a package-external consumer so lazy root exports cannot silently
-      # degrade to Any even when the implementation modules remain well typed.
-      - name: Typecheck (ty)
-        run: .venv/bin/python scripts/check_typing.py
-
-      - name: Python tests (native core)
-        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
-        # full Figure.to_png path runs here rather than skipping.
-        run: |
-          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
-          # Chromium is installed here, so a probe that cannot launch it is a
-          # defect: fail rather than skip, so the browser layer cannot pass by
-          # absence. (A crash or non-zero exit already fails unconditionally.)
-          export XY_REQUIRE_BROWSER=1
-          .venv/bin/pytest -q
-
-      # Keep the Matplotlib-dependent compatibility surface visible as its own
-      # required gate. The full test run above remains authoritative; this
-      # focused pass makes import-skips and browser/widget regressions obvious
-      # in the Actions UI and binds the live widget test to real Chromium.
       - name: Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)
         if: needs.changes.outputs.pyplot == 'true'
         env:
@@ -470,10 +472,6 @@ jobs:
             tests/pyplot/test_gallery_behavior.py \
             tests/pyplot/test_public_protocols.py
 
-      # End-to-end: a real Figure (line decimation + scatter) through to_html's
-      # exact payload path, rendered in Chromium, pixels read back. Complements
-      # the stdlib smoke, which hand-builds payloads. (Was dead code — audit
-      # finding: the only real-Figure→browser gate, never executed.)
       - name: Real-Figure render smoke (numpy + Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -511,6 +509,69 @@ jobs:
             --chart-counts 10,20,50,60 --chromium "$CHROME" --json dashboard-smoke.json
           .venv/bin/python scripts/verify_benchmark_report.py \
             dashboard-smoke.json --kind dashboard-browser
+
+  regression_checks:
+    name: Blocking regression checks
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
+        run: python3 scripts/bench_native.py --sizes 1e5,1e6
+
+      - name: Install package + dev deps
+        run: |
+          uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+
+      - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
+      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
+        run: |
+          .venv/bin/python benchmarks/bench_scatter_native.py \
+            --sizes 1e5,1e6,1e7 --production --json scatter.json
+          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
+            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
+          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
+          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
+          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
+          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
+            --transport transport.json --emit-md spec/benchmarks/metrics.md
+
+      - name: Upload regression benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: regression-benchmark-report
+          if-no-files-found: warn
+          path: |
+            spec/benchmarks/metrics.md
+            scatter.json
+            kernel.json
+            transport.json
 
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
@@ -1179,7 +1240,7 @@ jobs:
     name: CI result
     runs-on: ubuntu-24.04
     if: always()
-    needs: [changes, build, test, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
+    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
     steps:
       - name: Require selected checks to succeed
         env:

@@ -808,8 +808,8 @@ def test_required_pytest_and_browser_gates_cannot_be_non_blocking(tmp_path: Path
     path = tmp_path / "ci.yml"
     path.write_text(
         workflow.replace(
-            "  test:\n    name: Test (Rust + Python + JS)\n",
-            "  test:\n    name: Test (Rust + Python + JS)\n    continue-on-error: true\n",
+            "  test:\n    name: Python tests + quality\n",
+            "  test:\n    name: Python tests + quality\n    continue-on-error: true\n",
             1,
         ),
         encoding="utf-8",
@@ -1422,7 +1422,9 @@ def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) ->
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "interaction_stress_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "interaction_stress_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path) -> None:
@@ -1441,7 +1443,9 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "dashboard reliability" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "dashboard reliability" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_dashboard_reliability_smoke_without_sixty_charts(
@@ -1459,7 +1463,9 @@ def test_ci_workflow_rejects_dashboard_reliability_smoke_without_sixty_charts(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "--chart-counts 10,20,50,60" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "--chart-counts 10,20,50,60" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_methodology_dashboard_without_sixty_charts(
@@ -1498,7 +1504,9 @@ def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> N
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "reflex_lifecycle_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "reflex_lifecycle_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> None:
@@ -1514,7 +1522,9 @@ def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> 
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "visual_regression_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "visual_regression_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -> None:
@@ -1568,7 +1578,9 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "check_regressions" in error for error in errors)
+    assert any(
+        "regression_checks job" in error and "check_regressions" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_transport_regression_probe(tmp_path: Path) -> None:
@@ -1585,7 +1597,7 @@ def test_ci_workflow_rejects_missing_transport_regression_probe(tmp_path: Path) 
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "bench_transport" in error for error in errors)
+    assert any("regression_checks job" in error and "bench_transport" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Path) -> None:
@@ -1601,7 +1613,7 @@ def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Pat
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "kernel-native" in error for error in errors)
+    assert any("regression_checks job" in error and "kernel-native" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path) -> None:
@@ -1618,7 +1630,10 @@ def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path)
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "regression-benchmark-report" in error for error in errors)
+    assert any(
+        "regression_checks job" in error and "regression-benchmark-report" in error
+        for error in errors
+    )
 
 
 def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
@@ -1636,7 +1651,7 @@ def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "if: always()" in error for error in errors)
+    assert any("regression_checks job" in error and "if: always()" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_wheel_upload(tmp_path: Path) -> None:
@@ -1749,6 +1764,9 @@ def test_summary_requires_every_blocking_dependency(tmp_path: Path) -> None:
         "changes",
         "build",
         "test",
+        "rust_checks",
+        "browser_smokes",
+        "regression_checks",
         "python_floor",
         "matplotlib_reference",
         "matplotlib_patch_smoke",
