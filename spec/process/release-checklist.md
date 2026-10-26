@@ -166,10 +166,11 @@ Do not call the release complete until all of these pass:
 - the post-release docs deployment dispatch.
 
 Confirm PyPI exposes the version and at least one file matching every artifact
-pattern required by `[tool.reflex-release]`:
+pattern required by `[tool.reflex-release]`. Run this check with Python 3.11 or
+later (`python3.11` is shown because the script uses `tomllib`):
 
 ```bash
-VERSION=X.Y.Z python3 - <<'PY'
+VERSION=X.Y.Z python3.11 - <<'PY'
 import fnmatch
 import json
 import os
@@ -325,8 +326,11 @@ gh release create vX.Y.Z \
   SHA256SUMS
 ```
 
-Add `--prerelease` for a prerelease. Confirm the release targets the immutable
-tag and contains the saved checksum manifest before manually dispatching the
+Add `--prerelease` for a prerelease. When the failed workflow's `MARK_LATEST`
+value was false, also add `--latest=false` (including for hotfixes and other
+non-latest releases); omit that option when `MARK_LATEST` was true. Confirm the
+release targets the immutable tag, preserves the intended Latest state, and
+contains the saved checksum manifest before manually dispatching the
 post-release docs workflow if it did not run.
 
 ### The Python floor fails because Reflex is missing
