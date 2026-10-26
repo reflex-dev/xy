@@ -111,7 +111,7 @@ an old wheel cannot hide a broken source archive.
 
 ### Rust-backed installation
 
-The release workflow installs a pinned Rust toolchain and installs the sdist
+The release workflow installs the stable Rust toolchain and installs the sdist
 with `XY_REQUIRE_CARGO=1`. The smoke must:
 
 - compile the native core with Cargo;
@@ -182,9 +182,13 @@ UV_CACHE_DIR="$TMP_DIR/uv-cache" uv pip install \
   numpy
 ```
 
-Verify versions, import locations, and the backend:
+Change to the temporary directory and invoke the environment's interpreter
+explicitly so neither the checkout nor another Python installation can satisfy
+the check:
 
-```python
+```bash
+cd "$TMP_DIR"
+"$TMP_DIR/.venv/bin/python" - <<'PY'
 import importlib.metadata as metadata
 
 import reflex_xy
@@ -198,13 +202,15 @@ assert kernels.BACKEND == "native"
 
 print(xy.__file__)
 print(reflex_xy.__file__)
+PY
 ```
 
 Both paths must point into the clean environment's `site-packages`.
 
 ## 6. Run published-package examples
 
-Exercise more than imports. From the clean environment:
+Exercise more than imports. Run every example from `$TMP_DIR` with
+`"$TMP_DIR/.venv/bin/python"`:
 
 - build the README line chart and export non-empty HTML and SVG files;
 - build the first-chart scatter and export self-contained HTML;
