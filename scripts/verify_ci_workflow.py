@@ -769,6 +769,10 @@ def _require_ci_summary(errors: list[str], jobs: dict[str, str]) -> None:
     if _has_yaml_key(summary, "continue-on-error", indent=4):
         errors.append("CI summary must be blocking")
     step = _named_step_blocks(summary).get("Require selected checks to succeed", "")
+    step_env = _unique_mapping_block(step, "env", indent=8)
+    results_values, results_ambiguous = _direct_yaml_key_values(
+        step_env or "", "RESULTS", indent=10
+    )
     if (
         _direct_yaml_key_count(step, "run", indent=8) != 1
         or _step_run_lines(step) != CI_SUMMARY_COMMANDS
@@ -781,7 +785,8 @@ def _require_ci_summary(errors: list[str], jobs: dict[str, str]) -> None:
                 "working-directory",
             )
         )
-        or "RESULTS: ${{ toJSON(needs) }}" not in step
+        or results_ambiguous
+        or results_values != ["${{ toJSON(needs) }}"]
     ):
         errors.append("CI summary must run the reviewed failure and selection assertions")
 

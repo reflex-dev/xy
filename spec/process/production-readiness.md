@@ -73,9 +73,10 @@ rejects failed/cancelled hard dependencies and accepts intentionally skipped
 lanes, so it also completes on docs-only PRs. Repositories can require this
 stable status instead of individually selected jobs. The verifier protects every
 blocking summary dependency, the shared-build selection condition, and its exact
-failure/selection assertions, including
-packaging failures. The Python-floor environment explicitly installs PyYAML for
-the workflow tests. Workflow changes do not
+failure/selection assertions, including packaging failures. The summary step must
+define one direct `env.RESULTS` assignment equal to `${{ toJSON(needs) }}`;
+comments, inherited values and duplicate mappings cannot satisfy that contract.
+The Python-floor environment explicitly installs PyYAML for the workflow tests. Workflow changes do not
 change repository branch-protection settings automatically.
 
 One `ubuntu-24.04` producer builds and verifies a native Linux x64 wheel at the

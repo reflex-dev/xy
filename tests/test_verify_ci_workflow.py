@@ -1807,3 +1807,29 @@ def test_shared_build_condition_cannot_skip_selected_consumers(tmp_path: Path) -
         "build" in error and "scope" in error
         for error in verify_ci_workflow.validate_ci_workflow(path)
     )
+
+
+def test_summary_requires_direct_step_results_input(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    assignment = "          RESULTS: ${{ toJSON(needs) }}"
+    step_env = "        env:\n" + assignment
+    mutations = {
+        "comment-only": summary.replace(assignment, "          # RESULTS: ${{ toJSON(needs) }}"),
+        "inherited-fake": summary.replace(
+            "    runs-on: ubuntu-24.04",
+            '    runs-on: ubuntu-24.04\n    env:\n      RESULTS: \'{"changes":{"result":"success"}}\'',
+        ).replace(assignment, "          # RESULTS: ${{ toJSON(needs) }}"),
+        "fabricated": summary.replace(
+            assignment,
+            '          RESULTS: \'{"changes":{"result":"success"}}\'\n'
+            "          # RESULTS: ${{ toJSON(needs) }}",
+        ),
+        "duplicate-results": summary.replace(assignment, assignment + "\n" + assignment),
+        "duplicate-env": summary.replace(step_env, step_env + "\n" + step_env),
+    }
+    for name, mutated in mutations.items():
+        path = tmp_path / f"{name}.yml"
+        path.write_text(prefix + "  result:\n" + mutated)
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any("summary" in error for error in errors), name
