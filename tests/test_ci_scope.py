@@ -41,7 +41,6 @@ def test_pyplot_selects_compatibility_without_platform_builds(path):
         "js/src/60_entries.ts",
         "python/xy/_figure.py",
         "pyproject.toml",
-        ".github/workflows/ci.yml",
         "new-build-input",
     ],
 )
@@ -235,3 +234,45 @@ def test_codspeed_excludes_nested_markdown_and_license_changes():
     ignored = workflow[True]["pull_request"]["paths-ignore"]
     assert "**.md" in ignored
     assert "LICENSE" in ignored
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codspeed.yml",
+        ".github/actions/restore-ci-build/action.yml",
+        "scripts/ci_scope.py",
+        "scripts/verify_ci_workflow.py",
+    ],
+)
+def test_ci_configuration_changes_skip_advisory_benchmarks(path):
+    selected = select_checks([path])
+    assert selected["runtime"]
+    assert not selected["benchmarks"]
+    assert not selected["pyplot"]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_mixed_ci_and_benchmark_changes_preserve_benchmark_selection(reverse):
+    paths = [".github/workflows/ci.yml", "benchmarks/bench_interaction.py"]
+    if reverse:
+        paths.reverse()
+    assert select_checks(paths)["benchmarks"]
+
+
+def test_methodology_browser_setup_avoids_system_package_downloads():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["benchmark_methodology"]
+    steps = {step.get("name"): step for step in job["steps"]}
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 20
+    install = steps["Install Chromium (Playwright)"]
+    assert install["timeout-minutes"] == 5
+    assert install["run"].strip() == "npx playwright install --no-shell chromium"
+    preflight = steps["Verify methodology Chromium"]
+    assert preflight["timeout-minutes"] == 1
+    assert "chromium.launch({executablePath: chromium.executablePath()})" in preflight["run"]
+    cache = steps["Cache methodology Chromium"]
+    assert cache["with"]["path"] == "~/.cache/ms-playwright"
+    assert "hashFiles('package-lock.json')" in cache["with"]["key"]

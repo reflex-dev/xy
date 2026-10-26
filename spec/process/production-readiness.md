@@ -58,7 +58,8 @@ and manual dispatches run all lanes, including documentation-only pushes to main
 | `python/xy/pyplot/`, `python/xy/backends/`, their tests, gallery inputs or compatibility scripts | Runtime/Python floor, released Matplotlib reference/patch, eight standard gallery shards, extended gallery |
 | Other `tests/` or `examples/`, or `.binder/` | Runtime/Python floor; Binder separately selects its own build inputs |
 | `benchmarks/` or `scripts/bench*` | Blocking runtime/Python-floor regression checks plus advisory cross-library/methodology benchmarks and their report merge |
-| Shared Python, Rust, JS, dependency/build configuration, CI, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
+| `.github/workflows/`, `.github/actions/`, CI selector/verifier scripts | Runtime/Python floor, packaging and conformance; advisory benchmarks are skipped |
+| Shared Python, Rust, JS, dependency/build configuration, or unfamiliar paths | General lanes; pyplot requires a matching compatibility path |
 
 Mixed PRs take the union. On pull requests, the reference/patch jobs, both gallery
 profiles and the focused pyplot test step require an explicit change under the
@@ -96,6 +97,27 @@ CodSpeed PR filters omit backend/gallery-only changes, tests, Markdown at any
 depth, license-only changes, docs and news.
 Pyplot implementation changes still run its dedicated CodSpeed benchmarks.
 Published release build workflows and their full platform coverage are unchanged.
+
+The advisory methodology job keeps the standard workload sizes and repetition
+counts. CI-only PRs skip it and the cross-library benchmark/report jobs; mixed
+PRs that edit benchmark or shared implementation inputs still select them.
+Main pushes and manual dispatches retain all benchmark coverage.
+On the fixed `ubuntu-24.04` hosted image, methodology installs the lockfile-pinned
+Chromium without `--with-deps`, reusing the system browser libraries already
+provided by the [runner image](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#browsers-and-drivers). Its Chromium cache is keyed by OS, architecture and the
+frontend lockfile. Only full Chromium is needed: Python probes invoke its exact
+executable path, so the separate headless-shell download is omitted. Browser
+installation has a five-minute limit; the complete job has a twenty-minute limit.
+A one-minute browser-launch preflight fails on missing Chromium or system
+libraries before measurements begin; it never substitutes a different renderer
+or silently accepts a missing browser.
+
+The motivating hosted run [40357494239, methodology job](https://github.com/reflex-dev/xy/actions/runs/40357494239/job/121694488499)
+spent 9m50s installing Chromium, including 9m17s fetching Ubuntu packages, while
+the interaction step took 42s. Reproduce these setup-duration observations with
+`gh api repos/reflex-dev/xy/actions/jobs/121694488499` and that job's `/logs`
+endpoint. These are hosted step durations, not chart-performance benchmarks;
+the speedup of the revised setup still needs a fresh hosted run.
 
 Validation: `python3 scripts/verify_ci_workflow.py` and
 `pytest -q tests/test_ci_scope.py tests/test_verify_ci_workflow.py`. The selection

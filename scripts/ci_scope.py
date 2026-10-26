@@ -37,6 +37,14 @@ def select_checks(paths: list[str], *, full: bool = False) -> dict[str, bool]:
             selected["runtime"] = selected["pyplot"] = True
         elif path.startswith(("benchmarks/", "scripts/bench")):
             selected["runtime"] = selected["benchmarks"] = True
+        elif path.startswith((".github/workflows/", ".github/actions/")) or path in {
+            "scripts/ci_scope.py",
+            "scripts/verify_ci_workflow.py",
+        }:
+            # Wiring changes need correctness and packaging checks, not
+            # advisory measurements of an unchanged charting implementation.
+            for group in ("runtime", "packaging", "conformance"):
+                selected[group] = True
         elif path.startswith(("tests/", "examples/")) or path.startswith(".binder/"):
             selected["runtime"] = True
         else:

@@ -752,6 +752,7 @@ jobs:
     if: needs.changes.outputs.benchmarks == 'true'
     runs-on: ubuntu-24.04
     continue-on-error: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -761,7 +762,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Restore shared native core and client
         uses: ./.github/actions/restore-ci-build
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
@@ -791,10 +791,24 @@ jobs:
           import xy.kernels as k
           assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
           PY
-      # Playwright Chromium for the time-to-first-render (browser paint) pass.
+      # The fixed hosted Ubuntu image already carries Chrome's system libraries.
+      # Keep the lockfile-pinned browser, without repeating apt/font/Xvfb setup.
+      - name: Cache methodology Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: methodology-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        run: npx playwright install --no-shell chromium
+      - name: Verify methodology Chromium
+        timeout-minutes: 1
         run: |
-          npx playwright install --with-deps chromium
+          node --input-type=module - <<'JS'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({executablePath: chromium.executablePath()});
+          await browser.close();
+          JS
       - name: Line decimation vs plotly-resampler (methodology line_10M)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
