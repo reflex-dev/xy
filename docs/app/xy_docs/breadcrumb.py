@@ -4,9 +4,11 @@ import reflex as rx
 import reflex_components_internal as ui
 from reflex_base.config import get_config
 from reflex_site_shared.docs import docs_page_actions
+from reflex_site_shared.docs.content import discover_docs
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.sidebar import docs_sidebar_drawer
 
+from xy_docs.config import DOCS_CONFIG
 from xy_docs.constants import LLMS_FULL_TXT_PATH, PUBLIC_DOCS_URL
 from xy_docs.plugins import markdown_asset_path
 
@@ -19,6 +21,8 @@ _BREADCRUMB_LABELS = {
 _BREADCRUMB_ROUTES = {
     "/charts": "/overview/gallery/",
 }
+
+_PAGE_ROUTES = frozenset(page.route for page in discover_docs(DOCS_CONFIG))
 
 
 def _breadcrumb_label(segment: str, *, page_title: str | None = None) -> str:
@@ -36,21 +40,22 @@ def _breadcrumb_label(segment: str, *, page_title: str | None = None) -> str:
     )
 
 
-def _breadcrumb_parts(page: DocsPage) -> tuple[tuple[str, str], ...]:
+def _breadcrumb_parts(page: DocsPage) -> tuple[tuple[str, str | None], ...]:
     """Return breadcrumb labels and destinations for one documentation page."""
     segments = [segment for segment in page.route.split("/") if segment]
     current_path = ""
-    parts: list[tuple[str, str]] = []
+    parts: list[tuple[str, str | None]] = []
 
     for index, segment in enumerate(segments):
         current_path += f"/{segment}"
+        href = _BREADCRUMB_ROUTES.get(current_path, f"{current_path}/")
         parts.append(
             (
                 _breadcrumb_label(
                     segment,
                     page_title=page.title if index == len(segments) - 1 else None,
                 ),
-                _BREADCRUMB_ROUTES.get(current_path, f"{current_path}/"),
+                href if href in _PAGE_ROUTES else None,
             )
         )
     return tuple(parts)
@@ -74,17 +79,20 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
             "min-h-8 flex items-center text-sm font-[525] text-foreground last:text-muted-foreground",
             "truncate" if index == len(parts) - 1 else "",
         )
-        breadcrumbs.append(
-            rx.el.a(
-                label,
-                class_name=ui.cn(
-                    base_class,
-                    "hover:text-primary-hover dark:hover:text-primary",
-                ),
-                underline="none",
-                href=href,
+        if href is None:
+            breadcrumbs.append(rx.el.span(label, class_name=base_class))
+        else:
+            breadcrumbs.append(
+                rx.el.a(
+                    label,
+                    class_name=ui.cn(
+                        base_class,
+                        "hover:text-primary-hover dark:hover:text-primary",
+                    ),
+                    underline="none",
+                    href=href,
+                )
             )
-        )
         if index < len(parts) - 1:
             breadcrumbs.extend(
                 (
@@ -110,12 +118,15 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
     return rx.box(
         docs_sidebar_drawer(
             sidebar,
-            trigger=rx.box(
-                class_name="absolute inset-0 z-[1] flex bg-transparent lg:hidden",
+            trigger=rx.el.button(
+                type="button",
+                aria_label="Open documentation navigation",
+                class_name="absolute inset-0 z-[1] flex bg-transparent focus-visible:outline-2 focus-visible:outline-ring lg:hidden",
             ),
         ),
         rx.box(
             *breadcrumbs,
+            custom_attrs={"data-testid": "xy-breadcrumbs"},
             class_name="flex flex-row items-center gap-[5px] overflow-hidden lg:gap-4",
         ),
         rx.box(
@@ -131,7 +142,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
             ),
             class_name="flex flex-row items-center gap-2 p-[0.563rem] lg:p-0",
         ),
-        class_name="relative z-10 mb-10 flex w-full flex-row items-center justify-between gap-4 border-b border-border-subtle max-lg:py-2 lg:gap-0 lg:border-none lg:p-0",
+        class_name="docs-breadcrumb relative z-10 mb-10 flex w-full flex-row items-center justify-between gap-4 border-b border-border-subtle max-lg:py-2 lg:gap-0 lg:border-none lg:p-0",
     )
 
 

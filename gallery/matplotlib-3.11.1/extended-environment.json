@@ -1,0 +1,371 @@
+{
+  "example_count": 12,
+  "examples": [
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "ginput": [
+          {
+            "button": 1,
+            "points": [
+              [
+                0.2,
+                0.2
+              ],
+              [
+                0.8,
+                0.2
+              ],
+              [
+                0.5,
+                0.8
+              ]
+            ]
+          },
+          {
+            "button": 2,
+            "points": []
+          }
+        ],
+        "manual_clabel": [
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "sleep_scale": 0.0,
+        "waitforbuttonpress": [
+          false,
+          true,
+          false
+        ]
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "event_handling/ginput_manual_clabel_sgskip.py",
+      "requirements": [
+        "deterministic_input"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 3,
+          "kind": "figure"
+        },
+        {
+          "kind": "pdf",
+          "page_count": 3,
+          "path": "multipage_pdf.pdf"
+        }
+      ],
+      "path": "misc/multipage_pdf.py",
+      "requirements": [
+        "tex",
+        "tex_fonts"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "checkpoint_after_seconds": 1.0,
+        "checkpoint_line_count": 2,
+        "multiprocessing_start_method": "fork",
+        "poll_interval_seconds": 0.02,
+        "show_policy": "native_until_close"
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure",
+          "process": "child"
+        }
+      ],
+      "path": "misc/multiprocess_sgskip.py",
+      "requirements": [
+        "multiprocessing"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "text_labels_and_annotations/demo_text_path.py",
+      "requirements": [
+        "tex",
+        "tex_fonts"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "text_labels_and_annotations/font_table.py",
+      "requirements": [
+        "clean_argv",
+        "system_fonts"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 2,
+          "kind": "figure"
+        }
+      ],
+      "path": "text_labels_and_annotations/tex_demo.py",
+      "requirements": [
+        "tex",
+        "tex_fonts"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "text_labels_and_annotations/usetex_baseline_test.py",
+      "requirements": [
+        "tex",
+        "tex_fonts"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {},
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "text_labels_and_annotations/usetex_fonteffects.py",
+      "requirements": [
+        "tex",
+        "tex_fonts"
+      ],
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "color_filters": [
+          "Greyscale",
+          "Deuteranopia"
+        ]
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "user_interfaces/mplcvd.py",
+      "requirements": [
+        "colorspacious"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "GTK3Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "motion": [
+          [
+            320,
+            240
+          ]
+        ],
+        "toolbar_action": "Click me"
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "user_interfaces/pylab_with_gtk3_sgskip.py",
+      "requirements": [
+        "gtk3",
+        "gui_backend"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "GTK4Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "motion": [
+          [
+            320,
+            240
+          ]
+        ],
+        "toolbar_action": "Click me"
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "user_interfaces/pylab_with_gtk4_sgskip.py",
+      "requirements": [
+        "gtk4",
+        "gui_backend"
+      ],
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [],
+      "backends": {
+        "matplotlib": "GTK3Agg",
+        "xy": "module://xy.backends.backend_xy"
+      },
+      "driver": {
+        "tool_triggers": [
+          "List",
+          "Show",
+          "Show"
+        ]
+      },
+      "expected_outputs": [
+        {
+          "count": 1,
+          "kind": "figure"
+        }
+      ],
+      "path": "user_interfaces/toolmanager_sgskip.py",
+      "requirements": [
+        "gtk3",
+        "gui_backend",
+        "toolmanager"
+      ],
+      "timeout_seconds": 120
+    }
+  ],
+  "matplotlib_version": "3.11.0",
+  "platform": {
+    "display": "xvfb-run --auto-servernum --server-args=\"-screen 0 1280x720x24\"",
+    "github_runner": "ubuntu-24.04",
+    "python": "/usr/bin/python3",
+    "venv_system_site_packages": true
+  },
+  "profile": "extended",
+  "python_packages": [
+    "colorspacious==1.1.2",
+    "matplotlib==3.11.0"
+  ],
+  "required_commands": [
+    "dvipng",
+    "dvips",
+    "fc-match",
+    "gs",
+    "kpsewhich",
+    "latex",
+    "xvfb-run",
+    "Xvfb"
+  ],
+  "schema_version": 1,
+  "system_packages": [
+    "cm-super",
+    "dvipng",
+    "fonts-dejavu-core",
+    "fonts-liberation",
+    "fonts-urw-base35",
+    "ghostscript",
+    "gir1.2-gtk-3.0",
+    "gir1.2-gtk-4.0",
+    "librsvg2-common",
+    "python3-cairo",
+    "python3-gi",
+    "python3-gi-cairo",
+    "python3-venv",
+    "texlive-fonts-recommended",
+    "texlive-latex-base",
+    "texlive-latex-extra",
+    "texlive-latex-recommended",
+    "xauth",
+    "xvfb"
+  ],
+  "tex_files": [
+    "article.cls",
+    "fix-cm.sty",
+    "ptmr8r.tfm",
+    "ptmri8r.tfm",
+    "ptmro8r.tfm",
+    "ptmr8rn.tfm",
+    "ptmrr8re.tfm"
+  ]
+}

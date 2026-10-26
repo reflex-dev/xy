@@ -105,6 +105,7 @@ from ._svg import (
     _STYLED_TEXT,
     _POLAR_CLIP,
 ) = range(19)
+_PHASED_STROKE = 19
 # Anchor-byte rotation flags — must match TEXT_ROTATED/TEXT_ROTATED_CW in
 # src/raster.rs. CCW reads bottom-to-top (y-axis titles), CW top-to-bottom
 # (right-margin titles, matplotlib rotation=270).
@@ -236,14 +237,21 @@ class _Cmd:
         self._raw_f(polar.sector_a0)
         self._raw_f(polar.sector_a1 - polar.sector_a0)
 
-    def fill(self, pts: Sequence[tuple[float, float]], color: tuple[int, ...]) -> None:
+    def fill(
+        self,
+        pts: Sequence[tuple[float, float]],
+        color: tuple[int, ...],
+        *,
+        offset: tuple[float, float] = (0.0, 0.0),
+    ) -> None:
         if len(pts) < 3:
             return
         self.buf.append(_FILL)
         self._u32(len(pts))
+        dx, dy = offset
         for x, y in pts:
-            self._f(x)
-            self._f(y)
+            self._f(x + dx)
+            self._f(y + dy)
         self._rgba(color)
 
     def grad(
@@ -276,19 +284,26 @@ class _Cmd:
         color: tuple[int, ...],
         closed: bool = False,
         dash: Sequence[float] | None = None,
+        dash_offset: float = 0.0,
         cap: str = "round",
+        offset: tuple[float, float] = (0.0, 0.0),
     ) -> None:
         if len(pts) < 2 or width <= 0:
             return
-        self.buf.append(_STROKE)
+        phased = bool(dash) and math.isfinite(dash_offset) and dash_offset != 0
+        self.buf.append(_PHASED_STROKE if phased else _STROKE)
         self._u32(len(pts))
+        dx, dy = offset
         if isinstance(pts, np.ndarray):
-            scaled = np.asarray(pts, dtype=np.float64) * self.s
+            points = np.asarray(pts, dtype=np.float64)
+            if dx or dy:
+                points = points + np.asarray([dx, dy])
+            scaled = points * self.s
             self.buf += scaled.astype("<f4").tobytes()
         else:
             for x, y in pts:
-                self._f(x)
-                self._f(y)
+                self._f(x + dx)
+                self._f(y + dy)
         self._f(width)
         self._rgba(color)
         self.buf.append(1 if closed else 0)
@@ -296,6 +311,8 @@ class _Cmd:
         self._u32(len(dash))
         for d in dash:
             self._f(d)
+        if phased:
+            self._f(dash_offset)
         self.buf.append(_CAP_CODES[cap])
 
     def point(

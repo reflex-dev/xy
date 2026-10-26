@@ -105,6 +105,19 @@ network tab, two namespaces inside it. React effect ordering means the chart
 often connects first; mirroring the options exactly is what makes that safe
 (the backend sees an identical connection either way).
 
+The wrapper explicitly calls `connect()` on the newly created namespace if it
+is not already active, after installing its diagnostic listeners. It must not rely on the manager's
+`autoConnect`: Reflex 0.10 creates a warm manager with `autoConnect: false`,
+and namespace construction inherits that setting even after its transport is
+open. The public `active` guard avoids sending a second CONNECT while an older
+auto-connecting manager already has the namespace handshake in flight. It
+also preserves XY-first creation and does not change the manager options.
+The cached-socket path does not call `connect()` again, so mounting another
+chart during an app-managed disconnect cannot reopen the transport early.
+`tests/test_reflex_socket_connection.py` exercises the shipped wrapper with
+real Socket.IO peers for both creation orders, warm/open/legacy managers,
+binary payload dispatch, repeated mounts, cleanup, and app-owned reconnects.
+
 Reflex owns reconnection: its `reconnect()` reopens the shared manager, our
 namespace socket re-CONNECTs automatically, and every mounted chart re-`sub`s
 on the `connect` event.

@@ -31,7 +31,7 @@ def _footer_link(text: str, href: str) -> rx.Component:
 def _footer_column(heading: str, *links: rx.Component) -> rx.Component:
     """Render one compact footer navigation column."""
     return rx.box(
-        rx.el.h4(
+        rx.el.h2(
             heading,
             class_name=("text-xs font-book leading-5 text-muted-foreground"),
         ),
@@ -114,7 +114,7 @@ def xy_docs_footer(page: DocsPage) -> rx.Component:
     controls = rx.box(
         rx.box(dark_mode_toggle(), class_name="[&>div]:!ml-0"),
         _footer_link("View XY on GitHub ↗", REPOSITORY_URL),
-        class_name="flex w-full flex-row items-end justify-between gap-6",
+        class_name="flex w-full flex-row flex-wrap items-end justify-between gap-6",
     )
     channel_label = "main-branch preview" if DOCS_CHANNEL == "preview" else "stable docs"
     copyright_status = rx.el.div(

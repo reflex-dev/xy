@@ -5,6 +5,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 # Actions are pinned to full commit SHAs (`@<40-hex> # vX`) per the org policy,
 # so fixtures strip a step by its action *path*, not a version tag — a SHA bump
 # must not silently turn these negative tests into no-ops.
@@ -94,7 +96,10 @@ def test_locked_reflex_environment_cannot_hide_in_step_env(tmp_path: Path) -> No
             "      - name: Install package + dev deps\n"
             "        env:\n"
             f"          FAKE_GATE: {required}\n",
-        ).replace(f"          {required}", "          uv sync --extra reflex --group dev"),
+        ).replace(
+            f"          {required}",
+            "          uv sync --extra reflex --group dev",
+        ),
         encoding="utf-8",
     )
 
@@ -605,6 +610,321 @@ def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> No
     assert any("reference test commands" in error for error in errors)
 
 
+def test_reference_gate_requires_generated_pyplot_inventory_check(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    command = "          .venv/bin/python scripts/generate_pyplot_compat_inventory.py --check\n"
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(command, "") + f"\n# {command.strip()}\n", encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Verify released reference and reviewed snapshot" in error
+        and "generate_pyplot_compat_inventory.py" in error
+        for error in errors
+    )
+
+
+def test_gallery_ratchet_job_must_keep_all_eight_shards(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "        shard: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+            "        shard: [0]\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "eight-shard" in error for error in errors)
+
+
+def test_gallery_ratchet_job_cannot_hide_fallback_reports(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            gallery-artifacts-${{ matrix.shard }}/failures\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "/failures" in error for error in errors)
+
+
+def test_gallery_ratchet_job_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "    timeout-minutes: 45\n",
+            "    timeout-minutes: 45\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("pyplot_gallery" in error and "must be blocking" in error for error in errors)
+
+
+def test_gallery_jobs_must_build_the_linux_native_core(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          XY_REQUIRE_CARGO: "1"\n',
+            '          XY_SKIP_CARGO: "1"\n',
+            3,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("pyplot_gallery" in error and "XY_REQUIRE_CARGO" in error for error in errors)
+    assert any(
+        "Install xy and pinned extended Python dependencies" in error
+        and "XY_REQUIRE_CARGO" in error
+        for error in errors
+    )
+
+
+def test_required_full_pytest_job_must_install_exact_matplotlib_pin(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    install_block = (
+        "      - name: Install package + dev deps\n"
+        "        run: |\n"
+        "          uv sync --locked --extra reflex --group dev\n"
+        '          uv pip install -p .venv/bin/python "matplotlib==3.11.0"\n'
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            install_block,
+            install_block.replace("matplotlib==3.11.0", "matplotlib>=3.11"),
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install package + dev deps" in error and "matplotlib==3.11.0" in error for error in errors
+    )
+
+
+def test_required_full_pytest_step_keeps_chromium_and_fail_on_missing_browser(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("          export XY_REQUIRE_BROWSER=1\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Python tests (native core)" in error and "XY_REQUIRE_BROWSER=1" in error
+        for error in errors
+    )
+
+    chromium_assignment = (
+        '          export XY_CHROMIUM="$(node -e '
+        '"console.log(require(\'playwright\').chromium.executablePath())")"\n'
+    )
+    path.write_text(workflow.replace(chromium_assignment, "", 1), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("Python tests (native core)" in error and "XY_CHROMIUM" in error for error in errors)
+
+
+def test_focused_pyplot_browser_gate_requires_every_compatibility_suite(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    suite_lines = {
+        "tests/backends/test_backend_xy.py": "            tests/backends/test_backend_xy.py \\\n",
+        "tests/backends/test_backend_xy_widget.py": (
+            "            tests/backends/test_backend_xy_widget.py \\\n"
+        ),
+        "tests/backends/test_pyplot_svg_gallery_browser.py": (
+            "            tests/backends/test_pyplot_svg_gallery_browser.py \\\n"
+        ),
+        "tests/backends/test_display_list.py": "            tests/backends/test_display_list.py \\\n",
+        "tests/pyplot/test_modes.py": "            tests/pyplot/test_modes.py \\\n",
+        "tests/pyplot/test_gallery_behavior.py": (
+            "            tests/pyplot/test_gallery_behavior.py \\\n"
+        ),
+        "tests/pyplot/test_public_protocols.py": (
+            "            tests/pyplot/test_public_protocols.py\n"
+        ),
+    }
+    for index, (suite, line) in enumerate(suite_lines.items()):
+        path = tmp_path / f"ci-{index}.yml"
+        path.write_text(workflow.replace(line, "", 1), encoding="utf-8")
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any(
+            "Pyplot backend, widget, mode, behavior, and protocol gate" in error and suite in error
+            for error in errors
+        )
+
+
+def test_focused_pyplot_browser_gate_requires_playwright_chromium_environment(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace('          XY_REQUIRE_BROWSER: "1"\n', "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Pyplot backend, widget, mode, behavior, and protocol gate" in error
+        and "XY_REQUIRE_BROWSER" in error
+        for error in errors
+    )
+
+    chromium_assignment = (
+        '          export XY_CHROMIUM="$(node -e '
+        '"console.log(require(\'playwright\').chromium.executablePath())")"\n'
+    )
+    prefix, separator, suffix = workflow.rpartition(chromium_assignment)
+    assert separator
+    path.write_text(prefix + suffix, encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Pyplot backend, widget, mode, behavior, and protocol gate" in error
+        and "XY_CHROMIUM" in error
+        for error in errors
+    )
+
+
+def test_required_pytest_and_browser_gates_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  test:\n    name: Python tests + quality\n",
+            "  test:\n    name: Python tests + quality\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("test job" in error and "must be blocking" in error for error in errors)
+
+
+def test_extended_gallery_job_requires_exact_tex_gtk_and_xvfb_packages(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("            texlive-latex-extra \\\n", "", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install TeX, fonts, GTK3/4, and virtual display" in error
+        and "texlive-latex-extra" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_requires_the_gdk_svg_loader(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("            librsvg2-common \\\n", "", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install TeX, fonts, GTK3/4, and virtual display" in error and "librsvg2-common" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_requires_system_python_gi_bridge(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "uv venv .venv --python /usr/bin/python3 --system-site-packages",
+            "uv venv .venv",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Install xy and pinned extended Python dependencies" in error
+        and "system-site-packages" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_must_run_all_12_unsharded(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("              --shard 0/1 \\\n", "              --shard 0/12 \\\n", 1),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Run all 12 extended differential examples" in error and "--shard 0/1" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_cannot_skip_strict_report_verification(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            verify-report gallery-extended-artifacts/report.json\n",
+            "",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "Require 12/12 extended acceptance with no waivers" in error and "verify-report" in error
+        for error in errors
+    )
+
+
+def test_extended_gallery_job_cannot_be_non_blocking(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "  pyplot_gallery_extended:\n    name: Pyplot gallery extended environment (12/12)\n",
+            "  pyplot_gallery_extended:\n"
+            "    name: Pyplot gallery extended environment (12/12)\n"
+            "    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "pyplot_gallery_extended" in error and "must be blocking" in error for error in errors
+    )
+
+
 def test_reference_gate_commands_cannot_hide_in_inline_comments(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     commands = (
@@ -924,13 +1244,13 @@ def test_ci_workflow_rejects_missing_cross_library_job_timeout(tmp_path: Path) -
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        workflow.replace("    timeout-minutes: 10\n", "", 1),
+        workflow.replace("    timeout-minutes: 20\n", "", 1),
         encoding="utf-8",
     )
 
     errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("benchmark_vs" in error and "timeout-minutes: 10" in error for error in errors)
+    assert any("benchmark_vs" in error and "timeout-minutes: 20" in error for error in errors)
 
 
 def test_ci_workflow_rejects_unlocked_competitor_install(tmp_path: Path) -> None:
@@ -1039,10 +1359,10 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
             '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
             "          uv pip install -p .venv/bin/python \\\n"
-            "            --constraint benchmarks/requirements-ci.lock -e .\n",
+            "            --constraint benchmarks/requirements-ci.lock dist/*.whl\n",
             "        run: |\n          uv venv .venv\n"
             "          uv pip install -p .venv/bin/python \\\n"
-            "            --constraint benchmarks/requirements-ci.lock -e .\n",
+            "            --constraint benchmarks/requirements-ci.lock dist/*.whl\n",
         ),
         encoding="utf-8",
     )
@@ -1104,7 +1424,9 @@ def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) ->
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "interaction_stress_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "interaction_stress_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path) -> None:
@@ -1123,7 +1445,9 @@ def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path)
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "dashboard reliability" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "dashboard reliability" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_dashboard_reliability_smoke_without_sixty_charts(
@@ -1141,7 +1465,9 @@ def test_ci_workflow_rejects_dashboard_reliability_smoke_without_sixty_charts(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "--chart-counts 10,20,50,60" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "--chart-counts 10,20,50,60" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_methodology_dashboard_without_sixty_charts(
@@ -1180,7 +1506,9 @@ def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> N
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "reflex_lifecycle_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "reflex_lifecycle_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> None:
@@ -1196,7 +1524,9 @@ def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> 
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "visual_regression_smoke" in error for error in errors)
+    assert any(
+        "browser_smokes job" in error and "visual_regression_smoke" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -> None:
@@ -1216,24 +1546,57 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
 
 
-def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
+def test_ci_workflow_rejects_unpinned_browser_image(tmp_path: Path) -> None:
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    mutated = re.sub(r"@sha256:[0-9a-f]{64}", "", text)
+    assert mutated != text
     path = tmp_path / "ci.yml"
-    path.write_text(
-        text.replace(
-            "      - name: Cache Playwright browsers\n"
-            "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n"
-            "        with:\n"
-            "          path: ~/.cache/ms-playwright\n"
-            "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
-            "",
-        ),
-        encoding="utf-8",
+    path.write_text(mutated, encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any(
+        "browser_conformance" in error and "pinned browser image" in error for error in errors
     )
 
-    errors = verify_ci_workflow.validate_ci_workflow(path)
 
-    assert any("browser_conformance" in error and "actions/cache" in error for error in errors)
+def test_ci_workflow_rejects_inactive_browser_preflight(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    mutations = [
+        ("accessSync(browser.executablePath());", "// accessSync(browser.executablePath());"),
+        ("accessSync(browser.executablePath());", "/* accessSync(browser.executablePath()); */"),
+        ("[chromium, firefox, webkit]", "[]"),
+    ]
+    for original, replacement in mutations:
+        mutated = text.replace(original, replacement)
+        assert mutated != text
+        path = tmp_path / "ci.yml"
+        path.write_text(mutated, encoding="utf-8")
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any("browser preflight" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    ("anchor", "inserted"),
+    [
+        ("step", "        if: false\n"),
+        ("step", "        continue-on-error: true\n"),
+        ("step", "        shell: cat {0}\n"),
+        ("step", "        working-directory: /tmp\n"),
+        ("job", "    continue-on-error: true\n"),
+        ("job", "    defaults:\n      run:\n        shell: cat {0}\n"),
+    ],
+)
+def test_ci_workflow_rejects_bypassed_browser_preflight(
+    tmp_path: Path, anchor: str, inserted: str
+) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    step = "      - name: Verify preinstalled Playwright browsers\n"
+    job = "  browser_conformance:\n    name: Accessibility + cross-browser conformance\n"
+    original = step if anchor == "step" else job
+    assert text.count(original) == 1
+    path = tmp_path / "ci.yml"
+    path.write_text(text.replace(original, original + inserted), encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("browser preflight" in error for error in errors), errors
 
 
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
@@ -1250,7 +1613,9 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "check_regressions" in error for error in errors)
+    assert any(
+        "regression_checks job" in error and "check_regressions" in error for error in errors
+    )
 
 
 def test_ci_workflow_rejects_missing_transport_regression_probe(tmp_path: Path) -> None:
@@ -1267,7 +1632,7 @@ def test_ci_workflow_rejects_missing_transport_regression_probe(tmp_path: Path) 
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "bench_transport" in error for error in errors)
+    assert any("regression_checks job" in error and "bench_transport" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Path) -> None:
@@ -1283,7 +1648,7 @@ def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Pat
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "kernel-native" in error for error in errors)
+    assert any("regression_checks job" in error and "kernel-native" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path) -> None:
@@ -1300,7 +1665,10 @@ def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path)
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "regression-benchmark-report" in error for error in errors)
+    assert any(
+        "regression_checks job" in error and "regression-benchmark-report" in error
+        for error in errors
+    )
 
 
 def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
@@ -1318,7 +1686,7 @@ def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("test job" in error and "if: always()" in error for error in errors)
+    assert any("regression_checks job" in error and "if: always()" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_wheel_upload(tmp_path: Path) -> None:
@@ -1422,3 +1790,222 @@ def test_workflows_reject_fetch_depth_hidden_in_scalar_input(tmp_path: Path) -> 
         errors = validate(path)
 
         assert any("fetch-depth: 0" in error for error in errors)
+
+
+def test_summary_requires_every_blocking_dependency(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    dependencies = [
+        "changes",
+        "build",
+        "test",
+        "rust_checks",
+        "browser_smokes",
+        "regression_checks",
+        "python_floor",
+        "matplotlib_reference",
+        "matplotlib_patch_smoke",
+        "pyplot_gallery",
+        "pyplot_gallery_extended",
+        "browser_conformance",
+        "sdist",
+        "wheels",
+        "install_without_rust",
+    ]
+    for removed in dependencies:
+        remaining = [job for job in dependencies if job != removed]
+        mutated = re.sub(r"    needs: \[.*\]", f"    needs: [{', '.join(remaining)}]", summary)
+        path = tmp_path / f"missing-{removed}.yml"
+        path.write_text(prefix + "  result:\n" + mutated)
+        assert any("summary" in error for error in verify_ci_workflow.validate_ci_workflow(path))
+
+
+def test_summary_requires_failure_and_selection_assertions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    mutations = [
+        ("assert not failed,", "assert True,"),
+        ("assert results['changes']['result'] == 'success',", "assert True,"),
+        ("('success', 'skipped')", "('success', 'skipped', 'failure')"),
+        ("    if: always()", "    if: false"),
+        ("    name: CI result", "    name: CI result\n    continue-on-error: true"),
+    ]
+    for index, (before, after) in enumerate(mutations):
+        assert before in summary
+        path = tmp_path / f"weakened-summary-{index}.yml"
+        path.write_text(prefix + "  result:\n" + summary.replace(before, after))
+        assert any("summary" in error for error in verify_ci_workflow.validate_ci_workflow(path))
+
+
+def test_python_floor_installs_yaml_for_workflow_tests(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    floor = jobs["python_floor"]
+    # Only mutate the floor lane: a dependency in another job cannot satisfy it.
+    path = tmp_path / "floor-without-yaml.yml"
+    path.write_text(workflow.replace(floor, floor.replace('            "pyyaml>=6" \\\n', "")))
+    assert any(
+        "floor" in error and "pyyaml" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
+def test_shared_build_condition_cannot_skip_selected_consumers(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    mutated = workflow.replace("if: needs.changes.outputs.build == 'true'", "if: false")
+    assert mutated != workflow
+    path = tmp_path / "skipped-build.yml"
+    path.write_text(mutated)
+    assert any(
+        "build" in error and "scope" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
+
+
+def test_summary_requires_direct_step_results_input(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    prefix, summary = workflow.split("  result:\n")
+    assignment = "          RESULTS: ${{ toJSON(needs) }}"
+    step_env = "        env:\n" + assignment
+    mutations = {
+        "comment-only": summary.replace(assignment, "          # RESULTS: ${{ toJSON(needs) }}"),
+        "inherited-fake": summary.replace(
+            "    runs-on: ubuntu-24.04",
+            '    runs-on: ubuntu-24.04\n    env:\n      RESULTS: \'{"changes":{"result":"success"}}\'',
+        ).replace(assignment, "          # RESULTS: ${{ toJSON(needs) }}"),
+        "fabricated": summary.replace(
+            assignment,
+            '          RESULTS: \'{"changes":{"result":"success"}}\'\n'
+            "          # RESULTS: ${{ toJSON(needs) }}",
+        ),
+        "duplicate-results": summary.replace(assignment, assignment + "\n" + assignment),
+        "duplicate-env": summary.replace(step_env, step_env + "\n" + step_env),
+    }
+    for name, mutated in mutations.items():
+        path = tmp_path / f"{name}.yml"
+        path.write_text(prefix + "  result:\n" + mutated)
+        errors = verify_ci_workflow.validate_ci_workflow(path)
+        assert any("summary" in error for error in errors), name
+
+
+def test_ci_bootstrap_security_rejects_missing_duplicate_or_floating_inputs(tmp_path: Path) -> None:
+    cases = [
+        ("persist-credentials: false", "persist-credentials: true"),
+        ("persist-credentials: false", "# persist-credentials: false"),
+        (
+            "persist-credentials: false",
+            "persist-credentials: false\n          persist-credentials: true",
+        ),
+        ('node-version: "22.23.3"', 'node-version: "22"'),
+        ('version: "0.13.5"', '# version: "0.13.5"'),
+        ('version: "0.13.5"', 'version: "0.13.5"\n          version: latest'),
+        ('toolchain: "1.99.1"', "toolchain: stable"),
+        ('python-version: "3.11.17"', 'python-version: "3.11"'),
+    ]
+    for filename, validate in (
+        ("ci.yml", verify_ci_workflow.validate_ci_workflow),
+        ("codspeed.yml", verify_ci_workflow.validate_codspeed_workflow),
+    ):
+        workflow = (Path(".github/workflows") / filename).read_text()
+        for index, (before, after) in enumerate(cases):
+            assert before in workflow
+            path = tmp_path / f"{filename}-{index}.yml"
+            path.write_text(workflow.replace(before, after))
+            assert any("unique direct" in error for error in validate(path)), (filename, index)
+
+
+def test_codspeed_verifier_requires_the_reviewed_commit(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text()
+    path = tmp_path / "tag-object-pin.yml"
+    path.write_text(
+        workflow.replace(
+            "f99becdce5e5d51fd556489ebef684f4ecfd6286", "4bee4eada46987d4607fc208971a36367352b83d"
+        )
+    )
+    assert any(
+        "reviewed commit SHA" in error
+        for error in verify_ci_workflow.validate_codspeed_workflow(path)
+    )
+
+
+def test_parallel_runtime_gates_reject_equivalent_continue_on_error_keys(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    for job, step_name in (
+        ("browser_smokes", "Real-Figure render smoke (numpy + Chromium)"),
+        (
+            "regression_checks",
+            "Regression gate (deterministic payloads = hard fail; timing = advisory)",
+        ),
+    ):
+        for key in (
+            "continue-on-error",
+            '"continue-on-error"',
+            "'continue-on-error'",
+            '"continue\\u002don-error"',
+        ):
+            for scope in ("job", "step"):
+                original = jobs[job]
+                needle = f"  {job}:\n" if scope == "job" else f"      - name: {step_name}\n"
+                indent = "    " if scope == "job" else "        "
+                mutated = original.replace(needle, needle + f"{indent}{key}: true\n", 1)
+                assert mutated != original
+                path = tmp_path / "nonblocking-runtime.yml"
+                path.write_text(workflow.replace(original, mutated))
+                assert any(
+                    "must be blocking" in error
+                    for error in verify_ci_workflow.validate_ci_workflow(path)
+                ), (job, key, scope)
+
+
+def test_runtime_gates_reject_disabled_step_conditions(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    jobs = verify_ci_workflow._job_blocks(workflow)
+    for job in ("browser_smokes", "regression_checks"):
+        original = jobs[job]
+        for index, step in enumerate(verify_ci_workflow._step_sequence_blocks(original)):
+            for key in ("if", '"if"'):
+                lines = step.splitlines()
+                # Remove the existing allowed pyplot/upload condition before disabling it.
+                lines = [line for line in lines if not line.startswith("        if:")]
+                lines.insert(1, f"        {key}: false")
+                mutated = original.replace(step, "\n".join(lines), 1)
+                path = tmp_path / f"disabled-{job}-{index}.yml"
+                path.write_text(workflow.replace(original, mutated))
+                assert any(
+                    "step condition" in error
+                    for error in verify_ci_workflow.validate_ci_workflow(path)
+                ), (job, index, key)
+
+
+def test_bootstrap_rejects_duplicate_and_unsafe_action_references(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text()
+    pin = "CodSpeedHQ/action@f99becdce5e5d51fd556489ebef684f4ecfd6286"
+    needle = f"        uses: {pin} # v4\n"
+    assert needle in workflow
+    for replacement in (
+        needle + "        uses: CodSpeedHQ/action@v4\n",
+        needle + '        "uses": CodSpeedHQ/action@v4\n',
+        '        "u\\x73es": CodSpeedHQ/action@v4\n',
+    ):
+        path = tmp_path / "ambiguous-action.yml"
+        path.write_text(workflow.replace(needle, replacement))
+        assert any(
+            "ambiguous action reference" in error
+            for error in verify_ci_workflow.validate_codspeed_workflow(path)
+        )
+
+
+def test_bootstrap_rejects_floating_action_refs(tmp_path: Path) -> None:
+    for filename, validate in (
+        ("ci.yml", verify_ci_workflow.validate_ci_workflow),
+        ("codspeed.yml", verify_ci_workflow.validate_codspeed_workflow),
+    ):
+        workflow = (Path(".github/workflows") / filename).read_text()
+        for action in verify_ci_workflow.CI_BOOTSTRAP_INPUTS:
+            mutated = re.sub(re.escape(action) + r"@[0-9a-f]{40}", action + "@latest", workflow)
+            if mutated == workflow:
+                continue
+            path = tmp_path / "floating-action.yml"
+            path.write_text(mutated)
+            assert any("commit SHA" in error for error in validate(path)), (filename, action)

@@ -4,9 +4,6 @@ on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "spec/**"
   workflow_dispatch:
 
 # Limit every job to the only repository permission needed by this workflow.
@@ -21,61 +18,332 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  matplotlib_reference:
-    name: Matplotlib 3.11 reference compatibility
-    runs-on: ubuntu-latest
+  changes:
+    name: Select CI checks
+    runs-on: ubuntu-24.04
+    outputs:
+      runtime: ${{ steps.scope.outputs.runtime }}
+      pyplot: ${{ steps.scope.outputs.pyplot }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      benchmarks: ${{ steps.scope.outputs.benchmarks }}
+      conformance: ${{ steps.scope.outputs.conformance }}
+      build: ${{ steps.scope.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select checks from complete PR diff
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          else
+            python3 scripts/ci_scope.py --full
+          fi
+
+  build:
+    name: Shared Linux wheel
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+      - name: Build native wheel and render client once
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: uv build --wheel
+      - name: Verify shared wheel
+        run: python3 scripts/verify_wheel.py dist/*.whl --expect-native
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-linux-wheel
+          path: dist/*.whl
+          retention-days: 3
+
+  matplotlib_reference:
+    name: Matplotlib 3.11 reference compatibility
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
-      # The editable install below builds the render client from source via the
-      # hatch hook (generated, not committed; §33) — the pyplot corpus exports
-      # HTML, which inlines the client bundle. Pin Node so the build uses a
-      # vite-compatible version rather than the runner's system Node.
+      # Install the shared wheel and the development dependencies.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
       - name: Install xy and released reference wheel
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e . --group dev
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
           uv pip install -p .venv/bin/python "matplotlib==3.11.0"
       - name: Verify released reference and reviewed snapshot
         run: |
           .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/python scripts/generate_pyplot_compat_inventory.py --check
           .venv/bin/python scripts/sync_matplotlib_compat.py --check
+          .venv/bin/python -m scripts.pyplot_gallery.contract check
+      - name: Enforce monotonic gallery baseline
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          BASELINE_REF="origin/${BASE_REF}:gallery/matplotlib-3.11.1/baseline.json"
+          if git cat-file -e "$BASELINE_REF" 2>/dev/null; then
+            git show "$BASELINE_REF" > "$RUNNER_TEMP/previous-gallery-baseline.json"
+            .venv/bin/python -m scripts.pyplot_gallery.contract check \
+              --previous-baseline "$RUNNER_TEMP/previous-gallery-baseline.json"
+          else
+            echo "Initial gallery baseline; no base-branch contract to compare."
+          fi
       - name: Run optional-interoperability and dual-engine corpus tests
         env:
           MPLBACKEND: Agg
         run: |
+          .venv/bin/pytest -q tests/pyplot/test_gallery_contract.py
+          .venv/bin/pytest -q tests/pyplot/test_gallery_metrics.py
           .venv/bin/pytest -q tests/pyplot/test_launch_compat.py
           .venv/bin/pytest -q tests/pyplot/test_reference_corpus.py
           .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py
 
-  test:
-    name: Test (Rust + Python + JS)
-    runs-on: ubuntu-latest
+  matplotlib_patch_smoke:
+    name: Matplotlib 3.11.1 declared-range smoke
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history and tags: the distribution version is derived
-          # from the latest `v*` tag, and a shallow clone has none.
+          persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
+      - name: Install the newest documented 3.11 patch
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.1"
+      - name: Exercise modes and protocols through the XY renderer
+        env:
+          MPLBACKEND: Agg
+        run: |
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.1'"
+          .venv/bin/pytest -q tests/pyplot/test_modes.py tests/pyplot/test_public_protocols.py
 
-      - name: Install JS build toolchain
-        run: npm ci
+  # The compat canvas renders PNG through XY's native display-list rasterizer
+  # and reports any forbidden fallback. The completed zero-waiver baseline
+  # makes every accepted execution/render/behavior a required gate.
+  pyplot_gallery:
+    name: Pyplot gallery ratchet (${{ matrix.shard }}/8)
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          # Gallery reports are promoted against the implementation commit,
+          # never GitHub's synthetic pull-request merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+      - name: Install standard gallery system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ffmpeg
+      - name: Install xy and Matplotlib 3.11
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+      - name: Run standard differential gallery shard
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
+            --output "gallery-artifacts-${{ matrix.shard }}" \
+            --profile standard \
+            --shard "${{ matrix.shard }}/8" \
+            --workers 2
+      - name: Upload failure-only gallery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyplot-gallery-${{ matrix.shard }}
+          if-no-files-found: warn
+          path: |
+            gallery-artifacts-${{ matrix.shard }}/report.json
+            gallery-artifacts-${{ matrix.shard }}/junit.xml
+            gallery-artifacts-${{ matrix.shard }}/failures
+            gallery-artifacts-${{ matrix.shard }}/runs/**/stdout.txt
+            gallery-artifacts-${{ matrix.shard }}/runs/**/stderr.txt
+
+  # The 12 extended examples are a separate, strict completion gate. They
+  # exercise TeX/font lookup, real GTK managers under Xvfb, optional
+  # colorspacious hooks, deterministic input, and multiprocessing. The final
+  # report verifier rejects every temporary waiver and requires 12/12 from
+  # both engines, so the historical environmental failures cannot pass as an
+  # empty ratchet.
+  pyplot_gallery_extended:
+    name: Pyplot gallery extended environment (12/12)
+    needs: [changes, build]
+    if: needs.changes.outputs.pyplot == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+      - name: Install TeX, fonts, GTK3/4, and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            cm-super \
+            dvipng \
+            fonts-dejavu-core \
+            fonts-liberation \
+            fonts-urw-base35 \
+            ghostscript \
+            gir1.2-gtk-3.0 \
+            gir1.2-gtk-4.0 \
+            librsvg2-common \
+            python3-cairo \
+            python3-gi \
+            python3-gi-cairo \
+            python3-venv \
+            texlive-fonts-recommended \
+            texlive-latex-base \
+            texlive-latex-extra \
+            texlive-latex-recommended \
+            xauth \
+            xvfb
+      - name: Install xy and pinned extended Python dependencies
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv --python /usr/bin/python3 --system-site-packages
+          uv pip install -p .venv/bin/python dist/*.whl --group dev
+          uv pip install -p .venv/bin/python \
+            "colorspacious==1.1.2" \
+            "matplotlib==3.11.0"
+      - name: Verify extended dependency and driver contract
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.extended_environment check
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            .venv/bin/python -m scripts.pyplot_gallery.extended_environment preflight
+      - name: Run all 12 extended differential examples
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            .venv/bin/python -m scripts.pyplot_gallery.run_gallery \
+              --output gallery-extended-artifacts \
+              --profile extended \
+              --shard 0/1 \
+              --workers 2 \
+              --timeout 180
+      - name: Require 12/12 extended acceptance with no waivers
+        run: |
+          .venv/bin/python -m scripts.pyplot_gallery.extended_environment \
+            verify-report gallery-extended-artifacts/report.json
+      - name: Upload extended gallery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pyplot-gallery-extended
+          if-no-files-found: warn
+          path: |
+            gallery-extended-artifacts/report.json
+            gallery-extended-artifacts/junit.xml
+            gallery-extended-artifacts/failures
+            gallery-extended-artifacts/runs/**/stdout.txt
+            gallery-extended-artifacts/runs/**/stderr.txt
+  rust_checks:
+    name: Rust tests + Clippy
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+          components: clippy
 
       - name: Rust unit tests
         run: cargo test
@@ -83,16 +351,34 @@ jobs:
       - name: Rust lint
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Build native core
-        run: cargo build --release
+  test:
+    name: Python tests + quality
+    env:
+      PYTEST_ADDOPTS: ${{ needs.changes.outputs.pyplot != 'true' && '--ignore=tests/pyplot --ignore=tests/backends' || '' }}
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Build JS client
-        run: node js/build.mjs
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
 
-      - name: JS parses (ESM + IIFE)
-        run: |
-          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
-          node --check python/xy/static/standalone.js
+      - name: Install JS build toolchain
+        run: npm ci
 
       - name: Python 3.11 floor syntax check
         run: python3 scripts/check_python_floor.py
@@ -100,19 +386,80 @@ jobs:
       - name: Workflow gate wiring
         run: python3 scripts/verify_ci_workflow.py
 
-      # Dependency-free gates — verify the two seams cargo can't (the C ABI and
-      # the WebGL2 render path) and run even if PyPI is unreachable.
+      - name: Install package + dev deps
+        run: |
+          uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+
+      - name: Verify bundled Reflex integration import
+        run: |
+          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
+
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
+      - name: Lint (ruff)
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck (ty)
+        run: .venv/bin/python scripts/check_typing.py
+
+      - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
+      - name: Python tests (native core)
+        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
+        # full Figure.to_png path runs here rather than skipping.
+        run: |
+          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          # Chromium is installed here, so a probe that cannot launch it is a
+          # defect: fail rather than skip, so the browser layer cannot pass by
+          # absence. (A crash or non-zero exit already fails unconditionally.)
+          export XY_REQUIRE_BROWSER=1
+          .venv/bin/pytest -q
+
+  browser_smokes:
+    name: Browser rendering + integration
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: JS parses (ESM + IIFE)
+        run: |
+          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
+          node --check python/xy/static/standalone.js
+
       - name: Native ABI smoke (stdlib only)
         run: python3 scripts/abi_smoke.py
 
-      # Playwright's Chromium, not the apt/snap one: Ubuntu's chromium-browser is
-      # a confined snap that can't read the temp HTML under /tmp and whose GPU
-      # process crashes headless — it fails the render probe for environment
-      # reasons, not code. Playwright ships an unconfined build.
       - name: Install Chromium (Playwright)
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
       - name: Headless render smoke (stdlib + Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -132,71 +479,27 @@ jobs:
       - name: Static PNG export smoke (stdlib + Chromium)
         run: XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
 
-      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
-        run: python3 scripts/bench_native.py --sizes 1e5,1e6
-
       - name: Install package + dev deps
         run: |
           uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
 
-      - name: Verify bundled Reflex integration import
-        run: |
-          .venv/bin/python -c "import importlib.metadata as m, reflex_xy; assert reflex_xy.__version__ == m.version('xy')"
-
-      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
-        run: |
-          .venv/bin/python benchmarks/bench_scatter_native.py \
-            --sizes 1e5,1e6,1e7 --production --json scatter.json
-          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
-          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
-          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
-            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
-          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
-          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
-          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
-          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
-            --transport transport.json --emit-md spec/benchmarks/metrics.md
-
-      - name: Upload regression benchmark report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: regression-benchmark-report
-          if-no-files-found: warn
-          path: |
-            spec/benchmarks/metrics.md
-            scatter.json
-            kernel.json
-            transport.json
-
-      - name: Public API coherence
-        run: .venv/bin/python scripts/check_public_api.py
-
-      - name: Lint (ruff)
-        run: |
-          .venv/bin/ruff check .
-          .venv/bin/ruff format --check .
-
-      # Include a package-external consumer so lazy root exports cannot silently
-      # degrade to Any even when the implementation modules remain well typed.
-      - name: Typecheck (ty)
-        run: .venv/bin/python scripts/check_typing.py
-
-      - name: Python tests (native core)
-        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
-        # full Figure.to_png path runs here rather than skipping.
+      - name: Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)
+        if: needs.changes.outputs.pyplot == 'true'
+        env:
+          XY_REQUIRE_BROWSER: "1"
         run: |
           export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
-          # Chromium is installed here, so a probe that cannot launch it is a
-          # defect: fail rather than skip, so the browser layer cannot pass by
-          # absence. (A crash or non-zero exit already fails unconditionally.)
-          export XY_REQUIRE_BROWSER=1
-          .venv/bin/pytest -q
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/pytest -q \
+            tests/backends/test_backend_xy.py \
+            tests/backends/test_backend_xy_widget.py \
+            tests/backends/test_pyplot_svg_gallery_browser.py \
+            tests/backends/test_display_list.py \
+            tests/pyplot/test_modes.py \
+            tests/pyplot/test_gallery_behavior.py \
+            tests/pyplot/test_public_protocols.py
 
-      # End-to-end: a real Figure (line decimation + scatter) through to_html's
-      # exact payload path, rendered in Chromium, pixels read back. Complements
-      # the stdlib smoke, which hand-builds payloads. (Was dead code — audit
-      # finding: the only real-Figure→browser gate, never executed.)
       - name: Real-Figure render smoke (numpy + Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -235,86 +538,188 @@ jobs:
           .venv/bin/python scripts/verify_benchmark_report.py \
             dashboard-smoke.json --kind dashboard-browser
 
-      - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
-        run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
-
-  browser_conformance:
-    name: Accessibility + cross-browser conformance
-    runs-on: ubuntu-latest
+  regression_checks:
+    name: Blocking regression checks
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
-      - name: Cache Playwright browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
-      - name: Install Playwright browser engines
+          node-version: "22.23.3"
+
+      - name: Install JS build toolchain
+        run: npm ci
+
+      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
+        run: python3 scripts/bench_native.py --sizes 1e5,1e6
+
+      - name: Install package + dev deps
         run: |
-          npm ci
-          npx playwright install --with-deps chromium firefox webkit
+          uv sync --locked --extra reflex --group dev
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+
+      - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-ci-chromium
+
+      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
+        run: |
+          .venv/bin/python benchmarks/bench_scatter_native.py \
+            --sizes 1e5,1e6,1e7 --production --json scatter.json
+          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
+            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
+          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
+          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
+          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
+          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
+            --transport transport.json --emit-md spec/benchmarks/metrics.md
+
+      - name: Upload regression benchmark report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: regression-benchmark-report
+          if-no-files-found: warn
+          path: |
+            spec/benchmarks/metrics.md
+            scatter.json
+            kernel.json
+            transport.json
+
+      - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
+        run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
+  browser_conformance:
+    name: Accessibility + cross-browser conformance
+    needs: [changes, build]
+    if: needs.changes.outputs.conformance == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history and tags: the distribution version is derived
+          # from the latest `v*` tag, and a shallow clone has none.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11.17"
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.23.3"
+      - name: Install JS build toolchain
+        timeout-minutes: 5
+        run: npm ci
+      - name: Verify preinstalled Playwright browsers
+        timeout-minutes: 1
+        run: |
+          node --input-type=module - <<'JS'
+          import { accessSync } from 'node:fs';
+          import { chromium, firefox, webkit } from 'playwright';
+          for (const browser of [chromium, firefox, webkit]) {
+            accessSync(browser.executablePath());
+          }
+          JS
       - name: Build render client
-        run: node js/build.mjs
+        run: test -f python/xy/static/standalone.js
       - name: Run accessibility and cross-browser conformance
+        timeout-minutes: 5
         # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
         # virtual display installed by Playwright so every engine still runs
         # the real WebGL rendering and perceptual assertions.
         env:
+          # The container runs as root; Firefox rejects GitHub's mounted home
+          # owned by the runner's different UID.
+          HOME: /root
           MOZ_WEBRENDER: "1"
           XY_CONFORMANCE_HEADFUL: "1"
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
-
   python_floor:
     name: Python 3.11 floor
-    runs-on: ubuntu-latest
+    env:
+      PYTEST_ADDOPTS: ${{ needs.changes.outputs.pyplot != 'true' && '--ignore=tests/pyplot --ignore=tests/backends' || '' }}
+    needs: [changes, build]
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.17"
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
 
       - name: Verify syntax/annotation floor
         run: python scripts/check_python_floor.py
 
       - name: Build native core
-        run: cargo build --release
+        run: test -f target/release/libxy_core.so
 
-      # The render client is a generated artifact (§33): build it so the full
-      # test suite (which reads python/xy/static/*.js) has it on disk.
+      # Verify the shared render client is available to source-path tests.
       - name: Build render client
         run: |
           npm ci
-          node js/build.mjs
+          test -f python/xy/static/standalone.js
 
-      - name: Install package for Python 3.11
+      - name: Install package and compatibility test dependencies for Python 3.11
         run: |
           python -VV
           # Absolute path: newer uv resolves a bare name as a directory, not
           # the interpreter setup-python put on PATH.
           uv venv .venv --python "$(command -v python)"
-          uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
+          uv pip install -p .venv/bin/python \
+            dist/*.whl \
+            "pytest>=8,<9" \
+            "pillow>=10" \
+            "pyyaml>=6" \
+            "matplotlib==3.11.0"
 
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
 
-      - name: Python 3.11 tests (native core)
+      - name: Python 3.11 tests (native + compat)
         run: .venv/bin/python -m pytest -q
 
   # Cross-library scatter benchmark incl. time-to-first-render (spec/benchmarks/results.md).
@@ -322,8 +727,10 @@ jobs:
   # parallel. The report job below merges the partial results.
   benchmark_vs:
     name: Cross-library benchmark (${{ matrix.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    needs: [changes, build]
+    if: needs.changes.outputs.benchmarks == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -380,27 +787,36 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
+        if: matrix.xy
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         if: matrix.xy
+        with:
+          toolchain: "1.99.1"
+
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: matrix.browser || matrix.build_js
         with:
-          node-version: "22"
+          node-version: "22.23.3"
       - name: Install JS build toolchain
-        if: matrix.build_js
+        if: matrix.browser || matrix.build_js
         run: npm ci
       - name: Build native core
         if: matrix.xy
-        run: cargo build --release
+        run: test -f target/release/libxy_core.so
       - name: Build JS client
         if: matrix.build_js
-        run: node js/build.mjs
+        run: test -f python/xy/static/standalone.js
       - name: Create benchmark environment
         run: uv venv .venv
       - name: Install xy
@@ -409,7 +825,7 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv pip install -p .venv/bin/python \
-            --constraint benchmarks/requirements-ci.lock -e .
+            --constraint benchmarks/requirements-ci.lock dist/*.whl
       - name: Install selected competitors
         run: |
           uv pip install -p .venv/bin/python \
@@ -424,7 +840,6 @@ jobs:
       - name: Install Chromium (Playwright)
         if: matrix.browser
         run: |
-          npm ci
           npx playwright install --with-deps chromium
       - name: Run cross-library benchmark group
         run: |
@@ -452,34 +867,41 @@ jobs:
   # Other benchmark suites run concurrently with the cross-library matrix.
   benchmark_methodology:
     name: Benchmark methodology suites
-    runs-on: ubuntu-latest
+    needs: [changes, build]
+    if: needs.changes.outputs.benchmarks == 'true'
+    runs-on: ubuntu-24.04
     continue-on-error: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Restore shared native core and client
+        uses: ./.github/actions/restore-ci-build
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
       - name: Install JS build toolchain
         run: npm ci
       - name: Build core + JS client
         run: |
-          node js/build.mjs
-          cargo build --release
+          test -f python/xy/static/standalone.js
+          test -f target/release/libxy_core.so
       - name: Install xy + competitors
         env:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python \
-            --constraint benchmarks/requirements-ci.lock -e .
+            --constraint benchmarks/requirements-ci.lock dist/*.whl
           uv pip install -p .venv/bin/python \
             --constraint benchmarks/requirements-ci.lock \
             matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
@@ -490,11 +912,24 @@ jobs:
           import xy.kernels as k
           assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
           PY
-      # Playwright Chromium for the time-to-first-render (browser paint) pass.
+      # The fixed hosted Ubuntu image already carries Chrome's system libraries.
+      # Keep the lockfile-pinned browser, without repeating apt/font/Xvfb setup.
+      - name: Cache methodology Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: methodology-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - name: Install Chromium (Playwright)
+        timeout-minutes: 5
+        run: npx playwright install --no-shell chromium
+      - name: Verify methodology Chromium
+        timeout-minutes: 1
         run: |
-          npm ci
-          npx playwright install --with-deps chromium
+          node --input-type=module - <<'JS'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({executablePath: chromium.executablePath()});
+          await browser.close();
+          JS
       - name: Line decimation vs plotly-resampler (methodology line_10M)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -548,16 +983,16 @@ jobs:
             workflows.json
             interaction.json
             dashboard.json
-
   benchmark:
     name: Merge and verify benchmark reports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [benchmark_vs, benchmark_methodology]
-    if: always()
+    if: always() && !cancelled() && needs.benchmark_vs.result != 'skipped' && needs.benchmark_methodology.result != 'skipped'
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
@@ -606,23 +1041,29 @@ jobs:
             benchmark-methodology/workflows.json
             benchmark-methodology/interaction.json
             benchmark-methodology/dashboard.json
-
   sdist:
     name: Source distribution
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.99.1"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
 
       - name: Install JS build toolchain
         run: npm ci
@@ -692,30 +1133,48 @@ jobs:
   # still includes both Intel and Apple Silicon macOS wheels.
   wheels:
     name: Wheel ${{ matrix.os }}
-    needs: test
+    needs: [changes, build]
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        if: matrix.os != 'ubuntu-24.04'
+        with:
+          toolchain: "1.99.1"
+
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.os != 'ubuntu-24.04'
         with:
-          node-version: "22"
+          node-version: "22.23.3"
 
       - name: Install JS build toolchain
+        if: matrix.os != 'ubuntu-24.04'
         run: npm ci
 
+      - name: Download shared Linux wheel
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-linux-wheel
+          path: dist
+
       - name: Build wheel
+        if: matrix.os != 'ubuntu-24.04'
         # The hatch build hook builds both artifacts. The render client is
         # required by default; REQUIRE_CARGO additionally forbids the native core
         # from silently falling back to a pure-Python wheel here.
@@ -732,8 +1191,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update && sudo apt-get install -y patchelf
-          uv tool install auditwheel
-          uv tool run auditwheel repair dist/*.whl -w wheelhouse
+          uv tool install auditwheel==6.8.2
+          uv tool run --from auditwheel==6.8.2 auditwheel repair dist/*.whl -w wheelhouse
           rm dist/*.whl && mv wheelhouse/*.whl dist/
           ls -la dist/
 
@@ -785,21 +1244,25 @@ jobs:
   # fallback and never an opaque crash.
   install_without_rust:
     name: Install without Rust (clear error)
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # Full history and tags: the distribution version is derived
           # from the latest `v*` tag, and a shallow clone has none.
           fetch-depth: 0
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
+          version: "0.13.5"
           enable-cache: false
       # The render client is independent of the native core (§33): this job
       # drops Rust but keeps Node so the coreless wheel still carries the client.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "22.23.3"
       - name: Install JS build toolchain
         run: npm ci
       # GitHub runners preinstall Rust (which would defeat this job's purpose
@@ -843,4 +1306,23 @@ jobs:
               print("no-Rust install errors clearly on import; OK")
           else:
               raise SystemExit("expected ImportError without the native core")
+          PY
+
+
+  result:
+    name: CI result
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [changes, build, test, rust_checks, browser_smokes, regression_checks, python_floor, matplotlib_reference, matplotlib_patch_smoke, pyplot_gallery, pyplot_gallery_extended, browser_conformance, sdist, wheels, install_without_rust]
+    steps:
+      - name: Require selected checks to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failed = [name for name, job in results.items() if job['result'] not in ('success', 'skipped')]
+          assert not failed, f"CI jobs failed or cancelled: {failed}"
+          assert results['changes']['result'] == 'success', 'CI selection must succeed'
           PY
