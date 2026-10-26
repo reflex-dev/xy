@@ -1,0 +1,112 @@
+# Deploy a source snapshot of the docs independently of a library release.
+# Reuse the image build and Helm promotion path, including production approval.
+name: Deploy XY Docs Only
+
+run-name: Deploy docs only from ${{ inputs.source_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "XY branch, tag, or commit to deploy (no PyPI release required)"
+        required: true
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+# Both site-only and library-release deploys update the same Helm values.
+# Serialize the entire promotion so their staging/production updates cannot race.
+concurrency:
+  group: deploy-xy-docs-stg
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  prepare:
+    name: Resolve Docs Source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - name: Resolve source commit and image tag
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "${#SOURCE_REF}" -gt 128 ]]; then
+            echo "::error::source_ref must be a branch, tag, or commit using [A-Za-z0-9._/-] and <=128 characters"
+            exit 1
+          fi
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]] || [[ ! "$RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
+            echo "::error::run ID and attempt must be numeric"
+            exit 1
+          fi
+          # Resolve once: a moving branch must not change the source between
+          # the frontend/backend builds or staging/production promotion.
+          SHA=$(gh api "repos/${REPO}/commits/${SOURCE_REF}" --jq '.sha')
+          if [[ ! "$SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::resolved SHA is not a 40-character hex commit"
+            exit 1
+          fi
+          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+          # Separate from library and dev tags. Fresh dispatches and full
+          # reruns get new images and Helm PR branches, even for the same SHA.
+          echo "image_tag=docs-${SHA:0:12}-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Docs Images
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build-docs-images.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+    secrets: inherit
+
+  helm-pr-stg:
+    name: Update Staging Helm Values
+    needs: [prepare, build]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+      environment: stg
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+      auto_merge: true
+    secrets: inherit
+
+  await-prod-approval:
+    name: Await Production Approval
+    needs: helm-pr-stg
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - run: echo "Approved for site-only production promotion"
+
+  helm-pr-prod:
+    name: Update Production Helm Values
+    needs: [prepare, await-prod-approval]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+      environment: prod
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+      auto_merge: true
+    secrets: inherit

@@ -30,8 +30,8 @@ on:
     # A `v*` release tag pushed by hand, so re-tagging still deploys docs. The
     # pipeline's own tag does not arrive this way — it is pushed with
     # GITHUB_TOKEN, which deliberately fires no on-push workflow — which is what
-    # the post-release dispatch above is for. Deploying an arbitrary commit
-    # outside a release is workflow_dispatch's job too (or deploy-docs-dev.yml,
+    # the post-release dispatch above is for. To deploy an arbitrary commit
+    # without a library release, use deploy-docs-site.yml (or deploy-docs-dev.yml,
     # which tracks main on every push).
     tags: ["v*"]
 
@@ -41,6 +41,7 @@ permissions:
 concurrency:
   group: deploy-xy-docs-stg
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare:

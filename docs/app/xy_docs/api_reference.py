@@ -74,8 +74,8 @@ CHART_FACTORY_GROUPS = (
             xy.triangle_mesh_chart,
         ),
     ),
-    ("Annotations", (xy.chart,)),
-    ("Facets and Layers", (xy.chart, xy.facet_chart)),
+    ("Annotations and Layers", (xy.chart,)),
+    ("Facets", (xy.facet_chart,)),
 )
 _CHART_FACTORY_COMPONENTS = frozenset(
     factory for _group_name, factories in CHART_FACTORY_GROUPS for factory in factories
@@ -448,7 +448,7 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
                 rx.text(
                     parameter.description,
                     class_name=(
-                        "font-small text-secondary-11 whitespace-normal leading-snug break-words"
+                        "font-small text-muted-foreground whitespace-normal leading-snug break-words"
                     ),
                 ),
                 _COMPONENT_API_COLUMN_WIDTHS[2],
@@ -461,12 +461,12 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
             reference.display_name,
             as_="h3",
             id=_heading_id(reference.display_name),
-            class_name="font-large text-secondary-12 mt-8 mb-2",
+            class_name="docs-heading font-large text-foreground mt-8 mb-2",
         ),
         (
             rx.text(
                 reference.summary,
-                class_name="font-[475] text-secondary-11 mb-4 leading-7",
+                class_name="docs-prose font-normal text-muted-foreground mb-4 leading-7",
             )
             if reference.summary
             else rx.fragment()
@@ -474,7 +474,7 @@ def _component_api_reference(reference: ComponentApiReference) -> rx.Component:
         rx.heading(
             "Props",
             as_="h4",
-            class_name="font-base text-secondary-12 mt-4 mb-2",
+            class_name="font-base text-foreground mt-4 mb-2",
         ),
         docs_api_table(*rows),
         class_name="w-full",

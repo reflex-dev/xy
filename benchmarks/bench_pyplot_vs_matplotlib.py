@@ -196,6 +196,10 @@ def make_cases(profile: str) -> tuple[list[Case], Any, Any]:
     import xy.pyplot as xy_plt
     from xy import kernels
 
+    # This harness measures the dependency-free XY frontend. Never let an
+    # ambient Matplotlib installation silently change the implementation while
+    # the report continues to label the row as native-raster.
+    xy_plt.set_mode("native")
     if kernels.BACKEND != "native":
         raise SystemExit(f"benchmark requires xy native backend, got {kernels.BACKEND!r}")
 
