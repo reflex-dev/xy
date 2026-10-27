@@ -346,7 +346,13 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
                     family="export",
                     n=n,
                     setup=figure,
-                    operation=lambda fig: fig.to_png(engine=xy.Engine.chromium),
+                    # The benchmark renders only the controlled figure above.
+                    # GitHub-hosted runners cannot initialize Chromium's sandbox,
+                    # so this repository-owned harness opts out explicitly.
+                    operation=lambda fig: fig.to_png(
+                        engine=xy.Engine.chromium,
+                        sandbox=False,
+                    ),
                     reps=1,
                     category_ids=("static_export", "payload_export_size"),
                     scope="public-chromium-png-export",
@@ -379,6 +385,7 @@ def run(*, profile: str, reps: int, chromium: str | None = None) -> dict[str, An
     if chromium:
         # The opt-in Chromium row forces SwiftShader independently of benchmark flags.
         environment["browser_renderer"] = "software-gl"
+        environment["chromium_sandbox"] = False
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "workflow-native",

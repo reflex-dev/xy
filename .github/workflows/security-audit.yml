@@ -1,0 +1,74 @@
+name: Dependency security audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/security-audit.yml"
+      - "Cargo.lock"
+      - "**/Cargo.lock"
+      - "**/package-lock.json"
+      - "**/bun.lock"
+      - "**/bun.lockb"
+      - "**/uv.lock"
+      - "**/requirements*.lock"
+      - "**/Pipfile.lock"
+      - "**/poetry.lock"
+      - "**/pdm.lock"
+      - "**/pixi.lock"
+      - "**/pylock*.toml"
+      - "**/yarn.lock"
+      - "**/pnpm-lock.yaml"
+      - "**/npm-shrinkwrap.json"
+      - "**/go.sum"
+      - "**/Gemfile.lock"
+      - "**/composer.lock"
+      - "**/Package.resolved"
+      - "**/Podfile.lock"
+      - "**/packages.lock.json"
+      - "**/flake.lock"
+      - "**/gradle.lockfile"
+      - "pyproject.toml"
+      - "Cargo.toml"
+      - "**/Cargo.toml"
+      - "package.json"
+      - "**/package.json"
+      - "docs/app/pyproject.toml"
+      - "docs/app/reflex.lock/package.json"
+      - "benchmarks/requirements*.in"
+      - "benchmarks/requirements*.txt"
+      - "scripts/verify_dependency_lock_inventory.py"
+      - "scripts/audit_dependencies.py"
+      - "Makefile"
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit committed dependency locks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install Rust advisory scanner
+        run: cargo install cargo-audit --locked
+
+      - name: Audit active dependency locks
+        run: make PYTHON=python3 check-dependency-audit

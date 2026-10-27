@@ -227,7 +227,8 @@ def main() -> None:
         from xy.export import html_to_png
 
         png = HERE / "site_overview.png"
-        png.write_bytes(html_to_png(doc, 1336, 340))
+        # The document contains only this repository's synthetic dashboard data.
+        png.write_bytes(html_to_png(doc, 1336, 340, sandbox=False))
         print(f"wrote {png}")
 
 

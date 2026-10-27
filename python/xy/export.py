@@ -63,6 +63,10 @@ _B64_CHUNK_BYTES = 48 * 2**20
 # executable paths; discovery remains an implementation detail.
 _BROWSER_ENV = "XY_BROWSER"
 _CHROMIUM_ENV = "XY_CHROMIUM"
+_SANDBOX_FAILURE_HINT = (
+    "If Chromium cannot start its sandbox in this environment, pass sandbox=False "
+    "only for HTML you trust."
+)
 _BROWSER_NAMES = (
     "chrome-headless-shell",
     "chromium",
@@ -610,22 +614,12 @@ def html_to_png(
         )
         if not shot.exists():
             first_tail = (proc.stderr or "")[-500:]
-            if sandbox:
-                retry_args = list(args)
-                retry_args.insert(2, "--no-sandbox")
-                proc = subprocess.run(
-                    retry_args,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                )
-            if not shot.exists():
-                tail = (proc.stderr or "")[-500:]
-                if sandbox:
-                    tail = f"sandboxed launch failed: {first_tail}\nno-sandbox retry failed: {tail}"
-                raise RuntimeError(
-                    f"Chromium produced no screenshot (exit {proc.returncode}): {tail}"
-                )
+            mode = "sandboxed" if sandbox else "unsandboxed"
+            hint = f" {_SANDBOX_FAILURE_HINT}" if sandbox else ""
+            raise RuntimeError(
+                f"Chromium {mode} launch produced no screenshot "
+                f"(exit {proc.returncode}): {first_tail}{hint}"
+            )
         data = shot.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise RuntimeError("screenshot output was not a PNG")
@@ -1032,7 +1026,7 @@ def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional
 
 
 def _browser_session(*, gl: str, sandbox: bool) -> "Any":
-    """One launched ChromiumSession, mirroring `html_to_png`'s sandbox retry."""
+    """Launch one Chromium session without silently changing its sandbox mode."""
     exe = find_browser()
     if exe is None:
         raise RuntimeError(
@@ -1045,10 +1039,10 @@ def _browser_session(*, gl: str, sandbox: bool) -> "Any":
 
     try:
         return ChromiumSession(exe, gl=gl, sandbox=sandbox)
-    except ChromiumError:
-        if not sandbox:
-            raise
-        return ChromiumSession(exe, gl=gl, sandbox=False)
+    except ChromiumError as exc:
+        if sandbox:
+            raise ChromiumError(f"{exc} {_SANDBOX_FAILURE_HINT}") from exc
+        raise
 
 
 def _native_image(

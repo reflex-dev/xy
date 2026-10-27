@@ -166,7 +166,9 @@ def main() -> None:
     if find_chromium() is None:
         print("chromium png export smoke SKIPPED (no chromium)")
         return
-    png = html_to_png(build_html(), W, H, scale=SCALE, time_budget_ms=3000)
+    # This smoke renders repository-generated HTML only; keep the public
+    # sandbox default enabled for applications rendering caller-provided HTML.
+    png = html_to_png(build_html(), W, H, scale=SCALE, time_budget_ms=3000, sandbox=False)
     if png[:8] != b"\x89PNG\r\n\x1a\n":
         raise SystemExit("not a PNG")
     w, h = struct.unpack(">II", png[16:24])

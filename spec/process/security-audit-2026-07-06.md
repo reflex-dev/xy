@@ -203,9 +203,9 @@ path — which pulls in eight transitive crates: `bitflags`, `crc32fast`,
 `Cargo.lock` therefore holds nine third-party packages plus `xy-core`.
 
 The tree is still shallow and single-rooted, but "no third-party Rust crates"
-is no longer an accurate standing control. Follow-up pending: add `cargo audit`
-(or `cargo deny`) to CI now that a third-party tree exists, matching the
-`pip-audit` coverage already run on the Python side.
+is no longer an accurate standing control. The follow-up is complete:
+`.github/workflows/security-audit.yml` installs `cargo-audit` and runs the same
+`make check-dependency-audit` entry point used locally.
 
 ## Tooling Evidence
 
@@ -273,3 +273,37 @@ sandbox cannot initialize. Container/worker isolation is therefore the load-
 bearing control, not the sandbox flag. Follow-up pending (same item as
 XY-SEC-2026-03): make the fallback opt-in, or at minimum warn on the downgrade,
 so a sandbox loss is observable.
+
+#### Follow-up status as of 2026-08-05
+
+The export contract is now fail-closed: `html_to_png` and persistent browser
+sessions never retry a failed sandboxed launch with `--no-sandbox`. Callers
+must pass `sandbox=False` explicitly when they accept an unsandboxed browser.
+The repository also has a scheduled dependency-audit workflow covering the
+root and docs Python environments, Rust locks, npm, Bun, and the benchmark
+requirements lock. `scripts/verify_dependency_lock_inventory.py` fails when a
+new committed dependency lock is not added to that audit inventory.
+
+#### Dependency-advisory policy as of 2026-10-26
+
+Active dependency locks are release-blocking. `pip-audit` and `cargo-audit`
+fail on every published advisory; npm and Bun fail at high or critical
+severity. There are no advisory ignores or allowlists. A temporary exception
+must be recorded here with the advisory identifier, affected lock, exposure
+analysis, owner, and expiry date before an ignore can be added to automation.
+
+The two locks under `benchmarks/launch_baselines/` are immutable historical
+measurement evidence, not install, CI, build, or release inputs. They are
+therefore inventoried explicitly as `FROZEN_EVIDENCE_LOCKFILES`, but are exempt
+from the active advisory gate: updating them would destroy the dependency
+resolution whose historical result they preserve. Any code path that begins
+installing or executing one must first move it into `AUDITED_LOCKFILES` and
+make its advisory audit pass.
+
+The shared gate is `make check-dependency-audit`. It verifies the complete
+inventory, audits the root and docs Python environments plus the benchmark
+requirements lock, both Rust locks, npm, and Bun. The workflow runs weekly and
+on dependency-manifest, lockfile, inventory, or audit-runner changes. Common
+lock formats across Python, JavaScript, Rust, Go, Ruby, PHP, Swift, CocoaPods,
+.NET, Nix, and Gradle are recognized so a new ecosystem cannot bypass review
+merely by using a different conventional filename.

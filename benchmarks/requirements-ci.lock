@@ -263,7 +263,7 @@ scipy==1.18.0
     # via datashader
 seaborn==0.13.2
     # via -r benchmarks/requirements-ci.in
-setuptools==83.0.0
+setuptools==84.2.1
     # via dash
 simplejson==4.1.1
     # via choreographer
@@ -273,7 +273,7 @@ stack-data==0.6.3
     # via ipython
 toolz==1.1.0
     # via datashader
-tornado==6.5.7
+tornado==6.6
     # via bokeh
 tqdm==4.69.0
     # via panel
@@ -298,11 +298,11 @@ typing-inspection==0.4.2
     # via pydantic
 uc-micro-py==2.0.0
     # via linkify-it-py
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
 wcwidth==0.8.2
     # via prompt-toolkit
-werkzeug==3.1.8
+werkzeug==3.1.9
     # via
     #   dash
     #   flask

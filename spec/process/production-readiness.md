@@ -313,6 +313,7 @@ These must pass before publishing.
 | CI/CodSpeed workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, and no-Rust clear-error jobs stay wired. The release workflows are `reflex-release`'s and are not re-checked here | `make check-ci` |
 | GitHub Actions token scope | CI, release, and manual benchmark workflows declare an explicit least-privilege `GITHUB_TOKEN` default; privileged jobs use narrow job-level overrides | GitHub code scanning (`actions/missing-workflow-permissions`) |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
+| Dependency advisories | Every active committed Python, Rust, npm, and Bun lock passes the repository advisory policy; inventory rejects unclassified lockfiles | `make check-dependency-audit` |
 | Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Matplotlib reference | The reviewed compatibility snapshot matches the pinned released matplotlib reference, and the `xy.pyplot` shim passes its interoperability and dual-engine corpus suites | `python scripts/sync_matplotlib_compat.py --check` and `pytest tests/pyplot` |
@@ -368,7 +369,10 @@ reports, and sharing a single file, but it has a clear security contract:
   launching Chromium so bad user input produces actionable Python errors, and
   keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
   trusted HTML in constrained CI/container environments that cannot launch a
-  sandboxed browser.
+  sandboxed browser. A failed sandboxed launch does not silently downgrade to
+  an unsandboxed browser. Repository-owned browser smokes that explicitly opt
+  out render only controlled, repository-generated HTML; application code keeps
+  the sandboxed default.
 - Export tests should include weird strings with `</script>`, HTML entities,
   mixed-case tags, and Unicode line/paragraph separators.
 
@@ -388,6 +392,7 @@ production-facing push:
 | Reviewed matplotlib compatibility snapshot (`spec/matplotlib/compat-matrix.md`) | `python scripts/sync_matplotlib_compat.py --check` |
 | `xy.pyplot` speed margin against matplotlib | `make check-pyplot-speed` |
 | Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
+| Dependency manifests, locks, or audit policy | `make check-dependency-audit` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
 | CI/CodSpeed workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
@@ -473,6 +478,13 @@ insertion:
 ```bash
 make check-security
 ```
+
+`make check-security` includes the dependency-advisory gate and therefore
+requires `cargo-audit` (`cargo install cargo-audit --locked`), npm, Bun, and uv.
+Use `make check-security-static` while iterating only on HTML/export sinks. The
+same `make check-dependency-audit` entry point runs in the scheduled and
+pull-request security workflow, so the local and hosted audit scopes cannot
+drift.
 
 Use this after changing public validation, error messages, builder rollback
 behavior, LOD/drill mutation boundaries, or chart/widget caching:

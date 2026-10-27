@@ -730,6 +730,8 @@ jobs:
     needs: [changes, build]
     if: needs.changes.outputs.benchmarks == 'true'
     runs-on: ubuntu-24.04
+    # Browser installation can spend several minutes in apt on a hosted runner;
+    # leave enough room for the benchmark itself after setup completes.
     timeout-minutes: 20
     continue-on-error: true
     strategy:

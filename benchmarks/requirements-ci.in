@@ -2,7 +2,7 @@
 # timing changes reflect code changes rather than a competitor release. Refresh
 # the transitive lock intentionally with:
 #
-#   uv pip compile --python-version 3.12 \
+#   uv pip compile --upgrade --python-version 3.12 \
 #     --python-platform x86_64-unknown-linux-gnu \
 #     benchmarks/requirements-ci.in -o benchmarks/requirements-ci.lock
 
