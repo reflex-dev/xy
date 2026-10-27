@@ -17,12 +17,16 @@ Mapping decisions:
   (``fill-opacity``/``stroke-opacity``/``opacity`` and rgba() color alpha)
   become deduplicated ExtGStates (/ca /CA). The generator only ever emits the
   default nonzero winding rule, so even-odd variants are never produced.
-- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 Helvetica family
-  (weight >= 600 selects Helvetica-Bold) in WinAnsiEncoding, using the
-  standard AFM width tables so ``text-anchor="middle"/"end"`` offsets come
-  from real metrics. Characters outside WinAnsi are replaced with "?"
-  (``cp1252`` + ``errors="replace"``) — a deterministic, locale-independent
-  substitution policy.
+- Text stays text: BT/Tf/Tm/Tj/ET with the base-14 fonts in WinAnsiEncoding.
+  ``font-family`` selects the family (a generic ``serif`` -> Times,
+  ``monospace`` -> Courier, everything else -> Helvetica; `_base_family` holds
+  the table, spec/api/export.md §9 documents it), weight >= 600 the bold face
+  and ``font-style: italic|oblique`` the italic/oblique face. ``letter-spacing``
+  becomes the ``Tc`` character-spacing operator and ``opacity`` folds into the
+  text's ExtGState. The selected face's standard AFM width table makes
+  ``text-anchor="middle"/"end"`` offsets come from real metrics. Characters
+  outside WinAnsi are replaced with "?" (``cp1252`` + ``errors="replace"``) —
+  a deterministic, locale-independent substitution policy.
 - ``<linearGradient>`` becomes an axial shading (/ShadingType 2; exponential
   function for 2 stops, stitching for more) painted inside the gradient
   geometry's clip; per-stop alpha becomes a luminosity soft mask.
@@ -65,8 +69,13 @@ def _unsupported(what: str) -> NoReturn:
 
 
 # ---------------------------------------------------------------------------
-# Helvetica metrics (AFM widths for WinAnsi codes 32..255, per mille)
+# Base-14 metrics (AFM widths for WinAnsi codes 32..255, per mille)
 # ---------------------------------------------------------------------------
+# Generated from the Adobe core-14 AFM files (the copies matplotlib ships in
+# mpl-data/fonts/pdfcorefonts). WinAnsi codes with no glyph (0x7F and the five
+# undefined 0x8x/0x9x slots) take the bullet width, as Acrobat does. The
+# Oblique faces share their upright face's advances, so they carry no table
+# of their own, and every Courier face is a uniform 600.
 
 # fmt: off
 _HELV = (
@@ -101,12 +110,171 @@ _HELV_BOLD = (
     556, 556, 556, 556, 556, 556, 889, 556, 556, 556, 556, 556, 278, 278, 278, 278,
     611, 611, 611, 611, 611, 611, 611, 584, 611, 611, 611, 611, 611, 556, 611, 556,
 )
+_TIMES = (
+    250, 333, 408, 500, 500, 833, 778, 180, 333, 333, 500, 564, 250, 333, 250, 278,
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 278, 278, 564, 564, 564, 444,
+    921, 722, 667, 667, 722, 611, 556, 722, 722, 333, 389, 722, 611, 889, 722, 722,
+    556, 722, 667, 556, 611, 722, 722, 944, 722, 722, 611, 333, 278, 333, 469, 500,
+    333, 444, 500, 444, 500, 444, 333, 500, 500, 278, 278, 500, 278, 778, 500, 500,
+    500, 500, 333, 389, 278, 500, 500, 722, 500, 500, 444, 480, 200, 480, 541, 350,
+    500, 350, 333, 500, 444, 1000, 500, 500, 333, 1000, 556, 333, 889, 350, 611, 350,
+    350, 333, 333, 444, 444, 350, 500, 1000, 333, 980, 389, 333, 722, 350, 444, 722,
+    250, 333, 500, 500, 500, 500, 200, 500, 333, 760, 276, 500, 564, 333, 760, 333,
+    400, 564, 300, 300, 333, 500, 453, 250, 333, 300, 310, 500, 750, 750, 750, 444,
+    722, 722, 722, 722, 722, 722, 889, 667, 611, 611, 611, 611, 333, 333, 333, 333,
+    722, 722, 722, 722, 722, 722, 722, 564, 722, 722, 722, 722, 722, 722, 556, 500,
+    444, 444, 444, 444, 444, 444, 667, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+    500, 500, 500, 500, 500, 500, 500, 564, 500, 500, 500, 500, 500, 500, 500, 500,
+)
+_TIMES_BOLD = (
+    250, 333, 555, 500, 500, 1000, 833, 278, 333, 333, 500, 570, 250, 333, 250, 278,
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 570, 570, 570, 500,
+    930, 722, 667, 722, 722, 667, 611, 778, 778, 389, 500, 778, 667, 944, 722, 778,
+    611, 778, 722, 556, 667, 722, 722, 1000, 722, 722, 667, 333, 278, 333, 581, 500,
+    333, 500, 556, 444, 556, 444, 333, 500, 556, 278, 333, 556, 278, 833, 556, 500,
+    556, 556, 444, 389, 333, 556, 500, 722, 500, 500, 444, 394, 220, 394, 520, 350,
+    500, 350, 333, 500, 500, 1000, 500, 500, 333, 1000, 556, 333, 1000, 350, 667, 350,
+    350, 333, 333, 500, 500, 350, 500, 1000, 333, 1000, 389, 333, 722, 350, 444, 722,
+    250, 333, 500, 500, 500, 500, 220, 500, 333, 747, 300, 500, 570, 333, 747, 333,
+    400, 570, 300, 300, 333, 556, 540, 250, 333, 300, 330, 500, 750, 750, 750, 500,
+    722, 722, 722, 722, 722, 722, 1000, 722, 667, 667, 667, 667, 389, 389, 389, 389,
+    722, 722, 778, 778, 778, 778, 778, 570, 778, 722, 722, 722, 722, 722, 611, 556,
+    500, 500, 500, 500, 500, 500, 722, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+    500, 556, 500, 500, 500, 500, 500, 570, 500, 556, 556, 556, 556, 500, 556, 500,
+)
+_TIMES_ITALIC = (
+    250, 333, 420, 500, 500, 833, 778, 214, 333, 333, 500, 675, 250, 333, 250, 278,
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 675, 675, 675, 500,
+    920, 611, 611, 667, 722, 611, 611, 722, 722, 333, 444, 667, 556, 833, 667, 722,
+    611, 722, 611, 500, 556, 722, 611, 833, 611, 556, 556, 389, 278, 389, 422, 500,
+    333, 500, 500, 444, 500, 444, 278, 500, 500, 278, 278, 444, 278, 722, 500, 500,
+    500, 500, 389, 389, 278, 500, 444, 667, 444, 444, 389, 400, 275, 400, 541, 350,
+    500, 350, 333, 500, 556, 889, 500, 500, 333, 1000, 500, 333, 944, 350, 556, 350,
+    350, 333, 333, 556, 556, 350, 500, 889, 333, 980, 389, 333, 667, 350, 389, 556,
+    250, 389, 500, 500, 500, 500, 275, 500, 333, 760, 276, 500, 675, 333, 760, 333,
+    400, 675, 300, 300, 333, 500, 523, 250, 333, 300, 310, 500, 750, 750, 750, 500,
+    611, 611, 611, 611, 611, 611, 889, 667, 611, 611, 611, 611, 333, 333, 333, 333,
+    722, 667, 722, 722, 722, 722, 722, 675, 722, 722, 722, 722, 722, 556, 611, 500,
+    500, 500, 500, 500, 500, 500, 667, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+    500, 500, 500, 500, 500, 500, 500, 675, 500, 500, 500, 500, 500, 444, 500, 444,
+)
+_TIMES_BOLD_ITALIC = (
+    250, 389, 555, 500, 500, 833, 778, 278, 333, 333, 500, 570, 250, 333, 250, 278,
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 570, 570, 570, 500,
+    832, 667, 667, 667, 722, 667, 667, 722, 778, 389, 500, 667, 611, 889, 722, 722,
+    611, 722, 667, 556, 611, 722, 667, 889, 667, 611, 611, 333, 278, 333, 570, 500,
+    333, 500, 500, 444, 500, 444, 333, 500, 556, 278, 278, 500, 278, 778, 556, 500,
+    500, 500, 389, 389, 278, 556, 444, 667, 500, 444, 389, 348, 220, 348, 570, 350,
+    500, 350, 333, 500, 500, 1000, 500, 500, 333, 1000, 556, 333, 944, 350, 611, 350,
+    350, 333, 333, 500, 500, 350, 500, 1000, 333, 1000, 389, 333, 722, 350, 389, 611,
+    250, 389, 500, 500, 500, 500, 220, 500, 333, 747, 266, 500, 606, 333, 747, 333,
+    400, 570, 300, 300, 333, 576, 500, 250, 333, 300, 300, 500, 750, 750, 750, 500,
+    667, 667, 667, 667, 667, 667, 944, 667, 667, 667, 667, 667, 389, 389, 389, 389,
+    722, 722, 722, 722, 722, 722, 722, 570, 722, 722, 722, 722, 722, 611, 611, 500,
+    500, 500, 500, 500, 500, 500, 722, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+    500, 556, 500, 500, 500, 500, 500, 570, 500, 556, 556, 556, 556, 444, 500, 444,
+)
 # fmt: on
+_COURIER = (600,) * 224
+
+#: AFM advance table per base-14 font name.
+_WIDTHS: dict[str, tuple[int, ...]] = {
+    "Helvetica": _HELV,
+    "Helvetica-Bold": _HELV_BOLD,
+    "Helvetica-Oblique": _HELV,
+    "Helvetica-BoldOblique": _HELV_BOLD,
+    "Times-Roman": _TIMES,
+    "Times-Bold": _TIMES_BOLD,
+    "Times-Italic": _TIMES_ITALIC,
+    "Times-BoldItalic": _TIMES_BOLD_ITALIC,
+    "Courier": _COURIER,
+    "Courier-Bold": _COURIER,
+    "Courier-Oblique": _COURIER,
+    "Courier-BoldOblique": _COURIER,
+}
+
+#: The four faces of each base-14 family: (regular, bold, italic, bold-italic).
+_BASE14: dict[str, tuple[str, str, str, str]] = {
+    "Helvetica": ("Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"),
+    "Times": ("Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic"),
+    "Courier": ("Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique"),
+}
+
+#: CSS `font-family` names that select a base-14 family. The writer embeds no
+#: fonts (stdlib + numpy only), so a family is a *substitution*, not the face
+#: the browser draws: the CSS generic families and the base-14 names (plus
+#: their ubiquitous Windows aliases) are the only names whose intent is
+#: unambiguous. Anything else falls back to Helvetica, the writer's default.
+#: spec/api/export.md §9 publishes this table; keep the two in step.
+_FAMILY_MAP: dict[str, str] = {
+    "serif": "Times",
+    "ui-serif": "Times",
+    "times": "Times",
+    "times new roman": "Times",
+    "monospace": "Courier",
+    "ui-monospace": "Courier",
+    "courier": "Courier",
+    "courier new": "Courier",
+    "sans-serif": "Helvetica",
+    "ui-sans-serif": "Helvetica",
+    "system-ui": "Helvetica",
+    "helvetica": "Helvetica",
+    "arial": "Helvetica",
+}
 
 
-def _text_width_px(data: bytes, size: float, bold: bool) -> float:
-    """String advance in px for WinAnsi bytes at `size` px, from AFM widths."""
-    table = _HELV_BOLD if bold else _HELV
+def _base_family(value: Optional[str], default: str) -> str:
+    """Resolve a CSS `font-family` stack onto a base-14 family name.
+
+    The stack is walked in author order and the first recognised name wins
+    (`"Georgia", serif` -> Times: the generic fallback is the author's own
+    statement of what the face is). A stack naming nothing recognised
+    resolves to Helvetica rather than raising — the value is an author's
+    font preference, not generator drift, and refusing the export over it
+    would hide the whole chart behind an unavailable typeface.
+    """
+    if value is None:
+        return default
+    for name in value.split(","):
+        family = _FAMILY_MAP.get(name.strip().strip("'\"").strip().lower())
+        if family is not None:
+            return family
+    return "Helvetica"
+
+
+def _italic(value: Optional[str], default: bool) -> bool:
+    """`font-style` -> whether the slanted face is wanted. `oblique` may carry
+    an angle (`oblique 10deg`); the base-14 set has one slant, so any angle
+    selects it."""
+    if value is None:
+        return default
+    v = value.strip().lower()
+    if v == "normal":
+        return False
+    if v == "italic" or v == "oblique" or v.startswith("oblique "):
+        return True
+    _unsupported(f"font-style {value!r}")
+
+
+def _letter_spacing(value: Optional[str], font_size: float) -> float:
+    """`letter-spacing` in CSS px. The SVG writer emits `normal`, a unitless px
+    number, or the author's own CSS length; `em` is relative to the element's
+    resolved font size and `pt` is converted at the writer's 0.75 pt/px."""
+    if value is None:
+        return 0.0
+    v = value.strip().lower()
+    if v == "normal":
+        return 0.0
+    for suffix, scale in (("px", 1.0), ("em", font_size), ("pt", 1.0 / _PX_TO_PT)):
+        if v.endswith(suffix):
+            return _float(v[: -len(suffix)], 0.0, "letter-spacing") * scale
+    return _float(v, 0.0, "letter-spacing")
+
+
+def _text_width_px(data: bytes, size: float, font: str) -> float:
+    """String advance in px for WinAnsi bytes at `size` px, from the AFM widths
+    of base-14 font `font`."""
+    table = _WIDTHS[font]
     return size * sum(table[b - 32] for b in data if b >= 32) / 1000.0
 
 
@@ -202,7 +370,20 @@ _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "polyline": frozenset({"points"}) | _PAINT_ATTRS,
     "polygon": frozenset({"points"}) | _PAINT_ATTRS,
     "text": frozenset(
-        {"x", "y", "transform", "text-anchor", "font-size", "font-weight", "fill", "fill-opacity"}
+        {
+            "x",
+            "y",
+            "transform",
+            "text-anchor",
+            "font-size",
+            "font-weight",
+            "font-style",
+            "font-family",
+            "letter-spacing",
+            "opacity",
+            "fill",
+            "fill-opacity",
+        }
     ),
     "tspan": frozenset({"x", "y"}),
     "image": frozenset({"x", "y", "width", "height", "preserveAspectRatio", "style", "href"}),
@@ -564,7 +745,16 @@ class _Pdf:
 class _State:
     """Inheritable presentation state (override semantics, like CSS)."""
 
-    __slots__ = ("fill", "fill_opacity", "font_size", "font_weight", "opacity", "stroke_opacity")
+    __slots__ = (
+        "fill",
+        "fill_opacity",
+        "font_family",
+        "font_italic",
+        "font_size",
+        "font_weight",
+        "opacity",
+        "stroke_opacity",
+    )
 
     def __init__(self) -> None:
         self.fill = "#000000"
@@ -573,6 +763,8 @@ class _State:
         self.opacity = 1.0
         self.font_size = _DEFAULT_FONT_SIZE
         self.font_weight = 400.0
+        self.font_family = "Helvetica"
+        self.font_italic = False
 
     def child(self) -> "_State":
         out = _State.__new__(_State)
@@ -678,8 +870,8 @@ class _Converter:
 
     # -- resource registration ---------------------------------------------
 
-    def _font(self, bold: bool) -> str:
-        base = "Helvetica-Bold" if bold else "Helvetica"
+    def _font(self, base: str) -> str:
+        """Resource name for base-14 font `base`, registering it on first use."""
         if base not in self.fonts:
             num = self.pdf.reserve()
             name = f"F{len(self.fonts) + 1}"
@@ -1063,6 +1255,10 @@ class _Converter:
         _check_attrs(el, "text", _ALLOWED_ATTRS["text"])
         font_size = _float(el.get("font-size"), state.font_size, "font-size")
         bold = _weight(el.get("font-weight"), state.font_weight) >= 600
+        italic = _italic(el.get("font-style"), state.font_italic)
+        family = _base_family(el.get("font-family"), state.font_family)
+        font_base = _BASE14[family][(2 if italic else 0) + (1 if bold else 0)]
+        spacing = _letter_spacing(el.get("letter-spacing"), font_size)
         anchor = el.get("text-anchor", "start")
         if anchor not in ("start", "middle", "end"):
             _unsupported(f"text-anchor {anchor!r}")
@@ -1070,8 +1266,11 @@ class _Converter:
         if fill is None or fill[0] != "solid":
             _unsupported("text fill paint")
         red, green, blue, alpha = fill[1]
+        # Whole-element `opacity` and the fill channel multiply, as they do for
+        # shapes (`_render_shape`); both land in the one deduplicated ExtGState.
         ca = (
             state.opacity
+            * _float(el.get("opacity"), 1.0, "opacity")
             * _float(el.get("fill-opacity"), state.fill_opacity, "fill-opacity")
             * alpha
         )
@@ -1110,7 +1309,7 @@ class _Converter:
                 (_float(el.get("x"), 0.0, "x"), _float(el.get("y"), 0.0, "y"), el.text or "")
             )
 
-        font_name = self._font(bold)
+        font_name = self._font(font_base)
         theta = math.radians(angle)
         cos_t, sin_t = math.cos(theta), math.sin(theta)
         for x, y, s in runs:
@@ -1124,12 +1323,22 @@ class _Converter:
                     cx + cos_t * (x - cx) - sin_t * (y - cy),
                     cy + sin_t * (x - cx) + cos_t * (y - cy),
                 )
-            width = _text_width_px(data, font_size, bold)
+            # Browsers add letter-spacing after every character, the last one
+            # included, and anchor on that full advance; Tc does the same.
+            width = _text_width_px(data, font_size, font_base) + spacing * len(data)
             dx = -width / 2.0 if anchor == "middle" else (-width if anchor == "end" else 0.0)
             tx = x + dx * cos_t
             ty = y + dx * sin_t
             self._set_gs(ca, ca)
             self._set_fill_rgb((red, green, blue))
+            # Tc is graphics state (saved by q, restored by Q) and outlives the
+            # BT/ET block, so a spaced run must be followed by an explicit reset
+            # before the next plain one. Tc is in unscaled text-space units and
+            # Tm is a pure rotation here, so the px value passes through as-is,
+            # exactly like the Tf size. Untouched when nothing ever set it, so
+            # unstyled documents keep their bytes.
+            if spacing or self._cache.get("Tc"):
+                self._set("Tc", round(spacing, 4), f"{_f(spacing)} Tc")
             # Tm un-flips the top-level y flip so glyphs render upright; the
             # rotation is the SVG angle (clockwise in screen space).
             self.ops.append("BT")
@@ -1272,6 +1481,9 @@ class _Converter:
 
         state = _State()
         state.font_size = _float(root.get("font-size"), _DEFAULT_FONT_SIZE, "font-size")
+        # The root's system-ui stack resolves to Helvetica; an author root
+        # family (facet composition, future themes) inherits like any other.
+        state.font_family = _base_family(root.get("font-family"), "Helvetica")
 
         page_w = width * _PX_TO_PT
         page_h = height * _PX_TO_PT
