@@ -554,6 +554,11 @@ Node, Chrome, `ruff`, `ty`, or `pytest` produce direct install/skip guidance.
 
 ## Release Checklist
 
+For the ordered maintainer procedure—including PyPI immutability checks,
+approval, release monitoring, recovery, and clean-install smoke tests—use the
+[`release operator checklist`](release-checklist.md). The invariants below are
+the release bar that procedure must preserve.
+
 **`CHANGELOG.md` is the release trigger.** A version heading in it with no
 matching git tag is what makes the pipeline build and publish that version, and
 the tag is pushed only *after* PyPI accepted the artifacts. Releases are driven
