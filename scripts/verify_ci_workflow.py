@@ -1046,7 +1046,6 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "actions/cache@",
         "hashFiles('scripts/ci_gallery_ffmpeg.lock.json')",
         "actions/upload-artifact@",
-        "name: ci-gallery-ffmpeg",
         "compression-level: 0",
     )
     _require_step_contains(
@@ -1072,6 +1071,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
             _has_yaml_key(block, key, indent=8) for key in ("if", "continue-on-error")
         ):
             errors.append(f"CI step {step!r} must be present and blocking")
+    upload = _named_step_blocks(producer).get("Publish verified FFmpeg package bundle", "")
+    inputs = _unique_mapping_block(upload, "with", indent=8)
+    names, unsafe = _direct_yaml_key_values(inputs or "", "name", indent=10)
+    if unsafe or [_decode_yaml_key(name) for name in names] != [("ci-gallery-ffmpeg", False)]:
+        errors.append("CI gallery upload must define a unique direct with.name: ci-gallery-ffmpeg")
     if any(
         "apt-get" in line
         for step in _step_sequence_blocks(gallery_job)

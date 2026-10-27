@@ -169,8 +169,10 @@ not resolve floating package versions or run `apt-get update` for this bundle.
 
 Only the producer uses the package cache. Its exact key includes the runner OS,
 architecture and lockfile hash; no prefix restore or unreviewed external bundle
-is accepted. On a warm cache, no package-server download occurs, but all digests
-are still checked before publishing the same-run artifact. Already compressed
+is accepted. Workflow validation reads the upload step’s direct `with.name` input
+and requires exactly `ci-gallery-ffmpeg`; comments and duplicate keys cannot
+substitute for the artifact contract. On a warm cache, no package-server download
+occurs, but all digests are still checked before publishing the same-run artifact. Already compressed
 `.deb` files are uploaded without an additional compression pass. Each shard
 downloads this run's artifact, checks it against its own checked-out lockfile,
 then installs it with offline `dpkg` and proves that H.264 encoding works.

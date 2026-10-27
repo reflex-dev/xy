@@ -2062,3 +2062,23 @@ def test_gallery_shared_dependency_actions_cannot_be_bypassed(tmp_path, step, by
         step in error and "blocking" in error
         for error in verify_ci_workflow.validate_ci_workflow(path)
     )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "          name: wrong-artifact\n          # name: ci-gallery-ffmpeg",
+        "          # name: ci-gallery-ffmpeg",
+        "          name: ci-gallery-ffmpeg\n          name: wrong-artifact",
+    ],
+)
+def test_gallery_upload_requires_actual_artifact_name(tmp_path, replacement):
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    needle = "          name: ci-gallery-ffmpeg"
+    assert workflow.count(needle) == 1
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(needle, replacement))
+    assert any(
+        "upload" in error and "ci-gallery-ffmpeg" in error
+        for error in verify_ci_workflow.validate_ci_workflow(path)
+    )
