@@ -83,6 +83,11 @@ function xySocket() {
   });
   sharedSocket.on("connect", () => dbg("xy namespace connected"));
   sharedSocket.on("connect_error", (e) => dbg("xy connect_error", String(e)));
+  // Reflex 0.10 pre-creates the shared manager with autoConnect: false.
+  // Activate this namespace explicitly; io() inherits the manager's setting
+  // even when the app plane has already opened its transport. An active
+  // legacy socket may already have its CONNECT packet in flight.
+  if (!sharedSocket.active) sharedSocket.connect();
   return sharedSocket;
 }
 
@@ -178,6 +183,22 @@ const axisLayoutSpec = (spec) => {
   );
 };
 
+// Python keeps `loc` concrete even for automatic placement so static exports
+// and browsers without a readable marks surface have a deterministic fallback.
+// That concrete answer is data-dependent, not constructor-owned chrome: when
+// `auto_loc="best"` remains active, a loc-only change must stay on the
+// updatePayload path instead of destroying and remounting ChartView.
+const mountedLegendSpec = (legend, coords) => {
+  if (!legend || typeof legend !== "object" || Array.isArray(legend)) return legend ?? null;
+  const automatic =
+    String(legend.auto_loc || "").trim().toLowerCase() === "best" &&
+    !Array.isArray(legend.anchor) &&
+    coords !== "polar";
+  if (!automatic) return legend;
+  const { loc: _concreteFallback, ...mounted } = legend;
+  return mounted;
+};
+
 // updatePayload owns new axes/ranges, trace buffers, marks, annotations,
 // tooltip content, and animation. The fields below instead determine DOM
 // topology or layout built only by the ChartView constructor. Projecting just
@@ -188,8 +209,9 @@ const mountedChromeSpec = (spec) => ({
   title: spec?.title ?? null,
   padding: spec?.padding ?? null,
   show_legend: spec?.show_legend !== false,
-  legend: spec?.legend ?? null,
-  extra_legends: spec?.extra_legends ?? null,
+  legend: mountedLegendSpec(spec?.legend, spec?.coords),
+  extra_legends: spec?.extra_legends?.map((legend) =>
+    mountedLegendSpec(legend, spec?.coords)) ?? null,
   legend_traces: (spec?.traces || []).map(legendTraceSpec),
   colorbar: spec?.colorbar ?? null,
   has_density_badges: (spec?.traces || []).some((trace) => trace?.tier === "density"),

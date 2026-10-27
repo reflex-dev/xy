@@ -533,6 +533,12 @@ Object.assign(ChartView.prototype, {
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this._payload = buffer;
+    // The wrapper intentionally leaves automatic legend chrome mounted when
+    // only Python's data-dependent concrete fallback changed. A live renderer
+    // keeps its last settled winner through the animation; a lost/detached or
+    // non-preserved fallback canvas cannot score and adopts the new concrete
+    // location immediately instead.
+    this._adoptBestLegendFallbacks?.(spec);
     // A full payload re-homes the view to its own axis ranges (reflex-integration
     // §4 "state-driven rebuild"): unlike streaming append, it carries no
     // follow-policy, so it behaves like a fresh mount of the new data. Clear the
@@ -551,9 +557,14 @@ Object.assign(ChartView.prototype, {
     const target = { ...this.view0 };
     if (this._glLost || !this.gl) {
       this.view = { ...target };
+      this._markBestLegendsDirty?.();
       return true;
     }
     this.gpuTraces = spec.traces.map((trace) => this._buildTrace(buffer, trace));
+    // The legend DOM is unchanged on updatePayload, but every rendered mark
+    // underneath it was replaced. Keep this pending through `_dataAnim`; the
+    // completion draw is the single settled raster score.
+    this._markBestLegendsDirty?.();
     for (const next of this.gpuTraces) {
       const old = previous.find((candidate) => candidate.trace.id === next.trace.id && candidate.trace.kind === next.trace.kind);
       if (old) {

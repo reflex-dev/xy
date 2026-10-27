@@ -34,20 +34,12 @@ main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   max-width: 88rem;
 }
 #xy-chart-gallery {
-  --gallery-preview-surface: #fff;
-  --gallery-preview-fill: #efeaff;
-  --gallery-preview-soft: #dccfff;
-  --gallery-preview-bar: #dccfff;
-  --gallery-preview-stroke: #a790f0;
-  --gallery-preview-strong: #8067d7;
-}
-.dark #xy-chart-gallery {
-  --gallery-preview-surface: var(--secondary-2);
-  --gallery-preview-fill: var(--primary-3);
-  --gallery-preview-soft: var(--primary-5);
-  --gallery-preview-bar: var(--primary-5);
-  --gallery-preview-stroke: var(--primary-8);
-  --gallery-preview-strong: var(--primary-9);
+  --gallery-preview-surface: var(--muted);
+  --gallery-preview-fill: var(--accent);
+  --gallery-preview-soft: var(--border);
+  --gallery-preview-bar: var(--subtle-foreground);
+  --gallery-preview-stroke: var(--muted-foreground);
+  --gallery-preview-strong: var(--foreground);
 }
 #xy-chart-gallery .preview-fill { fill: var(--gallery-preview-fill); }
 #xy-chart-gallery .preview-fill-soft { fill: var(--gallery-preview-soft); }
@@ -377,12 +369,12 @@ def _gallery_card(item: GalleryItem, group_route: str | None) -> rx.Component:
             rx.box(
                 rx.text(
                     item.title,
-                    class_name="truncate font-base text-secondary-12",
+                    class_name="truncate font-base text-foreground",
                 ),
                 ui.icon(
                     "ArrowRight01Icon",
                     size=14,
-                    class_name="text-secondary-9",
+                    class_name="text-subtle-foreground",
                 ),
                 class_name=(
                     "absolute bottom-0 flex w-full flex-row items-center justify-between px-4 py-2"
@@ -390,8 +382,8 @@ def _gallery_card(item: GalleryItem, group_route: str | None) -> rx.Component:
             ),
             class_name=(
                 "relative aspect-[320/232] overflow-hidden rounded-xl border "
-                "box-border border-secondary-5 bg-secondary-2 shadow-large "
-                "transition-bg hover:bg-secondary-3"
+                "box-border border-border bg-muted shadow-small "
+                "transition-bg hover:bg-accent"
             ),
         ),
         href=destination,
@@ -405,7 +397,7 @@ def _gallery_group_heading(group: GalleryGroup) -> rx.Component:
     """Render a linked family heading or a plain mixed-family heading."""
     heading = rx.el.h2(
         group.title,
-        class_name="font-large text-secondary-12",
+        class_name="font-large text-foreground",
     )
     if group.route is None:
         return heading
@@ -413,7 +405,7 @@ def _gallery_group_heading(group: GalleryGroup) -> rx.Component:
         heading,
         href=group.route,
         underline="none",
-        class_name="!text-inherit hover:!text-primary-10",
+        class_name="!text-inherit hover:!text-foreground",
         aria_label=f"Open the {group.title} chart family guide",
     )
 

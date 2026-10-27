@@ -88,3 +88,7 @@ still promotable, because the images are what serve traffic.
 | secret | `HARBOR_PUSH_USERNAME` / `HARBOR_PUSH_SECRET` | Harbor push |
 | secret | `ACR_USERNAME` / `ACR_PASSWORD` | ACR push |
 | environment | `production` | the prod approval gate |
+
+The release tool may still dispatch staging with `tag`, `package`, and `version`.
+Staging accepts those inputs for compatibility and resolves `tag` when no `ref`
+is supplied; deployment remains commit-based with the same independent production approval.

@@ -4,7 +4,12 @@
 The workflows are YAML, but this checker intentionally stays stdlib-only so it
 can run before the dev environment is installed. It does not try to be a full
 YAML parser; it checks stable, high-value invariants that are easy to lose when
-editing `.github/workflows/ci.yml` or `.github/workflows/release.yml`.
+editing `.github/workflows/ci.yml` or `.github/workflows/codspeed.yml`.
+
+The release pipeline is deliberately out of scope: those workflows come from
+`reflex-release`, which owns their invariants (tested where the tool lives) and
+ships `sync` to detect drift. Asserting their contents here as well duplicated
+that and went stale the moment the tool changed.
 """
 
 from __future__ import annotations
@@ -19,12 +24,19 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
-DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "result",
+    "changes",
+    "build",
     "browser_conformance",
     "matplotlib_reference",
+    "pyplot_gallery",
+    "pyplot_gallery_extended",
     "test",
+    "rust_checks",
+    "browser_smokes",
+    "regression_checks",
     "python_floor",
     "benchmark_vs",
     "benchmark_methodology",
@@ -34,7 +46,45 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+
+CI_SUMMARY_DEPENDENCIES = (
+    "changes",
+    "build",
+    "test",
+    "rust_checks",
+    "browser_smokes",
+    "regression_checks",
+    "python_floor",
+    "matplotlib_reference",
+    "matplotlib_patch_smoke",
+    "pyplot_gallery",
+    "pyplot_gallery_extended",
+    "browser_conformance",
+    "sdist",
+    "wheels",
+    "install_without_rust",
+)
+CI_SUMMARY_COMMANDS = [
+    "python3 - <<'PY'",
+    "import json, os",
+    "results = json.loads(os.environ['RESULTS'])",
+    "failed = [name for name, job in results.items() if job['result'] not in ('success', 'skipped')]",
+    'assert not failed, f"CI jobs failed or cancelled: {failed}"',
+    "assert results['changes']['result'] == 'success', 'CI selection must succeed'",
+    "PY",
+]
+
+
+# Versions observed in passing CI runs; update these inputs and their spec together.
+CI_BOOTSTRAP_INPUTS = {
+    "actions/checkout": ("persist-credentials", "false"),
+    "actions/setup-node": ("node-version", "22.23.3"),
+    "astral-sh/setup-uv": ("version", "0.13.5"),
+    "dtolnay/rust-toolchain": ("toolchain", "1.99.1"),
+    "actions/setup-python": ("python-version", "3.11.17"),
+}
+CODSPEED_ACTION_COMMIT = "f99becdce5e5d51fd556489ebef684f4ecfd6286"
+CONFORMANCE_IMAGE = "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48"
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -318,7 +368,14 @@ def _has_shell_init_environment(text: str) -> bool:
     lines = _yaml_code_lines(text)
     protected_jobs = _job_blocks(text)
     protected_job_text = "\n".join(
-        protected_jobs.get(job, "") for job in ("matplotlib_reference", "test")
+        protected_jobs.get(job, "")
+        for job in (
+            "matplotlib_reference",
+            "test",
+            "rust_checks",
+            "browser_smokes",
+            "regression_checks",
+        )
     )
     if any(
         re.search(r"\bGITHUB_(?:ENV|PATH)\b", line)
@@ -432,30 +489,6 @@ def _unique_mapping_block(text: str, key: str, *, indent: int) -> Optional[str]:
             end = index
             break
     return "\n".join(raw_lines[start + 1 : end])
-
-
-def _has_safe_release_dry_run_input(text: str) -> bool:
-    """Validate the exact nested manual-release dry-run input mapping."""
-    block = _unique_mapping_block(text, "on", indent=0)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "workflow_dispatch", indent=2)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "inputs", indent=4)
-    if block is None:
-        return False
-    block = _unique_mapping_block(block, "dry_run", indent=6)
-    if block is None:
-        return False
-    type_values, type_unsafe = _direct_yaml_key_values(block, "type", indent=8)
-    default_values, default_unsafe = _direct_yaml_key_values(block, "default", indent=8)
-    return (
-        not type_unsafe
-        and not default_unsafe
-        and type_values == ["boolean"]
-        and default_values == ["true"]
-    )
 
 
 def _require_unique_workflow_structure(
@@ -574,16 +607,23 @@ def _require_step_runs_exactly(
     forbidden_step_keys = ("if", "continue-on-error", "shell", "working-directory")
     has_forbidden_step_key = any(_has_yaml_key(block, key, indent=8) for key in forbidden_step_keys)
     forbidden_job_keys = (
-        "if",
         "continue-on-error",
         "defaults",
         "container",
-        "needs",
         "strategy",
     )
     has_forbidden_job_key = any(
         _has_yaml_key(job_text, key, indent=4) for key in forbidden_job_keys
     )
+    # Scope/dependency controls are allowed only in their reviewed form.
+    group = "pyplot" if job_text.startswith("  matplotlib_reference:") else "runtime"
+    for key, expected in (
+        ("if", f"needs.changes.outputs.{group} == 'true'"),
+        ("needs", "changes" if job_text.startswith("  rust_checks:") else "[changes, build]"),
+    ):
+        values, ambiguous = _direct_yaml_key_values(job_text, key, indent=4)
+        if ambiguous or values != [expected]:
+            has_forbidden_job_key = True
     has_exactly_one_run_key = _direct_yaml_key_count(block, "run", indent=8) == 1
     if (
         not has_exactly_one_run_key
@@ -635,24 +675,6 @@ def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
     return block is not None and "if:" in block
 
 
-# The one condition that actually gates a PyPI upload behind the manual
-# dry-run switch. Requiring this exact predicate on the upload step itself —
-# not merely *an* `if:` — is the point: `if: always()` or any unrelated
-# condition would satisfy a mere presence check while gating nothing.
-PYPI_PUBLISH_GATE = (
-    "if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'"
-)
-
-
-def _step_carries_publish_gate(job_text: str, step_needle: str) -> bool:
-    block = _step_block(job_text, step_needle)
-    if block is None:
-        return False
-    values, unsafe = _direct_yaml_key_values(block, "if", indent=8)
-    expected = PYPI_PUBLISH_GATE.partition(":")[2].strip()
-    return not unsafe and values == [expected]
-
-
 def _require_workflow_contains(
     errors: list[str],
     text: str,
@@ -701,6 +723,39 @@ def _require_unshallow_checkouts(errors: list[str], text: str, workflow_label: s
             )
     if checkout_count == 0:
         errors.append(f"{workflow_label} workflow has no structurally recognized checkout step")
+
+
+def _require_ci_bootstrap_inputs(errors: list[str], text: str, label: str) -> None:
+    """Require explicit credential isolation and reviewed tool versions."""
+    for job in _job_blocks(text).values():
+        for step in _step_sequence_blocks(job):
+            uses_values, uses_unsafe = _step_direct_key_values(step, "uses")
+            if uses_unsafe or len(uses_values) > 1:
+                errors.append(f"{label} bootstrap step has an ambiguous action reference")
+                continue
+            if not uses_values:
+                continue
+            uses, decode_unsafe = _decode_yaml_key(uses_values[0])
+            if decode_unsafe or uses is None:
+                errors.append(f"{label} bootstrap step has an ambiguous action reference")
+                continue
+            action = uses.split("@", 1)[0]
+            if action == "CodSpeedHQ/action" and uses != f"{action}@{CODSPEED_ACTION_COMMIT}":
+                errors.append(f"{label} must pin CodSpeed to the reviewed commit SHA")
+            if action not in CI_BOOTSTRAP_INPUTS:
+                continue
+            if not re.fullmatch(r"[^@]+@[0-9a-fA-F]{40}", uses):
+                errors.append(f"{label} {action} must use a full 40-hex commit SHA")
+            key, expected = CI_BOOTSTRAP_INPUTS[action]
+            with_block = _unique_mapping_block(step, "with", indent=8)
+            values, unsafe = _direct_yaml_key_values(with_block or "", key, indent=10)
+            decoded = [_decode_yaml_key(value) for value in values]
+            if (
+                unsafe
+                or any(ambiguous for _, ambiguous in decoded)
+                or [value for value, _ in decoded] != [expected]
+            ):
+                errors.append(f"{label} {action} must define a unique direct {key}: {expected}")
 
 
 def _workflow_trigger_block(text: str, trigger: str) -> Optional[str]:
@@ -759,6 +814,41 @@ def _require_docs_spec_pr_paths_ignored(errors: list[str], text: str, workflow_l
         )
 
 
+def _require_ci_summary(errors: list[str], jobs: dict[str, str]) -> None:
+    """Protect the aggregate required check from omitted or weakened gates."""
+    summary = jobs.get("result", "")
+    for key, expected in (
+        ("needs", f"[{', '.join(CI_SUMMARY_DEPENDENCIES)}]"),
+        ("if", "always()"),
+    ):
+        values, ambiguous = _direct_yaml_key_values(summary, key, indent=4)
+        if ambiguous or values != [expected]:
+            errors.append(f"CI summary must define {key}: {expected}")
+    if _has_yaml_key(summary, "continue-on-error", indent=4):
+        errors.append("CI summary must be blocking")
+    step = _named_step_blocks(summary).get("Require selected checks to succeed", "")
+    step_env = _unique_mapping_block(step, "env", indent=8)
+    results_values, results_ambiguous = _direct_yaml_key_values(
+        step_env or "", "RESULTS", indent=10
+    )
+    if (
+        _direct_yaml_key_count(step, "run", indent=8) != 1
+        or _step_run_lines(step) != CI_SUMMARY_COMMANDS
+        or any(
+            _has_yaml_key(step, key, indent=8)
+            for key in (
+                "if",
+                "continue-on-error",
+                "shell",
+                "working-directory",
+            )
+        )
+        or results_ambiguous
+        or results_values != ["${{ toJSON(needs) }}"]
+    ):
+        errors.append("CI summary must run the reviewed failure and selection assertions")
+
+
 def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     try:
         text = path.read_text(encoding="utf-8")
@@ -772,8 +862,84 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         errors.append("CI workflow must not override the shell for hard-gate run steps")
     if _has_shell_init_environment(text):
         errors.append("CI workflow must not set shell-init environment variables")
-    _require_docs_spec_pr_paths_ignored(errors, text, "CI")
+    if _workflow_trigger_block(text, "pull_request") is None:
+        errors.append("CI workflow missing pull_request trigger")
+    _require_job_contains(
+        errors,
+        jobs,
+        "changes",
+        "CI",
+        "complete diff scope selection",
+        'scripts/ci_scope.py --base "$BASE_SHA" --head "$HEAD_SHA"',
+        "scripts/ci_scope.py --full",
+        "steps.scope.outputs.pyplot",
+    )
+    scopes = {
+        "build": "build",
+        "matplotlib_reference": "pyplot",
+        "matplotlib_patch_smoke": "pyplot",
+        "pyplot_gallery": "pyplot",
+        "pyplot_gallery_extended": "pyplot",
+        "test": "runtime",
+        "rust_checks": "runtime",
+        "browser_smokes": "runtime",
+        "regression_checks": "runtime",
+        "python_floor": "runtime",
+        "benchmark_vs": "benchmarks",
+        "benchmark_methodology": "benchmarks",
+        "browser_conformance": "conformance",
+        "sdist": "packaging",
+        "wheels": "packaging",
+        "install_without_rust": "packaging",
+    }
+    for job, group in scopes.items():
+        values, ambiguous = _direct_yaml_key_values(jobs.get(job, ""), "if", indent=4)
+        if ambiguous or values != [f"needs.changes.outputs.{group} == 'true'"]:
+            errors.append(f"CI {job} must use the reviewed {group} scope")
+    for job in (
+        "test",
+        "browser_smokes",
+        "regression_checks",
+        "python_floor",
+        "matplotlib_reference",
+        "matplotlib_patch_smoke",
+        "pyplot_gallery",
+        "pyplot_gallery_extended",
+        "browser_conformance",
+        "benchmark_vs",
+        "benchmark_methodology",
+    ):
+        _require_job_contains(
+            errors,
+            jobs,
+            job,
+            "CI",
+            "same-run native/client reuse",
+            "needs: [changes, build]",
+            "uses: ./.github/actions/restore-ci-build",
+        )
+    _require_job_contains(
+        errors,
+        jobs,
+        "build",
+        "CI",
+        "verified shared wheel producer",
+        "uv build --wheel",
+        'XY_REQUIRE_CARGO: "1"',
+        "scripts/verify_wheel.py dist/*.whl --expect-native",
+        "name: ci-linux-wheel",
+        "actions/upload-artifact@",
+    )
+    _require_ci_summary(errors, jobs)
+    _require_step_contains(
+        errors,
+        jobs.get("python_floor", ""),
+        "Install package and compatibility test dependencies for Python 3.11",
+        "Python floor pyyaml workflow-test dependency",
+        '"pyyaml>=6"',
+    )
     _require_unshallow_checkouts(errors, text, "CI")
+    _require_ci_bootstrap_inputs(errors, text, "CI")
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
@@ -786,7 +952,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "released Matplotlib compatibility gates",
         "matplotlib==3.11.0",
         "matplotlib.__version__ == '3.11.0'",
+        "scripts/generate_pyplot_compat_inventory.py --check",
         "scripts/sync_matplotlib_compat.py --check",
+        "scripts.pyplot_gallery.contract check",
+        "tests/pyplot/test_gallery_contract.py",
+        "tests/pyplot/test_gallery_metrics.py",
         "tests/pyplot/test_launch_compat.py",
         "tests/pyplot/test_reference_corpus.py",
         "tests/pyplot/test_reference_semantics.py",
@@ -799,7 +969,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Install xy and released reference wheel",
         "released reference installation",
         "uv venv .venv",
-        "uv pip install -p .venv/bin/python -e . --group dev",
+        "uv pip install -p .venv/bin/python dist/*.whl --group dev",
         'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
     )
     _require_step_runs_exactly(
@@ -808,16 +978,137 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "Verify released reference and reviewed snapshot",
         "version and snapshot checks",
         ".venv/bin/python -c \"import matplotlib; assert matplotlib.__version__ == '3.11.0'\"",
+        ".venv/bin/python scripts/generate_pyplot_compat_inventory.py --check",
         ".venv/bin/python scripts/sync_matplotlib_compat.py --check",
+        ".venv/bin/python -m scripts.pyplot_gallery.contract check",
     )
     _require_step_runs_exactly(
         errors,
         reference,
         "Run optional-interoperability and dual-engine corpus tests",
         "reference test commands",
+        ".venv/bin/pytest -q tests/pyplot/test_gallery_contract.py",
+        ".venv/bin/pytest -q tests/pyplot/test_gallery_metrics.py",
         ".venv/bin/pytest -q tests/pyplot/test_launch_compat.py",
         ".venv/bin/pytest -q tests/pyplot/test_reference_corpus.py",
         ".venv/bin/pytest -q tests/pyplot/test_reference_semantics.py",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "pyplot_gallery",
+        "CI",
+        "required eight-shard pyplot compatibility ratchet",
+        "fail-fast: false",
+        "shard: [0, 1, 2, 3, 4, 5, 6, 7]",
+        "dtolnay/rust-toolchain@",
+        'XY_REQUIRE_CARGO: "1"',
+        "matplotlib==3.11.0",
+        "scripts.pyplot_gallery.run_gallery",
+        "--profile standard",
+        '--shard "${{ matrix.shard }}/8"',
+        "Upload failure-only gallery evidence",
+        "if: always()",
+        "actions/upload-artifact@",
+        "report.json",
+        "junit.xml",
+        "/failures",
+        "if-no-files-found: warn",
+    )
+    gallery_job = jobs.get("pyplot_gallery", "")
+    if "continue-on-error:" in gallery_job:
+        errors.append("CI pyplot_gallery compatibility ratchet must be blocking")
+
+    _require_job_contains(
+        errors,
+        jobs,
+        "pyplot_gallery_extended",
+        "CI",
+        "strict 12-example extended gallery environment",
+        "runs-on: ubuntu-24.04",
+        "timeout-minutes: 90",
+        "dtolnay/rust-toolchain@",
+        "Install TeX, fonts, GTK3/4, and virtual display",
+        "Install xy and pinned extended Python dependencies",
+        "Verify extended dependency and driver contract",
+        "Run all 12 extended differential examples",
+        "Require 12/12 extended acceptance with no waivers",
+        "Upload extended gallery evidence",
+        "if: always()",
+        "actions/upload-artifact@",
+        "gallery-extended-artifacts/report.json",
+        "gallery-extended-artifacts/junit.xml",
+        "gallery-extended-artifacts/failures",
+        "if-no-files-found: warn",
+    )
+    extended_gallery = jobs.get("pyplot_gallery_extended", "")
+    if "continue-on-error:" in extended_gallery:
+        errors.append("CI pyplot_gallery_extended completion gate must be blocking")
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Install TeX, fonts, GTK3/4, and virtual display",
+        "exact TeX, font, GTK, and Xvfb packages",
+        "sudo apt-get update",
+        "sudo apt-get install --no-install-recommends -y",
+        "cm-super",
+        "dvipng",
+        "fonts-dejavu-core",
+        "fonts-liberation",
+        "fonts-urw-base35",
+        "ghostscript",
+        "gir1.2-gtk-3.0",
+        "gir1.2-gtk-4.0",
+        "librsvg2-common",
+        "python3-cairo",
+        "python3-gi",
+        "python3-gi-cairo",
+        "python3-venv",
+        "texlive-fonts-recommended",
+        "texlive-latex-base",
+        "texlive-latex-extra",
+        "texlive-latex-recommended",
+        "xauth",
+        "xvfb",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Install xy and pinned extended Python dependencies",
+        "system-Python GI bridge and pinned optional dependencies",
+        'XY_REQUIRE_CARGO: "1"',
+        "uv venv .venv --python /usr/bin/python3 --system-site-packages",
+        '"colorspacious==1.1.2"',
+        '"matplotlib==3.11.0"',
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Verify extended dependency and driver contract",
+        "metadata and Xvfb preflight commands",
+        "scripts.pyplot_gallery.extended_environment check",
+        'xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24"',
+        "scripts.pyplot_gallery.extended_environment preflight",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Run all 12 extended differential examples",
+        "unsharded complete extended profile command",
+        'xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24"',
+        "scripts.pyplot_gallery.run_gallery",
+        "--profile extended",
+        "--shard 0/1 \\",
+        "--workers 2",
+        "--timeout 180",
+    )
+    _require_step_contains(
+        errors,
+        extended_gallery,
+        "Require 12/12 extended acceptance with no waivers",
+        "strict post-run completion check",
+        "scripts.pyplot_gallery.extended_environment",
+        "verify-report gallery-extended-artifacts/report.json",
     )
 
     _require_job_contains(
@@ -832,6 +1123,20 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "importlib.metadata as m, reflex_xy",
         "assert reflex_xy.__version__ == m.version('xy')",
         "ruff check .",
+        "scripts/check_typing.py",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "browser_smokes",
+        "CI",
+        "hard browser production gates",
+        "scripts/abi_smoke.py",
+        "scripts/render_smoke_nonumpy.py",
+        "scripts/polar_parity_smoke.py",
+        "scripts/append_stream_smoke.py",
+        "scripts/png_export_smoke.py",
+        "JS parses (ESM + IIFE)",
         "scripts/smoke_render.py",
         "Polar phase 6/7 live examples",
         "scripts/polar_phase7_smoke.py",
@@ -845,6 +1150,15 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "benchmarks/bench_dashboard.py",
         "--chart-counts 10,20,50,60",
         "dashboard-smoke.json --kind dashboard-browser",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "regression_checks",
+        "CI",
+        "hard benchmark regression gates",
+        "scripts/bench_native.py --sizes 1e5,1e6",
+        "scripts/bench.py --sizes 1e5,1e6",
         "--sizes 1e5,1e6,1e7 --production --json scatter.json",
         "scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json",
         "scripts/verify_benchmark_report.py scatter.json --kind scatter-native",
@@ -863,12 +1177,79 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "transport.json",
     )
     test_job = jobs.get("test", "")
-    _require_step_runs_exactly(
+    allowed_step_conditions = {
+        (
+            "browser_smokes",
+            "Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)",
+        ): ["needs.changes.outputs.pyplot == 'true'"],
+        ("regression_checks", "Upload regression benchmark report"): ["always()"],
+    }
+    for job in ("test", "rust_checks", "browser_smokes", "regression_checks"):
+        if _has_yaml_key(jobs.get(job, ""), "continue-on-error"):
+            errors.append(f"CI {job} job and its required steps must be blocking")
+        for step in _step_sequence_blocks(jobs.get(job, "")):
+            names, names_unsafe = _step_direct_key_values(step, "name")
+            name = _decode_yaml_key(names[0])[0] if len(names) == 1 else ""
+            conditions, conditions_unsafe = _step_direct_key_values(step, "if")
+            if (
+                names_unsafe
+                or len(names) > 1
+                or conditions_unsafe
+                or conditions != allowed_step_conditions.get((job, name), [])
+            ):
+                errors.append(f"CI {job} has an unreviewed step condition on {name or 'setup'}")
+    rust_job = jobs.get("rust_checks", "")
+    values, ambiguous = _direct_yaml_key_values(rust_job, "needs", indent=4)
+    if ambiguous or values != ["changes"]:
+        errors.append("CI rust_checks must depend only on changes, independent of the wheel")
+    for name, command in (
+        ("Rust unit tests", "cargo test"),
+        ("Rust lint", "cargo clippy --all-targets -- -D warnings"),
+    ):
+        _require_step_runs_exactly(errors, rust_job, name, "blocking Rust checks", command)
+    for job in ("test", "browser_smokes", "regression_checks"):
+        _require_job_contains(
+            errors,
+            jobs,
+            job,
+            "CI",
+            "shared Chromium setup",
+            "uses: ./.github/actions/setup-ci-chromium",
+        )
+        _require_step_runs_exactly(
+            errors,
+            jobs.get(job, ""),
+            "Install package + dev deps",
+            "locked runtime development environment",
+            "uv sync --locked --extra reflex --group dev",
+            'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
+        )
+    _require_step_contains(
         errors,
         test_job,
-        "Install package + dev deps",
-        "locked Reflex development environment",
-        "uv sync --locked --extra reflex --group dev",
+        "Python tests (native core)",
+        "required full pytest Chromium environment",
+        "XY_CHROMIUM=",
+        "require('playwright').chromium.executablePath()",
+        "XY_REQUIRE_BROWSER=1",
+        ".venv/bin/pytest -q",
+    )
+    _require_step_contains(
+        errors,
+        jobs.get("browser_smokes", ""),
+        "Pyplot backend, widget, mode, behavior, and protocol gate (Chromium)",
+        "pinned Matplotlib browser compatibility suites",
+        'XY_REQUIRE_BROWSER: "1"',
+        "XY_CHROMIUM=",
+        "require('playwright').chromium.executablePath()",
+        "matplotlib.__version__ == '3.11.0'",
+        "tests/backends/test_backend_xy.py",
+        "tests/backends/test_backend_xy_widget.py",
+        "tests/backends/test_pyplot_svg_gallery_browser.py",
+        "tests/backends/test_display_list.py",
+        "tests/pyplot/test_modes.py",
+        "tests/pyplot/test_gallery_behavior.py",
+        "tests/pyplot/test_public_protocols.py",
     )
     _require_job_contains(
         errors,
@@ -876,22 +1257,56 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "browser_conformance",
         "CI",
         "accessibility and three-engine conformance gate",
-        'node-version: "22"',
+        'node-version: "22.23.3"',
         "npm ci",
-        "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
-        "~/.cache/ms-playwright",
-        "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
-        "npx playwright install --with-deps chromium firefox webkit",
-        "node js/build.mjs",
+        "PLAYWRIGHT_BROWSERS_PATH: /ms-playwright",
+        "Verify preinstalled Playwright browsers",
+        "accessSync(browser.executablePath())",
+        "chromium, firefox, webkit",
+        "test -f python/xy/static/standalone.js",
         "node scripts/browser_conformance.mjs",
     )
+    conformance_container = _unique_mapping_block(
+        jobs.get("browser_conformance", ""), "container", indent=4
+    )
+    images, images_unsafe = _direct_yaml_key_values(conformance_container or "", "image", indent=6)
+    if images_unsafe or images != [CONFORMANCE_IMAGE]:
+        errors.append("CI browser_conformance must use the reviewed pinned browser image")
+    conformance_job = jobs.get("browser_conformance", "")
+    preflight = _named_step_blocks(conformance_job).get(
+        "Verify preinstalled Playwright browsers", ""
+    )
+    # The text alone is not a gate: a skipped, non-blocking, or redirected
+    # step would pass it without ever probing a browser.
+    if (
+        _direct_yaml_key_count(preflight, "run", indent=8) != 1
+        or any(
+            _has_yaml_key(preflight, key, indent=8)
+            for key in ("if", "continue-on-error", "shell", "working-directory")
+        )
+        or any(
+            _has_yaml_key(conformance_job, key, indent=4)
+            for key in ("continue-on-error", "defaults")
+        )
+        or _step_run_lines(preflight)
+        != [
+            "node --input-type=module - <<'JS'",
+            "import { accessSync } from 'node:fs';",
+            "import { chromium, firefox, webkit } from 'playwright';",
+            "for (const browser of [chromium, firefox, webkit]) {",
+            "accessSync(browser.executablePath());",
+            "}",
+            "JS",
+        ]
+    ):
+        errors.append("CI browser preflight must actively verify all three executable paths")
     _require_job_contains(
         errors,
         jobs,
         "python_floor",
         "CI",
         "Python 3.11 floor gate",
-        'python-version: "3.11"',
+        'python-version: "3.11.17"',
         "scripts/check_python_floor.py",
         "scripts/check_public_api.py",
     )
@@ -902,7 +1317,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "parallel cross-library benchmark matrix",
         "continue-on-error: true",
-        "timeout-minutes: 10",
+        "timeout-minutes: 20",
         "fail-fast: false",
         "matrix:",
         "xy: false",
@@ -1188,6 +1603,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     if _workflow_trigger_block(text, "workflow_dispatch") is None:
         errors.append("CodSpeed workflow missing workflow_dispatch trigger")
     _require_unshallow_checkouts(errors, text, "CodSpeed")
+    _require_ci_bootstrap_inputs(errors, text, "CodSpeed")
     missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
@@ -1207,7 +1623,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         "native-only benchmark path",
         "dtolnay/rust-toolchain@",
         "actions/setup-python@",
-        'python-version: "3.11"',
+        'python-version: "3.11.17"',
         "astral-sh/setup-uv@",
         "cargo build --release",
         "XY_REQUIRE_CARGO",
@@ -1222,179 +1638,13 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
     return errors
 
 
-def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return [f"cannot read release workflow {path}: {exc}"]
-
-    jobs = _job_blocks(text)
-    errors: list[str] = []
-    _require_unique_workflow_structure(errors, text, "release", REQUIRED_RELEASE_JOBS)
-    _require_trigger_with_direct_option(
-        errors,
-        text,
-        "release",
-        "push",
-        "tags",
-        '["v*"]',
-    )
-    if _workflow_trigger_block(text, "workflow_dispatch") is None:
-        errors.append("release workflow missing workflow_dispatch trigger")
-    _require_unshallow_checkouts(errors, text, "release")
-    missing_jobs = sorted(REQUIRED_RELEASE_JOBS - set(jobs))
-    if missing_jobs:
-        errors.append(f"release workflow missing required jobs: {missing_jobs}")
-
-    _require_job_contains(
-        errors,
-        jobs,
-        "wheels",
-        "release",
-        "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
-        "dtolnay/rust-toolchain@",
-        "astral-sh/setup-uv@",
-        "actions/setup-node@",
-        'node-version: "22"',
-        "npm ci",
-        "cargo-zigbuild",
-        "uv build --wheel",
-        "XY_REQUIRE_CARGO",
-        "XY_WHEEL_PLATFORM",
-        "musllinux_1_2_x86_64",
-        "win_arm64",
-        "scripts/verify_wheel.py",
-        "--expect-native",
-        "Install-size budget (<= 15 MB)",
-        '"reflex>=0.9.6"',
-        "import importlib.metadata as m, reflex_xy",
-        "assert reflex_xy.__version__ == m.version('xy')",
-        "assert k.BACKEND=='native'",
-        "actions/upload-artifact@",
-        "dist/*.whl",
-    )
-    wheels_job = jobs.get("wheels", "")
-    if "continue-on-error:" in wheels_job:
-        errors.append(
-            "release wheels job must block publishing when any native wheel build or "
-            "verification fails"
-        )
-    _require_job_contains(
-        errors,
-        jobs,
-        "wasm",
-        "release",
-        "runtime-verified, PyPI-published PyEmscripten WASM wheel",
-        "permissions:",
-        "contents: read",
-        "toolchain: 1.97.0",
-        "wasm32-unknown-emscripten",
-        'RUSTFLAGS="-C panic=abort"',
-        "pypa/cibuildwheel@294735312765b09d24a2fbec22660ce817587d55",
-        "CIBW_PLATFORM: pyodide",
-        "CIBW_BUILD: cp314-pyodide_wasm32",
-        'CIBW_PYODIDE_VERSION: "314.0.0"',
-        "CIBW_BEFORE_BUILD_PYODIDE",
-        "CIBW_ENVIRONMENT_PYODIDE",
-        "pyemscripten_2026_0_wasm32",
-        "pyodide@314.0.0",
-        "scripts/pyodide_load_smoke.py",
-        "scripts/verify_wheel.py",
-        "--expect-native",
-        "wheelhouse/*.whl",
-        "name: dist-pyemscripten",
-    )
-    wasm_job = jobs.get("wasm", "")
-    if "continue-on-error:" in wasm_job:
-        errors.append("release wasm job must block publishing when the Pyodide runtime probe fails")
-    _require_job_contains(
-        errors,
-        jobs,
-        "sdist",
-        "release",
-        "sdist build, content verification, Rust-backed install smoke, and upload",
-        "astral-sh/setup-uv@",
-        "dtolnay/rust-toolchain@",
-        "actions/setup-node@",
-        'node-version: "22"',
-        "npm ci",
-        "uv build --sdist",
-        "scripts/verify_sdist.py",
-        "actions/upload-artifact@",
-        "dist/*.tar.gz",
-    )
-    release_sdist = jobs.get("sdist", "")
-    _require_step_contains(
-        errors,
-        release_sdist,
-        "Build and load native core from sdist",
-        "Rust-backed release sdist install contract",
-        "XY_REQUIRE_CARGO",
-        "uv pip install --no-cache",
-        '"reflex>=0.9.6"',
-        "import reflex_xy",
-        "import xy.kernels as kernels",
-        'kernels.BACKEND == "native"',
-    )
-    _require_step_contains(
-        errors,
-        release_sdist,
-        "Verify coreless sdist imports reflex_xy",
-        "coreless release sdist import contract",
-        "XY_SKIP_CARGO",
-        "uv pip install --no-cache",
-        "import reflex_xy",
-        "assert reflex_xy.__version__ == version",
-        "native Rust core",
-    )
-    _require_job_contains(
-        errors,
-        jobs,
-        "publish",
-        "release",
-        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
-        "and a release-tag shape gate",
-        "needs: [wheels, sdist, wasm]",
-        "environment: pypi",
-        "id-token: write",
-        "scripts/check_release_version.py",
-        "actions/download-artifact@",
-        "pattern: dist-*",
-        "merge-multiple: true",
-        "dry_run",
-        "pypa/gh-action-pypi-publish@",
-        "packages-dir: dist/",
-        "skip-existing: true",
-    )
-    if not _has_safe_release_dry_run_input(text):
-        errors.append(
-            "release workflow missing a unique boolean workflow_dispatch dry-run input "
-            "defaulting to true, so a manual run never accidentally publishes"
-        )
-    publish = jobs.get("publish", "")
-    if "password:" in publish or "api-token" in publish:
-        errors.append("release publish job should use trusted publishing, not a PyPI token")
-    if "pypa/gh-action-pypi-publish@" in publish and not _step_carries_publish_gate(
-        publish, "pypa/gh-action-pypi-publish@"
-    ):
-        errors.append(
-            "release publish job's PyPI upload step is not gated by the dry-run "
-            f"predicate on the step itself (`{PYPI_PUBLISH_GATE}`) — a missing or "
-            "unrelated condition (e.g. `if: always()`) would let a manual "
-            "dispatch publish unintentionally"
-        )
-    return errors
-
-
 def validate_all_workflows(
     ci_path: Path = DEFAULT_CI_WORKFLOW,
     codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
-    release_path: Path = DEFAULT_RELEASE_WORKFLOW,
 ) -> list[str]:
     return [
         *validate_ci_workflow(ci_path),
         *validate_codspeed_workflow(codspeed_path),
-        *validate_release_workflow(release_path),
     ]
 
 
@@ -1408,15 +1658,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--ci-workflow", type=Path, default=DEFAULT_CI_WORKFLOW)
     parser.add_argument("--codspeed-workflow", type=Path, default=DEFAULT_CODSPEED_WORKFLOW)
-    parser.add_argument("--release-workflow", type=Path, default=DEFAULT_RELEASE_WORKFLOW)
     parser.add_argument("--ci-only", action="store_true")
     parser.add_argument("--codspeed-only", action="store_true")
-    parser.add_argument("--release-only", action="store_true")
     args = parser.parse_args(argv)
 
-    selected_modes = [args.ci_only, args.codspeed_only, args.release_only]
-    if sum(1 for selected in selected_modes if selected) > 1:
-        parser.error("--ci-only, --codspeed-only, and --release-only are mutually exclusive")
+    if args.ci_only and args.codspeed_only:
+        parser.error("--ci-only and --codspeed-only are mutually exclusive")
 
     if args.workflow is not None:
         errors = validate_ci_workflow(args.workflow)
@@ -1427,20 +1674,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.codspeed_only:
         errors = validate_codspeed_workflow(args.codspeed_workflow)
         checked = [args.codspeed_workflow]
-    elif args.release_only:
-        errors = validate_release_workflow(args.release_workflow)
-        checked = [args.release_workflow]
     else:
-        errors = validate_all_workflows(
-            args.ci_workflow,
-            args.codspeed_workflow,
-            args.release_workflow,
-        )
-        checked = [
-            args.ci_workflow,
-            args.codspeed_workflow,
-            args.release_workflow,
-        ]
+        errors = validate_all_workflows(args.ci_workflow, args.codspeed_workflow)
+        checked = [args.ci_workflow, args.codspeed_workflow]
 
     if errors:
         print(

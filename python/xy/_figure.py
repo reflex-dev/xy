@@ -1401,8 +1401,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             x1c = self.store.ingest(x1)
             y0c = self.store.ingest(y0)
             y1c = self.store.ingest(y1)
-            xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
-            yc = self.store.ingest(y1c.values)
+            # Conventional center/value columns follow the orientation: the
+            # pick readout (§16) reports the category-band center and the value
+            # end, so a horizontal bar must not read back its x midpoint (half
+            # the value) or its y1 edge (category position + half width).
+            if orientation == "horizontal":
+                xc = self.store.ingest(x1c.values)
+                yc = self.store.ingest(y0c.values + (y1c.values - y0c.values) / 2.0)
+            else:
+                xc = self.store.ingest(x0c.values + (x1c.values - x0c.values) / 2.0)
+                yc = self.store.ingest(y1c.values)
             style: dict[str, Any] = {"color": color, "opacity": opacity, "role": role}
             if orientation is not None:
                 style["orientation"] = orientation

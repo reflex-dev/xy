@@ -32,6 +32,30 @@ NECKS = ("rect", "taper")
 # the same separation a bar chart's 0.8 width leaves.
 DEFAULT_GAP = {"area": 0.0, "bar": 0.2}
 
+# What the label ladder assumes about the plot box it is placing text into.
+# Only the renderers know the real rectangle, so this is an estimate — and an
+# OPTIMISTIC estimate is the one that produces overlapping text, while a
+# pessimistic one only hides a label the tooltip still carries. So round the
+# chrome allowance up and prefer to under-state the room.
+#
+# Vertically, the title band, the tick labels and the margins take a roughly
+# FIXED number of pixels rather than a fixed fraction: measured against the
+# SVG exporter, a titled chart's plot box is `height - 88` from 180px through
+# 640px. A ratio therefore misses badly where it matters most — at height 180
+# a 0.85 factor claims 153px of a real 92px, 65% too much — so subtract the
+# band instead. Horizontally there is no title to pay for and the stage-axis
+# gutter is small, so a fraction does track the measurements there.
+PLOT_CHROME_PX = 90.0
+PLOT_WIDTH_FRACTION = 0.85
+
+
+def estimate_plot_px(width_px: float, height_px: float) -> tuple[float, float]:
+    """The plot box the label ladder should assume for a chart of this size."""
+    return (
+        max(width_px * PLOT_WIDTH_FRACTION, 1.0),
+        max(height_px - PLOT_CHROME_PX, 1.0),
+    )
+
 
 @dataclass(frozen=True)
 class FunnelStage:
@@ -344,9 +368,16 @@ def decide_labels(
     Drop-off labels (``show_dropoff``) sit outside at the boundary between a
     stage and its predecessor, formatted as the signed change
     (``-38%`` for a drop, ``+12%`` for growth), and inherit the same
-    outside-or-hidden rule. Placement is estimated against the figure's
-    configured pixel size at build time; a responsive chart keeps the
-    build-time decision.
+    outside-or-hidden rule with one addition: on a vertical funnel they share
+    the outside lane with the value labels, and the two ladders interleave at
+    **half** the stage pitch (values at the stage centers, drop-offs at the
+    boundaries). So a drop-off label whose half pitch cannot clear a text line
+    keeps its row only where neither neighbouring value label reaches into the
+    span it starts at, and hides otherwise. The value label wins that tie,
+    being the datum rather than arithmetic derived from it, and every number
+    survives in the tooltip and the events regardless. Placement is estimated
+    against the figure's configured pixel size at build time; a responsive
+    chart keeps the build-time decision.
     """
     plot_w, plot_h = plot_px
     n = len(layout.stages)
@@ -368,6 +399,12 @@ def decide_labels(
     line_px = font_size * 1.4
 
     labels: list[FunnelLabelSpec] = []
+    # A vertical funnel's outside lane carries BOTH ladders: value labels sit
+    # at the stage centers, drop-off labels at the boundaries between them, so
+    # the two interleave at HALF the stage pitch. Record how far right each
+    # value label reaches, in plot px from the centerline; the drop-off rule
+    # below asks whether a neighbour reaches into its own start.
+    value_reach_px: dict[int, float] = {}
     for stage, quad in zip(layout.stages, layout.quads, strict=True):
         mid_pos = (quad.pos0 + quad.pos1) / 2.0
         mid_half = (quad.hi0 + quad.hi1) / 2.0
@@ -402,6 +439,15 @@ def decide_labels(
                 placement, cross = "outside", mid_half
             else:
                 placement, cross, anchor = "hidden", 0.0, "middle"
+            if not horizontal and placement != "hidden":
+                # Rightmost extent in px: a centered inside label reaches half
+                # its own width from the centerline, an outside one starts at
+                # the segment edge and runs its full width into the margin.
+                value_reach_px[stage.index] = (
+                    width_px / 2.0
+                    if placement == "inside"
+                    else cross * cross_px_per_unit + width_px
+                )
             labels.append(
                 FunnelLabelSpec(
                     stage=stage.index,
@@ -428,12 +474,30 @@ def decide_labels(
             # Same transposition as the value labels: a horizontal funnel's
             # boundary labels sit side by side along the pitch axis, so their
             # WIDTH is what collides; a vertical funnel stacks them and only
-            # the line height competes for the pitch.
-            placement = (
-                "outside"
-                if (_fits(drop_px, pitch_px) if horizontal else _fits(line_px, pitch_px))
-                else "hidden"
-            )
+            # the line height competes for the pitch. A horizontal funnel's
+            # value labels ride ABOVE their own segment rather than in this
+            # lane, so only the vertical ladder can be contested.
+            if horizontal:
+                fits_lane = _fits(drop_px, pitch_px)
+            elif not _fits(line_px, pitch_px):
+                # Boundary labels are a full pitch apart from each OTHER.
+                fits_lane = False
+            elif _fits(line_px, pitch_px / 2.0):
+                # Half a pitch clears a line, so this row cannot touch the
+                # value labels above and below it whatever they say.
+                fits_lane = True
+            else:
+                # The rows would touch, so this label survives only where no
+                # neighbouring value label reaches into the span it starts.
+                # The value label wins that tie: it is the datum, while the
+                # drop-off is derived from it and still reaches the reader
+                # through the tooltip and the events.
+                edge_px = edge * cross_px_per_unit
+                fits_lane = all(
+                    value_reach_px.get(index, -math.inf) <= edge_px
+                    for index in (stage.index - 1, stage.index)
+                )
+            placement = "outside" if fits_lane else "hidden"
             labels.append(
                 FunnelLabelSpec(
                     stage=stage.index,

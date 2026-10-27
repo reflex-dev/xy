@@ -138,6 +138,31 @@ def _patch_marks(ax: plt.Axes) -> tuple[list[dict], list[dict]]:
     return meshes, edges
 
 
+def test_unfillable_fancy_arrow_paths_remain_open_outlines() -> None:
+    pytest.importorskip("matplotlib")
+    from matplotlib.patches import FancyArrowPatch
+
+    _fig, ax = plt.subplots()
+    ax.set(xlim=(0, 6), ylim=(-1, 5))
+    ax.add_patch(
+        FancyArrowPatch(
+            (1, 0),
+            (5, 0),
+            arrowstyle="]-[,angleA=-40,angleB=40",
+            mutation_scale=42,
+        )
+    )
+    meshes, edges = _patch_marks(ax)
+
+    assert meshes == []
+    assert sorted(len(edge["args"][0]) for edge in edges) == [1, 3, 3]
+    xs = np.concatenate([np.asarray(edge["args"][index]) for edge in edges for index in (0, 2)])
+    ys = np.concatenate([np.asarray(edge["args"][index]) for edge in edges for index in (1, 3)])
+    assert 0.25 < xs.min() < 1.0
+    assert 5.0 < xs.max() < 5.75
+    assert np.max(np.abs(ys)) < 0.9
+
+
 def test_added_rectangle_patch_fills_with_its_own_face_color() -> None:
     pytest.importorskip("matplotlib")
     from matplotlib.patches import Rectangle

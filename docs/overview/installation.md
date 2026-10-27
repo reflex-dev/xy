@@ -63,6 +63,9 @@ Published platform wheels bundle the Python package, browser client, and native
 Rust compute core. Notebook display and HTML, native PNG, and SVG export do not
 require separate `notebooks` or `export` extras, Node, npm, or a CDN.
 
+The regular dependency also includes `xy.pyplot`'s dependency-free native 2-D
+mode. It does not install Matplotlib.
+
 ## Installing from Git or source
 
 Use the PyPI wheel when your platform is supported. A working source install
@@ -90,35 +93,79 @@ Rust tooling beyond the commands above.
 
 ## Optional tools and integrations
 
-- Install `pyarrow` separately when you want Arrow-backed input:
+### Matplotlib compatibility
+
+Install the Matplotlib extra for `xy.pyplot` compatibility mode:
+
+  ~~~~md tabs
+  ## uv
 
   ~~~bash
-  uv add pyarrow
+  uv add "xy[matplotlib]"
   ~~~
 
-- The bundled Reflex integration supports state-backed application charts and
-  remains experimental. Install the extra to select a compatible Reflex
-  version. With uv:
+  ## pip
 
   ~~~bash
-  uv add "xy[reflex]"
+  python -m pip install "xy[matplotlib]"
+  ~~~
+  ~~~~
+
+  The extra installs the supported Matplotlib 3.11 series
+  (`matplotlib>=3.11,<3.12`). Select it before creating figures:
+
+  ~~~python
+  import xy.pyplot as plt
+
+  plt.set_mode("compat")
   ~~~
 
-  Or with pip:
+  Compat mode uses genuine Matplotlib Figure, Axes, Artist, layout, units,
+  toolkit, widget, animation, and projection semantics with XY's
+  `module://xy.backends.backend_xy` canvas and display-list renderer. It does
+  not use Agg or another Matplotlib renderer as a raster fallback.
 
-  ~~~bash
-  python -m pip install "xy[reflex]"
-  ~~~
+  The configured default is `native`, including when Matplotlib is already
+  installed. Select `compat` explicitly to opt into the broader Matplotlib
+  frontend. Explicit `compat` fails with an installation hint if the supported
+  extra is missing. The equivalent process setting is `XY_PYPLOT_MODE=compat`.
+  Close all open figures before changing modes.
 
-  The `xy` wheel already carries the `reflex_xy` integration; the extra adds
-  only the supported Reflex dependency floor. Pin resolved versions for
-  production deployments. Continue with the
-  [Reflex integration guide](/docs/xy/integrations/reflex/) for its current
-  limitations and setup.
+### Arrow input
 
-- Native PNG is the default static raster path and does not launch a browser.
-  Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
-  or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
-  path when automatic discovery is not appropriate.
+Install `pyarrow` separately when you want Arrow-backed input:
+
+~~~bash
+uv add pyarrow
+~~~
+
+### Reflex integration
+
+The bundled Reflex integration supports state-backed application charts and
+remains experimental. Install the extra to select a compatible Reflex
+version. With uv:
+
+~~~bash
+uv add "xy[reflex]"
+~~~
+
+Or with pip:
+
+~~~bash
+python -m pip install "xy[reflex]"
+~~~
+
+The `xy` wheel already carries the `reflex_xy` integration; the extra adds
+only the supported Reflex dependency floor. Pin resolved versions for
+production deployments. Continue with the
+[Reflex integration guide](/docs/xy/integrations/reflex/) for its current
+limitations and setup.
+
+### Optional browser export
+
+Native PNG is the default static raster path and does not launch a browser.
+Chromium-based PNG export is optional and discovers Chrome, Chromium, Edge,
+or `chrome-headless-shell` on the machine; set `XY_BROWSER` to an executable
+path when automatic discovery is not appropriate.
 
 Next, build [your first chart](/docs/xy/overview/first-chart/).

@@ -24,7 +24,18 @@ on:
       ref:
         description: "Branch, tag, or commit SHA to deploy (default: main)"
         required: false
-        default: main
+        type: string
+      tag:
+        description: "Release-tool source tag (legacy dispatch contract)"
+        required: false
+        type: string
+      package:
+        description: "Published package (release-tool dispatch)"
+        required: false
+        type: string
+      version:
+        description: "Published version (release-tool dispatch)"
+        required: false
         type: string
 
 permissions:
@@ -55,7 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
-          REF: ${{ inputs.ref }}
+          REF: ${{ inputs.ref || inputs.tag || 'main' }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |

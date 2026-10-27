@@ -230,6 +230,17 @@ and `size_value` when those channels exist. A heatmap row is
 use their own client-side sequence (`_pickSeq`), not the view `seq` — sharing
 one counter let a hover invalidate an in-flight `tier_update`.
 
+`x`/`y` are raw axis coordinates from the conventional center/value columns
+(orientation-aware for bars: band center on the position axis, value end on
+the value axis). The client maps a category axis's code to its label before
+rendering or re-anchoring — the exact reply must land as an invisible
+refinement of the instant local readout, never a visible rewrite (a category
+code replacing its label, or a finite code dragging the tooltip anchor away
+from the cursor). A reply naming a trace the client no longer holds (dropped
+by a data update while the pick was in flight) has no mapping source and
+describes a mark that no longer exists; the client treats it as a miss and
+hides the tooltip.
+
 **`selection`** — `{type, traces, total}` plus one u32 buffer per trace. Each
 entry is `{id, count, buf, drill_seq}`. Masks speak **shipped-vertex
 positions** (`fig.to_shipped_indices`), so `count` is the wire mask length,
@@ -388,7 +399,42 @@ columns that form one stable 64-bit identity per shipped mark. Aggregate and
 decimated tiers omit keys and record an animation fallback rather than
 materializing canonical rows in the browser.
 
-### 5.1 Full-payload data transition
+### 5.1 Legend automatic-location metadata
+
+An unanchored Cartesian legend whose author requested `loc="best"` has this
+first-paint shape:
+
+```json
+{
+  "legend": {
+    "loc": "upper left",
+    "auto_loc": "best"
+  }
+}
+```
+
+`loc` is always one concrete member of the nine-candidate set when `auto_loc`
+is present. It is the Python scorer's initial decision and remains sufficient
+for static writers and older clients. The optional `auto_loc` field records
+semantic intent separately; `"best"` authorizes the browser to replace the
+concrete location after measuring rendered geometry on resize or after a view
+settles. Absence of `auto_loc` means the transmitted location is exact.
+
+The initial Python/static location and the browser's first settled live
+location choose the exact minimum score, with the canonical nine-candidate
+order breaking an exact tie. After a live winner is settled, subsequent view,
+resize, and LOD re-scores retain it unless a challenger lowers the normalized
+occupied fraction by at least `0.05`. The exception is an empty challenger,
+which always replaces an occupied current box. This live-only hysteresis keeps
+near-uniform rendered occupancy from moving the legend on every settle without
+blocking a clearly open candidate.
+
+Payload builders omit the field for an explicit concrete `loc`, any legend
+with `anchor`, and polar coordinates. Those are authored placements, not live
+scoring requests. Receivers must likewise ignore `auto_loc` outside an
+unanchored Cartesian plot.
+
+### 5.2 Full-payload data transition
 
 A host receiving a replacement `{spec, buffers}` for the same mounted figure
 calls `ChartView.updatePayload`. This is an in-browser operation, not a new
@@ -485,6 +531,11 @@ Two independent version constants:
   `spec/api/chart-kind-contract.md`). `markOf()` falls back to scatter for
   unknown kinds, so a cached v12 client would silently draw every funnel as a
   point cloud of trailing cross edges.
+  The optional `legend.auto_loc` field described in §5.1 deliberately does
+  **not** increment v13: it accompanies an already concrete `legend.loc`, so a
+  cached client that does not recognize the hint renders the same correct
+  first placement and merely forgoes later adaptive re-scoring. Ignoring it
+  cannot produce a structurally wrong first-paint scene.
 - **Transport frame.** `FRAME_MAGIC` `"XYBF"` with `FRAME_VERSION = 1`
   versions the binary envelope separately, so the transport and the renderer
   can evolve without coupling.
