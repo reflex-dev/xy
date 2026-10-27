@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
-"""Release gate: the pushed tag and the package's CHANGELOG must agree.
+"""Release gate: the release tag must be a shape the version derivation accepts.
 
-The tag *is* the version now — each pyproject derives it via
-uv-dynamic-versioning — so the old tag-vs-pyproject leg of this gate is gone
-along with the drift it existed to catch. What a tag cannot vouch for is that
-anyone wrote down what changed, so this runs first in the publish job on tag
-pushes: the package's changelog must carry a dated entry for the tagged
-version (an "unreleased" heading fails — date it as part of cutting the
-release).
+`CHANGELOG.md` decides *which* version ships (its newest version heading with no
+matching git tag is the publish trigger), and the release pipeline proves the
+built artifacts carry it. This gate decides the one thing left for the tag
+recording that version to get wrong on its own: a shape uv-dynamic-versioning
+cannot turn back into the version the artifacts are published under. It runs in
+the `version-gate` job of `.github/workflows/build_release_artifacts.yml` — the
+build workflow this repository owns, gating the cross-compile matrix rather than
+following it — and its input is the tag `reflex-release prepare-publish`
+computed, not a tag a human pushed, which can no longer start a release at all.
 
-The ``xy`` distribution uses bare `vX.Y.Z` tags and `CHANGELOG.md`. Its bundled
-Reflex integration and `reflex` extra ship on the same version line.
+The ``xy`` distribution uses bare `vX.Y.Z` tags. Its bundled Reflex integration
+and `reflex` extra ship on the same version line.
 
-Tags accept an optional PEP 440 pre-release suffix in its canonical spelling
-(`a1`/`b2`/`rc3`). PyPI accepts pre-releases but does not serve them to default
-`pip install`. Only the canonical spelling passes: `-alpha1`-style tags would
-be normalized by the derivation (`0.0.1a1`) and could never match their own
-artifacts. A pre-release still needs its own dated changelog entry.
+Accepted suffixes are exactly what the release actions can produce, in their
+canonical PEP 440 spelling: a pre-release (`a1`/`b2`/`rc3`, from the
+`*-prerelease` actions) and/or a post-release (`.post1`, from `release-post`).
+PyPI accepts pre-releases but does not serve them to default `pip install`.
+Only the canonical spelling passes: `-alpha1`-style tags would be normalized by
+the derivation (`0.0.1a1`) and could never match their own artifacts.
 
 Docs-deploy CalVer tags (2026.WW.N) do not match the release shape.
-Dev/post/local shapes stay rejected: dev versions are the between-tags marker
+Dev and local shapes stay rejected: dev versions are the between-tags marker
 and must stay unpublishable.
 """
 
@@ -29,69 +32,43 @@ import argparse
 import os
 import re
 import sys
-from pathlib import Path
 from typing import NamedTuple, Optional
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class _Package(NamedTuple):
     # The release tag shape uv-dynamic-versioning derives this package's
     # distribution version from: prefix + `v` + a PEP 440 release number,
-    # optionally a canonical pre-release suffix (aN/bN/rcN), nothing else.
+    # optionally a canonical pre-release suffix (aN/bN/rcN) and/or a post-release
+    # suffix (.postN), nothing else.
     tag_re: re.Pattern[str]
     tag_shape: str
-    changelog: Path
 
 
 # Canonical PEP 440 spellings only: the derivation would normalize `alpha1`
 # to `a1`, so a non-canonical tag can never equal its own built version.
-_RELEASE = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
-_SHAPE = "vX.Y.Z with an optional aN/bN/rcN pre-release suffix"
+# `.postN` is accepted because `release-post` materializes it for a
+# packaging-only re-release of an already-published version.
+_RELEASE = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?(?:\.post\d+)?"
+_SHAPE = "vX.Y.Z with an optional aN/bN/rcN pre-release and/or .postN post-release suffix"
 
 PACKAGES = {
     "xy": _Package(
         tag_re=re.compile(rf"^v(?P<version>{_RELEASE})$"),
         tag_shape=_SHAPE,
-        changelog=ROOT / "CHANGELOG.md",
     ),
 }
-DEFAULT_CHANGELOG = PACKAGES["xy"].changelog
 # Backward-compatible alias for the pre-adapter, xy-only gate.
 TAG_RE = PACKAGES["xy"].tag_re
 
 
-def check_release(tag: str, changelog: Path, package: str = "xy") -> list[str]:
-    errors: list[str] = []
+def check_release(tag: str, package: str = "xy") -> list[str]:
     spec = PACKAGES[package]
-    match = spec.tag_re.match(tag)
-    if match is None:
+    if spec.tag_re.match(tag) is None:
         return [
             f"tag {tag!r} is not a release tag for {package} — expected "
             f"{spec.tag_shape!r}, the shape the distribution version is derived from"
         ]
-    version = match.group("version")
-    try:
-        text = changelog.read_text(encoding="utf-8")
-    except OSError as exc:
-        errors.append(f"cannot read {changelog}: {exc}")
-        return errors
-    # A heading with a real date. The gate checks substance (this version has
-    # dated notes), not heading style: both spellings used in this repo pass —
-    # Keep-a-Changelog brackets (`## [0.0.2] — 2026-07-24`) and the plain
-    # v-prefixed form v0.0.2 was actually documented with
-    # (`## v0.0.2 - 2026-07-24`); em dash or hyphen either way.
-    dated = re.compile(
-        rf"^## (?:\[{re.escape(version)}\]|v?{re.escape(version)}) [—-] "
-        rf"\d{{4}}-\d{{2}}-\d{{2}}\s*$",
-        re.M,
-    )
-    if not dated.search(text):
-        errors.append(
-            f"{changelog.name} has no dated '## [{version}]' entry — date the "
-            "release section before tagging"
-        )
-    return errors
+    return []
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -107,25 +84,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         default="xy",
         help="which release line the tag belongs to (default: xy)",
     )
-    parser.add_argument(
-        "--changelog",
-        type=Path,
-        default=None,
-        help="changelog to gate against (defaults to the package's own)",
-    )
     args = parser.parse_args(argv)
 
     if not args.tag:
         print("release version gate: no tag provided (--tag or GITHUB_REF_NAME)", file=sys.stderr)
         return 1
-    changelog = args.changelog if args.changelog is not None else PACKAGES[args.package].changelog
-    errors = check_release(args.tag, changelog, args.package)
+    errors = check_release(args.tag, args.package)
     if errors:
         print("release version gate failed:", file=sys.stderr)
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print(f"release version gate OK: {args.tag} has a dated {changelog.name} entry")
+    print(f"release version gate OK: {args.tag} is a release tag for {args.package}")
     return 0
 
 

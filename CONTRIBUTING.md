@@ -14,6 +14,22 @@ make check        # fast gate
 make check-full   # full production gate (also needs Node 18+ and clippy)
 ```
 
+## Release notes
+
+`CHANGELOG.md` is generated and is the release trigger, so don't edit it by
+hand. Add a [towncrier](https://towncrier.readthedocs.io/) news fragment
+instead — every change under `python/`, `src/` or `js/` needs one, and the
+`skip-changelog` label waives it when a change is genuinely not user-facing:
+
+```bash
+make news NAME=1234.feature.md   # breaking, deprecation, feature, bugfix,
+                                 # performance, docs, misc
+make news-check                  # the same check your pull request runs
+```
+
+Write it for someone reading release notes. Before you know the PR number, name
+it `+something.feature.md` and rename it later.
+
 ## Check the active backend
 
 `import xy` is intentionally lightweight: it does not import NumPy or load the

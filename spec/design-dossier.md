@@ -760,14 +760,21 @@ already reports an off-screen iframe's chart as not-intersecting (it clips to th
 top-level viewport), so the visibility signal is correct across the frame boundary; the
 budget accounting was the only gap.
 
-Two subtleties the implementation must get right. **(1) Restore ordering.** A governed
-release is `WEBGL_lose_context.loseContext()`; re-acquire is `restoreContext()`. Chromium
-*silently drops* a `restoreContext()` issued before that context's `webglcontextlost`
-event has dispatched (or synchronously inside the dispatch), stranding the canvas lost
-forever — and a chart scrolled back into view in the same task it was shed hits exactly
-that window. Recovery therefore defers until the loss event lands (`_ctxLostPending`)
-and retries on a fresh task; a released chart that never re-acquired on scroll-in was the
-first symptom. **(2) Incremental shedding.** Frames over budget release *one* off-screen
+Two subtleties the implementation must get right. **(1) Re-acquire on a fresh canvas,
+after the loss event.** A governed release is `WEBGL_lose_context.loseContext()`; re-acquire
+is *never* `restoreContext()` on that canvas. Chromium (observed in 151) can restore the
+context fully healthy — draws, `readPixels` and picking all succeed, the stamp reads
+`live` — while the compositor presents that canvas element's frames as empty for good: a
+chart released by a peer tab while its own tab sat hidden came back blank, and no redraw
+(hover, resize, backing-store reset, a second lose/restore cycle) could show it. Only a
+fresh canvas element presents again, so a governed release re-acquires exactly like a real
+eviction: cloned canvas plus the §18/§27 rebuild (`_rebuildEvictedContext`), reserving
+with the governor first so an off-screen peer is shed before the replacement context is
+created. The rebuild still waits for the release's `webglcontextlost` event to land
+(`_ctxLostPending`, retried on a fresh task): the loss bookkeeping is bound to the canvas
+being replaced, and a chart scrolled back into view in the same task it was shed would
+otherwise strand that event. Either path answers a loss with exactly one
+`context_restored`. **(2) Incremental shedding.** Frames over budget release *one* off-screen
 view per event-loop turn, not the whole computed excess: several frames observing the
 same over-budget snapshot would each drop the full deficit and collectively over-release,
 so each sheds one, announces, and re-evaluates against the fresher count — converging on
@@ -816,6 +823,31 @@ rebuild its programs and per-chart render and pick resources from CPU-backed sce
 state. Each client preserves its settled pan/zoom and re-requests that same view after
 reconstruction, matching the existing context-loss contract rather than resetting
 charts to home.
+
+A client rebuild can itself fail transiently — under process-wide GPU pressure Chromium
+loses just-created resources mid-setup (the characteristic `shader compile: null`) — and
+the client then retries with backoff (50 ms doubling to a 1 s cap; off-screen and
+hidden-document retries defer to the visibility/intersection wake-ups). Throughout those
+retries the chart's Canvas2D presentation surface must keep showing the last
+successfully presented frame: surface backing stores are resized only when their
+dimensions actually change, because a canvas width/height write clears the canvas even
+at the same value, and an unguarded resize in the rebuild path turned every failed retry
+into a visible blank — a chart under sustained pressure flickered between drawn and
+empty until a retry finally succeeded. Recovery is seamless-or-stale, never blank; only
+`data-xy-ctx` reports the difference.
+
+Retries must also be as powerful as a page reload. A wedged driver can leave a context
+reporting itself live (`isContextLost()` false) while every rebuild against it fails;
+plain retries then never succeed, and the only user escape was refreshing the page.
+After three consecutive rebuild failures a client therefore calls
+`GLHost.recycleSurface()` — retire the current surface and rebuild every client on a
+fresh context, which is exactly what a reload buys — riding the existing loss/replace
+machinery and its backoff. The counter counts consecutive failures within one recovery
+cycle only: it resets on the first successful rebuild and on every loss notification —
+including one reaching a client still lost from a failed rebuild, since the host fans
+out losses only on a live→lost transition and a loss therefore always heralds a fresh
+context. Ordinary transient pressure thus recovers through cheap same-context retries,
+and a stale count can never escalate a host-wide recycle off a single post-loss failure.
 
 The governed per-chart path remains the compatibility fallback. It is used when shared
 hosting is explicitly disabled via `window.XY_SHARED_WEBGL = false`, when a document
@@ -908,8 +940,10 @@ modules. It is a **generated artifact, not committed to git** (§33): the hatch 
 hook runs `node js/build.mjs` at packaging time and force-includes the result into the
 wheel and sdist, so a published distribution carries it prebuilt. The one size gate CI
 enforces is on the **wheel**: `.github/workflows/ci.yml` asserts the built wheel is
-≤ 15 MB (§33). CI builds the client fresh from source in every relevant job but does not
-measure its bytes.
+≤ 15 MB (§33). CI builds the client once in its shared Linux wheel producer and reuses the
+wheel and extracted native/client assets in compatible same-run jobs. Independent
+platform and source-install packaging probes still build their own artifacts.
+CI does not measure the client bundle bytes separately.
 
 *Pending:* a gzipped-size budget on the client bundle, failing the build exactly like a
 perf regression (§12), plus per-trace-family lazy feature modules (Plotly's
@@ -1105,6 +1139,20 @@ number-parse-shaped; (c) every binding reports its actual copy count at ingest i
 mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
 live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
 
+**Bounded Matplotlib-compat exception.** The optional
+`module://xy.backends.backend_xy` live canvas is not the native XY data plane in
+the Jupyter row above. Its first implementation sends the rendered SVG document
+as one synced Unicode trait in Jupyter and as one JSON string from the
+authenticated loopback `/state` endpoint. The exception is bounded to compat
+figures and their live preview; native XY figures, numeric resources, server
+apps, and static-export contracts do not inherit it. A measured three-point
+scatter produces about 38 KiB of SVG per frame. Each refresh therefore incurs
+SVG construction, UTF-8/text serialization and transport copies, then browser
+DOM parsing on the main thread; no zero-copy or binary-transport performance
+claim applies to this compat live surface. Replacing it with binary display-list
+resources is tracked as compatibility-backend work, not silently treated as
+conforming to the native Jupyter transport row.
+
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 
 Full Plotly semantics (~40 trace types × transforms × axis quirks × hover rules) is a
@@ -1208,6 +1256,11 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
    so it stays on the widget host under "auto".
 
 **Contracts that keep it honest:**
+- **Artifact version identity.** Wheel filename and `.dist-info` versions must
+  agree; `METADATA` also agrees after stripping leading zeros from an all-digit
+  local version. An all-numeric Git hash such as `06589443` can appear in
+  metadata while Hatchling writes `6589443` in the artifact name. Different
+  public versions or numeric values still fail verification (§33).
 - **Comm-protocol versioning.** The native core and JS client ship together but can
   drift (cached notebook outputs, pinned server assets). The first-paint spec carries
   a protocol version; mismatch fails **loudly with an upgrade hint**, never silently

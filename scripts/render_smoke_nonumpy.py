@@ -842,6 +842,56 @@ try{{
         if(c>0&&Math.abs(qg[i]-c)/c>0.08)qok=0;}}
     }}
     const qwire=(qok && Math.abs(gd.density.max-qmax)<1e-9)?1:0;
+    // --- Direct-wire density (reduced motion): a count-only log-u8 reply
+    // uploads the wire bytes verbatim (grid null, normMax pinned to max). Spy
+    // on texImage2D so retained CPU state cannot hide a bad GPU upload. The
+    // home-extent restore is a defensive composition: kernel replies and the
+    // kernel-less re-bin path do not naturally overlap, so build it by hand
+    // and prove that its explicit re-upload uses the retained wire copy too.
+    const rmPrev=v._prefersReducedMotion.bind(v);
+    v._prefersReducedMotion=()=>true;
+    const rmax=9, renc=new Uint8Array(64);
+    for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
+      renc[i]=c>0?Math.max(1,Math.min(255,Math.round(255*Math.log1p(c)/Math.log1p(rmax)))):0;}}
+    const texImage2DPrev=v.gl.texImage2D;
+    const directUploads=[];
+    v.gl.texImage2D=function(...args){{
+      if(args[2]===this.R8 && args[3]===8 && args[4]===8 &&
+          args[6]===this.RED && args[7]===this.UNSIGNED_BYTE && args[8] instanceof Uint8Array){{
+        directUploads.push({{w:args[3],h:args[4],internal:args[2],format:args[6],
+          type:args[7],data:new Uint8Array(args[8])}});
+      }}
+      return texImage2DPrev.apply(this,args);
+    }};
+    const directUploadMatches=(upload)=>{{
+      if(!upload || upload.w!==8 || upload.h!==8 || upload.internal!==v.gl.R8 ||
+          upload.format!==v.gl.RED || upload.type!==v.gl.UNSIGNED_BYTE ||
+          upload.data.length!==renc.length) return false;
+      for(let i=0;i<renc.length;i++) if(upload.data[i]!==renc[i]) return false;
+      return true;
+    }};
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:12345,
+      density:{{buf:0,w:8,h:8,max:rmax,enc:"log-u8",x_range:[0,100],y_range:[0,100]}}}}]}},[renc.buffer.slice(0)]);
+    let dwire=(gd.density.grid===null && gd.density.wire instanceof Uint8Array &&
+      gd.density.wire.length===64 && gd.density.normMax===rmax &&
+      v.gl.isTexture(gd.density.tex) && directUploads.length===1 &&
+      directUploadMatches(directUploads[0]))?1:0;
+    if(dwire){{for(let i=0;i<64;i++) if(gd.density.wire[i]!==renc[i]) dwire=0;}}
+    let drestore=0;
+    try{{
+      gd._homeDensity=gd.density;
+      v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:2345,
+        density:{{buf:0,w:8,h:8,max:rmax,enc:"log-u8",x_range:[40,60],y_range:[40,60]}}}}]}},[renc.buffer.slice(0)]);
+      const zoomed=gd.density!==gd._homeDensity;
+      if(!v.view0) v.view0={{...v.view}};
+      v._requestSampleRebin(gd, v.view0, 0);
+      drestore=(zoomed && gd.density.grid===null && gd.density.wire instanceof Uint8Array &&
+        gd.density.xRange[1]===100 && v.gl.isTexture(gd.density.tex) &&
+        directUploads.length===3 && directUploads.every(directUploadMatches))?1:0;
+    }}catch(e){{ drestore=0; }}
+    v.gl.texImage2D=texImage2DPrev;
+    gd._homeDensity=null;
+    v._prefersReducedMotion=rmPrev;
     // --- Rapid zoom in/out torture (drill thrash): the marks/density alphas
     // must be CONTINUOUS across window-boundary crossings, dying-drill
     // revives, and kernel replies landing mid-transition. Runs on a virtual
@@ -1219,7 +1269,160 @@ try{{
     gMc.readPixels(Math.round(WM*0.8),Math.round(HM*0.5),1,1,gMc.RGBA,gMc.UNSIGNED_BYTE,rpx);
     const meancolor=(lpx[0]>60 && lpx[0]>lpx[2]*3 && rpx[2]>60 && rpx[2]>rpx[0]*3)?1:0;
     vMc.destroy();holderMc.remove();
-    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} dretire=${{dretire}}`;
+    // Funnel: per-stage quads expand locally into mesh triangles wearing the
+    // categorical palette; hover is CPU trapezoid containment returning the
+    // STAGE index with semantic tooltip rows; the per-stage centers join the
+    // keyboard traversal groups. Three stages, vertical, no axis reverse so
+    // stage 0 sits at the BOTTOM of the canvas (GL y small).
+    const fnBuf=new ArrayBuffer(512); const fnCols=[]; let fnOff=0;
+    // Give every funnel edge an independent non-zero offset/scale. The live
+    // build, hover and grow-mix paths must all decode through the shared §4/§16
+    // helper; a funnel-local `(offset || 0)` copy drifts under this probe.
+    const fncol=(vals,offset,scale)=>{{
+      const encoded=vals.map((value)=>(value-offset)*scale);
+      new Float32Array(fnBuf,fnOff*4,vals.length).set(encoded);
+      fnCols.push({{byte_offset:fnOff*4,len:vals.length,offset,scale,kind:"float"}});
+      fnOff+=vals.length; return fnCols.length-1;}};
+    const fnu8=(vals)=>{{const bo=fnOff*4;new Uint8Array(fnBuf,bo,vals.length).set(vals);
+      fnCols.push({{byte_offset:bo,len:vals.length,dtype:"u8"}});
+      fnOff+=Math.ceil(vals.length/4); return fnCols.length-1;}};
+    const fnSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      x_axis:{{kind:"linear",label:"",range:[-6,6]}},
+      y_axis:{{kind:"linear",label:"",range:[-0.5,2.5]}},
+      traces:[{{id:0,kind:"funnel",name:null,tier:"direct",n_points:3,n_marks:3,
+        style:{{opacity:1.0,orientation:"vertical",role:"funnel"}},
+        orientation:"vertical",
+        pos0:fncol([-0.4,0.6,1.6],100,2),pos1:fncol([0.4,1.4,2.4],-80,0.5),
+        lo0:fncol([-5,-3,-1],240,0.25),hi0:fncol([5,3,1],-160,2),
+        lo1:fncol([-3,-1,-1],75,4),hi1:fncol([3,1,1],-45,0.125),
+        color:{{mode:"categorical",categories:["A","B","C"],dtype:"u8",
+          buf:fnu8([0,1,2]),palette:["#e01010","#10c010","#1030e0"]}},
+        tooltip_rows:[
+          {{stage:"A",value:10,share:1.0,prior:null,conversion:null,dropoff:null}},
+          {{stage:"B",value:6,share:0.6,prior:10,conversion:0.6,dropoff:0.4}},
+          {{stage:"C",value:2,share:0.2,prior:6,conversion:0.3333,dropoff:0.6667}}]}}],
+      columns:fnCols}};
+    const holderFn=document.createElement("div");document.body.appendChild(holderFn);
+    const vFn=xy.renderStandalone(holderFn,fnSpec,fnBuf);
+    vFn._drawNow();
+    const gFn=vFn.gpuTraces[0];
+    const glFn=vFn.gl,WF=vFn.canvas.width,HF=vFn.canvas.height;
+    const apx=new Uint8Array(4), cpx=new Uint8Array(4);
+    // Stage A (data y=0, bottom sixth of the y range) and stage C (top).
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.17),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,apx);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.83),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,cpx);
+    const bpx=new Uint8Array(4);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.5),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,bpx);
+    const fnInk=(apx[0]>90 && apx[0]>apx[2]*2      // stage A red
+      && bpx[1]>90 && bpx[1]>bpx[0]*2              // stage B green (was unchecked)
+      && cpx[2]>90 && cpx[2]>cpx[0]*2)?1:0;        // stage C blue
+    // Old/removed traces retire only through `_transitionOpacity = 0` during
+    // data animation. A funnel must consume it just like every other mark.
+    gFn._transitionOpacity=0; vFn._drawNow();
+    const opx=new Uint8Array(4);
+    glFn.readPixels(Math.round(WF/2),Math.round(HF*0.17),1,1,glFn.RGBA,glFn.UNSIGNED_BYTE,opx);
+    const fnOpacity=!(opx[0]>90 && opx[0]>opx[2]*2)?1:0;
+    delete gFn._transitionOpacity; vFn._drawNow();
+    // Containment: stage B center hits index 1; a point beside B's taper at
+    // the same height (cross 4.5 > its widest half-width 3) misses.
+    const fnHit=vFn._funnelHover(gFn,0,1.0);
+    const fnMiss=vFn._funnelHover(gFn,4.5,1.0);
+    const fnRow=fnHit?vFn._localRow(fnHit):null;
+    const fnRowOk=(fnRow && fnRow.stage==="B" && fnRow.value===6 && fnRow.dropoff===0.4)?1:0;
+    // Traversal, not membership: Home then ArrowRight must land on stage 1
+    // and the live region must name it. Membership alone passed even when the
+    // walk was broken.
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"Home",bubbles:true}}));
+    const navHome=vFn._hoverTarget && vFn._hoverTarget.index===0;
+    const homeSaid=(vFn.a11yLive.textContent||"").includes("Stage 1 of 3");
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"ArrowRight",bubbles:true}}));
+    const navNext=vFn._hoverTarget && vFn._hoverTarget.index===1;
+    const nextSaid=(vFn.a11yLive.textContent||"").includes("Stage 2 of 3");
+    vFn.canvas.dispatchEvent(new KeyboardEvent("keydown",{{key:"Escape",bubbles:true}}));
+    const fnNav=(vFn._a11yPointGroups().some((g)=>g===gFn)
+      && navHome && homeSaid && navNext && nextSaid)?1:0;
+    // Review-fix probes (PR #474 round 2), all EXECUTED, not grepped:
+    // (a) legend category filter narrows draw count, hover, and the keyboard
+    //     walk, and the row index stays in shipped space;
+    // (b) a theme-refresh paint rebuild while filtered keeps the FULL rows so
+    //     restoring the stage restores its own color;
+    // (c) a legend-hidden trace answers no hover;
+    // (d) the update interpolation mixes geometry mid-flight (p=0.5 midpoint);
+    // (e) funnel tooltip rows print the shipped *_text (em dash included).
+    vFn._legendOffCats=new Map([[vFn.gpuTraces.indexOf(gFn), new Set([1])]]);
+    vFn._applyCategoryVisibility(vFn.gpuTraces.indexOf(gFn));
+    const fnFilterN=(gFn.n===2 && gFn._visMap && gFn._visMap[1]===2)?1:0;
+    const fnA11y=(vFn._a11yGroupCount(gFn)===2 && vFn._a11yGroupRow(gFn,1)===2)?1:0;
+    const fnHitHidden=vFn._funnelHover(gFn,0,1.0)===null?1:0;
+    vFn._funnelPaint(gFn,gFn.trace,null); // theme-refresh path while filtered
+    const fullRows=gFn._funnelRgbaFull;
+    const fnPaintFull=(fullRows && fullRows.length===3*4 && fullRows[4+1]>150)?1:0; // stage 1 green
+    vFn._legendOffCats=new Map();
+    vFn._applyCategoryVisibility(vFn.gpuTraces.indexOf(gFn));
+    const fnRestored=(gFn.n===3 && !gFn._visMap)?1:0;
+    gFn._legendHidden=true;
+    const fnHiddenHover=vFn._hoverAt(100,80)===null?1:0;
+    delete gFn._legendHidden;
+    // Hand-stepped interpolation: prev = every cross edge doubled, p=0.5 must
+    // draw the midpoint (1.5x). Exercises _mixFunnelGeometry's real path.
+    const fPrev={{}};
+    for (const nm of ["pos0","pos1","lo0","hi0","lo1","hi1"]) {{
+      fPrev[nm]=Float32Array.from(gFn._cpuFunnel[nm], (v)=>nm.startsWith("pos")?v:v*2);
+    }}
+    gFn._transitionPrevFunnelValues=fPrev;
+    gFn._transitionPositionProgress=0.5;
+    vFn._drawNow();
+    const mixHi=gFn._funnelMixScratch && gFn._funnelMixScratch.hi0;
+    const fnMix=(mixHi && Math.abs(mixHi[0]-gFn._cpuFunnel.hi0[0]*1.5)<1e-3)?1:0;
+    delete gFn._transitionPrevFunnelValues;
+    delete gFn._transitionPositionProgress;
+    gFn._funnelGeomMixed=true; vFn._drawNow(); // settled re-upload path
+    // Grow=0 collapses each cross-edge pair onto its DATA-SPACE midpoint even
+    // though the two columns use different offsets/scales.
+    gFn._transitionGrow=0;
+    vFn._mixFunnelGeometry(gFn);
+    const growScratch=gFn._funnelMixScratch;
+    const growLo=vFn._decodeValue(growScratch.lo0,gFn._cpuFunnel.metas.lo0,0);
+    const growHi=vFn._decodeValue(growScratch.hi0,gFn._cpuFunnel.metas.hi0,0);
+    const fnGrow=Math.abs(growLo-growHi)<1e-4?1:0;
+    delete gFn._transitionGrow;
+    gFn._funnelGeomMixed=true; vFn._drawNow();
+    // Retarget a synthetic mid-flight funnel into a second set of independent
+    // metas. The prepared starts must decode to the displayed OLD data values,
+    // not either endpoint's encoded f32 words.
+    const animNames=["pos0","pos1","lo0","hi0","lo1","hi1"];
+    const oldAnim={{_cpuFunnel:gFn._cpuFunnel,orientation:gFn.orientation,n:gFn.n,
+      _transitionPrevFunnelValues:{{}},_transitionPositionProgress:0.5}};
+    const newF={{n:gFn.n,metas:{{}}}};
+    for (let ni=0;ni<animNames.length;ni++) {{
+      const nm=animNames[ni], oldMeta=gFn._cpuFunnel.metas[nm];
+      const oldData=Array.from({{length:gFn.n}},(_,i)=>
+        vFn._decodeValue(gFn._cpuFunnel[nm],oldMeta,i));
+      oldAnim._transitionPrevFunnelValues[nm]=Float32Array.from(
+        oldData,(value)=>(value-2-oldMeta.offset)*(oldMeta.scale||1));
+      const meta={{offset:301+ni*17,scale:0.2+ni*0.15}};
+      newF.metas[nm]=meta;
+      newF[nm]=Float32Array.from(oldData,(value)=>(value+3-meta.offset)*meta.scale);
+    }}
+    const nextAnim={{_cpuFunnel:newF,orientation:gFn.orientation,n:gFn.n}};
+    const animMatch={{strategy:"index",pairs:[[0,0],[1,1],[2,2]]}};
+    const animPrepared=vFn._prepareFunnelPositionInterpolation(oldAnim,nextAnim,animMatch);
+    let fnAnim=animPrepared?1:0;
+    for (const nm of animNames) {{
+      const oldValue=vFn._decodeValue(gFn._cpuFunnel[nm],gFn._cpuFunnel.metas[nm],1);
+      const startValue=vFn._decodeValue(nextAnim._transitionPrevFunnelValues[nm],newF.metas[nm],1);
+      if (Math.abs(startValue-(oldValue-1))>1e-3) fnAnim=0;
+    }}
+    const fnItems=vFn._defaultTooltipItems({{trace:gFn.trace.id,index:2,stage:"C",value:2,
+      value_text:"2",share:0.2,share_text:"20%",conversion:null,conversion_text:"—",
+      dropoff:null,dropoff_text:"—"}},{{}},{{}});
+    const fnDash=(fnItems.length===5 && fnItems[3].value==="—" && fnItems[4].value==="—")?1:0;
+    const funnel=(fnInk && fnOpacity && fnHit && fnHit.index===1 && !fnMiss && fnRowOk && fnNav
+      && fnFilterN && fnA11y && fnHitHidden && fnPaintFull && fnRestored
+      && fnHiddenHover && fnMix && fnGrow && fnAnim && fnDash)?1:0;
+    vFn.destroy();holderFn.remove();
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHiddenAtRest}} modebarTopLeft=${{modebarTopLeft}} modebarHover=${{modebarHoverReveal}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} panToggle=${{panToggle}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} xonly=${{xonly}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} srestore=${{srestore}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} dwire=${{dwire}} drestore=${{drestore}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}} meancolor=${{meancolor}} funnel=${{funnel}} dretire=${{dretire}}`;
     const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
@@ -1424,6 +1627,7 @@ try{{
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     meancolor = int(re.search(r"meancolor=(\d+)", title).group(1))
+    funnel = int(re.search(r"funnel=(\d+)", title).group(1))
     dretire = int(re.search(r"dretire=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     hold = int(re.search(r"hold=(\d+)", title).group(1))
@@ -1435,6 +1639,8 @@ try{{
     stale = int(re.search(r"stale=(\d+)", title).group(1))
     thrash = int(re.search(r"thrash=(\d+)", title).group(1))
     qwire = int(re.search(r"qwire=(\d+)", title).group(1))
+    dwire = int(re.search(r"dwire=(\d+)", title).group(1))
+    drestore = int(re.search(r"drestore=(\d+)", title).group(1))
     stream = int(re.search(r"stream=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
@@ -1601,10 +1807,25 @@ try{{
         )
     if qwire != 1:
         raise SystemExit("log-u8 density decode failed (quantized wire)")
+    if dwire != 1:
+        raise SystemExit(
+            "direct-wire density failed (reduced motion must upload the "
+            "log-u8 wire bytes verbatim and retain them on density.wire)"
+        )
+    if drestore != 1:
+        raise SystemExit(
+            "direct-wire home restore failed (null-grid density must "
+            "re-upload from the retained wire bytes, not throw)"
+        )
     if meancolor != 1:
         raise SystemExit(
             "mean-color density failed (surface must wear the per-cell mean "
             "point colors, count as alpha — LOD doc §2)"
+        )
+    if funnel != 1:
+        raise SystemExit(
+            "funnel failed (per-stage palette ink, trapezoid containment "
+            "hover with stage index + semantic rows, or a11y stage nav)"
         )
     if dretire != 1:
         raise SystemExit(

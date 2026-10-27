@@ -39,14 +39,16 @@ from __future__ import annotations
 import asyncio
 import urllib.parse
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from socketio import AsyncNamespace
 
 from xy.channel import handle_message
 
+from .plan import PlanError, PlanMissError
 from .registry import FigureEntry, FigureRegistry
-from .tokens import parse_token
+from .tokens import parse_plan_token, parse_token
 
 if TYPE_CHECKING:
     from xy._figure import Figure
@@ -104,7 +106,43 @@ def _handle_entry_message(entry: FigureEntry, content: Any) -> Any:
 
 # An async callable(token) -> Figure | None: given a parseable figure token,
 # rebuild the figure from Reflex state (wired by app.setup; see state_bridge).
+# May raise PlanError subclasses for spec-aware err frames.
 RebuildHook = Callable[[str], Awaitable[Optional["Figure"]]]
+
+
+@dataclass(frozen=True)
+class _RebuildFailure:
+    """Client-facing outcome of a failed rebuild attempt."""
+
+    error: str
+    resync: bool = False
+
+
+@dataclass(frozen=True)
+class _TokenIdentity:
+    """What a figure token reveals: session affinity and rebuildability."""
+
+    affinity_client: Optional[str]
+    rebuildable: bool
+    plan_bound: Optional[tuple[str, str]] = None  # (data_token, digest)
+
+
+def _token_identity(token: str) -> _TokenIdentity:
+    composite = parse_plan_token(token)
+    if composite is not None:
+        return _TokenIdentity(
+            affinity_client=composite.data.client_token,
+            rebuildable=True,
+            plan_bound=(composite.data_token, composite.digest),
+        )
+    parsed = parse_token(token)
+    if parsed is not None and parsed.kind == "figure":
+        return _TokenIdentity(affinity_client=parsed.client_token, rebuildable=True)
+    if parsed is not None:
+        # A bare data token names columns, never a figure: enforce affinity
+        # (it embeds a session) but never serve or rebuild it as one.
+        return _TokenIdentity(affinity_client=parsed.client_token, rebuildable=False)
+    return _TokenIdentity(affinity_client=None, rebuildable=False)
 
 
 def _plain(value: Any) -> Any:
@@ -159,7 +197,7 @@ class XYNamespace(AsyncNamespace):
         # room fan-out, so one cancelled waiter cannot cancel the attempt and
         # a failed builder is not rerun serially by every existing waiter.
         self._rebuild_attempts: dict[
-            str, asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]
+            str, asyncio.Task[tuple[Optional[FigureEntry], Optional[_RebuildFailure]]]
         ] = {}
 
     # -- connection lifecycle ------------------------------------------------
@@ -208,7 +246,13 @@ class XYNamespace(AsyncNamespace):
                 # path has proved the SID is still live. A concurrent
                 # disconnect can now only remove this record, never precede
                 # and be undone by it.
-                self.registry.subscribe(token, sid, rebuildable=parse_token(token) is not None)
+                identity = _token_identity(token)
+                self.registry.subscribe(token, sid, rebuildable=identity.rebuildable)
+                if identity.plan_bound is not None:
+                    # Index the mounted plan before serving, so a column
+                    # republish racing this subscribe rebuilds it (the
+                    # re-read below then serves that fresher generation).
+                    self.registry.bind_plan(*identity.plan_bound)
                 # A normal state publish can replace a just-rebuilt entry
                 # while its room-wide broadcast is still completing, before
                 # this SID joins. Re-read after the join: replacements before
@@ -438,7 +482,7 @@ class XYNamespace(AsyncNamespace):
 
     def _start_rebuild_attempt(
         self, token: str
-    ) -> asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]:
+    ) -> asyncio.Task[tuple[Optional[FigureEntry], Optional[_RebuildFailure]]]:
         """Start and retain one shared cache-miss attempt for ``token``."""
         # Install the guard before publishing the task in ``_rebuild_attempts``.
         # A concurrent waiter can then distinguish this live attempt from one
@@ -447,7 +491,9 @@ class XYNamespace(AsyncNamespace):
         task = asyncio.create_task(self._run_rebuild_attempt(token, entry, guard))
         self._rebuild_attempts[token] = task
 
-        def forget(completed: asyncio.Task[tuple[Optional[FigureEntry], Optional[str]]]) -> None:
+        def forget(
+            completed: asyncio.Task[tuple[Optional[FigureEntry], Optional[_RebuildFailure]]],
+        ) -> None:
             if self._rebuild_attempts.get(token) is completed:
                 self._rebuild_attempts.pop(token, None)
 
@@ -459,19 +505,26 @@ class XYNamespace(AsyncNamespace):
         token: str,
         entry: Optional[FigureEntry],
         guard: Optional[object],
-    ) -> tuple[Optional[FigureEntry], Optional[str]]:
+    ) -> tuple[Optional[FigureEntry], Optional[_RebuildFailure]]:
         """Build, conditionally publish, and fan out one total rebuild attempt."""
+        unknown = _RebuildFailure("unknown figure token")
         if entry is not None:
             return entry, None
         if guard is None:  # defensive: a miss always receives one bounded guard
-            return None, "unknown figure token"
+            return None, unknown
 
         try:
             rebuild = self._rebuild
             if rebuild is None:
-                return None, "unknown figure token"
+                return None, unknown
             try:
                 figure = await rebuild(token)
+            except PlanError as exc:
+                # Spec-aware failures of the data-bound tier: a stale plan
+                # digest asks the client to resync (the recompiled page
+                # carries the new digest); a bind mismatch names both sides
+                # and is not retryable as-is.
+                return None, _RebuildFailure(str(exc), resync=isinstance(exc, PlanMissError))
             except Exception:  # noqa: BLE001 - user builder code is an input boundary
                 figure = None
 
@@ -480,12 +533,12 @@ class XYNamespace(AsyncNamespace):
                 # awaiting. Use it instead of reporting a stale rebuild failure.
                 entry = self.registry.get(token)
                 if entry is None:
-                    return None, "unknown figure token"
+                    return None, unknown
                 return entry, None
 
             entry, inserted = self.registry.publish_if_missing(token, figure, guard=guard)
             if entry is None:
-                return None, "unknown figure token"
+                return None, unknown
             if not inserted:
                 return entry, None
 
@@ -499,7 +552,7 @@ class XYNamespace(AsyncNamespace):
                     current = self.registry.get(token)
                     if current is not None:
                         return current, None
-                return None, "rebuild failed"
+                return None, _RebuildFailure("rebuild failed")
 
             # ``broadcast_payload`` intentionally no-ops when its generation
             # went stale. Resolve that race explicitly: a replacement wins,
@@ -507,7 +560,7 @@ class XYNamespace(AsyncNamespace):
             if not self.registry.is_current(token, entry):
                 current = self.registry.get(token)
                 if current is None:
-                    return None, "unknown figure token"
+                    return None, unknown
                 return current, None
             return entry, None
         finally:
@@ -527,10 +580,10 @@ class XYNamespace(AsyncNamespace):
         token = self._token_of(data)
         if token is None:
             return None, None, False
-        parsed = parse_token(token)
-        if parsed is not None:
+        identity = _token_identity(token)
+        if identity.affinity_client is not None:
             session = await self.get_session(sid)
-            if session.get("client_token") != parsed.client_token:
+            if session.get("client_token") != identity.affinity_client:
                 await self._err(sid, token, "figure belongs to another session")
                 return token, None, False
         entry, rebuild_guarded = self.registry.get_with_rebuild_guard(token)
@@ -541,7 +594,12 @@ class XYNamespace(AsyncNamespace):
         # forever for older user rebuild code. An entry whose guard is still
         # valid remains provisional until its rebuild fan-out completes.
         initially_missing = entry is None or (attempt is not None and rebuild_guarded)
-        if parsed is not None and allow_rebuild and self._rebuild is not None and initially_missing:
+        if (
+            identity.rebuildable
+            and allow_rebuild
+            and self._rebuild is not None
+            and initially_missing
+        ):
             # The task spans builder, conditional insertion, and existing-room
             # fan-out. All requests that observed this in-flight miss share its
             # result and must drop pre-payload interactions, even when another
@@ -553,14 +611,27 @@ class XYNamespace(AsyncNamespace):
                 attempt = None
             if attempt is None:
                 attempt = self._start_rebuild_attempt(token)
-            entry, error = await asyncio.shield(attempt)
-            if error is not None:
-                await self._err(sid, token, error)
+            entry, failure = await asyncio.shield(attempt)
+            if failure is not None:
+                await self._err(sid, token, failure.error, resync=failure.resync)
                 return token, None, initially_missing
         if entry is None:
             await self._err(sid, token, "unknown figure token")
             return token, None, False
         return token, entry, initially_missing
 
-    async def _err(self, sid: str, token: Optional[str], error: str) -> None:
-        await self.emit("err", {"fig": token, "error": error}, to=sid)
+    async def _err(
+        self, sid: str, token: Optional[str], error: str, *, resync: bool = False
+    ) -> None:
+        envelope: dict[str, Any] = {"fig": token, "error": error}
+        if resync:
+            envelope["resync"] = True
+        await self.emit("err", envelope, to=sid)
+
+    async def broadcast_error(self, token: str, error: str, resync: bool = False) -> None:
+        """Room-wide err frame for server-side failures with no request to
+        answer (e.g. a column republish whose plan bind fails)."""
+        envelope: dict[str, Any] = {"fig": token, "error": error}
+        if resync:
+            envelope["resync"] = True
+        await self.emit("err", envelope, room=self._room(token))

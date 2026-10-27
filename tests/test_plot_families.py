@@ -113,6 +113,33 @@ def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> 
     assert fig.to_png(engine=xy.Engine.default).startswith(b"\x89PNG")
 
 
+def test_triangle_mesh_stroke_channel_without_width_implies_one_pixel() -> None:
+    coordinates = (
+        [0.0, 1.0],
+        [0.0, 0.0],
+        [1.0, 2.0],
+        [0.0, 0.0],
+        [0.5, 1.5],
+        [1.0, 1.0],
+    )
+    strokes = np.array([[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]])
+    trace = Figure().triangle_mesh(*coordinates, stroke=strokes).traces[0]
+    assert trace.stroke_ch is not None
+    assert trace.style["stroke_width"] == 1.0
+
+    vector_width = (
+        Figure()
+        .triangle_mesh(
+            *coordinates,
+            stroke=strokes,
+            stroke_width=[0.0, 2.0],
+        )
+        .traces[0]
+    )
+    assert "stroke_width" not in vector_width.style
+    assert "stroke_width" in vector_width.style_channels
+
+
 def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
     fig = Figure().triangle_mesh(
         [0.0, np.nan, 2.0],

@@ -85,7 +85,7 @@ def render() -> str:
         "",
     ]
     lines += caps.markdown_mark_property_table()
-    lines += ["", "### Notes", ""]
+    lines += ["", "### Mark style notes", ""]
     for prop in caps.MARK_STYLE_PROPERTIES:
         if prop.notes:
             lines.append(f"- **`{prop.id}`** — {prop.notes}")
@@ -111,7 +111,7 @@ def render() -> str:
         "",
     ]
     lines += caps.markdown_slot_table()
-    lines += ["", "### Notes", ""]
+    lines += ["", "### Chrome slot notes", ""]
     for slot in caps.CHART_SLOTS:
         if slot.notes:
             lines.append(f"- **`{slot.id}`** (via `{slot.channel}`) — {slot.notes}")
@@ -123,7 +123,7 @@ def render() -> str:
         "",
     ]
     lines += caps.markdown_extension_table()
-    lines += ["", "### Notes", ""]
+    lines += ["", "### Extension point notes", ""]
     for point in caps.EXTENSION_POINTS:
         lines.append(f"- **{point.id}** — {point.notes}")
     lines += [
@@ -194,7 +194,7 @@ def render_public() -> str:
         "",
     ]
     lines += caps.markdown_mark_property_table()
-    lines += ["", "### Notes", ""]
+    lines += ["", "### Mark style notes", ""]
     for prop in caps.MARK_STYLE_PROPERTIES:
         if prop.notes:
             lines.append(f"- **`{prop.id}`** — {prop.notes}")
@@ -216,7 +216,7 @@ def render_public() -> str:
         "",
     ]
     lines += caps.markdown_slot_table()
-    lines += ["", "### Notes", ""]
+    lines += ["", "### Chrome slot notes", ""]
     for slot in caps.CHART_SLOTS:
         if slot.notes:
             lines.append(f"- **`{slot.id}`** (via `{slot.channel}`) — {slot.notes}")

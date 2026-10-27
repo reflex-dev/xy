@@ -22,6 +22,7 @@ components:
   - xy.segments
   - xy.ribbon
   - xy.sankey
+  - xy.funnel
   - xy.triangle_mesh
 ---
 
@@ -83,6 +84,7 @@ built.
 | Uncertainty | `errorbar`, `error_band` |
 | Explicit geometry | `stem`, `segments`, `triangle_mesh` |
 | Directed flows | `ribbon`, `sankey` |
+| Ordered processes | `funnel` |
 
 The [Chart Gallery](/docs/xy/overview/gallery/) explains expected data shapes and
 family-specific choices.

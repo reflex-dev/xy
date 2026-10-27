@@ -5106,6 +5106,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             # flow band as a rectangle.
             marks.append(_ribbon_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg))
 
+        elif kind == "funnel":
+            marks.append(_funnel_marks(t, blob, cols, trace_sx, trace_sy, style, color))
+
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
             marks.append(
                 _rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot, polar)
@@ -5277,7 +5280,21 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
 
     annotation_marks, unclipped_annotation_marks, annotation_labels = _annotation_svg(
-        spec.get("annotations") or [], sx, sy, plot, width, height, polar, slots
+        spec.get("annotations") or [],
+        sx,
+        sy,
+        plot,
+        width,
+        height,
+        polar,
+        # The live client resolves an annotation label through
+        # var(--chart-annotation-text, var(--chart-text, inherit)); the
+        # exporters must reach the same colour or a themed chart's labels
+        # print in the light-mode default (parity is identity).
+        _css(dom_style.get("--chart-annotation-text"), "")
+        or _css(dom_style.get("--chart-text"), "")
+        or "#667085",
+        slots=slots,
     )
     marks.extend(annotation_marks)
     labels.extend(annotation_labels)
@@ -5791,6 +5808,7 @@ def _annotation_svg(
     width: float,
     height: float,
     polar: "Optional[_PolarProjection]" = None,
+    default_text: str = "#667085",
     slots: Optional[dict[str, dict[str, Any]]] = None,
 ) -> tuple[list[str], list[str], list[str]]:
     marks: list[str] = []
@@ -5818,6 +5836,11 @@ def _annotation_svg(
 
     for ann in annotations:
         style = annotation_style_with_slot(ann, slots)
+        # SHAPE paint (rule strokes, band fills, arrows, markers) keeps its own
+        # neutral default — only the LABEL falls back to the theme text colour,
+        # which is what the client's
+        # var(--chart-annotation-text, var(--chart-text, inherit)) governs.
+        # Widening this to shapes diverged SVG from the raster and the client.
         color = escape(_css(style.get("color"), "#667085"))
         opacity = float(style.get("opacity", 1.0))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
@@ -5983,8 +6006,14 @@ def _annotation_svg(
                     style.get("opacity", 1.0) if kind == "text" else 1.0,
                 )
             )
-            # A callout's `color` paints its arrow; the label prefers its own.
-            label_color = escape(_css(style.get("label_color"), "")) or color
+            # A callout's `color` paints its arrow; the label prefers its own,
+            # then the theme text colour (the client resolves the same chain
+            # through var(--chart-annotation-text, var(--chart-text, …))).
+            label_color = (
+                escape(_css(style.get("label_color"), ""))
+                or (escape(_css(style.get("color"), "")) if style.get("color") else "")
+                or escape(default_text)
+            )
             labels.extend(
                 _svg_text_box(style, lines, x_text, y_text, line_height, font_size, anchor)
             )
@@ -6950,6 +6979,89 @@ def _ribbon_marks(
             # `effective_rgba` folds it into the fill.
             edge_op = stroke_op * (1.0 if stroke_paint is not None else float(source_rgba[i][3]))
             attrs += f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}" '
+            if edge_op < 1:
+                attrs += f'stroke-opacity="{_num(edge_op)}" '
+        out.append(f'<path d="{d}" {attrs}/>')
+    return "".join(out)
+
+
+def _funnel_marks(
+    t: dict,
+    blob: bytes,
+    cols: list,
+    sx: _Scale,
+    sy: _Scale,
+    style: dict,
+    fallback: str,
+) -> str:
+    """Funnel segments as one closed 4-corner `<path>` each, flat per-stage
+    fill. Geometry comes from `_scene.funnel_quad` — the same reference the
+    raster consumes and the golden test pins — built from the axis-mapped
+    edges, so log/symlog cross axes keep the straight-in-transformed-space
+    edges the client's strip draws."""
+    # Deferred import: _scene itself imports the column readers from this
+    # module, so a module-level import here is a load-order cycle.
+    from . import _scene
+
+    pos0 = _column(blob, cols[t["pos0"]])
+    pos1 = _column(blob, cols[t["pos1"]])
+    lo0 = _column(blob, cols[t["lo0"]])
+    hi0 = _column(blob, cols[t["hi0"]])
+    lo1 = _column(blob, cols[t["lo1"]])
+    hi1 = _column(blob, cols[t["hi1"]])
+    horizontal = t.get("orientation") == "horizontal"
+    spos, scross = (sx, sy) if horizontal else (sy, sx)
+    n = min(len(pos0), len(pos1), len(lo0), len(hi0), len(lo1), len(hi1))
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, fallback, read)
+    fills = _paint.effective_rgba(intrinsic, t, read, component="fill", default_opacity=1.0)
+    stroke_css = style.get("stroke")
+    stroke_width = float(style.get("stroke_width", 0.0) or 0.0)
+    stroke_op = _stroke_opacity(style)
+    # An omitted stroke colour matches each segment's own fill
+    # (edgecolors="face"), the ribbon rule: a per-stage funnel has no single
+    # trace colour to outline with.
+    stroke_paint = None if stroke_css is None else escape(_css(stroke_css, fallback))
+
+    def rgb(paint: Any) -> str:
+        return f"rgb({round(paint[0] * 255)},{round(paint[1] * 255)},{round(paint[2] * 255)})"
+
+    out: list[str] = []
+    for i in range(n):
+        mapped = (
+            float(spos(pos0[i])),
+            float(spos(pos1[i])),
+            float(scross(lo0[i])),
+            float(scross(hi0[i])),
+            float(scross(lo1[i])),
+            float(scross(hi1[i])),
+        )
+        if not all(math.isfinite(v) for v in mapped):
+            continue
+        quad = _scene.funnel_quad(*mapped, horizontal)
+        d = (
+            f"M {_num(quad[0, 0])} {_num(quad[0, 1])} "
+            f"L {_num(quad[1, 0])} {_num(quad[1, 1])} "
+            f"L {_num(quad[2, 0])} {_num(quad[2, 1])} "
+            f"L {_num(quad[3, 0])} {_num(quad[3, 1])} Z"
+        )
+        paint = fills[i]
+        alpha = float(paint[3])
+        attrs = f'fill="{rgb(paint)}"' + (f' fill-opacity="{_num(alpha)}"' if alpha < 1 else "")
+        if stroke_width > 0:
+            paint_css = stroke_paint if stroke_paint is not None else rgb(intrinsic[i])
+            edge_op = stroke_op * (1.0 if stroke_paint is not None else float(intrinsic[i][3]))
+            # round joins: the native rasterizer's stroke is a distance field
+            # with round caps/joins by construction (src/raster.rs), so an SVG
+            # miter would spike where a taper meets its neck while the PNG
+            # stayed round — parity is identity, so say it explicitly.
+            attrs += (
+                f' stroke="{paint_css}" stroke-width="{_num(stroke_width)}"'
+                ' stroke-linejoin="round" '
+            )
             if edge_op < 1:
                 attrs += f'stroke-opacity="{_num(edge_op)}" '
         out.append(f'<path d="{d}" {attrs}/>')
@@ -8863,6 +8975,72 @@ def _colorbar_body(
     return "".join(rects)
 
 
+def _resolve_auto_legend_locations(
+    fig: Any,
+    spec: dict[str, Any],
+    rendered_columns: Any,
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+) -> dict[str, Any]:
+    """Re-resolve automatic legends only when an export changes dimensions.
+
+    Payload construction has to choose an initial concrete location before the
+    export-only width/height overrides are known. Static writers still have the
+    exact emitted columns at this point, so score those columns against the
+    final layout when an override actually changes it. Keeping that trigger in
+    this shared helper prevents SVG and raster export semantics from drifting;
+    in particular, a same-size export must retain pyplot's richer initial
+    decision. Copy on write matters for ``extra_legends``: their payload list
+    is allowed to share dictionaries with the source Figure.
+    """
+    dimensions_changed = (width is not None and int(width) != getattr(fig, "width", None)) or (
+        height is not None and int(height) != getattr(fig, "height", None)
+    )
+    if not dimensions_changed:
+        return spec
+
+    from ._legendfit import resolve_for_figure
+
+    updated: Optional[dict[str, Any]] = None
+
+    def resolved(options: Any) -> Any:
+        if (
+            not isinstance(options, dict)
+            or options.get("auto_loc") != "best"
+            or options.get("anchor") is not None
+            or spec.get("coords", "cartesian") != "cartesian"
+        ):
+            return options
+        concrete = dict(options)
+        concrete["loc"] = resolve_for_figure(
+            fig,
+            spec,
+            concrete,
+            rendered_columns=rendered_columns,
+        )
+        return concrete
+
+    legend = spec.get("legend")
+    concrete_legend = resolved(legend)
+    if concrete_legend is not legend:
+        updated = dict(spec)
+        updated["legend"] = concrete_legend
+
+    extra_legends = spec.get("extra_legends")
+    if isinstance(extra_legends, (list, tuple)):
+        concrete_extras = [resolved(extra) for extra in extra_legends]
+        if any(
+            concrete is not original
+            for concrete, original in zip(concrete_extras, extra_legends, strict=True)
+        ):
+            if updated is None:
+                updated = dict(spec)
+            updated["extra_legends"] = concrete_extras
+
+    return spec if updated is None else updated
+
+
 def to_svg(
     fig: Any,
     path: Optional[str | PathLike[str]] = None,
@@ -8890,6 +9068,13 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
+    spec = _resolve_auto_legend_locations(
+        fig,
+        spec,
+        blob,
+        width=width,
+        height=height,
+    )
     apply_export_background(spec, background)
     out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:

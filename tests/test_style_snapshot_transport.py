@@ -1,4 +1,4 @@
-"""The v13 capture pair: request out, snapshot back, validated at the door.
+"""The v14 capture pair: request out, snapshot back, validated at the door.
 
 Headless like the rest of the widget-boundary tests: the client's half is
 covered by the standalone capture smoke; here the kernel's half must send a

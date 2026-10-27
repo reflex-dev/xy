@@ -27,24 +27,18 @@ TAILWIND_SCAN_EDGE_CLASSES = (
 )
 
 
-@pytest.fixture
-def app_cwd(tmp_path, monkeypatch):
-    """rx.asset symlinks into Path.cwd()/assets — emulate an app directory."""
-    monkeypatch.chdir(tmp_path)
-    # component class is cached per process; asset symlinks are per-cwd, so
-    # force a rebuild to exercise registration in this cwd.
-    import reflex_xy.component as component_mod
-
-    monkeypatch.setattr(component_mod, "_component_cls", None)
-    return tmp_path
-
-
 def test_component_compiles_with_events(app_cwd):
-    comp = reflex_xy.chart("tok-abc", on_point_hover=CompState.picked, height="300px", id="chart1")
+    comp = reflex_xy.chart(
+        figure=reflex_xy.FigureHandle("tok-abc"),
+        on_point_hover=CompState.picked,
+        height="300px",
+        id="chart1",
+    )
     assert comp.tag == "XYChart"
     assert str(comp.library).startswith("$/public/external/reflex_xy/assets/XYChart")
     rendered = str(comp)
-    assert 'token:"tok-abc"' in rendered
+    # the handle's token reaches the *figure* prop, not just any prop
+    assert 'figure:({ ["token"] : "tok-abc" })' in rendered
     assert "onPointHover" in rendered
     assert "picked" in rendered  # the reflex event dispatch is in the prop
 
@@ -56,19 +50,69 @@ def test_component_compiles_with_events(app_cwd):
     assert (ext / "xy_client.js").resolve().read_bytes()[:16]
 
 
-def test_component_accepts_var_token(app_cwd):
-    class TokState(rx.State):
-        tok: str = ""
+def test_component_accepts_figure_var(app_cwd):
+    class FigState(rx.State):
+        @reflex_xy.figure
+        def fig(self):
+            return None
 
-    comp = reflex_xy.chart(TokState.tok)
+    comp = reflex_xy.chart(figure=FigState.fig, height="300px")
     rendered = str(comp)
-    assert "tok" in rendered
+    assert "figure" in rendered
+    assert "fig" in rendered
     # default sizing keeps the mount visible before the first payload
     assert "height" in rendered.lower()
 
 
+def test_component_rejects_wrong_var_and_raw_string_at_compile(app_cwd):
+    """The Phase-0 R1 contract, through the real component: the typed
+    ``figure`` prop fails the compile for a non-handle var or a string."""
+
+    class WrongVarState(rx.State):
+        points: int = 5
+
+    with pytest.raises(TypeError, match="figure"):
+        reflex_xy.chart(figure=WrongVarState.points)
+    with pytest.raises(TypeError, match="figure"):
+        reflex_xy.chart(figure="xyv1|raw|token|string")
+
+
+def test_positional_var_source_warns_and_routes_to_figure(app_cwd):
+    class ShimState(rx.State):
+        @reflex_xy.figure
+        def fig(self):
+            return None
+
+    with pytest.warns(DeprecationWarning, match="figure="):
+        comp = reflex_xy.chart(ShimState.fig)
+    assert "figure" in str(comp)
+
+
+def test_positional_token_string_warns_but_keeps_the_token_prop(app_cwd):
+    with pytest.warns(DeprecationWarning, match="figure="):
+        comp = reflex_xy.chart("tok-abc")
+    assert 'token:"tok-abc"' in str(comp)
+
+
+def test_kernel_events_on_static_source_fail_at_compile(app_cwd):
+    static_chart = xy.line_chart(xy.line([0, 1], [1, 2]))
+    with pytest.raises(ValueError, match=r"on_select_end.*static"):
+        reflex_xy.chart(static_chart, on_select_end=CompState.picked)
+    # client-side events stay valid on the static tier
+    comp = reflex_xy.chart(static_chart, on_view_change=CompState.picked, on_hover=CompState.picked)
+    assert "onViewChange" in str(comp)
+
+
+def test_explicitly_disabled_kernel_events_pass_on_static_source(app_cwd):
+    """``on_point_hover=None`` means "no handler" — a disabled handler must
+    not fail the static-source compile (value check, not key presence)."""
+    static_chart = xy.line_chart(xy.line([0, 1], [1, 2]))
+    comp = reflex_xy.chart(static_chart, on_point_hover=None, on_select_end=None)
+    assert "src" in str(comp)
+
+
 def test_component_import_is_local_library(app_cwd):
-    comp = reflex_xy.chart("tok")
+    comp = reflex_xy.chart(figure=reflex_xy.FigureHandle("tok"))
     imports = comp._get_all_imports()
     lib = [k for k in imports if "XYChart" in k]
     assert lib, f"wrapper import missing from {list(imports)}"
@@ -155,7 +199,7 @@ def test_static_facet_chart_compiles_as_grid_of_panel_payloads(app_cwd):
 
 
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
-    rendered = str(reflex_xy.chart("xyfig-runtime"))
+    rendered = str(reflex_xy.chart(figure=reflex_xy.FigureHandle("xyfig-runtime")))
     assert "tailwindClassTokens" not in rendered
 
 
@@ -163,7 +207,7 @@ def test_live_chart_accepts_explicit_tailwind_scan_inventory(app_cwd):
     """Token payloads are runtime-only; callers can expose complete utilities."""
     rendered = str(
         reflex_xy.chart(
-            "xyfig-runtime",
+            figure=reflex_xy.FigureHandle("xyfig-runtime"),
             tailwind_classes=[
                 "rounded-[28px] border-fuchsia-500",
                 "dark:bg-slate-950 hover:bg-fuchsia-100",
@@ -181,7 +225,7 @@ def test_tailwind_scan_inventory_is_verbatim_for_live_and_static_charts(app_cwd)
     manifest = " ".join(TAILWIND_SCAN_EDGE_CLASSES)
     live_rendered = str(
         reflex_xy.chart(
-            "xyfig-runtime",
+            figure=reflex_xy.FigureHandle("xyfig-runtime"),
             tailwind_classes=TAILWIND_SCAN_EDGE_CLASSES,
         )
     )
@@ -257,4 +301,4 @@ def test_tailwind_inventory_requires_literal_strings(app_cwd, value):
         match=r"tailwind_classes must be a string or ordered iterable of strings|"
         "tailwind_classes must contain only strings",
     ):
-        reflex_xy.chart("xyfig-runtime", tailwind_classes=value)
+        reflex_xy.chart(figure=reflex_xy.FigureHandle("xyfig-runtime"), tailwind_classes=value)

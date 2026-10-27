@@ -77,22 +77,23 @@ def test_await_registers_caches_and_rebuilds(_fresh_registry, client_token):
     calls_before = BUILDER_CALLS["count"]
 
     async def main():
-        token = await state.chart
-        entry = _fresh_registry.get(token)
+        handle = await state.chart
+        assert isinstance(handle, reflex_xy.FigureHandle)
+        entry = _fresh_registry.get(handle.token)
         assert entry is not None
         assert entry.figure.traces[0].n_points == 50
 
         # cache hit: the builder (and its awaited fetch) must not rerun
-        assert await state.chart == token
+        assert await state.chart == handle
         assert BUILDER_CALLS["count"] == calls_before + 1
 
-        # dependency change -> dirty -> re-await rebuilds, token stable
+        # dependency change -> dirty -> re-await rebuilds, handle stable
         state.n = 120
         type(state).computed_vars["chart"].mark_dirty(state)
-        assert await state.chart == token
+        assert await state.chart == handle
         assert BUILDER_CALLS["count"] == calls_before + 2
-        assert _fresh_registry.get(token).version == 2
-        assert _fresh_registry.get(token).figure.traces[0].n_points == 120
+        assert _fresh_registry.get(handle.token).version == 2
+        assert _fresh_registry.get(handle.token).figure.traces[0].n_points == 120
 
     asyncio.run(main())
 
@@ -100,7 +101,7 @@ def test_await_registers_caches_and_rebuilds(_fresh_registry, client_token):
 def test_pre_hydration_returns_empty(_fresh_registry):
     root = rx.State(_reflex_internal_init=True)
     state = root.get_substate(tuple(AsyncVarDemo.get_full_name().split("."))[1:])
-    assert asyncio.run(state.chart) == ""
+    assert asyncio.run(state.chart) == reflex_xy.FigureHandle("")
     assert len(_fresh_registry) == 0
 
 
@@ -108,11 +109,11 @@ def test_none_chart_unregisters(_fresh_registry, client_token):
     state = hydrated_substate(client_token)
 
     async def main():
-        token = await state.maybe_chart
+        token = (await state.maybe_chart).token
         assert _fresh_registry.get(token) is not None
         state.n = -1
         type(state).computed_vars["maybe_chart"].mark_dirty(state)
-        assert await state.maybe_chart == ""
+        assert await state.maybe_chart == reflex_xy.FigureHandle("")
         assert _fresh_registry.get(token) is None
 
     asyncio.run(main())

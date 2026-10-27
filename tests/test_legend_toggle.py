@@ -198,6 +198,9 @@ _TOGGLE_PROBE = """
     const click = (row) => row.dispatchEvent(new MouseEvent("click"));
     const cat = view.gpuTraces[1];
     const fullN = cat.n;
+    const a11yTotal = () => view._a11yPointGroups()
+      .reduce((sum, g) => sum + view._a11yGroupCount(g), 0);
+    const a11yBefore = a11yTotal();
 
     // Category toggle: filtered buffers, pick map, kernel notified.
     click(byName("A"));
@@ -208,6 +211,19 @@ _TOGGLE_PROBE = """
       if (cat._cpu.color[cat._visMap[j]] === 0) mappedClean = false;
     }
     const rowOff = byName("A").dataset.xyLegendOff !== undefined;
+    const a11yAfterCategoryHide = a11yTotal();
+    const categoryA11yCount = view._a11yGroupCount(cat);
+    // The first trace owns flat rows 0..7. Advancing once from its last row
+    // must reach the hidden category-A row 0 of the categorical trace, while
+    // funnel stageNav keeps its separate visible-stage rule.
+    const savedComm = view.comm;
+    view.comm = null;
+    view._a11yPointIndex = fullN - 1;
+    view.canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    const hiddenCategoryReachable = view._hoverTarget?.g === cat
+      && view._hoverTarget.index === 0
+      && view._a11yKeyboardReadout?.total === a11yBefore;
+    view.comm = savedComm;
 
     // Hovering a toggled-off row must not emphasize anything.
     byName("A").dispatchEvent(new PointerEvent("pointerenter"));
@@ -224,6 +240,14 @@ _TOGGLE_PROBE = """
     const alphaHidden = !!view.gpuTraces[0]._legendHidden;
     view._renderPick();
     const alphaUnpickable = view.gpuTraces[0].pickCount === 0;
+    const a11yAfterTraceHide = a11yTotal();
+    view.comm = null;
+    view._a11yPointIndex = -1;
+    view.canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    const hiddenTraceReachable = view._hoverTarget?.g === view.gpuTraces[0]
+      && view._hoverTarget.index === 0
+      && view._a11yKeyboardReadout?.total === a11yBefore;
+    view.comm = savedComm;
     click(byName("alpha"));
     const alphaRestored = !view.gpuTraces[0]._legendHidden;
 
@@ -232,6 +256,8 @@ _TOGGLE_PROBE = """
       JSON.stringify({
         fullN, afterHideN, hasVisMap, mappedClean, rowOff, offHoverDims,
         restoredN, visMapCleared, alphaHidden, alphaUnpickable, alphaRestored,
+        a11yBefore, a11yAfterCategoryHide, categoryA11yCount,
+        hiddenCategoryReachable, a11yAfterTraceHide, hiddenTraceReachable,
         sent,
       })
     );
@@ -554,6 +580,14 @@ def test_browser_legend_click_toggles_series() -> None:
     assert payload["restoredN"] == 8 and payload["visMapCleared"] is True, payload
     assert payload["alphaHidden"] is True and payload["alphaUnpickable"] is True, payload
     assert payload["alphaRestored"] is True, payload
+    # Visual legend filtering must not silently remove ordinary point-series
+    # data from the screen-reader walk or change its "Point N of total" count.
+    assert payload["a11yBefore"] == 16, payload
+    assert payload["a11yAfterCategoryHide"] == 16, payload
+    assert payload["categoryA11yCount"] == 8, payload
+    assert payload["hiddenCategoryReachable"] is True, payload
+    assert payload["a11yAfterTraceHide"] == 16, payload
+    assert payload["hiddenTraceReachable"] is True, payload
     # Kernel stays in sync: every click shipped a legend_toggle message.
     kinds = [
         (m.get("type"), m.get("trace"), m.get("category"), m.get("hidden")) for m in payload["sent"]

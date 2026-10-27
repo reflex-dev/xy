@@ -1,93 +1,181 @@
 # Changelog
 
-All notable changes to **xy** are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
-adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
-pre-1.0, minor versions may contain breaking changes (see the stability table
-in the README).
+All notable changes to **xy** are documented here. The project adheres to
+[Semantic Versioning](https://semver.org/) once `1.0.0` ships; pre-1.0, minor
+versions may contain breaking changes (see the stability table in the README).
 
-## [Unreleased]
+This file is generated, and it is the release trigger: a version heading with no
+matching git tag is what makes the pipeline build and publish that version.
+Do not add or edit a version heading by hand — write a news fragment under
+`news/` instead (`make news NAME=1234.feature.md`), and the *Dispatch release*
+workflow materializes the pending fragments into a new section with
+[towncrier](https://towncrier.readthedocs.io/). See
+[`spec/process/production-readiness.md`](spec/process/production-readiness.md).
+
+<!-- towncrier release notes start -->
+
+## v0.0.8 (2026-10-13)
+
+### Bug Fixes
+
+- Connect the XY chart namespace explicitly when Reflex 0.10 pre-creates the shared Socket.IO manager with auto-connect disabled, restoring live chart rendering. ([#526](https://github.com/reflex-dev/xy/issues/526))
+
+
+## v0.0.7 (2026-08-26)
+
+### Features
+
+- Unanchored Cartesian legends now use content-aware placement when `loc` is set
+  to `"best"`. The initial static decision measures the legend against bounded
+  line, area, scatter, bar, and annotation geometry, while the browser remeasures
+  rendered pixels after responsive resize and settled view changes.
+  Initial/static placement takes the exact minimum with canonical tie order; after
+  the browser establishes a live winner, a five-percentage-point hysteresis keeps
+  near-uniform views from making the legend hop, while an empty candidate still
+  always beats an occupied one. Explicit locations, anchors, and polar legends
+  remain fixed. ([#496](https://github.com/reflex-dev/xy/issues/496))
+
+### Bug Fixes
+
+- Funnel labels no longer overlap on short vertical charts. Value labels sit
+  at the stage centers and drop-off labels at the boundaries between them, so
+  the two ladders interleave at half the stage pitch; both were budgeted
+  against a whole one, and every pitch between one and two line heights piled
+  them onto each other. The label ladder's plot-size estimate was also
+  optimistic — it scaled the chart height by a fraction, while the title band,
+  tick labels and margins actually cost a roughly fixed ~90px, so it claimed
+  153px of a real 92px plot at height 180 and placed labels that could not
+  fit. Cramped funnels now drop the derived drop-off percentage rather than
+  print it over the stage value; the tooltip and event payload still carry
+  every number, and roomy charts are unchanged. ([#481](https://github.com/reflex-dev/xy/issues/481))
+- Bar hover tooltips no longer rewrite themselves and jump when the kernel's
+  exact pick reply lands. The reply's row now follows the bar's orientation
+  (band center on the position axis, value end on the value axis) and is mapped
+  through the same display-value path as the local readout, so the refinement is
+  invisible instead of swapping a category label for its code and dragging the
+  anchor off the cursor. ([#499](https://github.com/reflex-dev/xy/issues/499))
+- Charts left running under GPU pressure no longer flicker blank or stay gone
+  until a page reload. Context-restore retries used to clear the presentation
+  canvas before every rebuild attempt, so each transient failure wiped the last
+  drawn frame; the canvas now resizes only when its dimensions actually change,
+  keeping the last good frame on screen until a rebuild succeeds. And when a
+  context stays "live" while every rebuild against it fails (a wedged driver),
+  three consecutive failures now recycle the shared WebGL surface — rebuilding
+  every chart on a fresh context, the in-page equivalent of the reload that was
+  previously the only escape. A genuine context loss — including one arriving
+  while a chart is still mid-retry from an earlier failure — resets that
+  escalation counter, so ordinary loss/restore churn keeps taking cheap
+  same-context retries. ([#501](https://github.com/reflex-dev/xy/issues/501))
+- Charts no longer come back blank after the shared WebGL context budget
+  released them while their tab was hidden. A released chart used to revive with
+  `restoreContext()` on the same canvas, and Chrome can restore that context
+  fully healthy — draws, `readPixels`, and picking all succeed — while never
+  presenting the canvas element again, so the data layer stayed invisible under
+  intact axes until a page reload. Governed releases now re-acquire the way a
+  real eviction does: on a fresh canvas element, rebuilt from the retained spec
+  and payload.
+  Gestures follow the chart onto that fresh canvas: wheel zoom, drag, and hover
+  read their geometry from the live canvas rather than the one they were first
+  bound to, which previously sent a zoom after any context rebuild to infinity. ([#503](https://github.com/reflex-dev/xy/issues/503))
+
+### Miscellaneous
+
+- Releases are now driven by `CHANGELOG.md` instead of by a hand-cut git tag.
+  Contributors add a [towncrier](https://towncrier.readthedocs.io/) news fragment
+  under `news/` (`make news NAME=1234.feature.md`), the *Dispatch release*
+  workflow materializes the pending fragments into a version section, and merging
+  that pull request publishes: the release matrix builds every wheel, the sdist
+  and the runtime-verified PyEmscripten wheel, a human approves the single
+  credentialed upload job, and only a successful upload creates the tag and the
+  GitHub release. `CHANGELOG.md` is generated from that point on — version
+  headings are no longer written by hand. ([#498](https://github.com/reflex-dev/xy/issues/498))
+
+
+## v0.0.6 (2026-08-07)
 
 ### Added
-- The versioned Tailwind-core manifest (`tailwind_profile="core-v1"`):
-  `chart.to_png(style_source="native_cascade", tailwind_profile="core-v1")`
-  resolves the core utilities natively — the full default color palette
-  (vendored from tailwindcss@3.4.17 with provenance, never hand-typed
-  hexes), the spacing/type/weight/radius/border/tracking scales in their
-  published rem/em/px values, resolved through the cascade's own font-size
-  chain. Project Tailwind builds ride `stylesheets=`; unmatched utilities
-  are reported, never guessed.
-- Axis chrome joins static-export styling (parity phase 2): `axis_line` and
-  `tick_mark` accept the shared box vocabulary (background, border, radius,
-  offset shadow, opacity) in SVG, PNG and PDF, `tick_label` and `axis_title`
-  additionally draw padded boxes with the axis gutters growing to fit, and a
-  rotated y-title box lowers to PDF-legal pre-rotated geometry. Emission is
-  strictly declaration-gated (unstyled bytes are untouched), one shared
-  producer feeds both writers and the declared snapshot (per-tick
-  qualifiers + geometry), and `axis_band` is recorded as navigation-gated
-  live chrome rather than drawn. The preflight, capability registry and
-  matrix moved in the same change.
-- The mount-free native cascade (optional `xy-cascade` extension, ~3.8 MB
-  cdylib built from the same workspace): `chart.to_png(custom_css=css,
-  style_source="native_cascade")` resolves classes and self-contained author
-  CSS natively — Lightning CSS parsing; class/slot/descendant selectors,
-  `!important`/specificity/order, custom properties with fallbacks,
-  `em`/`rem` against the font-size cascade, `prefers-color-scheme` — and
-  exports with no browser in the path. Every out-of-profile construct is
-  reported through the compatibility modes (warn by default, refusal in
-  strict), never guessed. `scripts/cascade_differential_smoke.py` pins the
-  cascade against a live Chromium oracle.
-- Live style capture and snapshot-fed export (wire protocol v13). A mounted
-  chart's `await chart.capture_style_snapshot()` returns the browser's
-  resolved cascade as a validated `ResolvedStyleSnapshot` (the client
-  captures every rendered slot's allowlisted computed properties after
-  fonts/layout settle; replies are validated through the schema at the
-  boundary). Passing it to `to_png(style_snapshot=...)` / `to_svg` /
-  `to_image` / `write_image` makes the native writers reproduce what the
-  browser resolved — host theme, classes, dark mode — with no browser in
-  the export path; `compatibility="strict"` passes with a snapshot where it
-  refuses without one. Standalone documents expose the same capture as
-  `window.xy.captureStyleSnapshot`, and
-  `scripts/style_capture_smoke.py` pins the browser-oracle loop end to end.
-- The declared-styling resolver (`xy.styling.declared`): the writers' slot
-  view now derives from the same pass that builds the interned
-  `ResolvedStyleSnapshot`, byte-equivalently, with the legend's em-domain
-  values as a named, tested residue.
-- The renderer-neutral styling IR: `xy.styling.resolved` defines the
-  versioned, interned `ResolvedStyleSnapshot` (schema v1 — concrete values
-  only, declarations deduped, instances referencing them by index), with a
-  generated TypeScript mirror (`js/src/14_style_snapshot.ts`) that the test
-  suite pins to the Python schema. Wire shape and reserved message names:
-  `spec/design/wire-protocol.md` §8; nothing rides the wire yet, so
-  `PROTOCOL_VERSION` is unchanged.
-- Every chart-, figure-, and module-level image-export API (`to_png`,
-  `to_svg`, `to_image`, `write_image`, `export.write_images`) accepts
-  `compatibility=` — facet-grid exports deliberately do not yet (their
-  per-panel preflight is tracked in the migration document): `"legacy"`
-  (default —
-  behavior unchanged), `"warn"` (one `StyleCompatibilityWarning` naming each
-  declaration the export would drop), or `"strict"`
-  (`StyleCompatibilityError` before emission, preflight report attached).
-  Modes never re-route an explicit engine; `"lossless"` is reserved and
-  rejected until preflight routing exists. The default flips only on the
-  published schedule in `spec/process/style-compatibility-migration.md`
-  (warn in 0.0.7, strict in 0.1.0, legacy removed in 0.2.0).
-- `chart.style_compatibility_report(target=..., engine=..., custom_css=...)`:
-  a report-only export preflight that routes every declared slot style into
-  `survives`, `native-subset` (naming the kept and lost properties per
-  format family), `browser-only`, or `state-gated`, mirrors the export
-  path's refusals, and short-circuits in constant time for charts with no
-  class or per-slot declarations. The programmatic answer to
-  `spec/api/export.md` §9.
-- The capability registry now tags every chrome slot with an
-  **applicability** — present in a clean static export, or gated by an
-  export state (`hover`, `selection`, `crosshair`, `modebar`, `view`) — and
-  the generated capability matrices gained the *applicable in* column and
-  applicable-slot counts (24 static / 24 state-gated of 48). Live-only
-  chrome a static file never contains is no longer counted as missing from
-  static export parity.
+- The primary data-bound Reflex component API is now available. `@reflex_xy.data`
+  publishes typed column sets through `DataHandle[Schema]`; validated,
+  content-addressed plans keep chart structure in page code and bind live or
+  concrete data without routing arrays through Reflex state. Typed figure
+  handles, flat factories for every standalone mark kind,
+  `reflex_xy.chart(*nodes, data=...)` composition, reconnect/rebuild and
+  republish fan-out, compile-time figure probes, and a complete demo make the
+  new tier usable end to end.
+- Funnel charts joined the core declarative API (protocol v13):
+  `xy.funnel_chart(stages, values)` / `xy.funnel(...)` draw one centered
+  segment per stage in declared order — never sorted — with explicit
+  `geometry="area"|"bar"` modes, `neck="rect"|"taper"`, per-geometry segment
+  gaps, and a `min_width` floor that keeps zero/tiny stages visible without
+  touching their reported values. Conversion arithmetic (value, prior, overall
+  share, previous-stage conversion, drop-off; `None` over zero denominators)
+  rides labels with a documented inside/outside/hidden collision ladder,
+  hover tooltips, click events, and ordered keyboard traversal with
+  screen-reader announcements. Per-stage colors are a categorical channel over
+  the stage names (theme `palette={...}` mappings pin by stage name; legend
+  rows opt in via `xy.legend(...)`), and per-trace `stroke`/`stroke-width`/
+  opacity style compiles to all three renderers. The client draws
+  antialiased quads through a dedicated funnel program sharing the ribbon
+  fragment stage; SVG/PNG/PDF exports emit the same `_scene.funnel_quad`
+  geometry, pinned by golden tests.
+- A production document-scoped WebGL host lets charts share one WebGL2 context
+  and compiled shaders while preserving chart-owned buffers, picking, and view
+  state. Canvas2D presentation keeps normal layout and clipping; governed
+  per-chart fallback and host-wide context-loss recovery protect browsers and
+  dashboards with many charts.
+- The stable CSS, `class_names`, `styles`, and Tailwind chart-chrome surface
+  expanded from 29 to 48 slots, adding modebar internals, Cartesian axes and
+  gesture bands, colorbar details, and the annotation layer.
+- A reproducible dark-mode benchmark image and theme-aware README selection
+  now accompany the published benchmark evidence.
 
-## [0.0.5] - 2026-07-31
+### Changed
+- Reflex figure state vars, `register()`, and `inline()` now return typed
+  `FigureHandle`s, and live components accept `Var[FigureHandle]` so invalid
+  vars and raw strings fail during page evaluation. Positional live
+  `chart(var)` / `chart(token)` calls warn in favor of `figure=`; positional
+  static `chart(Chart)` remains supported, and legacy token strings remain
+  accepted by helper APIs for one release cycle.
+- The lazy `xy` root now has a complete PEP 561 type surface, including
+  `xy.__version__`. Source, external-consumer, and installed-wheel type checks
+  are release gates.
+- Polar charts disable zoom by default, except for wind roses. Authors can opt
+  in with `interaction_config(zoom=True)`; otherwise wheel events remain
+  available for page scrolling and inert zoom/history controls stay hidden.
+  Polar `default_drag_action` now accepts only `"auto"` and `"none"`, rejecting
+  drag tools that the renderer cannot execute.
+- Native raster exports now resolve categorical palettes through the same
+  indexed fallback as SVG and density rendering. Browser-only or otherwise
+  unresolvable entries in hand-authored payloads emit a `RuntimeWarning` and
+  fall back to the built-in color at the same index, preserving distinct
+  categories instead of silently collapsing them onto one shared color.
+- Release verification now drives standalone Chromium smokes through CDP,
+  parses built ESM exports structurally instead of matching minifier-dependent
+  strings, and uses stable-Rust-compatible chunk APIs so the floating stable
+  toolchain remains clean under Clippy.
+
+### Fixed
+- Log axes with an explicit margin no longer underflow their lower bound to
+  zero on very wide positive domains.
+- Invalid mark-fill mappings with incomparable key types now raise the intended
+  unknown-key `ValueError` instead of an internal sorting `TypeError`. Reflex
+  event-handler annotations also remain valid to static type checkers after the
+  dependency updates.
+- Static annotation labels now honor chart annotation/text theme tokens, and a
+  scene/SVG import-order cycle no longer breaks capability generation.
+- Documentation code-copy controls have accessible names, visible keyboard
+  focus, and announced copied/failed states. Route-wide checks now prevent
+  public documentation heading outlines from skipping levels.
+
+### Security
+- The active root environment now resolves `aiohttp==3.14.3`, patched for
+  CVE-2026-69244. Dependabot alert #12 names a lockfile from the
+  retired `python/reflex-xy` project, which is deleted from the repository and
+  excluded from the distribution. Other documentation and application
+  dependencies, including PostCSS, were updated to patched versions, with the
+  associated Python and JavaScript lockfiles refreshed.
+
+## v0.0.5 (2026-07-31)
 
 ### Added
 - Reflex integration is now bundled in the `xy` distribution and installed as
@@ -195,10 +283,6 @@ in the README).
   stay uniform.
 
 ### Changed
-- All Polar charts with the exception of wind rose disable zoom by default.
-- `default_drag_action` accepts only `"auto"`/`"none"` on a polar chart; the
-  values naming drag tools a disc does not have now raise at construction
-  instead of being accepted and silently doing nothing.
 - Default tooltips now lead with the hovered series name, and the radial row of
   a polar readout is labelled `r` rather than presented as a Cartesian `y`. The
   numeric angle row is gone from polar readouts: on most polar charts the angle
@@ -266,7 +350,7 @@ in the README).
   `set_transform` move the whole patch. Previously they reached only the fill,
   and a hidden patch still drew its outline.
 
-## [0.0.4] - 2026-07-27
+## v0.0.4 (2026-07-27)
 
 ### Added
 - Notebook display-host resolution (`spec/design/reflex-shaped-api.md` §3.3):
@@ -493,7 +577,7 @@ in the README).
   every colormap had ≤ 11 stops; a 256-stop ramp sits exactly at that limit, so
   the index is now `int32`.
 
-## [0.0.3] - 2026-07-24
+## v0.0.3 (2026-07-24)
 
 ### Changed
 - The runtime-verified WebAssembly wheel now targets the standardized PEP 783
@@ -507,7 +591,7 @@ in the README).
   `libxy_core.so`, the filename Pyodide's dynamic loader expects, even when
   cibuildwheel runs on a macOS host.
 
-## [0.0.2] - 2026-07-24
+## v0.0.2 (2026-07-24)
 
 ### Changed
 - The distribution version is derived from git tags (uv-dynamic-versioning)
@@ -1063,7 +1147,7 @@ in the README).
 - `XY_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
   backend (`xy/_fallback.py`).
 
-## [0.0.1] — 2026-07-16
+## v0.0.1 (2026-07-16)
 
 Initial development snapshot: line/scatter/area/histogram/bar/heatmap chart
 families, binary columnar transport, WebGL2 rendering, M4 decimation, density

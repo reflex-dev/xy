@@ -13,7 +13,7 @@ which is sometimes deliberate, and the notes say which.
 
 ## In one line
 
-- **11** mark style properties across **21** mark kinds, drawn by all three renderers.
+- **11** mark style properties across **22** mark kinds, drawn by all three renderers.
 - **48** stable chrome slots, CSS- and Tailwind-addressable in the browser. **23** of them name chrome a clean static export contains; **19** reach the native writers through `styles={slot: ...}` (the chart-level `style=` token bag additionally reaches every renderer). The other **25** are interaction/view chrome (tooltip, modebar, crosshair, selection, reduction badges) that a clean static file does not contain, so they are gated by an export state rather than missing.
 - **1** shipped extension point.
 - **9** known default divergences between renderers, listed below rather than left to be discovered.
@@ -26,19 +26,19 @@ one honors.
 
 | property | vocabulary | mark kinds | webgl | svg | native | status |
 |---|---|---|---|---|---|---|
-| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `opacity` | css | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh`, `violin` | full | full | full | shipped |
 | `fill` | svg | `area`, `bar`, `box`, `column`, `error_band`, `hist`, `histogram`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
-| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
-| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `fill-opacity` | svg | `area`, `bar`, `box`, `column`, `error_band`, `funnel`, `heatmap`, `hexbin`, `hist`, `histogram`, `ribbon`, `scatter`, `triangle_mesh`, `violin` | full | full | full | shipped |
+| `stroke` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-opacity` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
+| `stroke-width` | svg | `area`, `bar`, `box`, `column`, `contour`, `ecdf`, `error_band`, `errorbar`, `funnel`, `hist`, `histogram`, `line`, `ribbon`, `scatter`, `segments`, `stairs`, `stem`, `step`, `triangle_mesh` | full | full | full | shipped |
 | `stroke-dasharray` | svg | `area`, `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `stroke-linecap` | svg | `ecdf`, `line`, `stairs`, `step` | full | full | full | shipped |
 | `border-radius` | css | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `wedge-gap` | xy | `bar`, `column`, `hist`, `histogram` | full | full | full | shipped |
 | `marker-shape` | xy | `scatter` | full | full | full | shipped |
 
-### Notes
+### Mark style notes
 
 - **`opacity`** — Multiplies the mark's own alpha in every renderer.
 - **`fill`** — A plain color compiles to the mark's paint; a `linear-gradient(...)` compiles to a gradient and is accepted only by area and rect kinds, which are the ones with a gradient program.
@@ -120,7 +120,7 @@ declared and names anything that would not survive.
 | `axis_title` | clean static | full | partial | partial |
 | `annotation_label` | clean static | full | partial | partial |
 
-### Notes
+### Chrome slot notes
 
 - **`root`** (via `styles={'root': ...} / chart style=`) — Box slot: both writers honor background, border (color/width/style, dashed/dotted as dash arrays), symmetric border-radius, opacity and fill-opacity through the shared chrome-box lowering (`xy._chromebox.lower_box`); everything it cannot draw is a named loss in the preflight, never silent (§28). The root box is the figure patch: its fill replaces the `theme(background=)` token when both are set (same element, one background property, matching the browser), and an export `background=` override silences it (`_svg.apply_export_background` is the one precedence definition). box-shadow would fall outside the canvas and is a named loss; text properties have no root text to style. The chart-level `style=` token bag still reaches every renderer.
 - **`title`** (via `styles={'title': ...}`) — Vector (SVG, PDF) honors font-size, font-weight, font-style, font-family, letter-spacing, opacity and the text paint (`fill`, or `color`); PDF maps any declared family onto the base-14 Helvetica faces (regular/bold/oblique/bold-oblique), recorded in `_pdf.py`'s contract note. The raster atlas carries regular, bold and italic faces, so font-size, the paint, font-weight and font-style survive there too — font-family, letter-spacing and opacity remain vector-only rather than silently approximated. Properties outside the subset stay browser-only. The title also takes the full box vocabulary (`_svg.SLOT_BOX_PROPS`): a box under the text, sized to the measured block plus padding, with the title band growing to fit. Per-entry `xy.title(style=...)` box properties are native-only (KNOWN_RENDERER_DIVERGENCES `title_entry_box_allowlist`).
@@ -152,7 +152,7 @@ Ways to add behavior the core does not ship, without forking it.
 | mark_plugin_shader | planned | `—` | — |
 | custom_renderer | planned | `—` | — |
 
-### Notes
+### Extension point notes
 
 - **mark_plugin_composition** — A calc over declared columns plus a build that returns built-in marks. Its output is ordinary traces, so it reuses the built-in rendering, picking, and export paths rather than reimplementing them.
 - **mark_plugin_shader** — §24's WGSL/GLSL snippet pair. Deferred: a plugin with its own shader reuses none of the built-in rendering, picking, or export paths and would have to reimplement them.
